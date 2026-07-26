@@ -73,6 +73,14 @@ Every pull request runs: formatting, lint, typecheck (tests included), unit test
 
 Any `pnpm audit` exception is documented with a justification and a review trigger in [`AUDIT-EXCEPTIONS.md`](./AUDIT-EXCEPTIONS.md). An undocumented ignore is not acceptable.
 
+## Configuration
+
+Environment variables are validated at startup by `@platform/config`. Validation reports **every** problem at once rather than one per restart, and names the fix.
+
+`.env.example` deliberately contains **no connection strings**. `DATABASE_URL` and `REDIS_URL` are composed at runtime from the individual `POSTGRES_*` and `REDIS_*` parts, which means each credential appears exactly once, no credential-shaped string is ever committed, and the password is percent-encoded correctly — a password containing `@`, `:` or `/` silently produces a malformed URL when a connection string is hand-written.
+
+Always pass connection strings through `redactUrl()` before logging. A failed connection typically reports the URL it tried, which is how passwords reach log aggregators.
+
 ## Secrets
 
 Never commit secrets — this repository is public. `.env` holds local Docker values only, and they are deliberately worthless placeholders. Real credentials belong in `.env.local` and in the host secret manager.

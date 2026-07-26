@@ -32,6 +32,12 @@ description = "Postgres connection string carrying a non-placeholder password"
 regex = '''postgres(?:ql)?://[a-zA-Z0-9_.-]+:[^@\s:/]{8,}@'''
 tags = ["database", "credentials"]
 [rules.allowlist]
+# Scoped to this rule only. The default provider rules — Stripe keys, AWS
+# credentials, private keys — still apply to test files, because those are
+# high-confidence and a real key in a test fixture is still a real leak. This
+# heuristic rule is the noisy one, and connection-string fixtures are exactly
+# what a URL-composition module needs to test.
+paths = ['''.*\.test\.ts$''']
 regexes = [
   '''(?i)(local_dev_only|changeme|placeholder|example|your[_-]?password)''',
 ]
