@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# Private documentation — never pushed. Holds the BRD, handoff and strategy.
+# ---------------------------------------------------------------------------
+docs/
+
+# ---------------------------------------------------------------------------
+# Secrets. This repository is PUBLIC. Nothing below may ever be committed.
+# Secrets live in .env.local and in the host secret store — never in git.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+service-account*.json
+secrets.*
+
+# Terraform state contains plaintext secrets
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+
+# ---------------------------------------------------------------------------
+# Dependencies and build output
+# ---------------------------------------------------------------------------
+node_modules/
+.pnpm-store/
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Test, coverage and logs
+# ---------------------------------------------------------------------------
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# ---------------------------------------------------------------------------
+# Local database and storage volumes
+# ---------------------------------------------------------------------------
+.docker-data/
+pgdata/
+redisdata/
+*.sqlite
+*.db
+backups/
+
+# ---------------------------------------------------------------------------
+# Editor and OS
+# ---------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Claude Code local settings (may contain machine-specific permissions)
+# ---------------------------------------------------------------------------
+.claude/settings.local.json
