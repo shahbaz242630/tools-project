@@ -92,8 +92,15 @@ export function redactUrl(url: string): string {
   return url.replace(/^([a-z+]+:\/\/[^:/@]*):[^@]*@/i, '$1:***@');
 }
 
+/**
+ * The shape we actually depend on. Narrower than `NodeJS.ProcessEnv`, so a
+ * caller can pass any plain record — a test fixture, a parsed file, a secrets
+ * manager response — without pretending it came from the process.
+ */
+export type EnvSource = Readonly<Record<string, string | undefined>>;
+
 /** Parse and validate, reporting every problem rather than only the first. */
-export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
+export function loadEnv(source: EnvSource = process.env): Env {
   const result = schema.safeParse(source);
 
   if (!result.success) {

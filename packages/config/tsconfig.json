@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "./src",
-    "outDir": "./dist"
+    "outDir": "./dist",
+    // TypeScript 6 no longer auto-includes ambient @types from the workspace
+    // root. Declared explicitly here, and deliberately NOT in packages/core --
+    // pure domain logic should not have process or fs within reach.
+    "types": ["node"]
   },
   "include": ["src/**/*"]
 }

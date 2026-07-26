@@ -62,7 +62,9 @@ const redisUp = checkContainerRunning(REDIS_CONTAINER);
 if (pgUp) {
   console.log('\nPostgres');
   for (const database of DATABASES) {
-    let exists = false;
+    // No initialiser: the catch below always continues, so a default would be
+    // dead. ESLint 10's no-useless-assignment catches exactly this.
+    let exists;
     try {
       exists =
         psql('postgres', `SELECT 1 FROM pg_database WHERE datname='${database}'`) ===
