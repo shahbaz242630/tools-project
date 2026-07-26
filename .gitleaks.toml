@@ -28,8 +28,14 @@ regexes = [
 [[rules]]
 id = "postgres-connection-string-with-password"
 description = "Postgres connection string carrying a non-placeholder password"
-regex = '''postgres(?:ql)?://[a-zA-Z0-9_-]+:(?!local_dev_only|ci_only|password|changeme)[^@\s:/]{8,}@'''
+# No lookahead: gitleaks compiles regexes with Go's RE2, which does not support
+# assertions. Placeholders are excluded via the rule allowlist below instead.
+regex = '''postgres(?:ql)?://[a-zA-Z0-9_.-]+:[^@\s:/]{8,}@'''
 tags = ["database", "credentials"]
+[rules.allowlist]
+regexes = [
+  '''(?i)(local_dev_only|ci_only|changeme|placeholder|example|your[_-]?password)''',
+]
 
 [[rules]]
 id = "generic-secret-assignment"
