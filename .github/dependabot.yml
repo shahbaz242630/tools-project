@@ -46,6 +46,19 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Group every action update including majors into one pull request. Actions
+    # are pinned by major tag and their failure mode is loud and immediate — CI
+    # either runs or it does not — so they are safe to review together. Five
+    # separate pull requests for five routine tag bumps is noise that trains
+    # you to stop reading them.
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+        update-types:
+          - major
+          - minor
+          - patch
     commit-message:
       prefix: 'chore(ci)'
 
