@@ -75,6 +75,16 @@ Secret scanning is deliberately split. The pull request scan is incremental — 
 
 Any `pnpm audit` exception is documented with a justification and a review trigger in [`AUDIT-EXCEPTIONS.md`](./AUDIT-EXCEPTIONS.md). An undocumented ignore is not acceptable.
 
+## Observability
+
+`@platform/observability` provides structured logging, correlation IDs and an error-tracking seam.
+
+Logs are one JSON object per line — a pretty log is an unsearchable log. Every record carries the correlation id from the ambient context automatically, so a failure can be traced across API, workers and provider adapters without threading an id through every signature.
+
+**Everything logged is redacted first.** Credentials and payment data, obviously, but also precise coordinates: the public API deliberately withholds a listing's true location so an owner's address cannot be trilaterated, and logging it would undo that. Redaction is applied to fields, nested objects, error messages and stack traces.
+
+Error tracking sits behind an interface with a no-op production adapter and a recording test fake. The Sentry adapter is deliberately absent until there is an account and DSN to exercise it — an untested adapter is worse than none, because it looks finished.
+
 ## Configuration
 
 Environment variables are validated at startup by `@platform/config`. Validation reports **every** problem at once rather than one per restart, and names the fix.

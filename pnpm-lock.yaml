@@ -52,6 +52,12 @@ importers:
         specifier: ^3.4.2
         version: 3.7.2
 
+  packages/observability:
+    dependencies:
+      '@platform/core':
+        specifier: workspace:*
+        version: link:../core
+
 packages:
 
   '@ampproject/remapping@2.3.0':
