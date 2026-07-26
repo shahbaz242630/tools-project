@@ -1,0 +1,17 @@
+# Ownership for review routing (BRD §12.1).
+#
+# The team is currently two: one product owner and Claude as engineer. Every
+# path routes to the same owner today, but the structure exists so that
+# security-critical areas already have designated ownership when the team grows
+# — retrofitting it after the fact tends not to happen.
+
+* @shahbaz242630
+
+# Security-critical paths. Changes here must never be self-merged without
+# review once there is a second reviewer available.
+/packages/core/src/money.ts   @shahbaz242630
+/packages/core/src/time.ts    @shahbaz242630
+/.github/                     @shahbaz242630
+/infra/                       @shahbaz242630
+/docker-compose.yml           @shahbaz242630
+/CLAUDE.md                    @shahbaz242630
