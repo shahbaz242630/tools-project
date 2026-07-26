@@ -50,14 +50,33 @@ set -e
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   echo "Scanning for secrets..."
-  docker run --rm -v "$(pwd):/repo" -w /repo zricethezav/gitleaks:v8.24.3 \\
-    detect --config .gitleaks.toml --source . --redact --no-banner || {
+
+  # MSYS_NO_PATHCONV and the doubled slash stop Git Bash on Windows rewriting
+  # the container path into a host path.
+  set +e
+  MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo" -w //repo \\
+    zricethezav/gitleaks:v8.24.3 \\
+    detect --config .gitleaks.toml --source . --redact --no-banner
+  status=$?
+  set -e
+
+  # gitleaks: 0 clean, 1 leaks found, anything else is a scanner failure.
+  # These must not be conflated — reporting a broken scanner as "secrets found"
+  # sends someone hunting for a leak that does not exist, and the opposite
+  # mistake would wave a real one through.
+  if [ "$status" -eq 1 ]; then
     echo ""
     echo "Secrets detected. Do not push."
     echo "If this is a false positive, add an allowlist entry to .gitleaks.toml"
     echo "with a comment explaining why."
     exit 1
-  }
+  elif [ "$status" -ne 0 ]; then
+    echo ""
+    echo "Secret scan could not run (exit $status). Push blocked."
+    echo "Fix the scanner, or use --no-verify only if you are certain the"
+    echo "change carries no credentials. CI scans regardless."
+    exit 1
+  fi
 fi
 `;
 
