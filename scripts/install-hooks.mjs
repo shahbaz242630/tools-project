@@ -10,7 +10,7 @@
  * Runs automatically after `pnpm install` via the prepare script.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 
@@ -108,8 +108,18 @@ for (const [name, body] of [
   const path = join(hooksDir, name);
 
   // Never clobber a hook someone wrote by hand. Only overwrite our own.
-  if (existsSync(path)) {
-    const existing = readFileSync(path, 'utf8');
+  //
+  // Read directly and handle absence, rather than checking existsSync first.
+  // A check followed by a read is a time-of-check/time-of-use race — the same
+  // shape as the check-then-insert pattern ADR 0004 rejects for bookings.
+  let existing = null;
+  try {
+    existing = readFileSync(path, 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  if (existing !== null) {
     if (!existing.includes(MARKER)) {
       console.warn(
         `Skipped ${name}: an unmanaged hook already exists. ` +
