@@ -39,6 +39,24 @@ pnpm test
 | `pnpm db:verify`         | Verify stack configuration                         |
 | `pnpm db:psql`           | Interactive psql session                           |
 | `pnpm db:logs`           | Follow container logs                              |
+| `pnpm invariants`        | Check project-specific invariants                  |
+| `pnpm hooks:install`     | Reinstall git hooks (automatic after install)      |
+
+## Guardrails
+
+`pnpm invariants` enforces rules no off-the-shelf linter knows about, each tied to a decision in `adr/` — money never touched by `toFixed` or `parseFloat`, environment read only through `@platform/config`, logging only through `@platform/observability` so redaction applies, raw SQL confined to the search module.
+
+Every rule supports an inline waiver, with a required reason:
+
+```ts
+// invariant-ok: no-console — CLI output, not application logging
+```
+
+A bare waiver is itself a failure: an unexplained exemption is indistinguishable from someone silencing the check.
+
+Git hooks install automatically on `pnpm install`. **pre-commit** runs the invariant check and formatting on staged files. **pre-push** scans for secrets with gitleaks when Docker is available — the last point at which a leak is still preventable, since a pushed secret is scraped within seconds and rewriting history does not un-leak it.
+
+Both are deliberately fast. A slow hook is a bypassed hook, so anything needing the database or the full test suite belongs in CI.
 
 ## Layout
 

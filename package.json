@@ -21,7 +21,10 @@
     "db:logs": "docker compose logs -f",
     "db:verify": "node scripts/verify-stack.mjs",
     "db:psql": "docker exec -it rental-postgres psql -U rental -d rental_dev",
-    "licences:check": "node scripts/check-licences.mjs"
+    "licences:check": "node scripts/check-licences.mjs",
+    "invariants": "node scripts/check-invariants.mjs",
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

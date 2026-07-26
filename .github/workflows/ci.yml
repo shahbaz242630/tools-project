@@ -41,6 +41,13 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Project invariants (see CLAUDE.md and adr/). The pre-commit hook runs
+      # these too, but a hook is advisory — `--no-verify` skips it, and a fresh
+      # clone that never ran `pnpm install` has no hooks at all. This is the
+      # layer that actually enforces them.
+      - name: Check invariants
+        run: pnpm invariants
+
   test:
     name: Unit tests and coverage
     runs-on: ubuntu-latest
