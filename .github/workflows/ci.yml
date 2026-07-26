@@ -178,14 +178,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Full history: a secret introduced and later reverted is still a
-          # leaked secret, and scanning only the tip would miss it.
+          # gitleaks-action derives its own commit range from the event, so this
+          # scan is incremental regardless of depth. Full history is covered by
+          # the separate secret-scan-history workflow. Depth is kept at 0 so the
+          # action can resolve the range for a multi-commit pull request.
           fetch-depth: 0
 
       # GitHub push protection on this plan matches known provider patterns
       # only, so it would miss a database password or a custom signing secret.
-      # This closes that gap.
-      - name: Scan history for secrets
+      # This closes that gap for newly pushed commits.
+      - name: Scan new commits for secrets
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
