@@ -1,0 +1,204 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege by default. Jobs opt in to more where they need it.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  quality:
+    name: Format, lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Formatting first: fastest signal, cheapest to fix.
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      # Typechecks tests as well as source — tsconfig.json includes them.
+      - name: Typecheck
+        run: pnpm typecheck
+
+  test:
+    name: Unit tests and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Thresholds live in vitest.config.ts, so a coverage regression fails the
+      # job rather than being reported and quietly ignored.
+      - name: Test with coverage
+        run: pnpm test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build all packages
+        run: pnpm build
+
+  database:
+    name: Database invariants
+    runs-on: ubuntu-latest
+    # Proves the runner can host our actual database requirements. Without
+    # this, a missing extension surfaces only when the first migration runs,
+    # by which point the failure is a long way from its cause.
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: rental
+          POSTGRES_DB: rental_test
+          # No password: this container is ephemeral and reachable only from
+          # within its own job. Carrying a literal credential here would add a
+          # hardcoded secret to the repository for no security benefit.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rental -d rental_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clients
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client redis-tools
+
+      - name: Create and verify extensions
+        run: |
+          set -euo pipefail
+          psql() { command psql -h localhost -U rental -d rental_test -v ON_ERROR_STOP=1 "$@"; }
+
+          for ext in postgis btree_gist pg_trgm citext; do
+            psql -q -c "CREATE EXTENSION IF NOT EXISTS $ext;"
+            version=$(psql -tAc "SELECT extversion FROM pg_extension WHERE extname='$ext'")
+            if [ -z "$version" ]; then
+              echo "::error::extension $ext is missing"
+              exit 1
+            fi
+            echo "$ext $version"
+          done
+
+      # BRD §8.5.1. The double-booking guarantee rests entirely on this
+      # constraint, so assert the database enforces it rather than trusting
+      # that btree_gist being installed is sufficient.
+      - name: Assert booking overlap constraint rejects overlaps
+        run: |
+          set -euo pipefail
+          psql() { command psql -h localhost -U rental -d rental_test -v ON_ERROR_STOP=1 "$@"; }
+
+          psql -q -c "CREATE TABLE booking_overlap_check (
+                        id int PRIMARY KEY,
+                        listing_id int NOT NULL,
+                        period tstzrange NOT NULL,
+                        EXCLUDE USING gist (listing_id WITH =, period WITH &&)
+                      );"
+          psql -q -c "INSERT INTO booking_overlap_check VALUES (1, 1, tstzrange('2026-08-01','2026-08-05'));"
+
+          if psql -q -c "INSERT INTO booking_overlap_check VALUES (2, 1, tstzrange('2026-08-03','2026-08-07'));" 2>/dev/null; then
+            echo "::error::an overlapping booking was accepted — double-booking prevention is broken"
+            exit 1
+          fi
+          echo "overlapping period correctly rejected"
+
+          psql -q -c "INSERT INTO booking_overlap_check VALUES (3, 2, tstzrange('2026-08-03','2026-08-07'));"
+          echo "same period on a different listing correctly allowed"
+
+      - name: Assert Redis rejects eviction
+        run: |
+          set -euo pipefail
+          policy=$(redis-cli -h localhost config get maxmemory-policy | tail -n 1)
+          echo "maxmemory-policy: $policy"
+          # BullMQ requires noeviction. A changed base image must not silently
+          # reintroduce the possibility of losing queued jobs.
+          if [ "$policy" != "noeviction" ]; then
+            echo "::error::Redis maxmemory-policy is $policy, expected noeviction"
+            exit 1
+          fi
+
+  security:
+    name: Secrets and dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret introduced and later reverted is still a
+          # leaked secret, and scanning only the tip would miss it.
+          fetch-depth: 0
+
+      # GitHub push protection on this plan matches known provider patterns
+      # only, so it would miss a database password or a custom signing secret.
+      # This closes that gap.
+      - name: Scan history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level moderate
+
+      - name: Check dependency licences
+        run: pnpm licences:check

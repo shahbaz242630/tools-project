@@ -1,0 +1,47 @@
+# Secret scanning configuration.
+#
+# Extends the default gitleaks ruleset rather than replacing it — the defaults
+# cover the provider patterns we care about (Stripe, AWS, private keys) and any
+# custom rules here are additions, not substitutions.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented local-only values that are not secrets"
+
+paths = [
+  # Contains deliberately worthless local Docker credentials. If these leak,
+  # nothing is exposed — they only work against a container on localhost.
+  '''\.env\.example$''',
+  # Documentation and lockfiles produce noise without carrying secrets.
+  '''pnpm-lock\.yaml$''',
+]
+
+regexes = [
+  # The local Docker password, which is intentionally obvious and public. It
+  # only authenticates against a container on the developer's own localhost.
+  '''local_dev_only''',
+]
+
+[[rules]]
+id = "postgres-connection-string-with-password"
+description = "Postgres connection string carrying a non-placeholder password"
+# No lookahead: gitleaks compiles regexes with Go's RE2, which does not support
+# assertions. Placeholders are excluded via the rule allowlist below instead.
+regex = '''postgres(?:ql)?://[a-zA-Z0-9_.-]+:[^@\s:/]{8,}@'''
+tags = ["database", "credentials"]
+[rules.allowlist]
+regexes = [
+  '''(?i)(local_dev_only|changeme|placeholder|example|your[_-]?password)''',
+]
+
+[[rules]]
+id = "generic-secret-assignment"
+description = "Secret-looking assignment with a long literal value"
+regex = '''(?i)\b(secret|token|api[_-]?key|private[_-]?key|passwd|password)\b\s*[:=]\s*['"][^'"\s]{16,}['"]'''
+tags = ["generic"]
+[rules.allowlist]
+regexes = [
+  '''(?i)(example|placeholder|redacted|your[_-]?|xxx|changeme|local_dev_only)''',
+]
