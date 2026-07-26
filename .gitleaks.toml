@@ -19,10 +19,9 @@ paths = [
 ]
 
 regexes = [
-  # The local Docker password, which is intentionally obvious and public.
+  # The local Docker password, which is intentionally obvious and public. It
+  # only authenticates against a container on the developer's own localhost.
   '''local_dev_only''',
-  # The CI Postgres password. Only ever reachable inside a runner.
-  '''ci_only''',
 ]
 
 [[rules]]
@@ -34,7 +33,7 @@ regex = '''postgres(?:ql)?://[a-zA-Z0-9_.-]+:[^@\s:/]{8,}@'''
 tags = ["database", "credentials"]
 [rules.allowlist]
 regexes = [
-  '''(?i)(local_dev_only|ci_only|changeme|placeholder|example|your[_-]?password)''',
+  '''(?i)(local_dev_only|changeme|placeholder|example|your[_-]?password)''',
 ]
 
 [[rules]]
@@ -44,5 +43,5 @@ regex = '''(?i)\b(secret|token|api[_-]?key|private[_-]?key|passwd|password)\b\s*
 tags = ["generic"]
 [rules.allowlist]
 regexes = [
-  '''(?i)(example|placeholder|redacted|your[_-]?|xxx|changeme|local_dev_only|ci_only)''',
+  '''(?i)(example|placeholder|redacted|your[_-]?|xxx|changeme|local_dev_only)''',
 ]

@@ -91,8 +91,11 @@ jobs:
         image: postgis/postgis:17-3.5
         env:
           POSTGRES_USER: rental
-          POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: rental_test
+          # No password: this container is ephemeral and reachable only from
+          # within its own job. Carrying a literal credential here would add a
+          # hardcoded secret to the repository for no security benefit.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -110,9 +113,6 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-
-    env:
-      PGPASSWORD: ci_only
 
     steps:
       - uses: actions/checkout@v4
