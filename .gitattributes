@@ -1,0 +1,18 @@
+# Normalise line endings to LF in the repository regardless of platform.
+# Without this, files authored on Windows are stored with CRLF and
+# `prettier --check` fails on Linux CI runners.
+* text=auto eol=lf
+
+# Binary files must never be touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+
+# Generated — collapse in diffs and exclude from language stats.
+pnpm-lock.yaml linguist-generated=true -diff
