@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -6,9 +7,14 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    languageOptions: {
+      globals: { ...globals.node },
+    },
     rules: {
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Timestamps must go through @platform/core so timezone handling stays
+      // explicit. A naive `new Date()` in domain code is how DST bugs get in.
       'no-restricted-globals': [
         'error',
         {
@@ -20,6 +26,8 @@ export default tseslint.config(
     },
   },
   {
+    // The time module is the one place allowed to touch Date directly, and
+    // tests need it to build fixtures.
     files: ['**/*.test.ts', 'packages/core/src/time.ts'],
     rules: { 'no-restricted-globals': 'off' },
   },

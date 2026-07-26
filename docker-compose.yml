@@ -1,0 +1,65 @@
+# Local development stack.
+#
+# Runs on the developer machine only. Never point local development at a shared
+# database (CLAUDE.md). Staging and production are provisioned separately.
+#
+# Two databases are created: one for development, one for the integration test
+# suite, so a test run can truncate tables without destroying dev data
+# (BRD §12.4 requires separate databases per environment).
+
+name: rental-marketplace
+
+services:
+  postgres:
+    # PostGIS is a hard dependency (BRD §4.2) — use the PostGIS image rather
+    # than plain postgres so the extension is present, not just installable.
+    image: postgis/postgis:17-3.5
+    container_name: rental-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rental}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-rental_dev}
+      # Deterministic collation so index ordering matches production.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Runs once, only when the data volume is empty.
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-rental} -d ${POSTGRES_DB:-rental_dev}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: rental-redis
+    restart: unless-stopped
+    # BullMQ requires noeviction: with an eviction policy Redis may silently
+    # drop job data under memory pressure, losing booking expiry and payout
+    # release jobs (BRD §8.6, §8.9).
+    command: >
+      redis-server
+      --maxmemory-policy noeviction
+      --appendonly yes
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:

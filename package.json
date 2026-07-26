@@ -14,13 +14,20 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d --wait && node scripts/verify-stack.mjs",
+    "db:logs": "docker compose logs -f",
+    "db:verify": "node scripts/verify-stack.mjs",
+    "db:psql": "docker exec -it rental-postgres psql -U rental -d rental_dev"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^3.0.2",
     "eslint": "^9.18.0",
+    "globals": "^17.7.0",
     "prettier": "^3.4.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0",
