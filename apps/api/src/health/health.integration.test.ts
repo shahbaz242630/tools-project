@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import type { DependencyCheck } from './dependency-check.js';
 import { CORRELATION_HEADER } from '../observability/correlation.middleware.js';
-import { createRecordingLogger } from '../testing/recording-logger.js';
+import { createRecordingLogger } from '@platform/observability/testing';
 
 /**
  * Boots the real application — real routing, real middleware, real exception

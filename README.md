@@ -29,6 +29,7 @@ pnpm test
 | Command                  | Does                                               |
 | ------------------------ | -------------------------------------------------- |
 | `pnpm test`              | Run the unit suite                                 |
+| `pnpm test:integration`  | Redis-backed tests (needs `pnpm db:up`)            |
 | `pnpm test:watch`        | Watch mode                                         |
 | `pnpm test:coverage`     | With coverage thresholds (90% lines, 85% branches) |
 | `pnpm typecheck`         | Typecheck every package, tests included            |
@@ -68,6 +69,30 @@ docker build -f apps/api/Dockerfile -t rental-api .
 
 It runs as a non-root user, handles SIGTERM so a deploy drains rather than being killed, and its `HEALTHCHECK` deliberately calls liveness only.
 
+## Running the worker
+
+```bash
+pnpm build
+pnpm --filter @app/worker dev
+```
+
+It consumes the `maintenance` queue. The only job so far is `heartbeat`, which does nothing but log — deliberately, because a skeleton job with side effects cannot be run freely in staging to check the worker is alive, and would have to be unpicked when real work arrives.
+
+**Correlation crosses the queue boundary.** `AsyncLocalStorage` cannot: the API finishes its request long before a worker picks the job up, and its context is gone. So the id travels inside the job envelope and is re-established on the other side, giving one trace across API and worker. Retrofitting that later would mean rewriting every enqueue site and back-filling every stored payload, so it exists before the second job type does.
+
+An id arriving in a job is sanitised even though we wrote it — job data is only as trustworthy as Redis, and it flows straight into logs.
+
+An unknown job name fails that single job rather than the worker. It usually means a deploy removed a handler while jobs of that type were still queued, and the job stays in the failed set where it can be inspected and retried.
+
+Redis-backed tests are separate:
+
+```bash
+pnpm db:up
+pnpm test:integration
+```
+
+They are excluded from `pnpm test` so the default suite needs nothing running. `pnpm test` names its projects explicitly rather than excluding the integration one, so a newly added project has to be opted in — forgetting shows up as tests that visibly do not run, rather than as coverage quietly disappearing.
+
 ## Guardrails
 
 `pnpm invariants` enforces rules no off-the-shelf linter knows about, each tied to a decision in `adr/` — money never touched by `toFixed` or `parseFloat`, environment read only through `@platform/config`, logging only through `@platform/observability` so redaction applies, raw SQL confined to the search module.
@@ -88,14 +113,16 @@ Both are deliberately fast. A slow hook is a bypassed hook, so anything needing 
 
 ```
 apps/api                 NestJS API (Fastify)
+apps/worker              BullMQ background jobs
 packages/core            Money and time primitives
 packages/config          Brand identity and configuration
 packages/observability   Logging, correlation IDs, error tracking
+packages/runtime         Process lifecycle — graceful shutdown
 infra/postgres           Database initialisation
 scripts/                 Developer tooling
 ```
 
-`apps/web`, `apps/worker` and `packages/contracts` arrive in later slices.
+`apps/web` and `packages/contracts` arrive in a later slice.
 
 ## Two databases
 
@@ -117,7 +144,9 @@ The full engineering rules are in `CLAUDE.md`.
 
 Every pull request runs: formatting, lint, typecheck (tests included), unit tests with coverage thresholds, build, a **runtime import check**, dependency audit, licence check, an incremental secret scan, CodeQL, and a **database invariants** job that asserts PostGIS and `btree_gist` are present and that a booking-overlap exclusion constraint genuinely rejects overlapping periods.
 
-There is also a **container image** job. It builds the real image, boots it, asserts liveness, then sends SIGTERM and requires a clean exit within ten seconds — because an unhandled SIGTERM shows up as random 502s during every release rather than as an obvious bug.
+There is also a **container image** job. It builds both real images, boots them, asserts liveness, then sends SIGTERM and requires a clean exit within ten seconds — because an unhandled SIGTERM shows up as random 502s during every release rather than as an obvious bug. The worker is booted deliberately **without** Redis: a process that only drains cleanly while its broker is reachable would hang during exactly the incident that makes someone want to redeploy.
+
+A **worker integration** job runs the Redis-backed tests against a real broker.
 
 The runtime import check exists because the unit suite resolves `@platform/*` to TypeScript source and therefore never loads the built output. That gap let every package ship an entry point no running process could load, while 143 tests stayed green — see [ADR 0010](./adr/0010-packages-expose-source-types-and-built-runtime.md). A test runner that resolves source is not testing the artefact you deploy.
 

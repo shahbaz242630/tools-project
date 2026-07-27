@@ -1,5 +1,5 @@
 {
-  "name": "@platform/observability",
+  "name": "@platform/runtime",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,6 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./dist/index.js"
-    },
-    "./testing": {
-      "types": "./src/testing/index.ts",
-      "default": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -23,7 +19,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@platform/core": "workspace:*"
+    "@platform/observability": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.1.1"

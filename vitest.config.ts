@@ -5,6 +5,9 @@ import { defineConfig } from 'vitest/config';
 const fromRoot = (relative: string): string =>
   fileURLToPath(new URL(relative, import.meta.url));
 
+/** Tests that talk to a live Redis, by naming convention. */
+const REQUIRES_REDIS = ['**/*.redis.test.ts'];
+
 export default defineConfig({
   // Workspace packages resolve to TypeScript source during tests, so the suite
   // runs without a build step and a failure points at the line you edited
@@ -18,7 +21,13 @@ export default defineConfig({
     alias: {
       '@platform/core': fromRoot('./packages/core/src/index.ts'),
       '@platform/config': fromRoot('./packages/config/src/index.ts'),
+      // Longest specifier first: an exact-match alias for the bare package
+      // would otherwise never be reached for the subpath.
+      '@platform/observability/testing': fromRoot(
+        './packages/observability/src/testing/index.ts',
+      ),
       '@platform/observability': fromRoot('./packages/observability/src/index.ts'),
+      '@platform/runtime': fromRoot('./packages/runtime/src/index.ts'),
     },
   },
   test: {
@@ -28,6 +37,28 @@ export default defineConfig({
         test: {
           name: 'packages',
           include: ['packages/*/src/**/*.test.ts'],
+          exclude: REQUIRES_REDIS,
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'worker',
+          include: ['apps/worker/src/**/*.test.ts'],
+          exclude: REQUIRES_REDIS,
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration',
+          // Needs a live Redis, so it is not in the default run. `pnpm test`
+          // names its projects explicitly rather than excluding this one --
+          // a new project must be opted in, and forgetting shows up as tests
+          // that visibly do not run rather than as silent coverage loss.
+          include: REQUIRES_REDIS,
           environment: 'node',
         },
       },
@@ -51,6 +82,7 @@ export default defineConfig({
         test: {
           name: 'api',
           include: ['apps/api/src/**/*.test.ts'],
+          exclude: REQUIRES_REDIS,
           environment: 'node',
         },
       },
@@ -69,6 +101,13 @@ export default defineConfig({
         '**/main.ts',
         // Test doubles, exercised by the tests that use them.
         '**/testing/**',
+        // Constructing a BullMQ Worker opens a Redis connection, so this file
+        // cannot be reached without a live broker. Its routing and correlation
+        // logic lives in processor.ts and is unit tested; what remains here is
+        // construction and two log callbacks, covered by *.redis.test.ts in the
+        // integration project. Keep this exclusion narrow — logic that moves
+        // back into this file stops being counted.
+        '**/worker/src/worker.ts',
       ],
       thresholds: {
         lines: 90,

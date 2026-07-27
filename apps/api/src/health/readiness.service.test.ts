@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ReadinessService } from './readiness.service.js';
 import type { DependencyCheck } from './dependency-check.js';
-import { createRecordingLogger } from '../testing/recording-logger.js';
+import { createRecordingLogger } from '@platform/observability/testing';
 
 const ok = (name: string): DependencyCheck => ({
   name,

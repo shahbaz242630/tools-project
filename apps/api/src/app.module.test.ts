@@ -5,7 +5,7 @@ import {
   DEFAULT_READINESS_TIMEOUT_MS,
   READINESS_TIMEOUT_MS,
 } from './health/readiness.service.js';
-import { createRecordingLogger } from './testing/recording-logger.js';
+import { createRecordingLogger } from '@platform/observability/testing';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
   const moduleRef = await Test.createTestingModule({

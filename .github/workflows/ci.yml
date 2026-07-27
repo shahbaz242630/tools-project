@@ -198,6 +198,9 @@ jobs:
       - name: Build the API image
         run: docker build -f apps/api/Dockerfile -t rental-api:ci .
 
+      - name: Build the worker image
+        run: docker build -f apps/worker/Dockerfile -t rental-worker:ci .
+
       - name: Boot it and check liveness
         run: |
           set -euo pipefail
@@ -247,6 +250,74 @@ jobs:
             echo "::error::took ${elapsed}s, so it was killed rather than draining"
             exit 1
           fi
+
+      - name: Check the worker starts and drains without Redis
+        run: |
+          set -euo pipefail
+
+          # Deliberately no Redis. A worker that only shuts down cleanly while
+          # its broker is reachable would hang during exactly the incident that
+          # makes someone want to redeploy -- the failure the API shipped with
+          # and CI caught.
+          docker run -d --name worker-ci \
+            -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
+            rental-worker:ci
+
+          sleep 5
+          if [ "$(docker inspect worker-ci --format '{{.State.Running}}')" != "true" ]; then
+            echo "::error::the worker exited instead of retrying its connection"
+            docker logs worker-ci
+            exit 1
+          fi
+
+          start=$(date +%s)
+          docker stop worker-ci > /dev/null
+          elapsed=$(( $(date +%s) - start ))
+          code=$(docker inspect worker-ci --format '{{.State.ExitCode}}')
+
+          echo "stopped in ${elapsed}s with exit code ${code}"
+          docker logs worker-ci 2>&1 | tail -n 3
+
+          if [ "$code" != "0" ]; then
+            echo "::error::expected a clean exit, got ${code}"
+            exit 1
+          fi
+          if [ "$elapsed" -ge 10 ]; then
+            echo "::error::took ${elapsed}s, so it was killed rather than draining"
+            exit 1
+          fi
+
+  worker-integration:
+    name: Worker integration
+    runs-on: ubuntu-latest
+    # BullMQ is almost entirely Redis semantics -- atomic moves between sorted
+    # sets, lock renewal, retry bookkeeping. A fake would test the fake, so
+    # these run against a real broker.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run Redis-backed tests
+        run: pnpm test:integration
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
 
   security:
     name: Secrets and dependencies

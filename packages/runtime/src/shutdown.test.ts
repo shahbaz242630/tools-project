@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createRecordingLogger } from '@platform/observability/testing';
 import { createShutdown } from './shutdown.js';
 import type { Closable } from './shutdown.js';
-import { createRecordingLogger } from './testing/recording-logger.js';
 
 const closable = (name: string, order: string[]): Closable => ({
   name,

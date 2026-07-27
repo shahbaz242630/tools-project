@@ -61,10 +61,11 @@ These were chosen deliberately after research. Deviating silently is a defect.
 | 0.7   | Invariant checker, git hooks, project skills                      | #18 |
 | 0.8a  | Made workspace packages loadable by a real Node process           | #22 |
 | 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container   | #23 |
+| 0.11a | `apps/worker` — BullMQ, correlation across the queue, container   | #24 |
 
 Still outstanding against the BRD §14 Phase 0 list:
 
-- **`apps/web`, `apps/worker` and `packages/contracts` do not exist.** `apps/api` does, and is deployable.
+- **`apps/web` and `packages/contracts` do not exist.** Slice 0.11b. `apps/api` and `apps/worker` do, and both are deployable.
 - **No infrastructure as code and no staging environment.** `infra/` holds only Postgres initialisation SQL. This is now the largest remaining item.
 - **No deploy pipeline.** CI builds and boots the container; nothing ships it anywhere.
 - **Rollback and log retrieval have never been demonstrated.**
@@ -91,9 +92,11 @@ Exists today:
 
 ```
 apps/api                NestJS on Fastify. Health, readiness, correlation, Dockerfile
+apps/worker             BullMQ. Maintenance queue, correlation across the boundary
 packages/core           Money and time primitives
 packages/config         Brand identity, environment validation
 packages/observability  Logging, correlation IDs, error-tracking seam
+packages/runtime        Process lifecycle — graceful shutdown, shared by both apps
 infra/postgres          Database initialisation SQL
 scripts/                Stack verification, licence check, invariants, hook install
 adr/                    Architecture decision records
@@ -105,7 +108,6 @@ Still to be scaffolded:
 
 ```
 apps/web             Next.js frontend (PWA)
-apps/worker          BullMQ background jobs
 packages/contracts   Shared types and API contracts
 infra/               Deployment skeleton — see the ADR 0009 divergence above
 ```
@@ -115,6 +117,7 @@ infra/               Deployment skeleton — see the ADR 0009 divergence above
 | Command                      | Does                                                        |
 | ---------------------------- | ----------------------------------------------------------- |
 | `pnpm test`                  | Unit suite (`test:watch`, `test:coverage` for the variants) |
+| `pnpm test:integration`      | Redis-backed tests; needs `pnpm db:up`                      |
 | `pnpm typecheck`             | Typecheck every package, tests included                     |
 | `pnpm lint`                  | ESLint                                                      |
 | `pnpm format:check`          | Prettier, verify only (`pnpm format` writes)                |
