@@ -87,6 +87,13 @@ jobs:
       - name: Build all packages
         run: pnpm build
 
+      # The unit suite resolves @platform/* to TypeScript source, so it never
+      # loads the built output. That is how every package came to declare a
+      # .ts entry point that no running process could load, while CI stayed
+      # green. This imports each built package in a real Node module graph.
+      - name: Verify packages load at runtime
+        run: pnpm verify:runtime
+
   database:
     name: Database invariants
     runs-on: ubuntu-latest

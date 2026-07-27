@@ -40,6 +40,7 @@ pnpm test
 | `pnpm db:psql`           | Interactive psql session                           |
 | `pnpm db:logs`           | Follow container logs                              |
 | `pnpm invariants`        | Check project-specific invariants                  |
+| `pnpm verify:runtime`    | Confirm built packages load in a real Node process |
 | `pnpm hooks:install`     | Reinstall git hooks (automatic after install)      |
 
 ## Guardrails
@@ -87,7 +88,9 @@ The full engineering rules are in `CLAUDE.md`.
 
 ## Continuous integration
 
-Every pull request runs: formatting, lint, typecheck (tests included), unit tests with coverage thresholds, build, dependency audit, licence check, an incremental secret scan, CodeQL, and a **database invariants** job that asserts PostGIS and `btree_gist` are present and that a booking-overlap exclusion constraint genuinely rejects overlapping periods.
+Every pull request runs: formatting, lint, typecheck (tests included), unit tests with coverage thresholds, build, a **runtime import check**, dependency audit, licence check, an incremental secret scan, CodeQL, and a **database invariants** job that asserts PostGIS and `btree_gist` are present and that a booking-overlap exclusion constraint genuinely rejects overlapping periods.
+
+The runtime import check exists because the unit suite resolves `@platform/*` to TypeScript source and therefore never loads the built output. That gap let every package ship an entry point no running process could load, while 143 tests stayed green — see [ADR 0010](./adr/0010-packages-expose-source-types-and-built-runtime.md). A test runner that resolves source is not testing the artefact you deploy.
 
 Secret scanning is deliberately split. The pull request scan is incremental — it covers the commits being introduced, which is fast and catches leaks at the point they appear. A separate workflow scans **every commit** weekly and on each push to `main`, because an incremental scan can never establish a baseline or find a secret that predates the scanner. On a public repository that distinction matters: a pushed secret is scraped within seconds, and rewriting history does not un-leak it.
 
