@@ -48,24 +48,81 @@ These were chosen deliberately after research. Deviating silently is a defect.
 
 ## Current status
 
-**Phase 0 — Foundations and guardrails.** Not started. Nothing is built yet; the repo currently holds the BRD and this file.
+**Phase 0 — Foundations and guardrails. In progress.** Slices 0.1 to 0.7 are merged. The exit gate is **not** met, so Phase 1 is not unlocked.
 
-Do not begin Phase 1 work until Phase 0's exit gate passes: a sample change travels from branch to staging through green CI with no manual secret handling, and rollback plus logs are demonstrated.
+| Slice | What landed                                                       | PR  |
+| ----- | ----------------------------------------------------------------- | --- |
+| 0.1   | Money and time primitives, pnpm workspace scaffold                | #1  |
+| 0.2   | Local Postgres/PostGIS and Redis stack with a verification script | #2  |
+| 0.3   | CI pipeline, CodeQL, CODEOWNERS, PR template, branch protection   | #3  |
+| 0.4   | Environment validation, connection strings composed from parts    | #12 |
+| 0.5   | Structured logging, correlation IDs, error-tracking seam          | #16 |
+| 0.6   | Architecture decision records 0001 to 0009                        | #17 |
+| 0.7   | Invariant checker, git hooks, project skills                      | #18 |
 
-## Intended structure
+Still outstanding against the BRD §14 Phase 0 list:
 
-Monorepo, pnpm workspaces. To be scaffolded in Phase 0:
+- **No applications.** `apps/web`, `apps/api`, `apps/worker` and `packages/contracts` do not exist. The workspace glob covers `apps/*`, but there is nothing deployable — this is the largest remaining item and it blocks everything below it.
+- **No infrastructure as code and no staging environment.** `infra/` holds only Postgres initialisation SQL.
+- **No deploy pipeline.** CI validates a change; nothing ships it anywhere.
+- **Rollback and log retrieval have never been demonstrated.**
+
+**Exit gate (BRD §14):** a sample change travels from branch to staging through green CI with no manual secret handling, and rollback plus logs are demonstrated. Do not begin Phase 1 work until that is true.
+
+**Hosting.** BRD §4 and §14 originally named AWS, Azure or GCP provisioned with Terraform. Both were amended on 27 July 2026 to require reproducible infrastructure as code without naming a tool, deferring to ADR 0009: a self-hosted Hostinger KVM VPS running Docker Compose, staging and production sharing one box at first, database backups held off the box. Appendix A.1 still lists Terraform as a validated 2026 choice; that is a research record and does not bind the build.
+
+**The BRD is not in version control.** `docs/` is gitignored on purpose — this repository is public and the BRD carries unit economics and strategy. It therefore has no history, no review trail and no off-machine backup. Amendments to it, including the one above, exist only on the product owner's machine.
+
+## Branch protection
+
+`main` requires a pull request, linear history and resolved conversations. Force pushes and deletions are blocked. Six checks must pass before merge: `Format, lint and types`, `Unit tests and coverage`, `Build`, `Database invariants`, `Secrets and dependencies` and `Analyse` (CodeQL). Branches must be up to date with `main` before merging.
+
+Adding a CI job does not make it blocking — the required-check list is repository configuration and has to be updated separately, or the new job runs advisory-only.
+
+**Known gap, accepted:** `enforce_admins` is off. With a single maintainer that is a deliberate escape hatch, but it means every rule above can be bypassed by the person who merges everything. It makes bypass a deliberate act rather than the default, which is the most a solo repository can enforce against itself.
+
+## Structure
+
+Monorepo, pnpm workspaces (`packages/*`, `apps/*`).
+
+Exists today:
 
 ```
-apps/web        Next.js frontend (PWA)
-apps/api        NestJS backend (Fastify adapter)
-apps/worker     BullMQ background jobs
+packages/core           Money and time primitives
+packages/config         Brand identity, environment validation
+packages/observability  Logging, correlation IDs, error-tracking seam
+infra/postgres          Database initialisation SQL
+scripts/                Stack verification, licence check, invariants, hook install
+adr/                    Architecture decision records
+```
+
+Still to be scaffolded:
+
+```
+apps/web             Next.js frontend (PWA)
+apps/api             NestJS backend (Fastify adapter)
+apps/worker          BullMQ background jobs
 packages/contracts   Shared types and API contracts
-packages/config      Versioned configuration schemas
-infra/          Terraform
+infra/               Deployment skeleton — see the ADR 0009 divergence above
 ```
 
-Commands will be recorded here once Phase 0 scaffolds them.
+## Commands
+
+| Command                  | Does                                                        |
+| ------------------------ | ----------------------------------------------------------- |
+| `pnpm test`              | Unit suite (`test:watch`, `test:coverage` for the variants) |
+| `pnpm typecheck`         | Typecheck every package, tests included                     |
+| `pnpm lint`              | ESLint                                                      |
+| `pnpm format:check`      | Prettier, verify only (`pnpm format` writes)                |
+| `pnpm build`             | Build all packages                                          |
+| `pnpm invariants`        | Project invariant checks — the rules in this file           |
+| `pnpm db:up` / `db:down` | Start / stop the local Postgres and Redis stack             |
+| `pnpm db:verify`         | Assert extensions, exclusion constraint and Redis eviction  |
+| `pnpm db:reset`          | Destroy volumes and rebuild from scratch                    |
+| `pnpm licences:check`    | Dependency licence check                                    |
+| `pnpm hooks:install`     | Reinstall git hooks (runs automatically after install)      |
+
+Coverage thresholds are enforced in `vitest.config.ts`: 90% lines, functions and statements, 85% branches. `.nvmrc` pins Node 22; CI runs Node 24.
 
 ## Environment
 
