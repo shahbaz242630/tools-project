@@ -13,6 +13,7 @@ import { AppModule } from './app.module.js';
 import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
 import { NestLoggerAdapter } from './observability/nest-logger.js';
+import { createShutdown } from './shutdown.js';
 
 /**
  * Composition root.
@@ -86,39 +87,29 @@ function installShutdownHandlers(
   redis: Redis,
   logger: Logger,
 ): void {
-  let shuttingDown = false;
-
-  const shutdown = (signal: string): void => {
-    // A second SIGTERM during shutdown is an operator losing patience, not a
-    // reason to start closing everything twice.
-    if (shuttingDown) return;
-    shuttingDown = true;
-
-    logger.info('shutdown requested', { signal });
-
-    // If a connection refuses to drain, exiting late is better than never:
-    // an orchestrator will SIGKILL us anyway, and doing it ourselves keeps the
-    // exit code honest.
-    const forceExit = setTimeout(() => {
-      logger.error('shutdown timed out, exiting', { timeoutMs: SHUTDOWN_TIMEOUT_MS });
-      process.exit(1);
-    }, SHUTDOWN_TIMEOUT_MS);
-    forceExit.unref();
-
-    void (async (): Promise<void> => {
-      try {
-        // Stop accepting first, then release what in-flight requests needed.
-        await app.close();
-        await pool.end();
-        await redis.quit();
-        logger.info('shutdown complete', { signal });
-        process.exit(0);
-      } catch (error) {
-        logger.error('shutdown failed', { signal, error });
-        process.exit(1);
-      }
-    })();
-  };
+  const shutdown = createShutdown({
+    logger,
+    timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    exit: (code) => process.exit(code),
+    // Stop accepting work first, then release what in-flight requests needed.
+    closables: [
+      { name: 'http server', close: () => app.close() },
+      { name: 'postgres pool', close: () => pool.end() },
+      {
+        name: 'redis',
+        close: async () => {
+          // `quit()` sends a command, so it rejects outright if the client
+          // never connected — the normal state during a Redis outage.
+          // `disconnect()` just drops the socket and always succeeds.
+          try {
+            await redis.quit();
+          } catch {
+            redis.disconnect();
+          }
+        },
+      },
+    ],
+  });
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
