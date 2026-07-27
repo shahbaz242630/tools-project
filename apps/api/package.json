@@ -1,0 +1,30 @@
+{
+  "name": "@app/api",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/main.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "dev": "node --env-file=../../.env --watch dist/main.js"
+  },
+  "dependencies": {
+    "@fastify/helmet": "^13.1.0",
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-fastify": "^11.1.28",
+    "@platform/config": "workspace:*",
+    "@platform/core": "workspace:*",
+    "@platform/observability": "workspace:*",
+    "ioredis": "^5.11.1",
+    "pg": "^8.22.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.1.28",
+    "@types/node": "^26.1.1",
+    "@types/pg": "^8.20.0"
+  }
+}

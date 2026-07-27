@@ -48,7 +48,7 @@ These were chosen deliberately after research. Deviating silently is a defect.
 
 ## Current status
 
-**Phase 0 — Foundations and guardrails. In progress.** Slices 0.1 to 0.7 are merged. The exit gate is **not** met, so Phase 1 is not unlocked.
+**Phase 0 — Foundations and guardrails. In progress.** Slices 0.1 to 0.8 are merged. The exit gate is **not** met, so Phase 1 is not unlocked.
 
 | Slice | What landed                                                       | PR  |
 | ----- | ----------------------------------------------------------------- | --- |
@@ -59,12 +59,14 @@ These were chosen deliberately after research. Deviating silently is a defect.
 | 0.5   | Structured logging, correlation IDs, error-tracking seam          | #16 |
 | 0.6   | Architecture decision records 0001 to 0009                        | #17 |
 | 0.7   | Invariant checker, git hooks, project skills                      | #18 |
+| 0.8a  | Made workspace packages loadable by a real Node process           | #22 |
+| 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container   | #23 |
 
 Still outstanding against the BRD §14 Phase 0 list:
 
-- **No applications.** `apps/web`, `apps/api`, `apps/worker` and `packages/contracts` do not exist. The workspace glob covers `apps/*`, but there is nothing deployable — this is the largest remaining item and it blocks everything below it.
-- **No infrastructure as code and no staging environment.** `infra/` holds only Postgres initialisation SQL.
-- **No deploy pipeline.** CI validates a change; nothing ships it anywhere.
+- **`apps/web`, `apps/worker` and `packages/contracts` do not exist.** `apps/api` does, and is deployable.
+- **No infrastructure as code and no staging environment.** `infra/` holds only Postgres initialisation SQL. This is now the largest remaining item.
+- **No deploy pipeline.** CI builds and boots the container; nothing ships it anywhere.
 - **Rollback and log retrieval have never been demonstrated.**
 
 **Exit gate (BRD §14):** a sample change travels from branch to staging through green CI with no manual secret handling, and rollback plus logs are demonstrated. Do not begin Phase 1 work until that is true.
@@ -75,7 +77,7 @@ Still outstanding against the BRD §14 Phase 0 list:
 
 ## Branch protection
 
-`main` requires a pull request, linear history and resolved conversations. Force pushes and deletions are blocked. Six checks must pass before merge: `Format, lint and types`, `Unit tests and coverage`, `Build`, `Database invariants`, `Secrets and dependencies` and `Analyse` (CodeQL). Branches must be up to date with `main` before merging.
+`main` requires a pull request, linear history and resolved conversations. Force pushes and deletions are blocked. Seven checks must pass before merge: `Format, lint and types`, `Unit tests and coverage`, `Build`, `Database invariants`, `Container image`, `Secrets and dependencies` and `Analyse` (CodeQL). Branches must be up to date with `main` before merging.
 
 Adding a CI job does not make it blocking — the required-check list is repository configuration and has to be updated separately, or the new job runs advisory-only.
 
@@ -88,6 +90,7 @@ Monorepo, pnpm workspaces (`packages/*`, `apps/*`).
 Exists today:
 
 ```
+apps/api                NestJS on Fastify. Health, readiness, correlation, Dockerfile
 packages/core           Money and time primitives
 packages/config         Brand identity, environment validation
 packages/observability  Logging, correlation IDs, error-tracking seam
@@ -96,11 +99,12 @@ scripts/                Stack verification, licence check, invariants, hook inst
 adr/                    Architecture decision records
 ```
 
+`apps/api` is **CommonJS while everything else is ESM**, and its tsconfig deliberately overrides four workspace defaults. This is not drift — NestJS depends on legacy decorator metadata, and `module: NodeNext` is the only setting under which a CommonJS app can import our ESM packages at all. ADR 0011 records what was tested and rejected. Do not "tidy" it without reading that first.
+
 Still to be scaffolded:
 
 ```
 apps/web             Next.js frontend (PWA)
-apps/api             NestJS backend (Fastify adapter)
 apps/worker          BullMQ background jobs
 packages/contracts   Shared types and API contracts
 infra/               Deployment skeleton — see the ADR 0009 divergence above
@@ -108,19 +112,21 @@ infra/               Deployment skeleton — see the ADR 0009 divergence above
 
 ## Commands
 
-| Command                  | Does                                                        |
-| ------------------------ | ----------------------------------------------------------- |
-| `pnpm test`              | Unit suite (`test:watch`, `test:coverage` for the variants) |
-| `pnpm typecheck`         | Typecheck every package, tests included                     |
-| `pnpm lint`              | ESLint                                                      |
-| `pnpm format:check`      | Prettier, verify only (`pnpm format` writes)                |
-| `pnpm build`             | Build all packages                                          |
-| `pnpm invariants`        | Project invariant checks — the rules in this file           |
-| `pnpm db:up` / `db:down` | Start / stop the local Postgres and Redis stack             |
-| `pnpm db:verify`         | Assert extensions, exclusion constraint and Redis eviction  |
-| `pnpm db:reset`          | Destroy volumes and rebuild from scratch                    |
-| `pnpm licences:check`    | Dependency licence check                                    |
-| `pnpm hooks:install`     | Reinstall git hooks (runs automatically after install)      |
+| Command                      | Does                                                        |
+| ---------------------------- | ----------------------------------------------------------- |
+| `pnpm test`                  | Unit suite (`test:watch`, `test:coverage` for the variants) |
+| `pnpm typecheck`             | Typecheck every package, tests included                     |
+| `pnpm lint`                  | ESLint                                                      |
+| `pnpm format:check`          | Prettier, verify only (`pnpm format` writes)                |
+| `pnpm build`                 | Build all packages                                          |
+| `pnpm invariants`            | Project invariant checks — the rules in this file           |
+| `pnpm verify:runtime`        | Confirm built packages load in a real Node process          |
+| `pnpm --filter @app/api dev` | Run the API locally against `.env`                          |
+| `pnpm db:up` / `db:down`     | Start / stop the local Postgres and Redis stack             |
+| `pnpm db:verify`             | Assert extensions, exclusion constraint and Redis eviction  |
+| `pnpm db:reset`              | Destroy volumes and rebuild from scratch                    |
+| `pnpm licences:check`        | Dependency licence check                                    |
+| `pnpm hooks:install`         | Reinstall git hooks (runs automatically after install)      |
 
 Coverage thresholds are enforced in `vitest.config.ts`: 90% lines, functions and statements, 85% branches. `.nvmrc` pins Node 22; CI runs Node 24.
 

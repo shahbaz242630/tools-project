@@ -1,0 +1,40 @@
+# The API image is built from the repository root, because @app/api depends on
+# packages/* and they are compiled from source. Everything below is either
+# rebuilt inside the image, useless to it, or must never enter it.
+
+# Rebuilt in the image. Copying the host's would also import pnpm's symlinks,
+# which point into a store that does not exist there.
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Secrets. An image layer is readable by anyone who can pull the image, and
+# deleting a file in a later layer does not remove it from the earlier one.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private documentation — the BRD and commercial strategy.
+docs
+
+# Not needed at build or runtime.
+.git
+.github
+.claude
+adr
+coverage
+infra
+scripts
+*.md
+!README.md
+docker-compose.yml
+.gitleaks.toml
+eslint.config.js
+vitest.config.ts
+.prettierrc.json
+.prettierignore

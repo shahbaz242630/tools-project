@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "types": ["node"],
+
+    // This app is CommonJS while the rest of the workspace is ESM. NestJS
+    // depends on legacy decorators and reflect-metadata, which is a settled,
+    // well-trodden CommonJS path; NestJS on ESM is not. See ADR 0011.
+    //
+    // NodeNext rather than Node16 is load-bearing: only NodeNext models Node's
+    // ability to `require()` an ES module, and every @platform/* package is
+    // ESM. Under Node16 this app does not compile at all.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // Incompatible with CommonJS emit — TypeScript rejects ESM import syntax in
+    // a CommonJS file when this is on. Off here, on everywhere else.
+    "verbatimModuleSyntax": false,
+
+    // Nest resolves constructor dependencies from the metadata these emit. With
+    // them off, injection silently yields undefined at runtime rather than
+    // failing to compile.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": ["src/**/*"]
+}

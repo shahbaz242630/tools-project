@@ -39,3 +39,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0008](0008-defer-provider-adapters-without-credentials.md)    | Do not write a provider adapter before it can be exercised        | Accepted |
 | [0009](0009-self-hosted-vps-with-off-box-backups.md)           | Self-host on a VPS, with database backups off the box             | Accepted |
 | [0010](0010-packages-expose-source-types-and-built-runtime.md) | Expose package types from source and runtime from built output    | Accepted |
+| [0011](0011-api-is-commonjs-in-an-esm-workspace.md)            | Build the API as CommonJS inside an ESM workspace                 | Accepted |

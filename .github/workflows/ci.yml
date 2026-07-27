@@ -186,6 +186,68 @@ jobs:
             exit 1
           fi
 
+  container:
+    name: Container image
+    runs-on: ubuntu-latest
+    # `pnpm build` proving the TypeScript compiles says nothing about whether
+    # the artefact we deploy actually starts. This builds the real image and
+    # boots it, which is the same class of gap ADR 0010 was written about.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the API image
+        run: docker build -f apps/api/Dockerfile -t rental-api:ci .
+
+      - name: Boot it and check liveness
+        run: |
+          set -euo pipefail
+
+          # Liveness deliberately depends on nothing, so this proves the
+          # process starts without a database standing by. Readiness against
+          # real dependencies is covered by the integration suite.
+          docker run -d --name api-ci -p 3000:3000 \
+            -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
+            rental-api:ci
+
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://localhost:3000/health > /tmp/health.json; then
+              break
+            fi
+            if [ "$attempt" = "20" ]; then
+              echo "::error::the image never became live"
+              docker logs api-ci
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cat /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
+
+      - name: Check it shuts down gracefully
+        run: |
+          set -euo pipefail
+
+          # A deploy sends SIGTERM. If it is not handled, the container lingers
+          # for the full stop timeout and is then SIGKILLed mid-request, which
+          # looks like random 502s during every release rather than like a bug.
+          start=$(date +%s)
+          docker stop api-ci > /dev/null
+          elapsed=$(( $(date +%s) - start ))
+
+          code=$(docker inspect api-ci --format '{{.State.ExitCode}}')
+          echo "stopped in ${elapsed}s with exit code ${code}"
+          docker logs api-ci 2>&1 | tail -n 3
+
+          if [ "$code" != "0" ]; then
+            echo "::error::expected a clean exit, got ${code} — SIGTERM was not handled"
+            exit 1
+          fi
+          if [ "$elapsed" -ge 10 ]; then
+            echo "::error::took ${elapsed}s, so it was killed rather than draining"
+            exit 1
+          fi
+
   security:
     name: Secrets and dependencies
     runs-on: ubuntu-latest
