@@ -212,11 +212,14 @@ jobs:
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             rental-api:ci
 
-          for attempt in $(seq 1 20); do
+          # Generous: a cold Node start on a loaded runner has been seen to take
+          # ten seconds. A required check that flakes gets ignored, which is
+          # worse than one that is occasionally slow.
+          for attempt in $(seq 1 30); do
             if curl -fsS http://localhost:3000/health > /tmp/health.json; then
               break
             fi
-            if [ "$attempt" = "20" ]; then
+            if [ "$attempt" = "30" ]; then
               echo "::error::the image never became live"
               docker logs api-ci
               exit 1

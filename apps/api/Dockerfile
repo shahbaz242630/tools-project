@@ -1,31 +1,30 @@
 # syntax=docker/dockerfile:1
 
 # Build stage. Needs the whole workspace: @app/api depends on @platform/*, and
-# those are built from source here rather than pulled from a registry.
+# those are compiled from source here rather than pulled from a registry.
 FROM node:24-alpine AS builder
 
 WORKDIR /repo
 RUN corepack enable
 
-# Manifests and the lockfile first, so a source-only change reuses the cached
-# install layer. Copying source before installing would invalidate it on every
-# edit and turn a 5-second rebuild into a 90-second one.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/core/package.json ./packages/core/
-COPY packages/config/package.json ./packages/config/
-COPY packages/observability/package.json ./packages/observability/
-COPY apps/api/package.json ./apps/api/
-
+# Everything at once, rather than manifests first for a cached install layer.
+#
+# That optimisation only ever helped local rebuilds: CI has no persistent Docker
+# cache, so it re-installs every run regardless. What it cost was a
+# hand-maintained list of workspace package.json paths in every Dockerfile --
+# and adding @platform/runtime to this app broke the image precisely because
+# that list was not updated. `pnpm fetch` avoids the list too, but populates the
+# store from the whole lockfile, which is far slower than installing what this
+# app actually needs.
+#
 # --ignore-scripts: the root `prepare` hook installs git hooks, which needs a
 # .git directory that is deliberately not in the image.
+COPY . .
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
-COPY tsconfig.base.json ./
-COPY packages ./packages
-COPY apps/api ./apps/api
-
-RUN pnpm --filter @platform/core --filter @platform/config \
-    --filter @platform/observability --filter @app/api build
+# `@app/api...` selects the app *and its dependencies*, so the build list stays
+# correct as the dependency graph changes.
+RUN pnpm --filter "@app/api..." build
 
 # Resolves the workspace symlinks into a real, self-contained directory. A
 # plain `cp -r node_modules` cannot survive the move: pnpm's layout is a tree of

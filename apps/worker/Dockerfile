@@ -1,31 +1,20 @@
 # syntax=docker/dockerfile:1
 
 # Build stage. Needs the whole workspace: @app/worker depends on @platform/*,
-# which are built from source rather than pulled from a registry.
+# which are compiled from source rather than pulled from a registry.
 FROM node:24-alpine AS builder
 
 WORKDIR /repo
 RUN corepack enable
 
-# Manifests first, so a source-only change reuses the cached install layer.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/core/package.json ./packages/core/
-COPY packages/config/package.json ./packages/config/
-COPY packages/observability/package.json ./packages/observability/
-COPY packages/runtime/package.json ./packages/runtime/
-COPY apps/worker/package.json ./apps/worker/
-
-# --ignore-scripts: the root `prepare` hook installs git hooks and needs a .git
-# directory that is deliberately absent from the image.
+# Everything at once rather than manifests first — see apps/api/Dockerfile for
+# why the cached-install-layer optimisation is not worth its maintenance cost
+# here.
+COPY . .
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
-COPY tsconfig.base.json ./
-COPY packages ./packages
-COPY apps/worker ./apps/worker
-
-RUN pnpm --filter @platform/core --filter @platform/config \
-    --filter @platform/observability --filter @platform/runtime \
-    --filter @app/worker build
+# `@app/worker...` selects the app *and its dependencies*.
+RUN pnpm --filter "@app/worker..." build
 
 # Resolves pnpm's symlink tree into a real self-contained directory. A plain
 # copy cannot survive the move between stages.
