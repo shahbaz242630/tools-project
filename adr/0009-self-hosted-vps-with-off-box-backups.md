@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-26
-- **Relates to:** BRD §9, §12.4, §3.4
+- **Relates to:** BRD §4, §9, §12.4, §14, §3.4 — §4 and §14 amended 27 July 2026 to match this decision
 
 ## Context
 
