@@ -22,7 +22,19 @@ describe('loadEnv', () => {
     expect(env.POSTGRES_HOST).toBe('localhost');
     expect(env.POSTGRES_PORT).toBe(5433);
     expect(env.REDIS_PORT).toBe(6379);
+    expect(env.API_PORT).toBe(3000);
     expect(env.isProduction).toBe(false);
+  });
+
+  it('defaults the API to every interface, not loopback', () => {
+    // localhost here would start cleanly in a container and refuse every
+    // request arriving from outside it.
+    expect(loadEnv(valid).API_HOST).toBe('0.0.0.0');
+  });
+
+  it('rejects an out-of-range API port', () => {
+    expect(() => loadEnv({ ...valid, API_PORT: '70000' })).toThrow(EnvironmentError);
+    expect(() => loadEnv({ ...valid, API_PORT: '0' })).toThrow(EnvironmentError);
   });
 
   it('reports every problem at once, not just the first', () => {

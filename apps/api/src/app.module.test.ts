@@ -1,0 +1,35 @@
+import { Test } from '@nestjs/testing';
+import { describe, expect, it } from 'vitest';
+import { AppModule } from './app.module.js';
+import {
+  DEFAULT_READINESS_TIMEOUT_MS,
+  READINESS_TIMEOUT_MS,
+} from './health/readiness.service.js';
+import { createRecordingLogger } from './testing/recording-logger.js';
+
+async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
+  const moduleRef = await Test.createTestingModule({
+    imports: [
+      AppModule.register({
+        checks: [],
+        logger: createRecordingLogger().logger,
+        ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
+      }),
+    ],
+  }).compile();
+
+  return moduleRef.get<number>(READINESS_TIMEOUT_MS);
+}
+
+describe('AppModule', () => {
+  it('falls back to the default readiness timeout', async () => {
+    // Without this the probe would inherit `undefined`, and `setTimeout` with
+    // an undefined delay fires immediately — every dependency would report a
+    // timeout regardless of whether it was reachable.
+    expect(await resolveTimeout()).toBe(DEFAULT_READINESS_TIMEOUT_MS);
+  });
+
+  it('honours an explicit readiness timeout', async () => {
+    expect(await resolveTimeout(50)).toBe(50);
+  });
+});

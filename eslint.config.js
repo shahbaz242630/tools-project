@@ -31,4 +31,17 @@ export default tseslint.config(
     files: ['**/*.test.ts', 'packages/core/src/time.ts'],
     rules: { 'no-restricted-globals': 'off' },
   },
+  {
+    // apps/api compiles with emitDecoratorMetadata, and NestJS resolves
+    // constructor dependencies from the metadata it emits. A type-only import
+    // erases that metadata, so applying consistent-type-imports here produces
+    // code that compiles cleanly and then injects `undefined` at runtime —
+    // verified by reverting it and watching all eight integration tests fail
+    // inside the Nest injector.
+    //
+    // Scoped to this app rather than disabled globally: everywhere else the
+    // rule is correct and the workspace is ESM. See ADR 0011.
+    files: ['apps/api/**/*.ts'],
+    rules: { '@typescript-eslint/consistent-type-imports': 'off' },
+  },
 );

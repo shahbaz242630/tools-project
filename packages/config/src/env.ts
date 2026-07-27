@@ -35,6 +35,14 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
+  /**
+   * `0.0.0.0`, not `localhost`. Inside a container, binding to the loopback
+   * interface makes the service unreachable from outside it — the process
+   * starts, logs that it is listening, and every request is refused.
+   */
+  API_HOST: z.string().min(1).default('0.0.0.0'),
+  API_PORT: port.default(3000),
+
   POSTGRES_HOST: z.string().min(1).default('localhost'),
   POSTGRES_PORT: port.default(5433),
   POSTGRES_USER: z.string().min(1),
