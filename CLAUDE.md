@@ -79,11 +79,9 @@ Still outstanding against the BRD §14 Phase 0 list:
 
 ## Branch protection
 
-`main` requires a pull request, linear history and resolved conversations. Force pushes and deletions are blocked. Seven checks must pass before merge: `Format, lint and types`, `Unit tests and coverage`, `Build`, `Database invariants`, `Container image`, `Secrets and dependencies` and `Analyse` (CodeQL). Branches must be up to date with `main` before merging.
+`main` requires a pull request, linear history and resolved conversations. Force pushes and deletions are blocked. **Nine checks** must pass before merge: `Format, lint and types`, `Unit tests and coverage`, `Build`, `Database invariants`, `Container image`, `Deploy rehearsal`, `Worker integration`, `Secrets and dependencies` and `Analyse` (CodeQL). Branches must be up to date with `main` before merging.
 
 Adding a CI job does not make it blocking — the required-check list is repository configuration and has to be updated separately, or the new job runs advisory-only.
-
-**Currently advisory, should be required:** `Worker integration` (added in 0.11a) and `Deploy rehearsal` (added in 0.9a). Both are green and neither blocks a merge until the protection list is updated to nine checks.
 
 **Known gap, accepted:** `enforce_admins` is off. With a single maintainer that is a deliberate escape hatch, but it means every rule above can be bypassed by the person who merges everything. It makes bypass a deliberate act rather than the default, which is the most a solo repository can enforce against itself.
 
