@@ -1,0 +1,71 @@
+# The shared edge. One Caddy for the whole box, routing by hostname to
+# whichever environment's API the request was addressed to.
+#
+# Separate from the app stack because ADR 0009 puts staging and production on
+# one machine and only one process can hold ports 80 and 443. Folding Caddy into
+# the app stack would mean the second environment silently fails to start, or
+# that redeploying staging drops production's TLS listener.
+#
+# This stack is long-lived. Deploys replace app containers underneath it; the
+# ingress itself is brought up once at provision time and rarely touched.
+
+name: rental-ingress
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: rental-ingress
+    restart: unless-stopped
+
+    ports:
+      - '80:80'
+      # 443 over UDP as well as TCP: without it Caddy advertises HTTP/3 in
+      # Alt-Svc and browsers retry on a port nothing is listening on, which
+      # shows up as intermittent slow first loads rather than as an error.
+      - '443:443'
+      - '443:443/udp'
+
+    environment:
+      # Required, not defaulted. A placeholder address here would be sent to
+      # Let's Encrypt as the account contact, and expiry warnings would go
+      # nowhere.
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL to a mailbox you actually read}
+      # A bare hostname makes Caddy obtain a certificate automatically. An
+      # `http://` prefix disables that, which is what local rehearsals use.
+      PRODUCTION_SITE_ADDRESS: ${PRODUCTION_SITE_ADDRESS:?set PRODUCTION_SITE_ADDRESS}
+      STAGING_SITE_ADDRESS: ${STAGING_SITE_ADDRESS:?set STAGING_SITE_ADDRESS}
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. This volume must survive redeploys:
+      # Let's Encrypt allows five identical certificates per week, so a stack
+      # that re-issues on every restart gets rate-limited out of TLS entirely,
+      # and the lockout lasts days.
+      - caddy-data:/data
+      - caddy-config:/config
+
+    networks:
+      - edge
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+    security_opt:
+      - no-new-privileges:true
+
+    # No HEALTHCHECK. Docker does not restart unhealthy containers, only exited
+    # ones, so a probe here would buy reporting rather than recovery — and the
+    # reporting is already unambiguous: a proxy that is up answers with a 502
+    # when an upstream is down, and one that is not answers nothing at all.
+
+networks:
+  edge:
+    external: true
+    name: rental-edge
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,219 @@
+# One environment's application stack: API, worker, database, queue broker.
+#
+# Deployed, not developed. `docker-compose.yml` at the repository root is the
+# local development stack and the two must not be confused — this one runs
+# published images by immutable tag, never builds, and publishes no ports.
+#
+# ADR 0009 puts staging and production on the same box, so everything here is
+# parameterised by APP_ENV: project name, container names and volumes. Two
+# copies of this stack coexist without colliding. The shared ingress that puts
+# them on the public internet is docker-compose.ingress.yml.
+#
+# Bring it up through `node scripts/deploy.mjs`, which health-checks the result
+# and rolls back if it fails. Running `docker compose up` by hand skips that.
+
+# Distinct per environment, so `docker compose down` in staging cannot take
+# production's containers with it.
+name: rental-${APP_ENV:?set APP_ENV to staging or production}
+
+x-logging: &logging
+  # Container logs are unbounded by default. On a single box that is a disk-full
+  # outage taking both environments with it, and it arrives weeks after deploy
+  # when nobody is looking. 30 MB per service is enough for `scripts/logs.mjs`
+  # to answer questions about a recent incident.
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  api:
+    # Never `build:`. The artefact that reaches production is the one CI
+    # published and nothing else — a box that can build is a box where the
+    # running code and the tagged commit can silently diverge. See ADR 0012.
+    image: ${IMAGE_REPOSITORY:?set IMAGE_REPOSITORY}/api:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    # Predictable, because the ingress addresses it by name.
+    container_name: rental-${APP_ENV}-api
+    restart: unless-stopped
+    logging: *logging
+
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # 0.0.0.0, not localhost: binding the loopback interface inside a
+      # container makes the service unreachable from the ingress.
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+
+      # Structural, not secret — these name services on the internal network.
+      # POSTGRES_PORT is set explicitly because @platform/config defaults it to
+      # 5433 for the local stack, which is not the port inside this network.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # Secret. `:?` rather than a default: an unset password would otherwise
+      # start the stack with an empty credential and fail later, somewhere less
+      # obvious than here.
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+
+    networks:
+      # Reachable by the ingress, and by nothing else from outside.
+      - edge
+      - internal
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    # No `ports:`. The only route in is through the ingress, which terminates
+    # TLS. Publishing 3000 here would expose plain HTTP on the box's public
+    # interface and quietly bypass it.
+
+    security_opt:
+      - no-new-privileges:true
+    # The application writes nothing to disk; logs go to stdout. A writable
+    # root filesystem is an attacker's foothold for no operational benefit.
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          # ADR 0009 records "a runaway process can affect both environments" as
+          # the accepted cost of one box. A ceiling turns that from an outage
+          # into a restart of the container that misbehaved.
+          memory: 512M
+
+  worker:
+    image: ${IMAGE_REPOSITORY:?set IMAGE_REPOSITORY}/worker:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    container_name: rental-${APP_ENV}-worker
+    restart: unless-stopped
+    logging: *logging
+
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+
+    # Not on `edge`. The worker serves no traffic and has no reason to be
+    # addressable from the ingress.
+    networks:
+      - internal
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  postgres:
+    # Pinned to the same image as local development and CI. PostGIS is a hard
+    # dependency (BRD §4.2), not an extension we install later.
+    image: postgis/postgis:17-3.5
+    container_name: rental-${APP_ENV}-postgres
+    restart: unless-stopped
+    logging: *logging
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      # Matches local development, so index ordering is the same everywhere.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # The same initialisation SQL as local development. Runs once, only when
+      # the data volume is empty. Requires the repository to be present on the
+      # box — see README.md.
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+
+    # No `ports:`. An exposed Postgres on a public IP is found by scanners in
+    # minutes. Reach it with `docker compose exec`, or over an SSH tunnel.
+    networks:
+      - internal
+
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7-alpine
+    container_name: rental-${APP_ENV}-redis
+    restart: unless-stopped
+    logging: *logging
+
+    # noeviction, as in every other environment. Under an eviction policy Redis
+    # silently drops job data when memory fills, losing booking expiry and
+    # payout release jobs (BRD §8.6, §8.9). maxmemory is set below the container
+    # limit so Redis refuses writes before the kernel kills it — a rejected
+    # write is an error we can see, an OOM kill is a job that vanished.
+    command: >
+      redis-server
+      --maxmemory 192mb
+      --maxmemory-policy noeviction
+      --appendonly yes
+
+    volumes:
+      - redis-data:/data
+
+    networks:
+      - internal
+
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+networks:
+  # Shared with the ingress and with the other environment's API. Created once
+  # when the box is provisioned, not by this file, because a network owned by
+  # one compose project disappears when that project is torn down.
+  edge:
+    external: true
+    name: rental-edge
+
+  # Per environment. Staging's API cannot reach production's database.
+  internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -62,13 +62,14 @@ These were chosen deliberately after research. Deviating silently is a defect.
 | 0.8a  | Made workspace packages loadable by a real Node process           | #22 |
 | 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container   | #23 |
 | 0.11a | `apps/worker` — BullMQ, correlation across the queue, container   | #24 |
+| 0.9a  | GHCR image publishing, deployment stack, deploy/rollback/logs     | #25 |
 
 Still outstanding against the BRD §14 Phase 0 list:
 
 - **`apps/web` and `packages/contracts` do not exist.** Slice 0.11b. `apps/api` and `apps/worker` do, and both are deployable.
-- **No infrastructure as code and no staging environment.** `infra/` holds only Postgres initialisation SQL. This is now the largest remaining item.
-- **No deploy pipeline.** CI builds and boots the container; nothing ships it anywhere.
-- **Rollback and log retrieval have never been demonstrated.**
+- **No VPS, so no staging environment.** The infrastructure is now defined as code in `infra/compose` and rehearsed in CI on every pull request, but it has never run on a real box. Slice 0.9b.
+- **No off-box backups.** ADR 0009 calls them non-negotiable. Until they exist, nothing irreplaceable goes in a deployed database.
+- **Rollback and log retrieval are demonstrated mechanically, not against staging.** The `Deploy rehearsal` CI job proves the mechanism on every PR. The exit gate asks for it against a real environment.
 
 **Exit gate (BRD §14):** a sample change travels from branch to staging through green CI with no manual secret handling, and rollback plus logs are demonstrated. Do not begin Phase 1 work until that is true.
 
@@ -81,6 +82,8 @@ Still outstanding against the BRD §14 Phase 0 list:
 `main` requires a pull request, linear history and resolved conversations. Force pushes and deletions are blocked. Seven checks must pass before merge: `Format, lint and types`, `Unit tests and coverage`, `Build`, `Database invariants`, `Container image`, `Secrets and dependencies` and `Analyse` (CodeQL). Branches must be up to date with `main` before merging.
 
 Adding a CI job does not make it blocking — the required-check list is repository configuration and has to be updated separately, or the new job runs advisory-only.
+
+**Currently advisory, should be required:** `Worker integration` (added in 0.11a) and `Deploy rehearsal` (added in 0.9a). Both are green and neither blocks a merge until the protection list is updated to nine checks.
 
 **Known gap, accepted:** `enforce_admins` is off. With a single maintainer that is a deliberate escape hatch, but it means every rule above can be bypassed by the person who merges everything. It makes bypass a deliberate act rather than the default, which is the most a solo repository can enforce against itself.
 
@@ -98,9 +101,12 @@ packages/config         Brand identity, environment validation
 packages/observability  Logging, correlation IDs, error-tracking seam
 packages/runtime        Process lifecycle — graceful shutdown, shared by both apps
 infra/postgres          Database initialisation SQL
-scripts/                Stack verification, licence check, invariants, hook install
+infra/compose           Deployment stack, shared ingress, provisioning runbook
+scripts/                Stack verification, licences, invariants, hooks, deploy, logs
 adr/                    Architecture decision records
 ```
+
+`docker-compose.yml` at the root is the **local development** stack. `infra/compose/` is what gets deployed — it runs published images by immutable tag, never builds, and publishes no ports except the ingress. Do not conflate them.
 
 `apps/api` is **CommonJS while everything else is ESM**, and its tsconfig deliberately overrides four workspace defaults. This is not drift — NestJS depends on legacy decorator metadata, and `module: NodeNext` is the only setting under which a CommonJS app can import our ESM packages at all. ADR 0011 records what was tested and rejected. Do not "tidy" it without reading that first.
 
@@ -109,8 +115,9 @@ Still to be scaffolded:
 ```
 apps/web             Next.js frontend (PWA)
 packages/contracts   Shared types and API contracts
-infra/               Deployment skeleton — see the ADR 0009 divergence above
 ```
+
+Defined but never run for real: everything in `infra/compose`. It is rehearsed in CI against the same files, but no VPS exists yet — see `infra/compose/README.md`.
 
 ## Commands
 
@@ -131,7 +138,16 @@ infra/               Deployment skeleton — see the ADR 0009 divergence above
 | `pnpm licences:check`        | Dependency licence check                                    |
 | `pnpm hooks:install`         | Reinstall git hooks (runs automatically after install)      |
 
-Coverage thresholds are enforced in `vitest.config.ts`: 90% lines, functions and statements, 85% branches. `.nvmrc` pins Node 22; CI runs Node 24.
+Deployment commands run on the box, not here, and take no pnpm wrapper — they must work when only Node and Docker are present:
+
+| Command                                             | Does                                         |
+| --------------------------------------------------- | -------------------------------------------- |
+| `node scripts/deploy.mjs --env <env> --tag <sha>`   | Deploy, health-check, auto-revert on failure |
+| `node scripts/deploy.mjs --env <env> --rollback`    | Return to the previous release               |
+| `node scripts/deploy.mjs --env <env> --status`      | What is recorded, what is running            |
+| `node scripts/logs.mjs --env <env> [--service api]` | Retrieve logs; `--env ingress` for the edge  |
+
+Coverage thresholds are enforced in `vitest.config.ts`: 90% lines, functions and statements, 85% branches, and cover `packages/*/src` and `apps/*/src` only. `scripts/` is outside them deliberately — its pure logic is unit tested under the `scripts` vitest project, and the parts that drive Docker are covered by the `Deploy rehearsal` CI job instead. `.nvmrc` pins Node 22; CI runs Node 24.
 
 ## Environment
 

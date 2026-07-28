@@ -1,0 +1,125 @@
+name: Release
+
+# Turns a commit on main into something deployable.
+#
+# CI proves a change is correct; this gives it an address. The two are separate
+# workflows because they answer different questions and fail for different
+# reasons — a registry outage should not read as "the tests broke".
+#
+# Every image is tagged with its full commit SHA and nothing else. There is no
+# `latest`, deliberately: a moving tag makes "what is running in production"
+# unanswerable after the fact, and rollback becomes a rebuild rather than a
+# re-point. See ADR 0012.
+
+on:
+  push:
+    branches: [main]
+  # Publishing a commit that is already on main is always safe — the tag is
+  # derived from the SHA, so a re-run overwrites an identical image rather than
+  # creating a second meaning for the same name.
+  workflow_dispatch:
+
+# Never cancel a release in flight. An interrupted push can leave a manifest
+# referencing blobs that were never finished uploading, which fails at `docker
+# pull` time on the box rather than here.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.app }} image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # The only place in this repository with write access to the registry.
+      # Scoped to the job rather than the workflow so a step added elsewhere
+      # cannot inherit it.
+      packages: write
+
+    strategy:
+      # Publish whichever image can be published. A worker build failing should
+      # not leave the API unpublished as well — partial is recoverable by
+      # re-running, and both are pinned by SHA so a half-release cannot be
+      # deployed by accident.
+      fail-fast: false
+      matrix:
+        app: [api, worker]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Derive the image reference
+        id: image
+        run: |
+          set -euo pipefail
+
+          # GHCR rejects uppercase in a repository path, and `github.repository`
+          # preserves the owner's casing. Lowercasing here rather than relying
+          # on the account never being renamed to something with a capital.
+          name=$(echo "ghcr.io/${{ github.repository }}/${{ matrix.app }}" \
+                 | tr '[:upper:]' '[:lower:]')
+
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "ref=${name}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The workflow-issued token, not a personal access token. Nothing to
+          # create, store or rotate, and it expires when the job ends.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.ref }}
+          # amd64 only. The VPS is amd64 (ADR 0009) and so is the runner;
+          # building arm64 under emulation would roughly triple the job for an
+          # architecture nothing we own runs.
+          platforms: linux/amd64
+          # The Dockerfiles deliberately skip the manifests-first layer trick
+          # because CI has no persistent Docker cache. This gives them one, so
+          # an unchanged dependency tree stops being re-installed every release.
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      - name: Verify the image is pullable
+        run: |
+          set -euo pipefail
+
+          # `push: true` reporting success means the upload returned 2xx. It
+          # does not mean the manifest resolves — a partially uploaded layer
+          # surfaces only on the first pull, which would otherwise be on the
+          # box, mid-deploy.
+          docker buildx imagetools inspect "${{ steps.image.outputs.ref }}"
+
+      - name: Summarise
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${{ matrix.app }}"
+            echo
+            echo '```'
+            echo "image:  ${{ steps.image.outputs.ref }}"
+            echo "digest: ${{ steps.push.outputs.digest }}"
+            echo '```'
+            echo
+            echo "Deploy it with:"
+            echo
+            echo '```'
+            echo "node scripts/deploy.mjs --env staging --tag ${{ github.sha }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

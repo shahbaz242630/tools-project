@@ -1,0 +1,43 @@
+# Edge configuration for the whole box.
+#
+# Site addresses come from the environment so one file serves both real
+# deployments and local rehearsals. A bare hostname (`app.example.com`) makes
+# Caddy obtain and renew a certificate automatically; an `http://` prefix
+# (`http://localhost`) disables that, which is what a rehearsal wants — there is
+# no public DNS record for localhost and ACME would fail against it.
+
+{
+	email {$ACME_EMAIL}
+}
+
+# Applied to both sites. Kept minimal on purpose: the headers that matter for a
+# browser application belong with apps/web, which does not exist yet. These two
+# are the ones that are correct for an API regardless of what fronts it.
+(common) {
+	header {
+		# Stops a browser from second-guessing a declared Content-Type, which is
+		# how a JSON response gets executed as script.
+		X-Content-Type-Options nosniff
+		# Naming the server and version tells a scanner which CVEs to try.
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$PRODUCTION_SITE_ADDRESS} {
+	import common
+	# By container name on the shared `rental-edge` network. Resolved per
+	# request rather than at startup, so the ingress survives an environment
+	# being torn down and brought back — it returns 502 in the gap instead of
+	# refusing to start.
+	reverse_proxy rental-production-api:3000
+}
+
+{$STAGING_SITE_ADDRESS} {
+	import common
+	reverse_proxy rental-staging-api:3000
+}
