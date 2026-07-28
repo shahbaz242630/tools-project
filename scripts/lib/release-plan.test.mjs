@@ -3,6 +3,7 @@ import {
   assertDeployableTag,
   emptyState,
   interpretProbe,
+  interpretWebProbe,
   isImmutableTag,
   MAX_HISTORY,
   nextStateAfterDeploy,
@@ -325,5 +326,35 @@ describe('interpretProbe', () => {
 
   it('tolerates absent output', () => {
     expect(interpretProbe({ exitCode: 1 }).outcome).toBe('starting');
+  });
+});
+
+describe('interpretWebProbe', () => {
+  it('is ready when the root page serves', () => {
+    expect(interpretWebProbe({ exitCode: 0, stdout: 'WEB_OK' })).toEqual({
+      outcome: 'ready',
+    });
+  });
+
+  it('is unhealthy — not starting — on a 500', () => {
+    // The web app is up and erroring. Waiting out the timeout would not help,
+    // and a deploy that only gated on the API would have called this a success.
+    const result = interpretWebProbe({ exitCode: 1, stdout: 'WEB_500' });
+    expect(result.outcome).toBe('unhealthy');
+    expect(result.detail).toContain('HTTP 500');
+  });
+
+  it('is starting when nothing has answered yet', () => {
+    expect(interpretWebProbe({ exitCode: 1, stdout: '' }).outcome).toBe('starting');
+  });
+
+  it('is starting when the container does not exist yet', () => {
+    expect(
+      interpretWebProbe({ exitCode: 1, stdout: 'Error: No such container' }).outcome,
+    ).toBe('starting');
+  });
+
+  it('tolerates absent output', () => {
+    expect(interpretWebProbe({ exitCode: 1 }).outcome).toBe('starting');
   });
 });

@@ -3,16 +3,12 @@ import { Controller, Get, HttpException, HttpStatus } from '@nestjs/common';
 // from the emitted design:paramtypes, and a type-only import erases it. The
 // result compiles cleanly and fails at runtime. See ADR 0011.
 import { ReadinessService } from './readiness.service.js';
-import type { DependencyStatus } from './dependency-check.js';
+// The wire format lives in @platform/contracts, so the web app validates
+// against the same definition this controller is written to satisfy. If these
+// shapes are edited, both consumers move together or the tests fail.
+import type { HealthResponse, ReadyResponse } from '@platform/contracts';
 
-export interface HealthResponse {
-  readonly status: 'ok';
-}
-
-export interface ReadyResponse {
-  readonly status: 'ready' | 'not_ready';
-  readonly checks: Readonly<Record<string, DependencyStatus>>;
-}
+export type { HealthResponse, ReadyResponse };
 
 @Controller()
 export class HealthController {

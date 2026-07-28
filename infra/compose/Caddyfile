@@ -30,14 +30,17 @@
 
 {$PRODUCTION_SITE_ADDRESS} {
 	import common
-	# By container name on the shared `rental-edge` network. Resolved per
-	# request rather than at startup, so the ingress survives an environment
-	# being torn down and brought back — it returns 502 in the gap instead of
-	# refusing to start.
-	reverse_proxy rental-production-api:3000
+	# The web app, not the API. Only `web` joins the `rental-edge` network —
+	# the API is internal and is called server-side, so there is nothing to
+	# route to it and no way to reach it from here.
+	#
+	# By container name, resolved per request rather than at startup, so the
+	# ingress survives an environment being torn down and brought back: it
+	# returns 502 in the gap instead of refusing to start.
+	reverse_proxy rental-production-web:3000
 }
 
 {$STAGING_SITE_ADDRESS} {
 	import common
-	reverse_proxy rental-staging-api:3000
+	reverse_proxy rental-staging-web:3000
 }

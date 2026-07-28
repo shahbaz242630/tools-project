@@ -1,0 +1,28 @@
+/* Deliberately minimal. Visual design is a later slice with a real brand
+   behind it; anything more here would be invented and thrown away. This is
+   only enough that the scaffold is legible and readable on a phone. */
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  max-width: 40rem;
+}
+
+dl > div {
+  display: flex;
+  gap: 0.5rem;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dt::after {
+  content: ':';
+}

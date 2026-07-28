@@ -48,7 +48,7 @@ jobs:
       # deployed by accident.
       fail-fast: false
       matrix:
-        app: [api, worker]
+        app: [api, worker, web]
 
     steps:
       - uses: actions/checkout@v7

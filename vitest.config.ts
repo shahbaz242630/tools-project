@@ -28,6 +28,7 @@ export default defineConfig({
       ),
       '@platform/observability': fromRoot('./packages/observability/src/index.ts'),
       '@platform/runtime': fromRoot('./packages/runtime/src/index.ts'),
+      '@platform/contracts': fromRoot('./packages/contracts/src/index.ts'),
     },
   },
   test: {
@@ -49,6 +50,23 @@ export default defineConfig({
           exclude: REQUIRES_REDIS,
           environment: 'node',
         },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'web',
+          include: ['apps/web/src/**/*.test.{ts,tsx}'],
+          // React components need a DOM. Only this project pays for it — the
+          // others stay on `node`, which is markedly faster.
+          environment: 'jsdom',
+          setupFiles: ['./apps/web/vitest-setup.ts'],
+        },
+        // esbuild handles the JSX, so no @vitejs/plugin-react. That plugin
+        // requires vite 8 and vitest 3 pins vite 7; adding it would mean an
+        // unmet peer dependency for a transform we do not need. The app's own
+        // tsconfig says `jsx: preserve` because Next requires it, which esbuild
+        // cannot emit — hence the override here rather than there.
+        esbuild: { jsx: 'automatic' },
       },
       {
         extends: true,
@@ -102,10 +120,21 @@ export default defineConfig({
     // without TZ being set here.
     coverage: {
       provider: 'v8',
-      include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],
+      // .tsx as well as .ts. A `**/*.ts` glob does not match `.tsx`, so without
+      // this every React component is invisible to the thresholds — its tests
+      // could be deleted and coverage would not move.
+      include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts', 'apps/*/src/**/*.tsx'],
       exclude: [
         '**/*.test.ts',
+        '**/*.test.tsx',
         '**/index.ts',
+        // App Router pages and layouts are composition roots, the same argument
+        // as main.ts below: they wire a component to a data source and a route.
+        // Testing them by mocking the framework would test the mocks, and they
+        // are loaded for real by the Deploy rehearsal job, which asserts on the
+        // rendered HTML. Presentational components live outside app/ and are
+        // counted.
+        '**/web/src/app/**',
         // Composition root. Asserting its wiring by mocking every constructor
         // would test the mocks; the integration test boots the real app instead.
         '**/main.ts',
