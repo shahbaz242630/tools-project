@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   interpretProbe,
+  interpretWebProbe,
   nextStateAfterDeploy,
   nextStateAfterRollback,
   parseArgs,
@@ -214,27 +215,62 @@ function probeReadiness(env) {
   return interpretProbe({ exitCode: result.status, stdout: result.stdout });
 }
 
-async function waitForReadiness(env, timeoutSeconds) {
+/**
+ * Ask the web app whether it serves its own root page.
+ *
+ * It has no readiness endpoint by design — it renders whether or not the API is
+ * reachable, and `/status` reports that honestly. So the question is only
+ * whether it is serving, and gating on it matters: the API can be perfectly
+ * ready while the thing every visitor loads returns 500.
+ */
+function probeWeb(env) {
+  const result = run('docker', [
+    'exec',
+    `rental-${env}-web`,
+    'node',
+    '-e',
+    `fetch('http://127.0.0.1:3000/')
+       .then((r) => {
+         process.stdout.write(r.ok ? 'WEB_OK' : 'WEB_' + r.status);
+         process.exit(r.ok ? 0 : 1);
+       })
+       .catch((e) => {
+         process.stderr.write(String(e));
+         process.exit(1);
+       });`,
+  ]);
+
+  return interpretWebProbe({ exitCode: result.status, stdout: result.stdout });
+}
+
+/**
+ * Poll one probe until it succeeds, fails definitively, or the budget runs out.
+ *
+ * The budget is per service rather than shared: they start concurrently, so the
+ * slowest one determines the wall clock either way, and splitting the allowance
+ * would make a slow database look like a broken web app.
+ */
+async function waitFor(label, probe, timeoutSeconds) {
   const attempts = Math.max(1, Math.ceil(timeoutSeconds / PROBE_INTERVAL_SECONDS));
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const probe = probeReadiness(env);
+    const result = probe();
 
-    if (probe.outcome === 'ready') {
-      say(`  ready after ${attempt * PROBE_INTERVAL_SECONDS}s`);
+    if (result.outcome === 'ready') {
+      say(`  ${label} ready after ${attempt * PROBE_INTERVAL_SECONDS}s`);
       return { ready: true };
     }
 
-    if (probe.outcome === 'unhealthy') {
-      // The process is up and naming a broken dependency. Waiting out the rest
-      // of the budget would not change the answer.
-      say(`  the release started but reports it is not ready:`);
-      say(`  ${probe.detail}`);
-      return { ready: false, reason: 'unhealthy', detail: probe.detail };
+    if (result.outcome === 'unhealthy') {
+      // Up, and telling us it is broken. Waiting out the rest of the budget
+      // would not change the answer.
+      say(`  ${label} started but is not healthy:`);
+      say(`  ${result.detail}`);
+      return { ready: false, reason: 'unhealthy', detail: result.detail };
     }
 
     if (attempt % 5 === 0) {
-      say(`  still starting (${attempt * PROBE_INTERVAL_SECONDS}s)`);
+      say(`  ${label} still starting (${attempt * PROBE_INTERVAL_SECONDS}s)`);
     }
     await sleep(PROBE_INTERVAL_SECONDS);
   }
@@ -242,40 +278,72 @@ async function waitForReadiness(env, timeoutSeconds) {
   return {
     ready: false,
     reason: 'timeout',
-    detail: `no readiness response within ${timeoutSeconds}s`,
+    detail: `${label} did not become healthy within ${timeoutSeconds}s`,
   };
+}
+
+/**
+ * Every service a visitor depends on, in the order a failure is most usefully
+ * reported: the API first, because a broken API explains a broken web app but
+ * not the other way round.
+ */
+async function waitForStack(env, timeoutSeconds) {
+  const api = await waitFor('api', () => probeReadiness(env), timeoutSeconds);
+  if (!api.ready) return api;
+
+  return waitFor('web', () => probeWeb(env), timeoutSeconds);
 }
 
 /**
  * Save the failed release's logs before reverting destroys them.
  *
- * `docker compose up` replaces the API container, so by the time anyone reads
- * the "deploy failed" message the evidence is gone — and `scripts/logs.mjs`
- * would show the healthy replacement, which looks like the failure never
- * happened. Capture first, then revert.
+ * `docker compose up` replaces the containers, so by the time anyone reads the
+ * "deploy failed" message the evidence is gone — and `scripts/logs.mjs` would
+ * show the healthy replacements, which looks like the failure never happened.
+ * Capture first, then revert.
+ *
+ * Both application services, not only the one that failed its probe: a web app
+ * returning 500 is very often explained by what the API logged, and the two are
+ * about to be destroyed together.
  */
 function captureFailedLogs(env, tag) {
-  const result = run('docker', ['logs', '--tail', '200', `rental-${env}-api`]);
+  const sections = [];
 
-  // Both streams: a Node process that dies on startup usually says why on
-  // stderr, which is exactly the case worth keeping.
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  for (const service of ['api', 'web', 'worker']) {
+    const result = run('docker', ['logs', '--tail', '200', `rental-${env}-${service}`]);
 
-  if (result.status !== 0 || output.trim() === '') {
-    return { path: null, lines: [] };
+    // Both streams: a Node process that dies on startup usually says why on
+    // stderr, which is exactly the case worth keeping.
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    if (result.status !== 0 || output.trim() === '') continue;
+
+    sections.push({ service, output });
   }
+
+  if (sections.length === 0) return { path: null, lines: [] };
 
   const path = join(releaseRoot, 'state', `${env}.failed.log`);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `# failed release: ${tag}\n${output}`, 'utf8');
+  writeFileSync(
+    path,
+    `# failed release: ${tag}\n` +
+      sections.map((s) => `\n--- ${s.service} ---\n${s.output}`).join(''),
+    'utf8',
+  );
 
-  return { path, lines: output.trimEnd().split('\n') };
+  // Only the API's tail is echoed to the terminal. Three services' worth would
+  // bury the reason; the file has all of it.
+  const api = sections.find((s) => s.service === 'api');
+  return {
+    path,
+    lines: api === undefined ? [] : api.output.trimEnd().split('\n'),
+  };
 }
 
-function runningImage(env) {
+function runningImage(env, service) {
   const result = run('docker', [
     'inspect',
-    `rental-${env}-api`,
+    `rental-${env}-${service}`,
     '--format',
     '{{.Config.Image}}',
   ]);
@@ -289,7 +357,12 @@ function showStatus(env) {
 
   say(`Environment: ${env}`);
   say(`Recorded:    ${state.current ?? 'nothing deployed'}`);
-  say(`Running:     ${runningImage(env) ?? 'no API container'}`);
+  // Per service rather than one line. They are deployed from the same tag, so
+  // a disagreement here means a partial deploy — worth seeing immediately
+  // rather than inferring from `docker ps`.
+  for (const service of ['web', 'api', 'worker']) {
+    say(`  ${service.padEnd(7)} ${runningImage(env, service) ?? '(no container)'}`);
+  }
   say('');
 
   if (state.history.length > 1) {
@@ -318,7 +391,7 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
   say('');
   say('Waiting for readiness...');
 
-  const readiness = await waitForReadiness(env, timeoutSeconds);
+  const readiness = await waitForStack(env, timeoutSeconds);
 
   if (readiness.ready) {
     const next =
@@ -374,7 +447,7 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
   say(`Reverting to ${plan.fallback}...`);
   bringUp(env, plan.fallback);
 
-  const recovered = await waitForReadiness(env, timeoutSeconds);
+  const recovered = await waitForStack(env, timeoutSeconds);
 
   say('');
   if (recovered.ready) {

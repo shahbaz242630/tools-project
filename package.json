@@ -9,9 +9,9 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run --project packages --project api --project worker --project scripts",
-    "test:watch": "vitest --project packages --project api --project worker --project scripts",
-    "test:coverage": "vitest run --project packages --project api --project worker --project scripts --coverage",
+    "test": "vitest run --project packages --project api --project worker --project scripts --project web",
+    "test:watch": "vitest --project packages --project api --project worker --project scripts --project web",
+    "test:coverage": "vitest run --project packages --project api --project worker --project scripts --project web --coverage",
     "test:integration": "vitest run --project integration",
     "lint": "eslint .",
     "format": "prettier --write .",

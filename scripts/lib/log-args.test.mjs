@@ -100,8 +100,8 @@ describe('buildLogArgs', () => {
   });
 
   it('does not filter by service on the single-service ingress stack', () => {
-    const args = buildLogArgs(parse('--env', 'ingress', '--service', 'api'));
-    expect(args).not.toContain('api');
+    const args = buildLogArgs(parse('--env', 'ingress', '--service', 'web'));
+    expect(args).not.toContain('web');
   });
 
   it('adds --follow only when asked', () => {

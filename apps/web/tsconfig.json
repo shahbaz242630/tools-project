@@ -1,0 +1,32 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Deliberate overrides of the workspace base, all required by Next. See
+    // ADR 0013 — this is the same category of divergence as apps/api's, and for
+    // the same underlying reason: the base is tuned for code that Node loads
+    // directly, and neither app is.
+    //
+    // `bundler` rather than the base's `NodeNext`. Next ships no `exports` map,
+    // so under NodeNext a bare `next/link` is unresolvable — Node ESM would
+    // demand `next/link.js`. TypeScript is right about that; it is simply not
+    // how a bundled application resolves. `bundler` reads package exports, so
+    // our ESM @platform/* packages still resolve correctly.
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "noEmit": true,
+    // composite requires emit, which noEmit forbids. Mutually exclusive.
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "isolatedModules": true,
+    "types": ["node"],
+    "plugins": [{ "name": "next" }]
+  },
+  // vitest-setup.ts is listed because its `@testing-library/jest-dom/vitest`
+  // import is what declares the DOM matchers on `expect`. Left out, the tests
+  // run fine and `tsc` rejects every `toBeInTheDocument`.
+  "include": ["src", "vitest-setup.ts", "next-env.d.ts", ".next/types/**/*.ts"]
+}

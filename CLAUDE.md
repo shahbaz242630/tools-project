@@ -63,11 +63,11 @@ These were chosen deliberately after research. Deviating silently is a defect.
 | 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container   | #23 |
 | 0.11a | `apps/worker` — BullMQ, correlation across the queue, container   | #24 |
 | 0.9a  | GHCR image publishing, deployment stack, deploy/rollback/logs     | #25 |
+| 0.11b | `apps/web` on Next.js, `packages/contracts`, both deployed        | #26 |
 
 Still outstanding against the BRD §14 Phase 0 list:
 
-- **`apps/web` and `packages/contracts` do not exist.** Slice 0.11b. `apps/api` and `apps/worker` do, and both are deployable.
-- **No VPS, so no staging environment.** The infrastructure is now defined as code in `infra/compose` and rehearsed in CI on every pull request, but it has never run on a real box. Slice 0.9b.
+- **No VPS, so no staging environment.** The infrastructure is now defined as code in `infra/compose` and rehearsed in CI on every pull request, but it has never run on a real box. Slice 0.9b. This is the only remaining blocker.
 - **No off-box backups.** ADR 0009 calls them non-negotiable. Until they exist, nothing irreplaceable goes in a deployed database.
 - **Rollback and log retrieval are demonstrated mechanically, not against staging.** The `Deploy rehearsal` CI job proves the mechanism on every PR. The exit gate asks for it against a real environment.
 
@@ -94,10 +94,12 @@ Monorepo, pnpm workspaces (`packages/*`, `apps/*`).
 Exists today:
 
 ```
+apps/web                Next.js 16 App Router. The only service the ingress reaches
 apps/api                NestJS on Fastify. Health, readiness, correlation, Dockerfile
 apps/worker             BullMQ. Maintenance queue, correlation across the boundary
 packages/core           Money and time primitives
-packages/config         Brand identity, environment validation
+packages/config         Brand identity, environment validation (server and web)
+packages/contracts      Shared API types with runtime validation
 packages/observability  Logging, correlation IDs, error-tracking seam
 packages/runtime        Process lifecycle — graceful shutdown, shared by both apps
 infra/postgres          Database initialisation SQL
@@ -108,16 +110,16 @@ adr/                    Architecture decision records
 
 `docker-compose.yml` at the root is the **local development** stack. `infra/compose/` is what gets deployed — it runs published images by immutable tag, never builds, and publishes no ports except the ingress. Do not conflate them.
 
-`apps/api` is **CommonJS while everything else is ESM**, and its tsconfig deliberately overrides four workspace defaults. This is not drift — NestJS depends on legacy decorator metadata, and `module: NodeNext` is the only setting under which a CommonJS app can import our ESM packages at all. ADR 0011 records what was tested and rejected. Do not "tidy" it without reading that first.
+**Both apps diverge from the workspace tsconfig, in opposite directions, and neither is drift.**
 
-Still to be scaffolded:
+- `apps/api` is **CommonJS while everything else is ESM**. NestJS depends on legacy decorator metadata, and `module: NodeNext` is the only setting under which a CommonJS app can import our ESM packages at all. ADR 0011.
+- `apps/web` uses **`moduleResolution: bundler`**, so its relative imports carry **no `.js` extension** — the opposite of everywhere else. Next ships no `exports` map, so `next/link` is unresolvable under NodeNext. ADR 0013.
 
-```
-apps/web             Next.js frontend (PWA)
-packages/contracts   Shared types and API contracts
-```
+Adding `.js` to a relative import in `apps/web` breaks the build; removing it anywhere else breaks the runtime. Read both ADRs before "tidying" either.
 
 Defined but never run for real: everything in `infra/compose`. It is rehearsed in CI against the same files, but no VPS exists yet — see `infra/compose/README.md`.
+
+**Request path.** Browser → Caddy ingress → `web` → (server-side) `api` → Postgres/Redis. Only `web` joins the `edge` network; the API is not reachable from the internet, and CI asserts that. When a browser-facing API route is genuinely needed, add it deliberately.
 
 ## Commands
 
@@ -132,6 +134,7 @@ Defined but never run for real: everything in `infra/compose`. It is rehearsed i
 | `pnpm invariants`            | Project invariant checks — the rules in this file           |
 | `pnpm verify:runtime`        | Confirm built packages load in a real Node process          |
 | `pnpm --filter @app/api dev` | Run the API locally against `.env`                          |
+| `pnpm --filter @app/web dev` | Run the web app locally (needs `API_BASE_URL`)              |
 | `pnpm db:up` / `db:down`     | Start / stop the local Postgres and Redis stack             |
 | `pnpm db:verify`             | Assert extensions, exclusion constraint and Redis eviction  |
 | `pnpm db:reset`              | Destroy volumes and rebuild from scratch                    |

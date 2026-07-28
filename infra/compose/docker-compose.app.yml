@@ -27,12 +27,56 @@ x-logging: &logging
     max-file: '3'
 
 services:
+  web:
+    # The only service the ingress can reach. Everything the browser sees comes
+    # from here; it calls the API server-side over the internal network.
+    image: ${IMAGE_REPOSITORY:?set IMAGE_REPOSITORY}/web:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    # Predictable, because the ingress addresses it by name.
+    container_name: rental-${APP_ENV}-web
+    restart: unless-stopped
+    logging: *logging
+
+    environment:
+      NODE_ENV: production
+      # Read by Next's standalone server, which owns these rather than
+      # @platform/config — see packages/config/src/web-env.ts.
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      # The API as seen from this container: a name on the internal network,
+      # never a public hostname. Deliberately not NEXT_PUBLIC_ — that prefix
+      # would inline it into the browser bundle.
+      API_BASE_URL: http://api:3000
+
+    networks:
+      - edge
+      - internal
+
+    # Deliberately no `depends_on`. The web app renders without the API — the
+    # status page reports it as unreachable, which is the honest answer and the
+    # useful one.
+    #
+    # Waiting for the API to be healthy would mean a database outage blocked
+    # deploying or restarting the web app, exactly when you most want to put a
+    # page in front of visitors. It also hid the web container's logs from a
+    # failed deploy, because a never-healthy API meant it never started.
+
+    # No `ports:`. The ingress is the only route in.
+
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   api:
     # Never `build:`. The artefact that reaches production is the one CI
     # published and nothing else — a box that can build is a box where the
     # running code and the tagged commit can silently diverge. See ADR 0012.
     image: ${IMAGE_REPOSITORY:?set IMAGE_REPOSITORY}/api:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
-    # Predictable, because the ingress addresses it by name.
     container_name: rental-${APP_ENV}-api
     restart: unless-stopped
     logging: *logging
@@ -61,9 +105,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
 
+    # Internal only. The API is not on `edge` and is therefore unreachable from
+    # the ingress and from the internet: the browser never calls it directly,
+    # the web app calls it server-side. When a browser-facing endpoint is
+    # genuinely needed, add a route through the ingress deliberately rather than
+    # leaving the whole surface exposed by default.
     networks:
-      # Reachable by the ingress, and by nothing else from outside.
-      - edge
       - internal
 
     depends_on:
@@ -72,9 +119,8 @@ services:
       redis:
         condition: service_healthy
 
-    # No `ports:`. The only route in is through the ingress, which terminates
-    # TLS. Publishing 3000 here would expose plain HTTP on the box's public
-    # interface and quietly bypass it.
+    # No `ports:`. Publishing 3000 here would expose plain HTTP on the box's
+    # public interface and bypass the ingress entirely.
 
     security_opt:
       - no-new-privileges:true

@@ -325,6 +325,8 @@ jobs:
             -t "local/rental/api:${TAG_A}" -t "local/rental/api:${TAG_B}" .
           docker build -f apps/worker/Dockerfile \
             -t "local/rental/worker:${TAG_A}" -t "local/rental/worker:${TAG_B}" .
+          docker build -f apps/web/Dockerfile \
+            -t "local/rental/web:${TAG_A}" -t "local/rental/web:${TAG_B}" .
 
       - name: Build a release that starts but never serves
         run: |
@@ -340,7 +342,8 @@ jobs:
           DOCKERFILE
 
           docker build -t "local/rental/api:${TAG_BROKEN}" \
-                       -t "local/rental/worker:${TAG_BROKEN}" /tmp/broken
+                       -t "local/rental/worker:${TAG_BROKEN}" \
+                       -t "local/rental/web:${TAG_BROKEN}" /tmp/broken
 
       - name: Provision the box
         run: |
@@ -383,7 +386,7 @@ jobs:
           # readable by anyone who can pull the image. Asserted rather than
           # assumed, because deleting a file in a later layer does not remove it
           # from the earlier one.
-          for app in api worker; do
+          for app in api worker web; do
             if docker run --rm --entrypoint sh "local/rental/${app}:${TAG_A}" \
                  -c 'test -e /app/.env'; then
               echo "::error::${app} image contains /app/.env"
@@ -405,7 +408,7 @@ jobs:
           # The single most expensive mistake available here. An exposed Redis
           # or Postgres on a public IP is found by scanners within minutes, and
           # `ports:` is one line away from existing.
-          for service in postgres redis api worker; do
+          for service in postgres redis api worker web; do
             published=$(docker port "rental-staging-${service}" 2>/dev/null || true)
             if [ -n "$published" ]; then
               echo "::error::rental-staging-${service} publishes ports: ${published}"
@@ -419,11 +422,13 @@ jobs:
           set -euo pipefail
           node scripts/deploy.mjs --env staging --tag "${TAG_B}" --timeout 180
 
-          running=$(docker inspect rental-staging-api --format '{{.Config.Image}}')
-          if [ "$running" != "local/rental/api:${TAG_B}" ]; then
-            echo "::error::expected the API to be running ${TAG_B}, found ${running}"
-            exit 1
-          fi
+          for service in api web worker; do
+            running=$(docker inspect "rental-staging-${service}" --format '{{.Config.Image}}')
+            if [ "$running" != "local/rental/${service}:${TAG_B}" ]; then
+              echo "::error::expected ${service} to be running ${TAG_B}, found ${running}"
+              exit 1
+            fi
+          done
 
       - name: Roll back
         run: |
@@ -431,12 +436,15 @@ jobs:
           node scripts/deploy.mjs --env staging --rollback --timeout 180
 
           # The assertion that matters: not that the command succeeded, but that
-          # the container is genuinely running the earlier image again.
-          running=$(docker inspect rental-staging-api --format '{{.Config.Image}}')
-          if [ "$running" != "local/rental/api:${TAG_A}" ]; then
-            echo "::error::rollback reported success but the API is running ${running}"
-            exit 1
-          fi
+          # every container is genuinely running the earlier image again. A
+          # rollback that moved only some of them is worse than none.
+          for service in api web worker; do
+            running=$(docker inspect "rental-staging-${service}" --format '{{.Config.Image}}')
+            if [ "$running" != "local/rental/${service}:${TAG_A}" ]; then
+              echo "::error::rollback reported success but ${service} is running ${running}"
+              exit 1
+            fi
+          done
           echo "rolled back to ${TAG_A}"
 
       - name: A failed deploy reverts itself and says why
@@ -472,30 +480,52 @@ jobs:
             -f infra/compose/docker-compose.ingress.yml up -d
 
           for attempt in $(seq 1 30); do
-            if curl -fsS http://localhost/health > /tmp/health.json; then break; fi
+            if curl -fsS http://localhost/ > /tmp/home.html; then break; fi
             if [ "$attempt" = "30" ]; then
-              echo "::error::the ingress never served the staging stack"
+              echo "::error::the ingress never served the staging web app"
               docker logs rental-ingress
               exit 1
             fi
             sleep 1
           done
-          grep -q '"status":"ok"' /tmp/health.json
 
-          # Readiness through the proxy, so this covers the whole path rather
-          # than just the proxy answering.
-          curl -fsS http://localhost/ready | grep -q '"status":"ready"'
+          # The brand name comes from packages/config. Asserting it proves the
+          # page rendered from our code rather than a proxy placeholder.
+          if ! grep -q 'Rental Marketplace' /tmp/home.html; then
+            echo "::error::the home page did not render the brand name"
+            head -c 500 /tmp/home.html
+            exit 1
+          fi
+
+          # The end-to-end path that matters: browser → ingress → web → API →
+          # Postgres and Redis. Rendered server-side, so a "ready" here means
+          # every hop worked.
+          curl -fsS http://localhost/status > /tmp/status.html
+          if ! grep -q 'API: ready' /tmp/status.html; then
+            echo "::error::the status page did not report the API as ready"
+            head -c 1000 /tmp/status.html
+            exit 1
+          fi
+
+          # The API must NOT be reachable through the ingress. It is not on the
+          # edge network, and this is the assertion that keeps it that way — the
+          # browser has no business calling it directly yet.
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ready)
+          if [ "$status" = "200" ]; then
+            echo "::error::/ready is served publicly — the API is exposed through the ingress"
+            exit 1
+          fi
 
           # Routing must discriminate by hostname. Production has no stack, so
           # a 502 here is the proof; a 200 would mean both hostnames resolve to
           # staging and a production deploy would silently serve the wrong one.
           status=$(curl -s -o /dev/null -w '%{http_code}' \
-                   -H 'Host: production.localhost' http://localhost/health)
+                   -H 'Host: production.localhost' http://localhost/)
           if [ "$status" != "502" ]; then
             echo "::error::production.localhost returned ${status}, expected 502 — the ingress is not routing by hostname"
             exit 1
           fi
-          echo "ingress serves staging and does not confuse it with production"
+          echo "ingress serves the staging web app, keeps the API private, and does not confuse staging with production"
 
       - name: Logs can be retrieved
         run: |
@@ -517,8 +547,15 @@ jobs:
             exit 1
           fi
 
+          node scripts/logs.mjs --env staging --service web --since 30m --out /tmp/web.log
+          if ! grep -qi 'ready\|started' /tmp/web.log; then
+            echo "::error::the web log did not contain its own startup line"
+            cat /tmp/web.log
+            exit 1
+          fi
+
           node scripts/logs.mjs --env staging --service worker --since 30m > /dev/null
-          echo "api, worker and ingress logs all retrievable"
+          echo "web, api, worker and ingress logs all retrievable"
 
       - name: Tear down
         if: always()

@@ -369,3 +369,32 @@ export function interpretProbe({ exitCode, stdout }) {
   // indistinguishable from here and all worth retrying.
   return { outcome: 'starting', detail: body };
 }
+
+/**
+ * The same three outcomes for the web app.
+ *
+ * Separate from `interpretProbe` because the web app has no readiness endpoint
+ * to report against — it renders whether or not the API is reachable, which is
+ * deliberate. What matters is that it serves its own root page, so the probe
+ * reports an HTTP status and this maps it.
+ *
+ * A deploy has to gate on this too. Gating only on the API would report success
+ * while the thing every visitor actually loads was returning 500.
+ */
+export function interpretWebProbe({ exitCode, stdout }) {
+  const body = (stdout ?? '').trim();
+
+  if (exitCode === 0 && body === 'WEB_OK') {
+    return { outcome: 'ready' };
+  }
+
+  // It answered, with a status we did not want. Retrying will not fix a 500.
+  if (body.startsWith('WEB_')) {
+    return {
+      outcome: 'unhealthy',
+      detail: `the web app answered HTTP ${body.slice('WEB_'.length)}`,
+    };
+  }
+
+  return { outcome: 'starting', detail: body };
+}

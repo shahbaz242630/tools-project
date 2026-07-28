@@ -14,7 +14,12 @@
  * log line, never in a response body.
  */
 
-export type DependencyStatus = 'ok' | 'failed' | 'timeout';
+// Defined in @platform/contracts, not here. The web app has to interpret these
+// values too, and two independent definitions of the same wire format drift the
+// moment one side adds a case. Re-exported so the health module's own imports
+// stay local.
+export type { DependencyStatus } from '@platform/contracts';
+import type { DependencyStatus } from '@platform/contracts';
 
 /**
  * A dependency that can be asked whether it is reachable.

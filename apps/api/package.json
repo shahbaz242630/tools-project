@@ -15,6 +15,7 @@
     "@nestjs/core": "^11.1.28",
     "@nestjs/platform-fastify": "^11.1.28",
     "@platform/config": "workspace:*",
+    "@platform/contracts": "workspace:*",
     "@platform/core": "workspace:*",
     "@platform/observability": "workspace:*",
     "@platform/runtime": "workspace:*",

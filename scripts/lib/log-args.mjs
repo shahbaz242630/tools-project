@@ -15,7 +15,7 @@ export class LogArgsError extends Error {
 }
 
 /** Services in docker-compose.app.yml, plus the separate ingress stack. */
-export const APP_SERVICES = ['api', 'worker', 'postgres', 'redis'];
+export const APP_SERVICES = ['web', 'api', 'worker', 'postgres', 'redis'];
 export const ENVIRONMENTS = ['staging', 'production', 'ingress'];
 
 /**
