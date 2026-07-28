@@ -290,6 +290,245 @@ jobs:
             exit 1
           fi
 
+  deploy-rehearsal:
+    name: Deploy rehearsal
+    runs-on: ubuntu-latest
+    # Runs the real deployment stack and the real deploy script, with the same
+    # compose files a VPS will use. The Phase 0 exit gate requires rollback and
+    # log retrieval to be demonstrated; this is where that is demonstrated
+    # mechanically, on every pull request, rather than once by hand.
+    #
+    # It cannot prove the environment — there is no staging box yet — but it
+    # proves the mechanism, which is the part that rots silently.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build both images under two release tags
+        run: |
+          set -euo pipefail
+
+          # Valid-shaped commit SHAs. The deploy script refuses anything that is
+          # not 40 hex characters, and that rule is under test here too — using
+          # a convenience tag would exercise a code path production never takes.
+          echo "TAG_A=$(printf 'a%.0s' {1..40})" >> "$GITHUB_ENV"
+          echo "TAG_B=$(printf 'b%.0s' {1..40})" >> "$GITHUB_ENV"
+          echo "TAG_BROKEN=$(printf 'c%.0s' {1..40})" >> "$GITHUB_ENV"
+
+      - name: Build the release images
+        run: |
+          set -euo pipefail
+
+          # Same image under both tags. The rollback assertions compare the tag
+          # the container was started from, so two identical builds would prove
+          # the same thing at twice the cost.
+          docker build -f apps/api/Dockerfile \
+            -t "local/rental/api:${TAG_A}" -t "local/rental/api:${TAG_B}" .
+          docker build -f apps/worker/Dockerfile \
+            -t "local/rental/worker:${TAG_A}" -t "local/rental/worker:${TAG_B}" .
+
+      - name: Build a release that starts but never serves
+        run: |
+          set -euo pipefail
+
+          # The realistic bad deploy: the container runs, so Docker is satisfied,
+          # and nothing ever answers on the port. A container that exits would be
+          # caught by compose alone and prove much less.
+          mkdir -p /tmp/broken
+          cat > /tmp/broken/Dockerfile <<'DOCKERFILE'
+          FROM node:24-alpine
+          CMD ["node","-e","console.error('FATAL: refusing to serve'); setInterval(()=>{},1000)"]
+          DOCKERFILE
+
+          docker build -t "local/rental/api:${TAG_BROKEN}" \
+                       -t "local/rental/worker:${TAG_BROKEN}" /tmp/broken
+
+      - name: Provision the box
+        run: |
+          set -euo pipefail
+
+          # The same steps infra/compose/README.md gives an operator. If they
+          # drift, this job fails and the runbook gets fixed.
+          docker network create rental-edge
+
+          echo "RELEASE_ROOT=${RUNNER_TEMP}/release-root" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/release-root"
+
+          sed -e 's|^IMAGE_REPOSITORY=.*|IMAGE_REPOSITORY=local/rental|' \
+              -e 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=rehearsal-only|' \
+              infra/compose/app.env.example > "${RUNNER_TEMP}/release-root/staging.env"
+
+          sed -e 's|^ACME_EMAIL=.*|ACME_EMAIL=rehearsal@example.invalid|' \
+              -e 's|^PRODUCTION_SITE_ADDRESS=.*|PRODUCTION_SITE_ADDRESS=http://production.localhost|' \
+              -e 's|^STAGING_SITE_ADDRESS=.*|STAGING_SITE_ADDRESS=http://localhost|' \
+              infra/compose/ingress.env.example > "${RUNNER_TEMP}/release-root/ingress.env"
+
+      - name: Both compose files are valid
+        run: |
+          set -euo pipefail
+          APP_ENV=staging IMAGE_TAG="${TAG_A}" docker compose \
+            --env-file "${RELEASE_ROOT}/staging.env" \
+            -f infra/compose/docker-compose.app.yml config --quiet
+          docker compose \
+            --env-file "${RELEASE_ROOT}/ingress.env" \
+            -f infra/compose/docker-compose.ingress.yml config --quiet
+
+      - name: Deploy
+        run: node scripts/deploy.mjs --env staging --tag "${TAG_A}" --timeout 180
+
+      - name: The deployed images carry no credentials
+        run: |
+          set -euo pipefail
+
+          # .dockerignore is what keeps .env out of every layer, and a layer is
+          # readable by anyone who can pull the image. Asserted rather than
+          # assumed, because deleting a file in a later layer does not remove it
+          # from the earlier one.
+          for app in api worker; do
+            if docker run --rm --entrypoint sh "local/rental/${app}:${TAG_A}" \
+                 -c 'test -e /app/.env'; then
+              echo "::error::${app} image contains /app/.env"
+              exit 1
+            fi
+
+            baked=$(docker inspect "local/rental/${app}:${TAG_A}" \
+                    --format '{{json .Config.Env}}')
+            if echo "$baked" | grep -Eiq 'password|secret|token'; then
+              echo "::error::${app} image bakes a credential into its environment: ${baked}"
+              exit 1
+            fi
+          done
+
+      - name: The data stores are not reachable from outside the stack
+        run: |
+          set -euo pipefail
+
+          # The single most expensive mistake available here. An exposed Redis
+          # or Postgres on a public IP is found by scanners within minutes, and
+          # `ports:` is one line away from existing.
+          for service in postgres redis api worker; do
+            published=$(docker port "rental-staging-${service}" 2>/dev/null || true)
+            if [ -n "$published" ]; then
+              echo "::error::rental-staging-${service} publishes ports: ${published}"
+              exit 1
+            fi
+          done
+          echo "no application container publishes a port"
+
+      - name: Deploy a second release
+        run: |
+          set -euo pipefail
+          node scripts/deploy.mjs --env staging --tag "${TAG_B}" --timeout 180
+
+          running=$(docker inspect rental-staging-api --format '{{.Config.Image}}')
+          if [ "$running" != "local/rental/api:${TAG_B}" ]; then
+            echo "::error::expected the API to be running ${TAG_B}, found ${running}"
+            exit 1
+          fi
+
+      - name: Roll back
+        run: |
+          set -euo pipefail
+          node scripts/deploy.mjs --env staging --rollback --timeout 180
+
+          # The assertion that matters: not that the command succeeded, but that
+          # the container is genuinely running the earlier image again.
+          running=$(docker inspect rental-staging-api --format '{{.Config.Image}}')
+          if [ "$running" != "local/rental/api:${TAG_A}" ]; then
+            echo "::error::rollback reported success but the API is running ${running}"
+            exit 1
+          fi
+          echo "rolled back to ${TAG_A}"
+
+      - name: A failed deploy reverts itself and says why
+        run: |
+          set -euo pipefail
+
+          if node scripts/deploy.mjs --env staging --tag "${TAG_BROKEN}" --timeout 20; then
+            echo "::error::deploying a release that never serves reported success"
+            exit 1
+          fi
+
+          running=$(docker inspect rental-staging-api --format '{{.Config.Image}}')
+          if [ "$running" != "local/rental/api:${TAG_A}" ]; then
+            echo "::error::the bad deploy was not reverted — API is running ${running}"
+            exit 1
+          fi
+
+          # The revert replaces the failed container, so its logs have to have
+          # been captured before that happened or the reason is lost.
+          if ! grep -q 'FATAL: refusing to serve' \
+                 "${RELEASE_ROOT}/state/staging.failed.log"; then
+            echo "::error::the failed release's logs were not captured before the revert"
+            cat "${RELEASE_ROOT}/state/staging.failed.log" 2>&1 || true
+            exit 1
+          fi
+          echo "reverted to ${TAG_A}, and the failure reason was preserved"
+
+      - name: Traffic reaches the stack through the ingress
+        run: |
+          set -euo pipefail
+
+          docker compose --env-file "${RELEASE_ROOT}/ingress.env" \
+            -f infra/compose/docker-compose.ingress.yml up -d
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost/health > /tmp/health.json; then break; fi
+            if [ "$attempt" = "30" ]; then
+              echo "::error::the ingress never served the staging stack"
+              docker logs rental-ingress
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -q '"status":"ok"' /tmp/health.json
+
+          # Readiness through the proxy, so this covers the whole path rather
+          # than just the proxy answering.
+          curl -fsS http://localhost/ready | grep -q '"status":"ready"'
+
+          # Routing must discriminate by hostname. Production has no stack, so
+          # a 502 here is the proof; a 200 would mean both hostnames resolve to
+          # staging and a production deploy would silently serve the wrong one.
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+                   -H 'Host: production.localhost' http://localhost/health)
+          if [ "$status" != "502" ]; then
+            echo "::error::production.localhost returned ${status}, expected 502 — the ingress is not routing by hostname"
+            exit 1
+          fi
+          echo "ingress serves staging and does not confuse it with production"
+
+      - name: Logs can be retrieved
+        run: |
+          set -euo pipefail
+
+          # The other half of the exit gate. Retrieval has to produce content —
+          # an empty result and a broken command look identical otherwise.
+          node scripts/logs.mjs --env staging --service api --since 30m \
+            --out /tmp/api.log
+          if ! grep -q 'api listening' /tmp/api.log; then
+            echo "::error::the API log did not contain its own startup line"
+            cat /tmp/api.log
+            exit 1
+          fi
+
+          node scripts/logs.mjs --env ingress --since 30m --out /tmp/ingress.log
+          if ! grep -q 'handled request' /tmp/ingress.log; then
+            echo "::error::the ingress access log is empty after serving requests"
+            exit 1
+          fi
+
+          node scripts/logs.mjs --env staging --service worker --since 30m > /dev/null
+          echo "api, worker and ingress logs all retrievable"
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose --env-file "${RELEASE_ROOT}/ingress.env" \
+            -f infra/compose/docker-compose.ingress.yml down -v || true
+          APP_ENV=staging IMAGE_TAG="${TAG_A}" docker compose \
+            --env-file "${RELEASE_ROOT}/staging.env" \
+            -f infra/compose/docker-compose.app.yml down -v || true
+
   worker-integration:
     name: Worker integration
     runs-on: ubuntu-latest

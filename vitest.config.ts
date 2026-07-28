@@ -53,6 +53,16 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: 'scripts',
+          // Plain .mjs: `scripts/` runs under a bare `node` with no build step,
+          // so the tests load exactly the files the deploy path loads.
+          include: ['scripts/**/*.test.mjs'],
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: 'integration',
           // Needs a live Redis, so it is not in the default run. `pnpm test`
           // names its projects explicitly rather than excluding this one --
