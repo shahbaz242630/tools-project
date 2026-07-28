@@ -71,12 +71,12 @@ These were chosen deliberately after research. Deviating silently is a defect.
 Still outstanding against the BRD §14 Phase 0 list:
 
 - **No VPS, so no staging environment.** The infrastructure is now defined as code in `infra/compose` and rehearsed in CI on every pull request, but it has never run on a real box. Slice 0.9b. This is the only remaining blocker.
-- **No off-box backups.** ADR 0009 calls them non-negotiable. Until they exist, nothing irreplaceable goes in a deployed database.
+- **No durable backups.** ADR 0009 calls off-box backups non-negotiable. Managed Postgres would discharge the same obligation for roughly £12/month and delete the work — researched, recommended, not yet decided. Either way: **until one exists, nothing irreplaceable goes in a deployed database.**
 - **Rollback and log retrieval are demonstrated mechanically, not against staging.** The `Deploy rehearsal` CI job proves the mechanism on every PR. The exit gate asks for it against a real environment.
 
-**Exit gate (BRD §14):** a sample change travels from branch to staging through green CI with no manual secret handling, and rollback plus logs are demonstrated. Do not begin Phase 1 work until that is true.
+**Exit gate (BRD §14):** a sample change travels from branch to staging through green CI with no manual secret handling, and rollback plus logs are demonstrated. **Still unmet.** Phase 1 was nonetheless started on 28 July 2026 by the product owner's decision — see the status note above. That does not relax the gate: it must be met before anything is deployed for real, and Phase 1's own exit gate requires staging too.
 
-**Hosting.** BRD §4 and §14 originally named AWS, Azure or GCP provisioned with Terraform. Both were amended on 27 July 2026 to require reproducible infrastructure as code without naming a tool, deferring to ADR 0009: a self-hosted Hostinger KVM VPS running Docker Compose, staging and production sharing one box at first, database backups held off the box. Appendix A.1 still lists Terraform as a validated 2026 choice; that is a research record and does not bind the build.
+**Hosting.** BRD §4 and §14 originally named AWS, Azure or GCP provisioned with Terraform. Both were amended on 27 July 2026 to require reproducible infrastructure as code without naming a tool, deferring to ADR 0009: a self-hosted KVM VPS running Docker Compose, staging and production sharing one box at first, and database durability held off the box. ADR 0009 named Hostinger, but chose self-hosting for cost predictability rather than the vendor — any KVM provider satisfies it. Appendix A.1 still lists Terraform as a validated 2026 choice; that is a research record and does not bind the build.
 
 **The BRD is not in version control.** `docs/` is gitignored on purpose — this repository is public and the BRD carries unit economics and strategy. It therefore has no history, no review trail and no off-machine backup. Amendments to it, including the one above, exist only on the product owner's machine.
 
