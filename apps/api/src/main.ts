@@ -13,7 +13,7 @@ import { AppModule } from './app.module.js';
 import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
 import { NestLoggerAdapter } from './observability/nest-logger.js';
-import { createShutdown } from './shutdown.js';
+import { createShutdown } from '@platform/runtime';
 
 /**
  * Composition root.

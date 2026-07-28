@@ -1,4 +1,4 @@
-import type { LogFields, Logger } from '@platform/observability';
+import type { LogFields, Logger } from '../logger.js';
 
 export interface LoggedRecord {
   readonly level: 'debug' | 'info' | 'warn' | 'error';

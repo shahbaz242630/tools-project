@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NestLoggerAdapter, splitParams } from './nest-logger.js';
-import { createRecordingLogger } from '../testing/recording-logger.js';
+import { createRecordingLogger } from '@platform/observability/testing';
 
 function build() {
   const recording = createRecordingLogger();
