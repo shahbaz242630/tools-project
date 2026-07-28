@@ -34,6 +34,10 @@ crash.log
 node_modules/
 .pnpm-store/
 dist/
+# Prisma 7 emits TypeScript source, regenerated from schema.prisma on install
+# and on every build. Committing it would put a large machine-written diff in
+# every schema PR, and it is not the source of truth — the migrations are.
+packages/database/generated/
 build/
 out/
 .next/

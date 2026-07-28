@@ -48,22 +48,25 @@ These were chosen deliberately after research. Deviating silently is a defect.
 
 ## Current status
 
-**Phase 0 — Foundations and guardrails. In progress.** Slices 0.1 to 0.8 are merged. The exit gate is **not** met, so Phase 1 is not unlocked.
+**Phase 0 — Foundations and guardrails. Complete except the exit gate.** Every Phase 0 slice that does not need a machine is merged.
 
-| Slice | What landed                                                       | PR  |
-| ----- | ----------------------------------------------------------------- | --- |
-| 0.1   | Money and time primitives, pnpm workspace scaffold                | #1  |
-| 0.2   | Local Postgres/PostGIS and Redis stack with a verification script | #2  |
-| 0.3   | CI pipeline, CodeQL, CODEOWNERS, PR template, branch protection   | #3  |
-| 0.4   | Environment validation, connection strings composed from parts    | #12 |
-| 0.5   | Structured logging, correlation IDs, error-tracking seam          | #16 |
-| 0.6   | Architecture decision records 0001 to 0009                        | #17 |
-| 0.7   | Invariant checker, git hooks, project skills                      | #18 |
-| 0.8a  | Made workspace packages loadable by a real Node process           | #22 |
-| 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container   | #23 |
-| 0.11a | `apps/worker` — BullMQ, correlation across the queue, container   | #24 |
-| 0.9a  | GHCR image publishing, deployment stack, deploy/rollback/logs     | #25 |
-| 0.11b | `apps/web` on Next.js, `packages/contracts`, both deployed        | #26 |
+**Phase 1 — Identity and basic profiles. Started, on the product owner's decision, with the Phase 0 exit gate not yet met.** BRD §14 says not to, and §14 also makes progression the product owner's call; they made it on 28 July 2026 rather than sit idle waiting for a VPS. Phase 1 has its own staging requirement in its exit gate, so this defers the blocker rather than removing it. **Nothing goes to a real environment, and no real data is created, until the gate is met and backups exist.**
+
+| Slice | What landed                                                             | PR  |
+| ----- | ----------------------------------------------------------------------- | --- |
+| 0.1   | Money and time primitives, pnpm workspace scaffold                      | #1  |
+| 0.2   | Local Postgres/PostGIS and Redis stack with a verification script       | #2  |
+| 0.3   | CI pipeline, CodeQL, CODEOWNERS, PR template, branch protection         | #3  |
+| 0.4   | Environment validation, connection strings composed from parts          | #12 |
+| 0.5   | Structured logging, correlation IDs, error-tracking seam                | #16 |
+| 0.6   | Architecture decision records 0001 to 0009                              | #17 |
+| 0.7   | Invariant checker, git hooks, project skills                            | #18 |
+| 0.8a  | Made workspace packages loadable by a real Node process                 | #22 |
+| 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container         | #23 |
+| 0.11a | `apps/worker` — BullMQ, correlation across the queue, container         | #24 |
+| 0.9a  | GHCR image publishing, deployment stack, deploy/rollback/logs           | #25 |
+| 0.11b | `apps/web` on Next.js, `packages/contracts`, both deployed              | #26 |
+| 1.1   | `packages/database` — Prisma 7, the `users` table, migrations on deploy | #28 |
 
 Still outstanding against the BRD §14 Phase 0 list:
 
@@ -98,6 +101,7 @@ apps/worker             BullMQ. Maintenance queue, correlation across the bounda
 packages/core           Money and time primitives
 packages/config         Brand identity, environment validation (server and web)
 packages/contracts      Shared API types with runtime validation
+packages/database       Prisma schema, migrations, client factory
 packages/observability  Logging, correlation IDs, error-tracking seam
 packages/runtime        Process lifecycle — graceful shutdown, shared by both apps
 infra/postgres          Database initialisation SQL
@@ -134,6 +138,10 @@ Defined but never run for real: everything in `infra/compose`. It is rehearsed i
 | `pnpm --filter @app/api dev` | Run the API locally against `.env`                          |
 | `pnpm --filter @app/web dev` | Run the web app locally (needs `API_BASE_URL`)              |
 | `pnpm db:up` / `db:down`     | Start / stop the local Postgres and Redis stack             |
+| `pnpm db:migrate`            | Create and apply a migration against local dev              |
+| `pnpm db:migrate:deploy`     | Apply pending migrations (what the deploy runs)             |
+| `pnpm db:migrate:status`     | What is applied and what is pending                         |
+| `pnpm db:generate`           | Regenerate the Prisma client                                |
 | `pnpm db:verify`             | Assert extensions, exclusion constraint and Redis eviction  |
 | `pnpm db:reset`              | Destroy volumes and rebuild from scratch                    |
 | `pnpm licences:check`        | Dependency licence check                                    |
@@ -147,6 +155,10 @@ Deployment commands run on the box, not here, and take no pnpm wrapper — they 
 | `node scripts/deploy.mjs --env <env> --rollback`    | Return to the previous release               |
 | `node scripts/deploy.mjs --env <env> --status`      | What is recorded, what is running            |
 | `node scripts/logs.mjs --env <env> [--service api]` | Retrieve logs; `--env ingress` for the edge  |
+
+**Prisma is on 7, which is not what most documentation assumes.** `url` is banned from `schema.prisma` and lives in `prisma.config.ts`; the client needs a driver adapter; the generator emits TypeScript source, which is gitignored and regenerated on install. Migrations ship as their own image and run before the stack comes up. ADR 0014 records what the compatibility gate found and what was rejected.
+
+Integration tests (`*.db.test.ts`, `*.redis.test.ts`) need `pnpm db:up` **and** `pnpm db:migrate:deploy` against the test database.
 
 Coverage thresholds are enforced in `vitest.config.ts`: 90% lines, functions and statements, 85% branches, and cover `packages/*/src` and `apps/*/src` only. `scripts/` is outside them deliberately — its pure logic is unit tested under the `scripts` vitest project, and the parts that drive Docker are covered by the `Deploy rehearsal` CI job instead. `.nvmrc` pins Node 22; CI runs Node 24.
 

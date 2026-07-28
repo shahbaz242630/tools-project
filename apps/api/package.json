@@ -20,13 +20,12 @@
     "@platform/observability": "workspace:*",
     "@platform/runtime": "workspace:*",
     "ioredis": "^5.11.1",
-    "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "@platform/database": "workspace:*"
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.28",
-    "@types/node": "^26.1.1",
-    "@types/pg": "^8.20.0"
+    "@types/node": "^26.1.1"
   }
 }

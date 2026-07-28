@@ -188,6 +188,32 @@ function bringUp(env, tag) {
 }
 
 /**
+ * Apply pending migrations, before anything starts serving.
+ *
+ * Runs the `migrations` image at the same tag as the release, as a one-off
+ * container on this environment's internal network. It exits when it is done;
+ * a non-zero exit aborts the deploy before a single request reaches code that
+ * expects a schema which is not there.
+ *
+ * Safe to run on every deploy: `migrate deploy` applies only what is pending
+ * and is a no-op otherwise.
+ *
+ * Rolling the application back afterwards is also safe, and that is not an
+ * accident — expand-and-contract migrations are backwards compatible by
+ * construction, so the previous release still runs against the newer schema.
+ * A migration that breaks that rule breaks rollback, which is why the rule is
+ * not optional (BRD §15).
+ */
+function runMigrations(env, tag) {
+  // Deliberately not `--no-deps`: the service declares `depends_on` on a
+  // healthy Postgres, and compose starting and waiting for it is exactly what
+  // is wanted before the first migration statement runs.
+  const result = compose(env, tag, ['run', '--rm', 'migrations']);
+
+  return result.status === 0;
+}
+
+/**
  * Ask the running API whether it is ready.
  *
  * Over `docker exec` rather than HTTP from the host, because the API publishes
@@ -387,6 +413,18 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
   if (plan.isRedeploy) say('  (already the recorded release — redeploying it)');
   say('');
 
+  say('Applying migrations...');
+  if (!runMigrations(env, plan.target)) {
+    // Nothing has been swapped yet, so the previous release is still serving.
+    // Stopping here leaves it that way, which is the correct outcome: a broken
+    // migration must not be followed by code that assumes it worked.
+    say('');
+    say('FAILED: migrations did not apply. The running release is untouched.');
+    say(`  node scripts/logs.mjs --env ${env} --service postgres --since 10m`);
+    return 1;
+  }
+
+  say('');
   bringUp(env, plan.target);
   say('');
   say('Waiting for readiness...');

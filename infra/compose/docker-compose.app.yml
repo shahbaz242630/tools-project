@@ -27,6 +27,39 @@ x-logging: &logging
     max-file: '3'
 
 services:
+  # Runs to completion and exits, rather than serving anything. Behind a profile
+  # so `docker compose up` ignores it entirely — `scripts/deploy.mjs` invokes it
+  # with `compose run` before bringing the stack up, and aborts the deploy if it
+  # fails.
+  migrations:
+    image: ${IMAGE_REPOSITORY:?set IMAGE_REPOSITORY}/migrations:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    profiles: ['migrate']
+    restart: 'no'
+    logging: *logging
+
+    environment:
+      # Parts, not a URL. `prisma.config.ts` composes and percent-encodes it —
+      # concatenating here would break on any password containing `/`, `@` or
+      # `:`, which is most of what `openssl rand -base64` produces.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+
+    networks:
+      - internal
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
   web:
     # The only service the ingress can reach. Everything the browser sees comes
     # from here; it calls the API server-side over the internal network.

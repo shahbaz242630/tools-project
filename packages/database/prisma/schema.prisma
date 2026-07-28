@@ -1,0 +1,39 @@
+// The database schema. Migrations in ./migrations are the source of truth for
+// what is actually deployed; this file describes the shape they build up to.
+//
+// Prisma 7 notes, all of which differ from most documentation still in
+// circulation (see ADR 0014):
+//   - `url` is not permitted here. Connection settings live in prisma.config.ts.
+//   - The client requires a driver adapter; ours is @prisma/adapter-pg.
+//   - The generator emits TypeScript source, not compiled JavaScript.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// A platform account.
+///
+/// The internal `id` is the authoritative platform identity (BRD §6). Identity
+/// and payment provider IDs are stored as references against it in later
+/// phases, never as the primary key — a provider that deletes an account, or
+/// that we stop using, must not take the identity with it.
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// citext, so `Alice@Example.com` and `alice@example.com` are one account.
+  /// Case folding in application code would leave the database able to hold
+  /// both, and the uniqueness guarantee has to be the database's.
+  email String @unique @db.Citext
+
+  /// Stored UTC. Rendering and rental-period arithmetic happen in the booking's
+  /// stored IANA timezone (BRD §6.1), never in the database.
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("users")
+}

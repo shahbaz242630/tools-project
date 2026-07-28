@@ -7,8 +7,9 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { describeEnv, loadEnv } from '@platform/config';
 import { createLogger } from '@platform/observability';
 import type { Logger } from '@platform/observability';
+import { createPrismaClient, ping } from '@platform/database';
+import type { PrismaClient } from '@platform/database';
 import Redis from 'ioredis';
-import { Pool } from 'pg';
 import { AppModule } from './app.module.js';
 import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
@@ -38,12 +39,10 @@ async function bootstrap(): Promise<void> {
 
   const logger = createLogger({ service: 'api', level: env.LOG_LEVEL });
 
-  const pool = new Pool({
-    connectionString: env.databaseUrl,
-    // Bounded so a dead database surfaces as a failed readiness check rather
-    // than a connection attempt that never returns.
-    connectionTimeoutMillis: 5_000,
-  });
+  // One client, one pool. Prisma 7 connects through a `pg` driver adapter, so
+  // this is the same driver the raw PostGIS queries will use later (BRD §4.2)
+  // rather than a second pool alongside it.
+  const database = createPrismaClient({ connectionString: env.databaseUrl });
 
   const redis = new Redis(env.redisUrl, {
     maxRetriesPerRequest: 1,
@@ -61,7 +60,12 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
-      checks: [new PostgresCheck(pool), new RedisCheck(redis)],
+      checks: [
+        // `ping` is bound to the client here rather than the check holding a
+        // Prisma instance, so the check stays testable without one.
+        new PostgresCheck({ ping: () => ping(database) }),
+        new RedisCheck(redis),
+      ],
       logger,
     }),
     new FastifyAdapter(),
@@ -70,7 +74,7 @@ async function bootstrap(): Promise<void> {
 
   await app.register(helmet);
 
-  installShutdownHandlers(app, pool, redis, logger);
+  installShutdownHandlers(app, database, redis, logger);
 
   await app.listen({ port: env.API_PORT, host: env.API_HOST });
 
@@ -83,7 +87,7 @@ async function bootstrap(): Promise<void> {
 
 function installShutdownHandlers(
   app: NestFastifyApplication,
-  pool: Pool,
+  database: PrismaClient,
   redis: Redis,
   logger: Logger,
 ): void {
@@ -94,7 +98,7 @@ function installShutdownHandlers(
     // Stop accepting work first, then release what in-flight requests needed.
     closables: [
       { name: 'http server', close: () => app.close() },
-      { name: 'postgres pool', close: () => pool.end() },
+      { name: 'database', close: () => database.$disconnect() },
       {
         name: 'redis',
         close: async () => {

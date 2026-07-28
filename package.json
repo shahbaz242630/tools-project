@@ -26,7 +26,12 @@
     "verify:runtime": "node scripts/verify-runtime-imports.mjs",
     "invariants": "node scripts/check-invariants.mjs",
     "hooks:install": "node scripts/install-hooks.mjs",
-    "prepare": "node scripts/install-hooks.mjs"
+    "prepare": "node scripts/install-hooks.mjs && pnpm --filter @platform/database generate",
+    "db:generate": "pnpm --filter @platform/database generate",
+    "db:migrate": "pnpm --filter @platform/database migrate",
+    "db:migrate:deploy": "pnpm --filter @platform/database migrate:deploy",
+    "db:migrate:status": "pnpm --filter @platform/database migrate:status",
+    "db:migrate:test": "pnpm --filter @platform/database migrate:deploy"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
