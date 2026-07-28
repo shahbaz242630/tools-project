@@ -49,6 +49,13 @@ jobs:
       fail-fast: false
       matrix:
         app: [api, worker, web]
+        include:
+          # Migrations ship as their own image so the schema arrives as a
+          # published artefact tagged with the same commit as the code that
+          # expects it. Built from packages/database, so its Dockerfile does not
+          # follow the apps/* convention the other three use.
+          - app: migrations
+            dockerfile: packages/database/Dockerfile
 
     steps:
       - uses: actions/checkout@v7
@@ -83,7 +90,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/${{ matrix.app }}/Dockerfile
+          file: ${{ matrix.dockerfile || format('apps/{0}/Dockerfile', matrix.app) }}
           push: true
           tags: ${{ steps.image.outputs.ref }}
           # amd64 only. The VPS is amd64 (ADR 0009) and so is the runner;

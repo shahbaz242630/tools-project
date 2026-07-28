@@ -327,6 +327,9 @@ jobs:
             -t "local/rental/worker:${TAG_A}" -t "local/rental/worker:${TAG_B}" .
           docker build -f apps/web/Dockerfile \
             -t "local/rental/web:${TAG_A}" -t "local/rental/web:${TAG_B}" .
+          docker build -f packages/database/Dockerfile \
+            -t "local/rental/migrations:${TAG_A}" \
+            -t "local/rental/migrations:${TAG_B}" .
 
       - name: Build a release that starts but never serves
         run: |
@@ -344,6 +347,12 @@ jobs:
           docker build -t "local/rental/api:${TAG_BROKEN}" \
                        -t "local/rental/worker:${TAG_BROKEN}" \
                        -t "local/rental/web:${TAG_BROKEN}" /tmp/broken
+
+          # The broken release still needs *working* migrations at its tag: the
+          # deploy must fail at the readiness check, which is what this tests,
+          # rather than earlier at the migration step for an unrelated reason.
+          docker tag "local/rental/migrations:${TAG_A}" \
+                     "local/rental/migrations:${TAG_BROKEN}"
 
       - name: Provision the box
         run: |
@@ -377,6 +386,37 @@ jobs:
 
       - name: Deploy
         run: node scripts/deploy.mjs --env staging --tag "${TAG_A}" --timeout 180
+
+      - name: Migrations ran, and the schema is really there
+        run: |
+          set -euo pipefail
+
+          # `deploy.mjs` reports success only if `migrate deploy` exited 0, but
+          # a migration tool that prints an error and exits 0 is a real failure
+          # mode we have already hit once. Assert the schema, not the exit code.
+          tables=$(docker exec rental-staging-postgres                      psql -U rental -d rental -tAc                      "select tablename from pg_tables where schemaname='public' order by 1;")
+          echo "$tables"
+
+          for table in users _prisma_migrations; do
+            if ! echo "$tables" | grep -qx "$table"; then
+              echo "::error::table ${table} is missing — migrations did not apply"
+              exit 1
+            fi
+          done
+
+          # citext is created by the migration, not inherited from the local
+          # init SQL, so a fresh environment builds the same schema.
+          if [ "$(docker exec rental-staging-postgres psql -U rental -d rental -tAc                    "select extname from pg_extension where extname='citext';")" != "citext" ]; then
+            echo "::error::the citext extension is missing"
+            exit 1
+          fi
+
+          # It ran to completion and left nothing behind.
+          if docker ps --format '{{.Names}}' | grep -q 'migrations'; then
+            echo "::error::the migrations container is still running"
+            exit 1
+          fi
+          echo "schema applied by the migrations image, container exited"
 
       - name: The deployed images carry no credentials
         run: |
@@ -569,10 +609,28 @@ jobs:
   worker-integration:
     name: Worker integration
     runs-on: ubuntu-latest
-    # BullMQ is almost entirely Redis semantics -- atomic moves between sorted
-    # sets, lock renewal, retry bookkeeping. A fake would test the fake, so
-    # these run against a real broker.
+    # Runs every test that needs a live service, not only the worker's -- the
+    # job name predates the database tests and is kept because it is a required
+    # check, and renaming it would block merges until branch protection caught
+    # up.
+    #
+    # BullMQ is almost entirely Redis semantics, and the schema guarantees are
+    # Postgres constraints. A fake would test the fake in both cases.
     services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: rental
+          POSTGRES_DB: rental_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rental -d rental_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
       redis:
         image: redis:7-alpine
         ports:
@@ -592,11 +650,48 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      - name: Run Redis-backed tests
+      # The suite asserts what the migrations built, so they have to have been
+      # applied -- and applying them here also proves they run cleanly against a
+      # database that has never seen them, which is the case that matters on a
+      # newly provisioned box.
+      - name: Apply migrations to the test database
+        run: pnpm db:migrate:deploy
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: rental
+          # Any value. The service uses trust auth, but @platform/config
+          # requires a non-empty password so that a real environment cannot
+          # start with a blank one.
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: rental_test
+
+      - name: Migrations are idempotent
+        run: pnpm db:migrate:status
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: rental
+          # Any value. The service uses trust auth, but @platform/config
+          # requires a non-empty password so that a real environment cannot
+          # start with a blank one.
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: rental_test
+
+      - name: Run service-backed tests
         run: pnpm test:integration
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: rental
+          # Any value. The service uses trust auth, but @platform/config
+          # requires a non-empty password so that a real environment cannot
+          # start with a blank one.
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: rental_test
+          POSTGRES_TEST_DB: rental_test
 
   security:
     name: Secrets and dependencies

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The package root, not ./src. Prisma 7's generator emits TypeScript rather
+    // than compiled JavaScript, and it lands in ./generated — outside src, so a
+    // rootDir of ./src cannot contain the whole program. Output is therefore
+    // dist/src/... and dist/generated/..., which the exports map reflects.
+    "rootDir": ".",
+    "outDir": "./dist",
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "generated/**/*"]
+}

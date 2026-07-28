@@ -5,8 +5,21 @@ import { defineConfig } from 'vitest/config';
 const fromRoot = (relative: string): string =>
   fileURLToPath(new URL(relative, import.meta.url));
 
-/** Tests that talk to a live Redis, by naming convention. */
-const REQUIRES_REDIS = ['**/*.redis.test.ts'];
+/**
+ * Tests that need a live service, by naming convention. Kept out of the default
+ * run so `pnpm test` needs nothing running; `pnpm test:integration` opts in.
+ */
+const REQUIRES_SERVICES = ['**/*.redis.test.ts', '**/*.db.test.ts'];
+
+// Connection details for those services live in `.env` on a developer machine.
+// CI sets them directly as job environment, so an absent file is normal rather
+// than an error — and swallowing the failure here is safe because the tests
+// that need the values fail loudly and by name if they are missing.
+try {
+  process.loadEnvFile('.env');
+} catch {
+  // No .env: CI, or a machine that has not run `pnpm db:up` yet.
+}
 
 export default defineConfig({
   // Workspace packages resolve to TypeScript source during tests, so the suite
@@ -29,6 +42,7 @@ export default defineConfig({
       '@platform/observability': fromRoot('./packages/observability/src/index.ts'),
       '@platform/runtime': fromRoot('./packages/runtime/src/index.ts'),
       '@platform/contracts': fromRoot('./packages/contracts/src/index.ts'),
+      '@platform/database': fromRoot('./packages/database/src/index.ts'),
     },
   },
   test: {
@@ -38,7 +52,7 @@ export default defineConfig({
         test: {
           name: 'packages',
           include: ['packages/*/src/**/*.test.ts'],
-          exclude: REQUIRES_REDIS,
+          exclude: REQUIRES_SERVICES,
           environment: 'node',
         },
       },
@@ -47,7 +61,7 @@ export default defineConfig({
         test: {
           name: 'worker',
           include: ['apps/worker/src/**/*.test.ts'],
-          exclude: REQUIRES_REDIS,
+          exclude: REQUIRES_SERVICES,
           environment: 'node',
         },
       },
@@ -82,11 +96,12 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'integration',
-          // Needs a live Redis, so it is not in the default run. `pnpm test`
+          // Needs a live Redis or Postgres, so it is not in the default run.
+          // `pnpm test`
           // names its projects explicitly rather than excluding this one --
           // a new project must be opted in, and forgetting shows up as tests
           // that visibly do not run rather than as silent coverage loss.
-          include: REQUIRES_REDIS,
+          include: REQUIRES_SERVICES,
           environment: 'node',
         },
       },
@@ -110,7 +125,7 @@ export default defineConfig({
         test: {
           name: 'api',
           include: ['apps/api/src/**/*.test.ts'],
-          exclude: REQUIRES_REDIS,
+          exclude: REQUIRES_SERVICES,
           environment: 'node',
         },
       },
@@ -128,6 +143,9 @@ export default defineConfig({
         '**/*.test.ts',
         '**/*.test.tsx',
         '**/index.ts',
+        // Machine-written by `prisma generate`. Holding generated code to a
+        // coverage threshold measures Prisma, not us.
+        '**/generated/**',
         // App Router pages and layouts are composition roots, the same argument
         // as main.ts below: they wire a component to a data source and a route.
         // Testing them by mocking the framework would test the mocks, and they
