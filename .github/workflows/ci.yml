@@ -208,8 +208,16 @@ jobs:
           # Liveness deliberately depends on nothing, so this proves the
           # process starts without a database standing by. Readiness against
           # real dependencies is covered by the integration suite.
+          # The Clerk values are placeholders. No token is verified here and no
+          # Clerk instance is contacted -- the API validates its whole
+          # environment at startup, so it will not boot without them, which is
+          # the behaviour this step exists to prove works. The public key has to
+          # be PEM-shaped because the schema checks that; it is written on one
+          # line with no `\n` escapes because nothing here needs to parse it.
           docker run -d --name api-ci -p 3000:3000 \
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
+            -e 'CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----ci-only-not-a-real-key-----END PUBLIC KEY-----' \
+            -e CLERK_AUTHORIZED_PARTIES=http://localhost:3000 \
             rental-api:ci
 
           # Generous: a cold Node start on a loaded runner has been seen to take
@@ -612,6 +620,33 @@ jobs:
 
           node scripts/logs.mjs --env staging --service worker --since 30m > /dev/null
           echo "web, api, worker and ingress logs all retrievable"
+
+      # Before Tear down, deliberately. Removing the containers destroys the
+      # only record of why they were unhealthy, and this job has already cost
+      # one debugging session that a captured log would have ended in a minute.
+      # Same lesson as the deploy script's own capture-before-revert.
+      - name: Capture what failed
+        if: failure()
+        run: |
+          for service in web api worker migrations; do
+            echo "::group::${service}"
+            docker logs "rental-staging-${service}" 2>&1 | tail -80 || echo "(no container)"
+            echo "::endgroup::"
+          done
+
+          echo "::group::container states"
+          docker ps -a --filter "name=rental-staging-" \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo "::endgroup::"
+
+          # A container can be `unhealthy` for a reason its stdout never shows —
+          # the probe's own output lives here and nowhere else.
+          echo "::group::health probe output"
+          for service in web api; do
+            docker inspect "rental-staging-${service}" \
+              --format '{{.Name}}: {{json .State.Health}}' 2>/dev/null || true
+          done
+          echo "::endgroup::"
 
       - name: Tear down
         if: always()
