@@ -5,7 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { verifyToken } from '@clerk/backend';
-import { describeEnv, loadEnv } from '@platform/config';
+import { describeEnv, loadEnv, loadIdentityEnv } from '@platform/config';
 import { createLogger } from '@platform/observability';
 import type { Logger } from '@platform/observability';
 import { createPrismaClient, ping } from '@platform/database';
@@ -44,6 +44,12 @@ async function bootstrap(): Promise<void> {
   // problem at once, and stderr is the only channel available this early.
   const env = loadEnv();
 
+  // Separate from loadEnv because the worker shares that schema and has no
+  // business holding identity configuration. Loaded here, immediately, so a
+  // missing key still fails at startup naming the variable rather than at the
+  // first authenticated request.
+  const identityEnv = loadIdentityEnv();
+
   const logger = createLogger({ service: 'api', level: env.LOG_LEVEL });
 
   // One client, one pool. Prisma 7 connects through a `pg` driver adapter, so
@@ -71,8 +77,8 @@ async function bootstrap(): Promise<void> {
   // not given the secret key that would make this a network call instead.
   const sessionVerifier = new ClerkSessionVerifier({
     verifyToken,
-    jwtKey: env.CLERK_JWT_PUBLIC_KEY,
-    authorizedParties: env.CLERK_AUTHORIZED_PARTIES,
+    jwtKey: identityEnv.CLERK_JWT_PUBLIC_KEY,
+    authorizedParties: identityEnv.CLERK_AUTHORIZED_PARTIES,
   });
 
   const identity = new IdentityService(
