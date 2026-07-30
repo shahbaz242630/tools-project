@@ -45,6 +45,7 @@ These were chosen deliberately after research. Deviating silently is a defect.
 - **Prisma + PostGIS** (§4.2): Prisma has no geography support. Keep `latitude`/`longitude` as ordinary columns so the model stays writable; maintain a **nullable** `Unsupported("geography(Point,4326)")` column by trigger; GiST index it; raw SQL for radius queries, confined to the Search & Location module behind a repository interface.
 - **Notification channels** (§4.1): iOS web push only works for home-screen-installed apps. Push is supplementary. Every critical event must be deliverable by email or SMS, and a critical send with no non-push channel is a failure, not a silent success.
 - **No platform-funded cover** (§8.15.1): never build an advertised cover amount, cover tier or damage guarantee funded by us. Substance beats labels — that is regulated insurance. Cover above the hold comes only from an authorised partner, from Phase 10.
+- **Identity** (ADR 0015): Clerk holds credentials; `users` is a **mirror** and `users.id` is the platform identity that every later foreign key points at. `clerkUserId` is an ordinary column, never a primary key. The **API is given only the JWT public key** — never `CLERK_SECRET_KEY` — which keeps session verification networkless and means a compromised API yields a key Clerk already publishes. The web app holds the secrets because Clerk's Next SDK requires it. Deletion is a soft delete with a tombstoned email; the ledger will reference these rows and can never lose a counterparty.
 
 ## Current status
 
@@ -67,6 +68,7 @@ These were chosen deliberately after research. Deviating silently is a defect.
 | 0.9a  | GHCR image publishing, deployment stack, deploy/rollback/logs           | #25 |
 | 0.11b | `apps/web` on Next.js, `packages/contracts`, both deployed              | #26 |
 | 1.1   | `packages/database` — Prisma 7, the `users` table, migrations on deploy | #28 |
+| 1.2   | Registration and login on Clerk, the identity mirror, server-side RBAC  | —   |
 
 Still outstanding against the BRD §14 Phase 0 list:
 
@@ -123,29 +125,33 @@ Defined but never run for real: everything in `infra/compose`. It is rehearsed i
 
 **Request path.** Browser → Caddy ingress → `web` → (server-side) `api` → Postgres/Redis. Only `web` joins the `edge` network; the API is not reachable from the internet, and CI asserts that. When a browser-facing API route is genuinely needed, add it deliberately.
 
+`apps/web/src/app/api/webhooks/clerk` is the **one such route that exists**, added deliberately in slice 1.2: Clerk cannot reach the API directly, so the web app verifies the delivery's signature — it is where the raw unparsed body exists — and forwards the event inward. The API owns what the event means and is the only service that writes.
+
+**Clerk instance configuration is load-bearing and lives outside version control.** A custom `email` session claim, a webhook endpoint, and the JWT public key all have to exist per instance, and staging and production must use **separate Clerk instances**. The provisioning list is in ADR 0015; an instance missing the claim produces correctly-signed tokens that the API rejects.
+
 ## Commands
 
-| Command                      | Does                                                        |
-| ---------------------------- | ----------------------------------------------------------- |
-| `pnpm test`                  | Unit suite (`test:watch`, `test:coverage` for the variants) |
-| `pnpm test:integration`      | Redis-backed tests; needs `pnpm db:up`                      |
-| `pnpm typecheck`             | Typecheck every package, tests included                     |
-| `pnpm lint`                  | ESLint                                                      |
-| `pnpm format:check`          | Prettier, verify only (`pnpm format` writes)                |
-| `pnpm build`                 | Build all packages                                          |
-| `pnpm invariants`            | Project invariant checks — the rules in this file           |
-| `pnpm verify:runtime`        | Confirm built packages load in a real Node process          |
-| `pnpm --filter @app/api dev` | Run the API locally against `.env`                          |
-| `pnpm --filter @app/web dev` | Run the web app locally (needs `API_BASE_URL`)              |
-| `pnpm db:up` / `db:down`     | Start / stop the local Postgres and Redis stack             |
-| `pnpm db:migrate`            | Create and apply a migration against local dev              |
-| `pnpm db:migrate:deploy`     | Apply pending migrations (what the deploy runs)             |
-| `pnpm db:migrate:status`     | What is applied and what is pending                         |
-| `pnpm db:generate`           | Regenerate the Prisma client                                |
-| `pnpm db:verify`             | Assert extensions, exclusion constraint and Redis eviction  |
-| `pnpm db:reset`              | Destroy volumes and rebuild from scratch                    |
-| `pnpm licences:check`        | Dependency licence check                                    |
-| `pnpm hooks:install`         | Reinstall git hooks (runs automatically after install)      |
+| Command                      | Does                                                          |
+| ---------------------------- | ------------------------------------------------------------- |
+| `pnpm test`                  | Unit suite (`test:watch`, `test:coverage` for the variants)   |
+| `pnpm test:integration`      | Redis-backed tests; needs `pnpm db:up`                        |
+| `pnpm typecheck`             | Typecheck every package, tests included                       |
+| `pnpm lint`                  | ESLint                                                        |
+| `pnpm format:check`          | Prettier, verify only (`pnpm format` writes)                  |
+| `pnpm build`                 | Build all packages                                            |
+| `pnpm invariants`            | Project invariant checks — the rules in this file             |
+| `pnpm verify:runtime`        | Confirm built packages load in a real Node process            |
+| `pnpm --filter @app/api dev` | Run the API locally on **3001** against `.env`                |
+| `pnpm --filter @app/web dev` | Run the web app locally on 3000 (needs `apps/web/.env.local`) |
+| `pnpm db:up` / `db:down`     | Start / stop the local Postgres and Redis stack               |
+| `pnpm db:migrate`            | Create and apply a migration against local dev                |
+| `pnpm db:migrate:deploy`     | Apply pending migrations (what the deploy runs)               |
+| `pnpm db:migrate:status`     | What is applied and what is pending                           |
+| `pnpm db:generate`           | Regenerate the Prisma client                                  |
+| `pnpm db:verify`             | Assert extensions, exclusion constraint and Redis eviction    |
+| `pnpm db:reset`              | Destroy volumes and rebuild from scratch                      |
+| `pnpm licences:check`        | Dependency licence check                                      |
+| `pnpm hooks:install`         | Reinstall git hooks (runs automatically after install)        |
 
 Deployment commands run on the box, not here, and take no pnpm wrapper — they must work when only Node and Docker are present:
 
@@ -173,6 +179,8 @@ Local Postgres/PostGIS and Redis run in Docker. Never point local development at
 Conventional commits. One vertical slice per feature branch. All changes via PR with green checks. Protected `main`.
 
 Secrets go in the cloud secret manager and `.env.local` — never committed, never in frontend bundles, never in PR jobs.
+
+Two env files, not one: the repository-root `.env` is the API's and the worker's; `apps/web/.env.local` is the web app's. The split is deliberate — the web app is the only process a browser can reach, so it holds no database credentials at all. Each has an `.env.example` beside it. Note that `.gitignore` ignores `.env.*` and negates only `!.env.example`, so an example file named anything else is silently untracked.
 
 Migrations use expand-and-contract. Every migration states data impact and a rollback/roll-forward note, and has a test.
 

@@ -6,13 +6,17 @@ import {
   READINESS_TIMEOUT_MS,
 } from './health/readiness.service.js';
 import { createRecordingLogger } from '@platform/observability/testing';
+import { createIdentityFakes } from './identity/testing/fakes.js';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
+  const { sessionVerifier, service } = createIdentityFakes();
+
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
         checks: [],
         logger: createRecordingLogger().logger,
+        identity: { sessionVerifier, service },
         ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
       }),
     ],

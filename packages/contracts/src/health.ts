@@ -16,6 +16,11 @@
  */
 
 import { z } from 'zod';
+import { parseWith } from './parse.js';
+
+// Re-exported so existing importers of ContractViolationError from this module
+// keep working; it now lives in ./parse.js alongside the helper that raises it.
+export { ContractViolationError } from './parse.js';
 
 /** Where the API serves these. Callers should not spell the paths themselves. */
 export const HEALTH_PATH = '/health';
@@ -51,37 +56,6 @@ export const readyResponseSchema = z.object({
   checks: z.record(z.string(), dependencyStatusSchema),
 });
 export type ReadyResponse = z.infer<typeof readyResponseSchema>;
-
-/** Raised when a response does not match the contract. */
-export class ContractViolationError extends Error {
-  readonly issues: readonly string[];
-
-  constructor(what: string, issues: readonly string[]) {
-    super(
-      `${what} did not match the expected contract:\n${issues
-        .map((issue) => `  - ${issue}`)
-        .join('\n')}`,
-    );
-    this.name = 'ContractViolationError';
-    this.issues = issues;
-  }
-}
-
-function parseWith<T>(schema: z.ZodType<T>, what: string, raw: unknown): T {
-  const result = schema.safeParse(raw);
-
-  if (!result.success) {
-    throw new ContractViolationError(
-      what,
-      result.error.issues.map((issue) => {
-        const path = issue.path.join('.');
-        return path === '' ? issue.message : `${path}: ${issue.message}`;
-      }),
-    );
-  }
-
-  return result.data;
-}
 
 export function parseHealthResponse(raw: unknown): HealthResponse {
   return parseWith(healthResponseSchema, 'The health response', raw);

@@ -10,18 +10,33 @@ async function freshWebEnv() {
   return (await import('./env')).webEnv;
 }
 
+/**
+ * Everything `loadWebEnv` requires beyond the variable under test.
+ *
+ * Stubbed rather than omitted because the schema reports *every* problem at
+ * once: a test that set only `API_BASE_URL` would fail with the Clerk keys in
+ * the message, pointing at the wrong thing entirely.
+ */
+function stubRequired(): void {
+  vi.stubEnv('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'pk_test_example');
+  vi.stubEnv('CLERK_SECRET_KEY', 'sk_test_example');
+  vi.stubEnv('CLERK_WEBHOOK_SIGNING_SECRET', 'whsec_test_example');
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
 describe('webEnv', () => {
   it('reads the validated environment', async () => {
+    stubRequired();
     vi.stubEnv('API_BASE_URL', 'http://api:3000');
     const webEnv = await freshWebEnv();
     expect(webEnv().API_BASE_URL).toBe('http://api:3000');
   });
 
   it('reads the environment once and caches it', async () => {
+    stubRequired();
     vi.stubEnv('API_BASE_URL', 'http://api:3000');
     const webEnv = await freshWebEnv();
 
@@ -43,8 +58,21 @@ describe('webEnv', () => {
   });
 
   it('throws when the environment is invalid, at call time', async () => {
+    stubRequired();
     vi.stubEnv('API_BASE_URL', 'not-a-url');
     const webEnv = await freshWebEnv();
     expect(() => webEnv()).toThrow(/API_BASE_URL/);
+  });
+
+  it('throws when a Clerk key is missing', async () => {
+    // Clerk's SDK reads these from process.env itself, so without validating
+    // them here the failure arrives at the first sign-in as a stack trace from
+    // inside node_modules rather than at startup naming the variable.
+    vi.stubEnv('API_BASE_URL', 'http://api:3000');
+    vi.stubEnv('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', '');
+    vi.stubEnv('CLERK_SECRET_KEY', '');
+
+    const webEnv = await freshWebEnv();
+    expect(() => webEnv()).toThrow(/CLERK/);
   });
 });

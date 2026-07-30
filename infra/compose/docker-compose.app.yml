@@ -80,6 +80,27 @@ services:
       # would inline it into the browser bundle.
       API_BASE_URL: http://api:3000
 
+      # --- Clerk (ADR 0015) ---
+      # Public, and compiled into the browser bundle — that is what the
+      # NEXT_PUBLIC_ prefix means and it is correct here.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+
+      # Secret. Clerk's Next SDK needs it for the session handshake, so the
+      # internet-facing service holds a key that can read the whole user
+      # directory. That is a real cost of a hosted identity provider and it
+      # stops here: the API below is given only the public JWT key.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set CLERK_SECRET_KEY}
+
+      # Secret. Verifies webhook signatures. Here rather than on the API
+      # because the delivery lands on the edge and verification needs the raw
+      # unparsed body, which exists only in this process.
+      CLERK_WEBHOOK_SIGNING_SECRET: ${CLERK_WEBHOOK_SIGNING_SECRET:?set CLERK_WEBHOOK_SIGNING_SECRET}
+
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+      NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
+      NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /
+      NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: /
+
     networks:
       - edge
       - internal
@@ -137,6 +158,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+
+      # --- Clerk (ADR 0015) ---
+      # A *public* key, so not a secret — but still `:?` rather than a default,
+      # because an API that starts without it authenticates nobody and only
+      # discovers that on the first request.
+      #
+      # Supplying it is what makes verification networkless: the API never calls
+      # Clerk, so a Clerk outage cannot hang an authenticated request. There is
+      # deliberately no CLERK_SECRET_KEY here — that key can mint sessions and
+      # read the whole user directory, and checking a signature needs neither.
+      CLERK_JWT_PUBLIC_KEY: ${CLERK_JWT_PUBLIC_KEY:?set CLERK_JWT_PUBLIC_KEY}
+
+      # Origins whose tokens this API accepts, as the `azp` claim. Without it a
+      # token minted by any Clerk application on the instance verifies here.
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:?set CLERK_AUTHORIZED_PARTIES}
 
     # Internal only. The API is not on `edge` and is therefore unreachable from
     # the ingress and from the internet: the browser never calls it directly,

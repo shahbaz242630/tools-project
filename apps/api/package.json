@@ -10,6 +10,7 @@
     "dev": "node --env-file=../../.env --watch dist/main.js"
   },
   "dependencies": {
+    "@clerk/backend": "^3.14.0",
     "@fastify/helmet": "^13.1.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",
@@ -17,12 +18,13 @@
     "@platform/config": "workspace:*",
     "@platform/contracts": "workspace:*",
     "@platform/core": "workspace:*",
+    "@platform/database": "workspace:*",
     "@platform/observability": "workspace:*",
     "@platform/runtime": "workspace:*",
     "ioredis": "^5.11.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "@platform/database": "workspace:*"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.28",

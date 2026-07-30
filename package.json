@@ -12,7 +12,7 @@
     "test": "vitest run --project packages --project api --project worker --project scripts --project web",
     "test:watch": "vitest --project packages --project api --project worker --project scripts --project web",
     "test:coverage": "vitest run --project packages --project api --project worker --project scripts --project web --coverage",
-    "test:integration": "vitest run --project integration",
+    "test:integration": "vitest run --project integration --no-file-parallelism",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

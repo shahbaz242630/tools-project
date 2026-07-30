@@ -365,8 +365,24 @@ jobs:
           echo "RELEASE_ROOT=${RUNNER_TEMP}/release-root" >> "$GITHUB_ENV"
           mkdir -p "${RUNNER_TEMP}/release-root"
 
+          # The Clerk values are rehearsal-only placeholders. This job proves the
+          # stack starts, is wired together and can be rolled back -- it never
+          # signs anyone in, so no real instance is involved and no Clerk secret
+          # is needed in CI.
+          #
+          # The public key is written on one line with no `\n` escapes, which is
+          # not what a real one looks like. That is deliberate: sed interprets
+          # `\n` in a replacement as an actual newline and would split the value
+          # across two lines, silently corrupting the env file. The startup
+          # check only validates the `-----BEGIN PUBLIC KEY-----` prefix, and
+          # the unescaping is covered by unit tests in @platform/config.
           sed -e 's|^IMAGE_REPOSITORY=.*|IMAGE_REPOSITORY=local/rental|' \
               -e 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=rehearsal-only|' \
+              -e 's|^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.*|NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_rehearsal|' \
+              -e 's|^CLERK_SECRET_KEY=.*|CLERK_SECRET_KEY=sk_test_rehearsal|' \
+              -e 's|^CLERK_WEBHOOK_SIGNING_SECRET=.*|CLERK_WEBHOOK_SIGNING_SECRET=whsec_rehearsal|' \
+              -e 's|^CLERK_JWT_PUBLIC_KEY=.*|CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----rehearsal-only-not-a-real-key-----END PUBLIC KEY-----|' \
+              -e 's|^CLERK_AUTHORIZED_PARTIES=.*|CLERK_AUTHORIZED_PARTIES=http://localhost|' \
               infra/compose/app.env.example > "${RUNNER_TEMP}/release-root/staging.env"
 
           sed -e 's|^ACME_EMAIL=.*|ACME_EMAIL=rehearsal@example.invalid|' \
@@ -692,6 +708,14 @@ jobs:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: rental_test
           POSTGRES_TEST_DB: rental_test
+          # These tests exercise Postgres, not Clerk, but they reach the
+          # database through `loadEnv()` — which validates the whole
+          # environment at once and therefore requires these. Placeholders: no
+          # token is ever verified here, and no Clerk instance is contacted.
+          # The public key still has to be PEM-shaped because the schema checks
+          # that, which is the point of checking it.
+          CLERK_JWT_PUBLIC_KEY: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END PUBLIC KEY-----\n"
+          CLERK_AUTHORIZED_PARTIES: http://localhost:3000
 
   security:
     name: Secrets and dependencies

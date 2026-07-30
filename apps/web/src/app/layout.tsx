@@ -1,4 +1,12 @@
+import {
+  ClerkProvider,
+  Show,
+  SignInButton,
+  SignUpButton,
+  UserButton,
+} from '@clerk/nextjs';
 import { BRAND } from '@platform/config';
+import Link from 'next/link';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
@@ -24,7 +32,29 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   // pronounces the page — and this is a UK-only marketplace.
   return (
     <html lang="en-GB">
-      <body>{children}</body>
+      <body>
+        {/* Inside <body>, not wrapping <html>. Clerk injects elements, and
+            wrapping the document element puts them outside <body> where the
+            browser relocates them and hydration then disagrees with the server. */}
+        <ClerkProvider>
+          {/* Deliberately unstyled, like the rest of the scaffold. There is no
+              brand yet (ADR 0005), and inventing a visual identity for an
+              unnamed product produces work that is thrown away twice. */}
+          <header>
+            <nav aria-label="Account">
+              <Show when="signed-out">
+                <SignInButton />
+                <SignUpButton />
+              </Show>
+              <Show when="signed-in">
+                <Link href="/account">Account</Link>
+                <UserButton />
+              </Show>
+            </nav>
+          </header>
+          {children}
+        </ClerkProvider>
+      </body>
     </html>
   );
 }

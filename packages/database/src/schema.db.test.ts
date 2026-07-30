@@ -10,6 +10,7 @@
  *   pnpm db:up && pnpm db:migrate:test
  */
 
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient, ping } from './index.js';
@@ -26,12 +27,32 @@ const client = createPrismaClient({
   }),
 });
 
-/** Distinct per test, so a leftover row cannot make a later assertion pass. */
-let counter = 0;
-const uniqueEmail = () => `user-${Date.now()}-${(counter += 1)}@example.invalid`;
+/**
+ * Distinct per test, so a leftover row cannot make a later assertion pass.
+ *
+ * randomUUID rather than a timestamp and a counter: two test files starting in
+ * the same millisecond generate the same values, and the unique-constraint
+ * violation that follows looks exactly like the bug these tests detect.
+ */
+const uniqueEmail = () => `user-${randomUUID()}@example.invalid`;
+const uniqueClerkId = () => `user_${randomUUID()}`;
+
+/**
+ * A row's required fields.
+ *
+ * `clerkUserId` is NOT NULL with no default: the mirror exists to be joined to
+ * an identity, and a row without one could never authenticate. Spelled out in a
+ * helper so a test asserting something about `email` does not have to restate
+ * that every time.
+ */
+const newUser = (overrides: { email?: string; clerkUserId?: string } = {}) => ({
+  clerkUserId: overrides.clerkUserId ?? uniqueClerkId(),
+  email: overrides.email ?? uniqueEmail(),
+});
 
 beforeEach(async () => {
   await client.user.deleteMany();
+  await client.webhookEvent.deleteMany();
 });
 
 afterAll(async () => {
@@ -46,22 +67,41 @@ describe('the connection', () => {
 
 describe('users', () => {
   it('stores and reads back an account', async () => {
-    const email = uniqueEmail();
-    const created = await client.user.create({ data: { email } });
+    const data = newUser();
+    const created = await client.user.create({ data });
 
     expect(created.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
-    expect(await client.user.findUnique({ where: { email } })).toMatchObject({
-      id: created.id,
-      email,
-    });
+    expect(
+      await client.user.findUnique({ where: { email: data.email } }),
+    ).toMatchObject({ id: created.id, email: data.email });
+  });
+
+  it('defaults a new account to the least privilege', async () => {
+    // A role column that defaulted to ADMIN — or to null, read later as a
+    // missing check — would hand every new sign-up the admin surface.
+    const created = await client.user.create({ data: newUser() });
+    expect(created.role).toBe('USER');
+    expect(created.deletedAt).toBeNull();
   });
 
   it('rejects a duplicate email at the database level', async () => {
     const email = uniqueEmail();
-    await client.user.create({ data: { email } });
-    await expect(client.user.create({ data: { email } })).rejects.toThrow();
+    await client.user.create({ data: newUser({ email }) });
+    await expect(client.user.create({ data: newUser({ email }) })).rejects.toThrow();
+  });
+
+  it('rejects a duplicate Clerk id at the database level', async () => {
+    // Two platform accounts mirroring one Clerk user would make "which account
+    // is this request" ambiguous at exactly the point it must not be. Two
+    // containers handling the same duplicate delivery both pass any check
+    // written in application code; only the constraint makes one lose.
+    const clerkUserId = uniqueClerkId();
+    await client.user.create({ data: newUser({ clerkUserId }) });
+    await expect(
+      client.user.create({ data: newUser({ clerkUserId }) }),
+    ).rejects.toThrow();
   });
 
   it('treats email as case-insensitive, because the column is citext', async () => {
@@ -70,25 +110,25 @@ describe('users', () => {
     // would leave the database able to store both, and then a race creates two
     // accounts for one address.
     const email = uniqueEmail();
-    await client.user.create({ data: { email } });
+    await client.user.create({ data: newUser({ email }) });
 
     await expect(
-      client.user.create({ data: { email: email.toUpperCase() } }),
+      client.user.create({ data: newUser({ email: email.toUpperCase() }) }),
     ).rejects.toThrow();
   });
 
   it('finds an account regardless of the case used to look it up', async () => {
-    const email = uniqueEmail();
-    const created = await client.user.create({ data: { email } });
+    const data = newUser();
+    const created = await client.user.create({ data });
 
     const found = await client.user.findUnique({
-      where: { email: email.toUpperCase() },
+      where: { email: data.email.toUpperCase() },
     });
     expect(found?.id).toBe(created.id);
   });
 
   it('stores timestamps with a timezone, as real Dates', async () => {
-    const created = await client.user.create({ data: { email: uniqueEmail() } });
+    const created = await client.user.create({ data: newUser() });
 
     expect(created.createdAt).toBeInstanceOf(Date);
     expect(created.updatedAt).toBeInstanceOf(Date);
@@ -98,7 +138,7 @@ describe('users', () => {
   });
 
   it('moves updatedAt when the row changes, and leaves createdAt alone', async () => {
-    const created = await client.user.create({ data: { email: uniqueEmail() } });
+    const created = await client.user.create({ data: newUser() });
 
     // Postgres resolves to microseconds; without a gap the two timestamps can
     // land in the same tick and the assertion passes for the wrong reason.
@@ -111,5 +151,70 @@ describe('users', () => {
 
     expect(updated.createdAt.getTime()).toBe(created.createdAt.getTime());
     expect(updated.updatedAt.getTime()).toBeGreaterThan(created.updatedAt.getTime());
+  });
+});
+
+describe('webhook_events', () => {
+  const delivery = (
+    overrides: Partial<{ provider: string; externalId: string }> = {},
+  ) => ({
+    provider: overrides.provider ?? 'clerk',
+    externalId: overrides.externalId ?? `msg_${randomUUID()}`,
+    eventType: 'user.created',
+  });
+
+  it('rejects a duplicate delivery from the same provider', async () => {
+    // This constraint *is* the idempotency guarantee. Two API containers handed
+    // the same retry concurrently both pass a "have I seen this?" check written
+    // in application code; only the database makes the second one lose.
+    const data = delivery();
+    await client.webhookEvent.create({ data });
+    await expect(client.webhookEvent.create({ data })).rejects.toThrow();
+  });
+
+  it('allows the same delivery id from a different provider', async () => {
+    // Event identifiers are only unique within the provider that issued them,
+    // and Stripe arrives in Phase 5. A global unique index would silently drop
+    // a Stripe event whose id happened to match a Clerk one.
+    const externalId = `msg_shared_${randomUUID()}`;
+    await client.webhookEvent.create({ data: delivery({ externalId }) });
+
+    await expect(
+      client.webhookEvent.create({
+        data: delivery({ provider: 'stripe', externalId }),
+      }),
+    ).resolves.toMatchObject({ provider: 'stripe' });
+  });
+
+  it('records a delivery as unprocessed until it is applied', async () => {
+    // A row claimed but never marked is a delivery we accepted and failed to
+    // apply. Collapsing the two states would erase the difference between
+    // "handled" and "started, then crashed".
+    const created = await client.webhookEvent.create({ data: delivery() });
+
+    expect(created.processedAt).toBeNull();
+    expect(created.receivedAt).toBeInstanceOf(Date);
+
+    const done = await client.webhookEvent.update({
+      where: { id: created.id },
+      data: { processedAt: new Date() },
+    });
+    expect(done.processedAt).toBeInstanceOf(Date);
+  });
+
+  it('stores no payload', async () => {
+    // Deliberate: idempotency needs only the identifier, and the Clerk body
+    // carries email addresses we would then hold a second time, outside
+    // `users`, with no purpose and no retention rule (BRD §10). If a payload
+    // column ever appears, that decision is being reversed.
+    const created = await client.webhookEvent.create({ data: delivery() });
+    expect(Object.keys(created).sort()).toEqual([
+      'eventType',
+      'externalId',
+      'id',
+      'processedAt',
+      'provider',
+      'receivedAt',
+    ]);
   });
 });
