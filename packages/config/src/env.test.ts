@@ -44,11 +44,13 @@ describe('loadEnv', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(EnvironmentError);
       const { problems } = error as EnvironmentError;
-      // All three required variables, not merely the first encountered.
+      // Every required variable, not merely the first encountered — one
+      // restart per missing value is the failure mode this exists to prevent.
+      const reported = problems.join('\n');
+      for (const name of ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB']) {
+        expect(reported).toContain(name);
+      }
       expect(problems).toHaveLength(3);
-      expect(problems.join('\n')).toContain('POSTGRES_USER');
-      expect(problems.join('\n')).toContain('POSTGRES_PASSWORD');
-      expect(problems.join('\n')).toContain('POSTGRES_DB');
     }
   });
 

@@ -11,12 +11,33 @@ import {
   ReadinessService,
 } from './health/readiness.service.js';
 import { CorrelationMiddleware } from './observability/correlation.middleware.js';
+import {
+  AUTH_LOGGER,
+  AuthGuard,
+  IDENTITY_SERVICE,
+  SESSION_VERIFIER,
+} from './identity/auth.guard.js';
+import { ClerkEventsController } from './identity/clerk-events.controller.js';
+import { MeController } from './identity/me.controller.js';
+import type { IdentityService } from './identity/identity.service.js';
+import type { SessionVerifier } from './identity/session-verifier.js';
 
 export interface AppModuleOptions {
   /** Built in the composition root, so no provider SDK is imported here. */
   readonly checks: readonly DependencyCheck[];
   readonly logger: Logger;
   readonly readinessTimeoutMs?: number;
+
+  /**
+   * Identity, assembled outside for the same reason the checks are: it keeps
+   * `@clerk/backend` and Prisma in `main.ts`, and it lets a test boot the real
+   * application — real routing, real guard, real exception filter — against
+   * fakes, with neither a database nor a Clerk instance.
+   */
+  readonly identity: {
+    readonly sessionVerifier: SessionVerifier;
+    readonly service: IdentityService;
+  };
 }
 
 /**
@@ -31,7 +52,7 @@ export class AppModule implements NestModule {
   static register(options: AppModuleOptions): DynamicModule {
     return {
       module: AppModule,
-      controllers: [HealthController],
+      controllers: [HealthController, MeController, ClerkEventsController],
       providers: [
         ReadinessService,
         { provide: DEPENDENCY_CHECKS, useValue: options.checks },
@@ -40,6 +61,15 @@ export class AppModule implements NestModule {
           provide: READINESS_TIMEOUT_MS,
           useValue: options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
         },
+
+        // Registered as a provider rather than applied globally with
+        // APP_GUARD. A global guard would also cover /health and /ready, and a
+        // readiness probe that needs a session token is a readiness probe that
+        // reports the service down whenever authentication is broken.
+        AuthGuard,
+        { provide: SESSION_VERIFIER, useValue: options.identity.sessionVerifier },
+        { provide: IDENTITY_SERVICE, useValue: options.identity.service },
+        { provide: AUTH_LOGGER, useValue: options.logger },
       ],
     };
   }

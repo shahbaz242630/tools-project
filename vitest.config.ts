@@ -103,6 +103,19 @@ export default defineConfig({
           // that visibly do not run rather than as silent coverage loss.
           include: REQUIRES_SERVICES,
           environment: 'node',
+
+          // These files must not run in parallel with each other. They share
+          // one database and each truncates in `beforeEach` to start from a
+          // known state, so concurrently they delete each other's rows
+          // mid-test — which surfaces as a row that vanished between being
+          // written and being read, a failure indistinguishable from a bug in
+          // the code under test.
+          //
+          // **`fileParallelism` is a root-level option and is silently ignored
+          // here**, which is why it is not set in this block: it looks like it
+          // works, and does nothing. The flag lives on the `test:integration`
+          // script in package.json instead, so it applies to this project
+          // without making the fast unit projects sequential too.
         },
       },
       {
@@ -165,6 +178,22 @@ export default defineConfig({
         // integration project. Keep this exclusion narrow — logic that moves
         // back into this file stops being counted.
         '**/worker/src/worker.ts',
+        // Same argument as worker.ts: exercised in full by
+        // prisma-identity-store.db.test.ts, which lives in the `integration`
+        // project and so does not run under this command. Its whole purpose is
+        // behaviour that only a real unique constraint produces, which is
+        // exactly what cannot be covered here. Keep this exclusion narrow —
+        // logic that moves out of this file stops being counted.
+        '**/api/src/identity/prisma-identity-store.ts',
+        // Declaration-only: two interfaces and nothing else, so it emits no
+        // executable JavaScript at all and v8 reports its source lines as
+        // uncovered because there is nothing to run. If any code appears in
+        // here, delete this line rather than keeping it honest by accident.
+        '**/api/src/identity/webhook-ledger.ts',
+        // Composition root, same argument as main.ts: it hands a matcher to
+        // Clerk's middleware factory. A test would assert that a mock was
+        // called with a regex we also wrote.
+        '**/web/src/proxy.ts',
       ],
       thresholds: {
         lines: 90,

@@ -6,6 +6,7 @@ import { AppModule } from '../app.module.js';
 import type { DependencyCheck } from './dependency-check.js';
 import { CORRELATION_HEADER } from '../observability/correlation.middleware.js';
 import { createRecordingLogger } from '@platform/observability/testing';
+import { createIdentityFakes } from '../identity/testing/fakes.js';
 
 /**
  * Boots the real application — real routing, real middleware, real exception
@@ -31,12 +32,15 @@ let app: NestFastifyApplication | undefined;
 async function boot(
   checks: readonly DependencyCheck[],
 ): Promise<NestFastifyApplication> {
+  const { sessionVerifier, service } = createIdentityFakes();
+
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
         checks,
         logger: createRecordingLogger().logger,
         readinessTimeoutMs: 50,
+        identity: { sessionVerifier, service },
       }),
     ],
   }).compile();

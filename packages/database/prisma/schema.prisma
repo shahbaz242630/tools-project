@@ -16,19 +16,57 @@ datasource db {
   provider = "postgresql"
 }
 
+/// Platform roles.
+///
+/// Coarse by design. Ownership — "is this your listing, your booking" — is a
+/// row-level question answered by the data, not by a role, and conflating the
+/// two produces roles like `OWNER` that multiply per entity. BRD §6 gives one
+/// account both renter and owner capabilities, so neither is a role here.
+enum UserRole {
+  USER
+  ADMIN
+}
+
 /// A platform account.
 ///
 /// The internal `id` is the authoritative platform identity (BRD §6). Identity
 /// and payment provider IDs are stored as references against it in later
 /// phases, never as the primary key — a provider that deletes an account, or
 /// that we stop using, must not take the identity with it.
+///
+/// Since ADR 0015 this row is a **mirror**: Clerk holds the credentials and is
+/// the source of truth for the identity, while this row is the thing listings,
+/// bookings, messages and the ledger point at. That split is the entire reason
+/// `clerkUserId` is an ordinary column and not the primary key.
 model User {
   id String @id @default(uuid()) @db.Uuid
+
+  /// Clerk's `user_…` identifier. A reference, never an identity — see the note
+  /// above. Unique because two platform accounts mirroring one Clerk user would
+  /// make "who is this request" ambiguous at exactly the point it must not be.
+  clerkUserId String @unique @db.Text
 
   /// citext, so `Alice@Example.com` and `alice@example.com` are one account.
   /// Case folding in application code would leave the database able to hold
   /// both, and the uniqueness guarantee has to be the database's.
+  ///
+  /// Mirrored from Clerk's primary email address. On deletion it is replaced
+  /// with a tombstone rather than kept — see `deletedAt`.
   email String @unique @db.Citext
+
+  role UserRole @default(USER)
+
+  /// Soft deletion, because hard deletion is not available to us: from Phase 2
+  /// onward listings, bookings and immutable ledger entries reference this row,
+  /// and the ledger in particular can never lose its counterparty.
+  ///
+  /// When Clerk reports a user deleted we set this *and* overwrite `email` with
+  /// a tombstone at `.invalid` (RFC 2606, so it can never collide with a real
+  /// address). That frees the address for genuine re-registration, which a
+  /// retained unique row would otherwise block forever, and it removes the
+  /// personal data we no longer have a purpose for. Full erasure semantics are
+  /// a later slice — BRD §14 Phase 1 asks only for a deletion *skeleton*.
+  deletedAt DateTime? @db.Timestamptz(3)
 
   /// Stored UTC. Rendering and rental-period arithmetic happen in the booking's
   /// stored IANA timezone (BRD §6.1), never in the database.
@@ -36,4 +74,41 @@ model User {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@map("users")
+}
+
+/// One received provider webhook, recorded so it is processed exactly once.
+///
+/// CLAUDE.md requires webhook events to be persisted entities rather than
+/// in-memory deduplication. In-memory is wrong twice over: it forgets on
+/// restart, and it is per-instance, so two API containers each process the
+/// same delivery. Providers retry aggressively and Clerk is no exception.
+///
+/// **No payload column, deliberately.** Idempotency needs only the identifier;
+/// the body carries email addresses and names we would then be storing a second
+/// time, outside `users`, with no purpose and no retention rule — against the
+/// data-minimisation requirement in BRD §10. Clerk retains the event and can
+/// redeliver it, so replay does not depend on us keeping a copy.
+model WebhookEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// `clerk` today. Named rather than assumed, because Stripe arrives in
+  /// Phase 5 and two providers will eventually collide on event id.
+  provider String @db.Text
+
+  /// The provider's own delivery identifier — Clerk sends Standard Webhooks
+  /// headers, so this is `svix-id`. Unique per delivery, stable across retries,
+  /// which is exactly what makes it usable as the idempotency key.
+  externalId String @db.Text
+
+  eventType String @db.Text
+
+  receivedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// Null while in flight. A row that stays null is a delivery we accepted and
+  /// failed to apply — the thing worth alerting on once we have somewhere to
+  /// send alerts.
+  processedAt DateTime? @db.Timestamptz(3)
+
+  @@unique([provider, externalId])
+  @@map("webhook_events")
 }

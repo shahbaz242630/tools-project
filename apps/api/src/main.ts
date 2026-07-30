@@ -4,7 +4,8 @@ import helmet from '@fastify/helmet';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { describeEnv, loadEnv } from '@platform/config';
+import { verifyToken } from '@clerk/backend';
+import { describeEnv, loadEnv, loadIdentityEnv } from '@platform/config';
 import { createLogger } from '@platform/observability';
 import type { Logger } from '@platform/observability';
 import { createPrismaClient, ping } from '@platform/database';
@@ -13,6 +14,12 @@ import Redis from 'ioredis';
 import { AppModule } from './app.module.js';
 import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
+import { ClerkSessionVerifier } from './identity/clerk-session-verifier.js';
+import { IdentityService } from './identity/identity.service.js';
+import {
+  PrismaUserDirectory,
+  PrismaWebhookLedger,
+} from './identity/prisma-identity-store.js';
 import { NestLoggerAdapter } from './observability/nest-logger.js';
 import { createShutdown } from '@platform/runtime';
 
@@ -37,6 +44,12 @@ async function bootstrap(): Promise<void> {
   // problem at once, and stderr is the only channel available this early.
   const env = loadEnv();
 
+  // Separate from loadEnv because the worker shares that schema and has no
+  // business holding identity configuration. Loaded here, immediately, so a
+  // missing key still fails at startup naming the variable rather than at the
+  // first authenticated request.
+  const identityEnv = loadIdentityEnv();
+
   const logger = createLogger({ service: 'api', level: env.LOG_LEVEL });
 
   // One client, one pool. Prisma 7 connects through a `pg` driver adapter, so
@@ -58,6 +71,21 @@ async function bootstrap(): Promise<void> {
     logger.warn('redis client error', { error });
   });
 
+  // Networkless: `jwtKey` is a public key held in memory, so verifying a
+  // session performs no I/O and a Clerk outage cannot hang an authenticated
+  // request. See CLERK_JWT_PUBLIC_KEY in @platform/config for why the API is
+  // not given the secret key that would make this a network call instead.
+  const sessionVerifier = new ClerkSessionVerifier({
+    verifyToken,
+    jwtKey: identityEnv.CLERK_JWT_PUBLIC_KEY,
+    authorizedParties: identityEnv.CLERK_AUTHORIZED_PARTIES,
+  });
+
+  const identity = new IdentityService(
+    new PrismaUserDirectory(database),
+    new PrismaWebhookLedger(database),
+  );
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       checks: [
@@ -67,6 +95,7 @@ async function bootstrap(): Promise<void> {
         new RedisCheck(redis),
       ],
       logger,
+      identity: { sessionVerifier, service: identity },
     }),
     new FastifyAdapter(),
     { logger: new NestLoggerAdapter(logger) },

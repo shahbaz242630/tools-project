@@ -1,0 +1,170 @@
+import { describe, expect, it, vi } from 'vitest';
+import { ACCOUNT_TIMEOUT_MS, fetchAccount } from './account';
+import type { FetchLike } from './account';
+
+const BASE = 'http://api:3000';
+
+const ACCOUNT = {
+  id: '11111111-1111-4111-8111-111111111111',
+  email: 'alice@example.com',
+  role: 'USER',
+};
+
+const answering = (status: number, body: unknown): FetchLike =>
+  vi.fn(() =>
+    Promise.resolve({
+      status,
+      text: () =>
+        Promise.resolve(typeof body === 'string' ? body : JSON.stringify(body)),
+    }),
+  );
+
+describe('fetchAccount', () => {
+  it('returns the account when the API answers', async () => {
+    const outcome = await fetchAccount(BASE, 'token', answering(200, ACCOUNT));
+    expect(outcome).toEqual({ kind: 'signed-in', account: ACCOUNT });
+  });
+
+  it('sends the token as a bearer credential', async () => {
+    const fetchImpl = answering(200, ACCOUNT);
+    await fetchAccount(BASE, 'the-token', fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://api:3000/me',
+      expect.objectContaining({
+        headers: { authorization: 'Bearer the-token' },
+      }),
+    );
+  });
+
+  it.each([[null], ['']])(
+    'reports signed out for %j without calling the API',
+    async (token) => {
+      // Signed out is a normal state. A round trip to be told so is wasted on
+      // every anonymous page view.
+      const fetchImpl = answering(200, ACCOUNT);
+      expect(await fetchAccount(BASE, token, fetchImpl)).toEqual({
+        kind: 'signed-out',
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports signed out when the API rejects the token', async () => {
+    // Tokens are issued with a 60-second lifetime, so one expiring between
+    // render and fetch is routine rather than exceptional.
+    expect(await fetchAccount(BASE, 'stale', answering(401, ''))).toEqual({
+      kind: 'signed-out',
+    });
+  });
+
+  it.each([[500], [502], [418]])(
+    'does not report signed out when the API answers %i',
+    async (status) => {
+      // The failure this prevents: telling a signed-in person they are signed
+      // out because the API is broken, which invites them to sign in over and
+      // over against a service that cannot answer.
+      const outcome = await fetchAccount(BASE, 'token', answering(status, ''));
+      expect(outcome.kind).toBe('unreachable');
+    },
+  );
+
+  it('reports unreachable when the request fails', async () => {
+    const outcome = await fetchAccount(BASE, 'token', () =>
+      Promise.reject(new Error('connect ECONNREFUSED')),
+    );
+    expect(outcome).toEqual({ kind: 'unreachable', reason: 'connect ECONNREFUSED' });
+  });
+
+  it('says how long it waited when the request times out', async () => {
+    const timeout = Object.assign(new Error('The operation was aborted'), {
+      name: 'TimeoutError',
+    });
+
+    const outcome = await fetchAccount(BASE, 'token', () => Promise.reject(timeout));
+    expect(outcome).toEqual({
+      kind: 'unreachable',
+      reason: `no response within ${ACCOUNT_TIMEOUT_MS}ms`,
+    });
+  });
+
+  it('bounds the request', async () => {
+    // Without a signal a page render blocks for as long as the API cares to
+    // take, which a reader experiences as a page that never loads.
+    const fetchImpl = answering(200, ACCOUNT);
+    await fetchAccount(BASE, 'token', fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('reports malformed when the body is not JSON', async () => {
+    // Almost always a proxy error page rather than the API.
+    const outcome = await fetchAccount(
+      BASE,
+      'token',
+      answering(200, '<html>502</html>'),
+    );
+    expect(outcome.kind).toBe('malformed');
+    expect(outcome).toMatchObject({
+      reason: expect.stringContaining('<html>502</html>'),
+    });
+  });
+
+  it('reports malformed rather than trusting a wrong shape', async () => {
+    // The window that makes this real: web and api deploy independently, so a
+    // new web app can be talking to the previous API. Trusting the shape would
+    // render a signed-in page belonging to nobody.
+    const outcome = await fetchAccount(
+      BASE,
+      'token',
+      answering(200, { id: 'not-a-uuid' }),
+    );
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('names the offending field when the shape is wrong', async () => {
+    const outcome = await fetchAccount(
+      BASE,
+      'token',
+      answering(200, { ...ACCOUNT, email: 'not-an-email' }),
+    );
+    expect(outcome).toMatchObject({ reason: expect.stringContaining('email') });
+  });
+
+  it('rejects an unknown role rather than rendering it', async () => {
+    // A role the web app does not know about must not be shown as though it
+    // were understood — the next thing built on it is a permissions decision.
+    const outcome = await fetchAccount(
+      BASE,
+      'token',
+      answering(200, { ...ACCOUNT, role: 'SUPERUSER' }),
+    );
+    expect(outcome.kind).toBe('malformed');
+  });
+});
+
+describe('fetchAccount — awkward failures', () => {
+  it('describes a rejection that is not an Error', async () => {
+    // `fetch` implementations and polyfills do reject with plain values. An
+    // unguarded `error.message` here would throw inside the error handler.
+    const outcome = await fetchAccount(BASE, 'token', () =>
+      Promise.reject('socket hang up'),
+    );
+    expect(outcome).toEqual({ kind: 'unreachable', reason: 'socket hang up' });
+  });
+
+  it('survives a body that fails while being read', async () => {
+    // A connection dropped mid-response resolves the request and then fails the
+    // body. Unhandled, that surfaces as an unhandled rejection during render.
+    const outcome = await fetchAccount(BASE, 'token', () =>
+      Promise.resolve({
+        status: 200,
+        text: () => Promise.reject(new Error('aborted mid-body')),
+      }),
+    );
+    expect(outcome).toEqual({ kind: 'unreachable', reason: 'aborted mid-body' });
+  });
+});

@@ -58,6 +58,52 @@ const schema = z.object({
    * at the first fetch inside a rendered page rather than at startup.
    */
   API_BASE_URL: z.url().refine(isHttpUrl, 'must be an http:// or https:// URL'),
+
+  /**
+   * Clerk's publishable key. Public by design — it is compiled into the browser
+   * bundle, which is what the `NEXT_PUBLIC_` prefix means and why that prefix is
+   * correct here and wrong for everything else in this file's history.
+   */
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
+
+  /**
+   * Clerk's secret key. Server-side only — never `NEXT_PUBLIC_`.
+   *
+   * **This is a real departure from the rule above and it should be read as
+   * one.** The header of this file says the web app must hold nothing sensitive
+   * because it is the process a browser can reach. Clerk's Next SDK gives us no
+   * choice: `clerkMiddleware()` and `auth()` need the secret key to run the
+   * session handshake, and that middleware is the app.
+   *
+   * So the internet-facing service now holds a credential that can read the
+   * whole user directory. That is a genuine cost of choosing a hosted identity
+   * provider over a library, it was weighed when the decision was made, and it
+   * is recorded in ADR 0015 rather than left to be discovered.
+   *
+   * What limits the damage is that it stops here: the API does *not* get this
+   * key, only the public one above it in `env.ts`.
+   *
+   * Declared here even though Clerk's SDK reads `process.env` itself, so a
+   * missing key fails at startup with a named variable instead of at the first
+   * sign-in with a stack trace from inside `node_modules`.
+   */
+  CLERK_SECRET_KEY: z.string().min(1),
+
+  /**
+   * Verifies the Standard Webhooks signature on Clerk deliveries.
+   *
+   * Here rather than in the API's schema, and that placement is the design
+   * rather than an accident. The delivery arrives at the web app, which is the
+   * only process on the edge network, and verification needs the raw unparsed
+   * body — which exists there and nowhere downstream. Forwarding raw bytes
+   * inward just to re-verify them adds a place for the payload to be re-encoded
+   * and the signature to stop matching, and buys nothing: an attacker who can
+   * reach the API internally can already reach Postgres beside it.
+   *
+   * Genuinely secret. The webhook is the sole external writer of the identity
+   * mirror, so forging one means creating and modifying accounts.
+   */
+  CLERK_WEBHOOK_SIGNING_SECRET: z.string().min(1),
 });
 
 export type RawWebEnv = z.infer<typeof schema>;
