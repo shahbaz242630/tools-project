@@ -123,6 +123,7 @@ describe('AuthGuard', () => {
       email: 'alice@example.com',
       role: 'ADMIN',
       deletedAt: null,
+      createdAt: new Date('2026-07-15T09:00:00.000Z'),
     };
     admin.seed(seeded);
 
@@ -194,6 +195,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
     const boom = new Error('connection terminated unexpectedly');
     const failing = {
       findByClerkUserId: () => Promise.reject(boom),
+      findById: () => Promise.reject(boom),
       upsert: () => Promise.reject(boom),
       update: () => Promise.reject(boom),
     };
@@ -217,6 +219,7 @@ describe('currentUserFrom', () => {
       email: 'nine@example.com',
       role: 'USER',
       deletedAt: null,
+      createdAt: new Date('2026-07-15T09:00:00.000Z'),
     };
     expect(currentUserFrom(contextFor({ headers: {}, user }))).toBe(user);
   });

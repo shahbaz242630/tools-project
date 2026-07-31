@@ -73,7 +73,148 @@ model User {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
+  /// Present only because Prisma requires both ends of a relation to be
+  /// declared. **Not** an invitation for the identity module to read through
+  /// them: BRD §5.1 gives public profiles to Profiles & Trust, and
+  /// `include: { profile: true }` from inside `identity/` is exactly the
+  /// cross-module read that boundary exists to prevent. The profiles module
+  /// reaches its own rows through its own port.
+  profile Profile?
+  address Address?
+
   @@map("users")
+}
+
+/// A person's public face, and the contact details behind it.
+///
+/// A separate table rather than columns on `users`, because BRD §5.1 draws the
+/// boundary there: Identity & Access owns accounts, roles and sessions, and
+/// Profiles & Trust owns public profiles. Two modules writing one table is the
+/// cross-module write CLAUDE.md bans, and it would be unavoidable if the
+/// display name lived beside `role` and `deletedAt`.
+///
+/// **Only `displayName` is public.** BRD §6.2 calls this the "public and
+/// contact profile" — one row, two audiences — so the split is enforced by the
+/// projection the API returns, not by which table a column sits in. ADR 0016
+/// records the rule: a stranger sees a name and a postal district, and contact
+/// details are released only once a booking authorises it, the same way BRD
+/// §8.4.1 gates a listing's true coordinates.
+model Profile {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// One profile per account. Unique because the alternative — two profiles for
+  /// one user — makes "what is this person called" a question with two answers,
+  /// and the loser is whichever row a query happens to sort first.
+  ///
+  /// `onDelete: Restrict` is the Prisma default for a required relation and is
+  /// correct here: accounts are soft-deleted (see `User.deletedAt`), so a hard
+  /// delete reaching this constraint means something is doing what the identity
+  /// module deliberately does not. Failing is the right answer to that. Erasing
+  /// a profile as part of a real deletion request is a later, deliberate slice.
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// What other users see. NOT NULL because the row is created by the first
+  /// save rather than provisioned empty — there is no state in which a profile
+  /// exists without a name, so nothing downstream has to handle one.
+  ///
+  /// Deliberately **not** unique. Uniqueness would invite name squatting and a
+  /// registration race, and it does not solve impersonation anyway: "Support"
+  /// and "Support " are different strings. Impersonation is a Trust & Safety
+  /// question for a later phase, not a constraint this column can answer.
+  displayName String @db.Text
+
+  /// Contact number, in E.164. **Never returned by a public endpoint.**
+  ///
+  /// Nullable because BRD §8.1 requires a verified phone before *listing or
+  /// booking*, not before having a profile — demanding one at sign-up would
+  /// block someone who only wants to browse.
+  ///
+  /// Stored in clear rather than encrypted, unlike the address detail. It is
+  /// the same sensitivity class as `users.email`, which must be readable for
+  /// citext uniqueness, and encrypting it would defeat the duplicate-number
+  /// check that Trust & Safety needs against multi-account fraud. The
+  /// protection here is that no projection exposes it, and that is tested.
+  ///
+  /// **Unverified.** Nothing has proved this number belongs to this person yet;
+  /// verification needs Twilio (Phase 6) or a Clerk phone flow. Until then it
+  /// must not be treated as a trust signal.
+  phone String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("profiles")
+}
+
+/// A postal address, split by how far each part may travel.
+///
+/// Its own table rather than columns on `profiles` for three reasons: BRD §6.2
+/// models it as its own entity; the sensitivity differs sharply from a display
+/// name; and Phase 3 adds a `geography(Point,4326)` column and a GiST index
+/// here (BRD §4.2), which has no business on the row every public profile view
+/// reads.
+///
+/// The columns are deliberately graded, so that reading the wrong one is a
+/// visible mistake rather than a silent leak:
+///
+///   outwardCode      public    a postal district, thousands of addresses
+///   town             public    coarse, and what makes the district legible
+///   postcode         private   full — needed to geocode, identifies ~15 homes
+///   encryptedDetail  private   the street lines, and the actual front door
+///
+/// Coordinates and the §8.4.1 fuzz offset are **not here yet**. They arrive in
+/// Phase 3 with the search that needs them; storing a precise point before
+/// anything queries it would be personal data held for no current purpose,
+/// against BRD §10.
+model Address {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Related to the user rather than to the profile: `users.id` is the platform
+  /// identity every foreign key points at (BRD §6), and an address outlives any
+  /// particular view of a person.
+  ///
+  /// Unique for now — one home address each. Listing locations arrive in Phase
+  /// 2 and may or may not reuse this table; that is a decision to make with the
+  /// listing requirement in hand, not to pre-empt with a nullable discriminator
+  /// nothing yet needs.
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// Full, normalised to `BS7 8AA` by the postcode primitive in @platform/core.
+  /// Private: Phase 3 geocodes it, and a booking may release it, but no public
+  /// projection selects it.
+  postcode String @db.Text
+
+  /// The publishable half, derived from `postcode` on save.
+  ///
+  /// **Stored rather than truncated at render time, and that is the point.** A
+  /// public query selects a column that has never held the inward code, so it
+  /// cannot leak one by someone forgetting a `.slice()`. Denormalised on
+  /// purpose; the write path is the only place the two can diverge, and it
+  /// derives one from the other.
+  outwardCode String @db.Text
+
+  /// Post town — "Bristol". Public, and coarse enough to stay public: it makes
+  /// an outward code readable to a person judging whether an item is near them.
+  town String @db.Text
+
+  /// The street lines, as an AES-256-GCM envelope (BRD §6.2, "encrypted
+  /// detail"). One ciphertext over a small JSON object rather than a column per
+  /// line, so adding a line later needs no migration and the column count
+  /// reveals nothing about what is stored.
+  ///
+  /// Encrypted because these lines are the difference between "somebody in BS7"
+  /// and a specific front door, and nothing operational needs them queryable —
+  /// they are read back to show a person their own address, or released to a
+  /// counterparty once a booking authorises it. A stolen dump then yields
+  /// postal districts instead of addresses.
+  encryptedDetail String @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("addresses")
 }
 
 /// One received provider webhook, recorded so it is processed exactly once.

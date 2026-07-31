@@ -185,6 +185,12 @@ export default defineConfig({
         // exactly what cannot be covered here. Keep this exclusion narrow —
         // logic that moves out of this file stops being counted.
         '**/api/src/identity/prisma-identity-store.ts',
+        // Same argument again: exercised in full by
+        // prisma-profile-store.db.test.ts in the `integration` project. What it
+        // proves — that a foreign key fires, that a transaction covers both
+        // tables, and that what lands in the encrypted column is unreadable —
+        // is precisely what a double cannot. Keep this exclusion narrow.
+        '**/api/src/profiles/prisma-profile-store.ts',
         // Declaration-only: two interfaces and nothing else, so it emits no
         // executable JavaScript at all and v8 reports its source lines as
         // uncovered because there is nothing to run. If any code appears in

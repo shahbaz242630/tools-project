@@ -35,12 +35,22 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+/**
+ * Guards `findById` against a value that came out of a URL.
+ *
+ * Postgres raises on a malformed uuid cast rather than returning no rows, so
+ * without this a request for `/users/banana/profile` is a 500 rather than a
+ * 404 — an error page for what is simply a wrong address.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface UserRow {
   id: string;
   clerkUserId: string;
   email: string;
   role: string;
   deletedAt: Date | null;
+  createdAt: Date;
 }
 
 function toMirroredUser(row: UserRow): MirroredUser {
@@ -52,6 +62,7 @@ function toMirroredUser(row: UserRow): MirroredUser {
     // be stored. Narrowed rather than asserted so the cast is visible.
     role: row.role === 'ADMIN' ? 'ADMIN' : ('USER' satisfies UserRole),
     deletedAt: row.deletedAt,
+    createdAt: row.createdAt,
   };
 }
 
@@ -60,6 +71,17 @@ export class PrismaUserDirectory implements UserDirectory {
 
   async findByClerkUserId(clerkUserId: string): Promise<MirroredUser | null> {
     const row = await this.prisma.user.findUnique({ where: { clerkUserId } });
+    return row === null ? null : toMirroredUser(row);
+  }
+
+  async findById(id: string): Promise<MirroredUser | null> {
+    // A malformed id reaches here from a public URL, and Postgres rejects a
+    // non-UUID cast with an error rather than an empty result. Answering null
+    // keeps "that is not an id" and "no such user" the same outcome to a
+    // caller, which is what the public profile route wants anyway.
+    if (!UUID.test(id)) return null;
+
+    const row = await this.prisma.user.findUnique({ where: { id } });
     return row === null ? null : toMirroredUser(row);
   }
 

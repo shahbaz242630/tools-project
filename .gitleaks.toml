@@ -22,6 +22,25 @@ regexes = [
   # The local Docker password, which is intentionally obvious and public. It
   # only authenticates against a container on the developer's own localhost.
   '''local_dev_only''',
+  # Fake AES keys for PERSONAL_DATA_ENCRYPTION_KEY (ADR 0016), in CI, the deploy
+  # rehearsal and the config tests.
+  #
+  # They have to be *well formed* — base64 of exactly 32 bytes — because the
+  # startup schema checks the length, so they cannot be given away with a value
+  # like `not-a-real-key`. Every one of them therefore decodes to text saying
+  # what it is, and the four are listed literally rather than by file so that a
+  # genuine key committed to any of those files is still caught:
+  #
+  #   Y2ktb25seS1ub3QtYS1yZWFsLWtleS0zMi1ieXRlcyE=  ci-only-not-a-real-key-32-bytes!
+  #   cmVoZWFyc2FsLW9ubHktbm90LWEtcmVhbC1rZXkhISE=  rehearsal-only-not-a-real-key!!!
+  #   dGVzdC1vbmx5LW5vdC1hLXJlYWwta2V5LTMyLWJ5dGU=  test-only-not-a-real-key-32-byte
+  #   dG9vLXNob3J0LTE2Ynl0ZQ==                      too-short-16byte
+  #
+  # Decode any of them with `base64 -d` to confirm before trusting this comment.
+  '''Y2ktb25seS1ub3QtYS1yZWFsLWtleS0zMi1ieXRlcyE=''',
+  '''cmVoZWFyc2FsLW9ubHktbm90LWEtcmVhbC1rZXkhISE=''',
+  '''dGVzdC1vbmx5LW5vdC1hLXJlYWwta2V5LTMyLWJ5dGU=''',
+  '''dG9vLXNob3J0LTE2Ynl0ZQ==''',
 ]
 
 [[rules]]

@@ -68,6 +68,10 @@ export class InMemoryUserDirectory implements UserDirectory {
     return Promise.resolve(found ?? null);
   }
 
+  findById(id: string): Promise<MirroredUser | null> {
+    return Promise.resolve(this.rows.get(id) ?? null);
+  }
+
   async upsert(input: UpsertUserInput): Promise<MirroredUser> {
     const existing = await this.findByClerkUserId(input.clerkUserId);
     if (existing !== null) return existing;
@@ -85,6 +89,10 @@ export class InMemoryUserDirectory implements UserDirectory {
       email: input.email,
       role: 'USER',
       deletedAt: null,
+      // Fixed rather than `new Date()`: "member since" is rendered from this,
+      // and a test asserting the rendered month must not depend on the clock
+      // the suite happens to run under.
+      createdAt: Time.fromIsoUtc('2026-07-15T09:00:00.000Z'),
     };
     this.rows.set(user.id, user);
     return user;

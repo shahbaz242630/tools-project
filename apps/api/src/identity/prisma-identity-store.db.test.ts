@@ -40,6 +40,10 @@ const uniqueClerkId = () => `user_${randomUUID()}`;
 const uniqueDeliveryId = () => `msg_${randomUUID()}`;
 
 beforeEach(async () => {
+  // Children before parents: the profile foreign keys are ON DELETE RESTRICT,
+  // so clearing `users` first throws rather than cascading.
+  await client.profile.deleteMany();
+  await client.address.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });

@@ -174,6 +174,17 @@ services:
       # token minted by any Clerk application on the instance verifies here.
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:?set CLERK_AUTHORIZED_PARTIES}
 
+      # --- Personal data encryption (ADR 0016) ---
+      # Decrypts the street lines of stored addresses. `:?` because an API that
+      # starts without it cannot read back an address anybody has saved, and
+      # would discover that on somebody's profile page rather than at boot.
+      #
+      # Given to the API and to nothing else — notably not the worker, which has
+      # no business being able to read a home address. Unlike the Clerk public
+      # key above this is a real secret, and losing it is unrecoverable: the
+      # ciphertext in `addresses` is all there is.
+      PERSONAL_DATA_ENCRYPTION_KEY: ${PERSONAL_DATA_ENCRYPTION_KEY:?set PERSONAL_DATA_ENCRYPTION_KEY}
+
     # Internal only. The API is not on `edge` and is therefore unreachable from
     # the ingress and from the internet: the browser never calls it directly,
     # the web app calls it server-side. When a browser-facing endpoint is

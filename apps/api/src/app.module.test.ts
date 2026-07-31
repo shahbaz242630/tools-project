@@ -7,6 +7,7 @@ import {
 } from './health/readiness.service.js';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createIdentityFakes } from './identity/testing/fakes.js';
+import { createProfileFakes } from './profiles/testing/fakes.js';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
   const { sessionVerifier, service } = createIdentityFakes();
@@ -17,6 +18,7 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
         checks: [],
         logger: createRecordingLogger().logger,
         identity: { sessionVerifier, service },
+        profiles: createProfileFakes().service,
         ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
       }),
     ],
