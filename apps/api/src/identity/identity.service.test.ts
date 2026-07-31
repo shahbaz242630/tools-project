@@ -722,3 +722,181 @@ describe('exportFor', () => {
     expect(document?.account.deletionRequestedAt).not.toBeNull();
   });
 });
+
+describe('correcting the email', () => {
+  const SESSION = (email: string) => ({
+    clerkUserId: 'user_a',
+    sessionId: 'sess_a',
+    email,
+  });
+
+  async function provision(email = 'old@example.com') {
+    const audit = createAuditFakes();
+    const directory = new InMemoryUserDirectory();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      new RecordingEraser(),
+      new StubDataSource(),
+    );
+
+    const user = await identity.resolveSession(SESSION(email));
+    return { id: user.id, audit, directory, identity };
+  }
+
+  it('corrects the mirror on the next authenticated request', async () => {
+    // The just-in-time path. A missed or delayed `user.updated` converges here
+    // rather than waiting for a redelivery that may never come.
+    const { identity } = await provision();
+
+    const user = await identity.resolveSession(SESSION('new@example.com'));
+
+    expect(user.email).toBe('new@example.com');
+  });
+
+  it('records the correction, with the address it came from', async () => {
+    // Ordinary-looking and security-relevant: changing the address is how an
+    // account takeover is made permanent.
+    const { id, audit, identity } = await provision();
+    await identity.resolveSession(SESSION('new@example.com'));
+
+    const entry = audit.log.entries().find((e) => e.action === 'account.email_changed');
+    expect(entry).toMatchObject({ actorId: id, targetType: 'user', targetId: id });
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('records neither address in the trail', async () => {
+    const { audit, identity } = await provision();
+    await identity.resolveSession(SESSION('new@example.com'));
+
+    const serialised = JSON.stringify(audit.log.entries());
+    expect(serialised).not.toContain('old@example.com');
+    expect(serialised).not.toContain('new@example.com');
+  });
+
+  it('records nothing when the address has not changed', async () => {
+    // Every authenticated request passes through this path. An entry per
+    // request would bury the corrections that matter under thousands that
+    // changed nothing.
+    const { audit, identity } = await provision();
+    await identity.resolveSession(SESSION('old@example.com'));
+    await identity.resolveSession(SESSION('old@example.com'));
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'account.email_changed'),
+    ).toHaveLength(0);
+  });
+
+  it('records a correction that arrives on a webhook, with no actor', async () => {
+    // Nobody was holding a session, so there is no address to attribute it to.
+    const { audit, identity } = await provision();
+
+    await identity.applyEvent('msg_1', {
+      type: 'user.upserted',
+      clerkUserId: 'user_a',
+      email: 'new@example.com',
+    });
+
+    const entry = audit.log.entries().find((e) => e.action === 'account.email_changed');
+    expect(entry).toMatchObject({ actorId: null, ipAddress: null });
+  });
+
+  it('uses one correction path, so the webhook and the session agree', async () => {
+    // Both routes reach the same method. If they diverged, one of them would
+    // eventually gain a rule the other lacked — most likely the audit entry.
+    const viaSession = await provision();
+    await viaSession.identity.resolveSession(SESSION('new@example.com'));
+
+    const viaWebhook = await provision();
+    await viaWebhook.identity.applyEvent('msg_1', {
+      type: 'user.upserted',
+      clerkUserId: 'user_a',
+      email: 'new@example.com',
+    });
+
+    const actions = (fakes: typeof viaSession) =>
+      fakes.audit.log.entries().map((entry) => entry.action);
+
+    expect(actions(viaSession)).toEqual(actions(viaWebhook));
+  });
+
+  it('survives a collision rather than failing the request', async () => {
+    // `users.email` is unique, so a correction can lose to a stale row —
+    // somebody else has since taken at the provider an address our mirror still
+    // holds. Throwing would 500 an ordinary page load over a race that resolves
+    // itself when the other account's next request corrects its own row.
+    const audit = createAuditFakes();
+    const directory = new InMemoryUserDirectory();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      new RecordingEraser(),
+      new StubDataSource(),
+    );
+
+    await identity.resolveSession({
+      clerkUserId: 'user_b',
+      sessionId: 'sess_b',
+      email: 'taken@example.com',
+    });
+    const mine = await identity.resolveSession(SESSION('old@example.com'));
+
+    const after = await identity.resolveSession(SESSION('taken@example.com'));
+
+    // The request succeeded, and the mirror is knowingly stale.
+    expect(after.id).toBe(mine.id);
+    expect(after.email).toBe('old@example.com');
+  });
+
+  it('records nothing when a collision stopped the correction', async () => {
+    // The trail must not claim a change that did not happen.
+    const audit = createAuditFakes();
+    const directory = new InMemoryUserDirectory();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      new RecordingEraser(),
+      new StubDataSource(),
+    );
+
+    await identity.resolveSession({
+      clerkUserId: 'user_b',
+      sessionId: 'sess_b',
+      email: 'taken@example.com',
+    });
+    await identity.resolveSession(SESSION('old@example.com'));
+    await identity.resolveSession(SESSION('taken@example.com'));
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'account.email_changed'),
+    ).toHaveLength(0);
+  });
+
+  it('shows the correction in the person’s own activity', async () => {
+    const { id, identity } = await provision();
+    await identity.resolveSession(SESSION('new@example.com'));
+
+    const document = await identity.exportFor({ userId: id, ipAddress: null });
+    expect(document?.activity.map((entry) => entry.action)).toContain(
+      'account.email_changed',
+    );
+  });
+
+  it('does not correct a deleted account', async () => {
+    // A tombstoned address must not be overwritten by a provider event; that
+    // would undo the erasure.
+    const { id, directory, identity } = await provision();
+    await identity.requestDeletion({ userId: id, ipAddress: null });
+
+    await identity.applyEvent('msg_1', {
+      type: 'user.upserted',
+      clerkUserId: 'user_a',
+      email: 'resurrect@example.com',
+    });
+
+    expect((await directory.findById(id))?.email).toBe(`deleted+${id}@deleted.invalid`);
+  });
+});

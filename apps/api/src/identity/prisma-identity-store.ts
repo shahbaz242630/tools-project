@@ -124,8 +124,17 @@ export class PrismaUserDirectory implements UserDirectory {
   }
 
   async update(id: string, changes: UserChanges): Promise<MirroredUser> {
-    const row = await this.prisma.user.update({ where: { id }, data: changes });
-    return toMirroredUser(row);
+    try {
+      const row = await this.prisma.user.update({ where: { id }, data: changes });
+      return toMirroredUser(row);
+    } catch (error) {
+      // The email is unique, so a correction can collide: our mirror holds a
+      // stale address that somebody else has since taken at the provider. Rare,
+      // but it is a *read* path that would otherwise throw — the caller decides
+      // whether a stale mirror is survivable, and here it is (ADR 0020).
+      if (isUniqueViolation(error)) throw new UserConflictError(error);
+      throw error;
+    }
   }
 }
 

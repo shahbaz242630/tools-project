@@ -5,6 +5,7 @@ import type { PersonalDataEraser } from './personal-data-eraser.js';
 import type { PersonalDataSource } from './personal-data-source.js';
 import type { DataExport } from '@platform/contracts';
 import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
+import { UserConflictError } from './user-directory.js';
 import type { MirroredUser, UserDirectory } from './user-directory.js';
 import type { VerifiedSession } from './session-verifier.js';
 import type { WebhookLedger } from './webhook-ledger.js';
@@ -115,11 +116,51 @@ export class IdentityService {
     // `user.updated` was missed or is still in flight. Correcting it here means
     // an address change converges on the next request instead of waiting for a
     // redelivery that may never come.
-    if (user.email !== session.email) {
-      return this.users.update(user.id, { email: session.email });
+    return this.correctEmail(user, session.email, { userId: user.id, ipAddress });
+  }
+
+  /**
+   * Bring the mirrored address into line with the provider's, and record it.
+   *
+   * Shared by both correction paths — the webhook and the just-in-time one —
+   * because they are the same operation arriving by different routes, and two
+   * copies would drift the moment one of them gained a rule the other did not.
+   *
+   * **Survives a collision rather than failing the request.** `users.email` is
+   * unique, so this can lose to a stale row: our mirror still holds an address
+   * that somebody else has since taken at the provider. Rare, and recoverable
+   * on its own — the other account's next request corrects *its* row and frees
+   * the address. Throwing here would 500 an ordinary page load over a race that
+   * resolves itself, so the stale address is kept and the caller carries on.
+   */
+  private async correctEmail(
+    user: MirroredUser,
+    email: string,
+    actor: Actor | null,
+  ): Promise<MirroredUser> {
+    if (user.email === email) return user;
+
+    let corrected: MirroredUser;
+    try {
+      corrected = await this.users.update(user.id, { email });
+    } catch (error) {
+      if (error instanceof UserConflictError) return user;
+      throw error;
     }
 
-    return user;
+    // Audited because changing the address on an account is how a takeover is
+    // made permanent. The digests show that it changed without recording either
+    // address (ADR 0017).
+    await this.audit.record({
+      actor,
+      action: 'account.email_changed',
+      targetType: 'user',
+      targetId: user.id,
+      before: auditableAccount(user),
+      after: auditableAccount(corrected),
+    });
+
+    return corrected;
   }
 
   /**
@@ -306,9 +347,10 @@ export class IdentityService {
       // tombstoned, and applying the new address would undo the erasure.
       if (user.deletedAt !== null) return;
 
-      if (user.email !== event.email) {
-        await this.users.update(user.id, { email: event.email });
-      }
+      // Actor is null for the same reason provisioning's is: this arrived on a
+      // webhook, so nobody was holding a session and there is no address to
+      // attribute it to.
+      await this.correctEmail(user, event.email, null);
       return;
     }
 

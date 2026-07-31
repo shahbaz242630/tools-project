@@ -48,3 +48,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0017](0017-audit-log-keeps-keyed-digests-not-values.md)                  | Keep keyed digests in the audit log, not values, and fail closed     | Accepted |
 | [0018](0018-delete-our-data-before-the-credential.md)                     | Erase our data before deleting the credential, and say what survives | Accepted |
 | [0019](0019-the-export-is-the-one-plaintext-egress.md)                    | Treat the data export as the one plaintext egress, and audit it      | Accepted |
+| [0020](0020-email-correction-stays-at-the-provider.md)                    | Correct the email at the provider, and let the mirror converge       | Accepted |

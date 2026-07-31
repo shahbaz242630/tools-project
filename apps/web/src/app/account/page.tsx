@@ -47,6 +47,9 @@ export default async function AccountPage() {
             <Link href="/account/profile">Edit your profile</Link>
           </li>
           <li>
+            <Link href="/account/email">Email and sign-in</Link>
+          </li>
+          <li>
             {/* What everybody else sees. Linked from here on purpose: a person
                 being asked for a home address should be one click from the page
                 that proves how little of it is published. */}
