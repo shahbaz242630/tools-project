@@ -1,5 +1,7 @@
 import { Postcode } from '@platform/core';
 import type { MyProfile, ProfileInput, PublicProfile } from '@platform/contracts';
+import type { Actor } from '../audit/audit-log.js';
+import type { AuditService } from '../audit/audit.service.js';
 import type { AccountLookup, ProfileStore, StoredProfile } from './profile-store.js';
 
 /**
@@ -18,6 +20,7 @@ export class ProfilesService {
   constructor(
     private readonly profiles: ProfileStore,
     private readonly accounts: AccountLookup,
+    private readonly audit: AuditService,
   ) {}
 
   /** The caller's own profile, in full. Null until they first save one. */
@@ -34,11 +37,31 @@ export class ProfilesService {
    * but the caller, which is a stronger guarantee than an ownership check —
    * a check can be forgotten on a new route, an absent parameter cannot.
    */
-  async saveMine(userId: string, input: ProfileInput): Promise<MyProfile> {
-    const saved = await this.profiles.save(userId, {
+  async saveMine(actor: Actor, input: ProfileInput): Promise<MyProfile> {
+    // Read before writing, for two reasons that happen to coincide: the audit
+    // entry needs the prior state to digest, and whether one existed is what
+    // distinguishes a creation from an edit. Neither is worth a second query.
+    const before = await this.profiles.find(actor.userId);
+
+    const saved = await this.profiles.save(actor.userId, {
       displayName: input.displayName,
       phone: input.phone,
       address: input.address,
+    });
+
+    // Awaited, and its failure is deliberately not caught. A profile saved with
+    // no record of who changed it is the outcome the audit log exists to
+    // prevent, and this table shares a database with the row just written — a
+    // failure here means that write would have failed too. ADR 0017.
+    await this.audit.record({
+      actor,
+      action: before === null ? 'profile.created' : 'profile.updated',
+      targetType: 'profile',
+      targetId: saved.id,
+      // `undefined` rather than null for a creation: there was no prior state,
+      // which is different from a prior state that was empty.
+      before: before === null ? undefined : auditableState(before),
+      after: auditableState(saved),
     });
 
     return toMyProfile(saved);
@@ -77,6 +100,23 @@ export class ProfilesService {
       memberSince: toMonth(account.createdAt),
     };
   }
+}
+
+/**
+ * The part of a profile whose change is worth recording.
+ *
+ * **`updatedAt` is deliberately excluded.** It moves on every save, so
+ * including it would make two saves of identical content produce different
+ * digests — and the audit log would claim a change every time somebody opened
+ * the form and pressed save without editing anything. That would destroy the
+ * one thing comparing digests is for.
+ */
+function auditableState(profile: StoredProfile): unknown {
+  return {
+    displayName: profile.displayName,
+    phone: profile.phone,
+    address: profile.address,
+  };
 }
 
 /** The owner's view: everything, with timestamps as ISO strings for the wire. */

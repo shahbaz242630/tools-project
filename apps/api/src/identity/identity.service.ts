@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import type { AuditService } from '../audit/audit.service.js';
 import type { MirroredUser, UserDirectory } from './user-directory.js';
 import type { VerifiedSession } from './session-verifier.js';
 import type { WebhookLedger } from './webhook-ledger.js';
@@ -51,10 +52,23 @@ export function tombstoneEmail(userId: string): string {
   return `deleted+${userId}@deleted.invalid`;
 }
 
+/**
+ * The part of an account whose state is worth digesting.
+ *
+ * The email is included because a change to it is exactly what a later
+ * `account.updated` entry would need to prove — and it is only ever hashed, so
+ * the address itself does not reach the log. `clerkUserId` is left out: it is a
+ * provider reference that says nothing about the account's own state.
+ */
+function auditableAccount(user: MirroredUser): unknown {
+  return { id: user.id, email: user.email, role: user.role };
+}
+
 export class IdentityService {
   constructor(
     private readonly users: UserDirectory,
     private readonly ledger: WebhookLedger,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -67,11 +81,26 @@ export class IdentityService {
    * still what applies later changes — this is the belt to its braces, and both
    * converge on the same row because `clerkUserId` is unique.
    */
-  async resolveSession(session: VerifiedSession): Promise<MirroredUser> {
-    const user = await this.users.upsert({
+  async resolveSession(
+    session: VerifiedSession,
+    ipAddress: string | null = null,
+  ): Promise<MirroredUser> {
+    const { user, created } = await this.users.upsert({
       clerkUserId: session.clerkUserId,
       email: session.email,
     });
+
+    if (created) {
+      // The account is the actor in its own creation: nobody else caused it,
+      // and attributing it to the system would lose the address it came from.
+      await this.audit.record({
+        actor: { userId: user.id, ipAddress },
+        action: 'account.provisioned',
+        targetType: 'user',
+        targetId: user.id,
+        after: auditableAccount(user),
+      });
+    }
 
     if (user.deletedAt !== null) throw new AccountDeletedError();
 
@@ -134,10 +163,23 @@ export class IdentityService {
 
   private async apply(event: IdentityEvent): Promise<void> {
     if (event.type === 'user.upserted') {
-      const user = await this.users.upsert({
+      const { user, created } = await this.users.upsert({
         clerkUserId: event.clerkUserId,
         email: event.email,
       });
+
+      if (created) {
+        // Actor is null: this arrived on a webhook, so nobody was holding a
+        // session and there is no address to attribute it to. Recording it as
+        // the account's own action would invent a sign-in that never happened.
+        await this.audit.record({
+          actor: null,
+          action: 'account.provisioned',
+          targetType: 'user',
+          targetId: user.id,
+          after: auditableAccount(user),
+        });
+      }
 
       // A deleted row stays deleted. Clerk cannot resurrect an account we have
       // tombstoned, and applying the new address would undo the erasure.

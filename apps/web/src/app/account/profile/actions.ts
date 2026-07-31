@@ -1,7 +1,9 @@
 'use server';
 
 import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { clientIpFrom } from '../../../lib/client-ip';
 import { readProfileForm } from '../../../lib/profile-form';
 import { saveMyProfile } from '../../../lib/profile';
 import { webEnv } from '../../../lib/env';
@@ -43,10 +45,17 @@ export async function saveProfileAction(
   }
 
   const { getToken } = await auth();
+
+  // The audit entry for this save records where it came from, so the address
+  // has to travel with the request that causes it.
+  const clientIp = clientIpFrom((await headers()).get('x-forwarded-for'));
+
   const outcome = await saveMyProfile(
     webEnv().API_BASE_URL,
     await getToken(),
     parsed.input,
+    undefined,
+    clientIp,
   );
 
   switch (outcome.kind) {

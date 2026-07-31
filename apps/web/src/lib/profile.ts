@@ -13,6 +13,7 @@
  */
 
 import {
+  CLIENT_IP_HEADER,
   ME_PROFILE_PATH,
   parseMyProfileResponse,
   parsePublicProfile,
@@ -60,6 +61,20 @@ export type FetchLike = (
   },
 ) => Promise<FetchResponse>;
 
+/**
+ * The headers every authenticated call carries.
+ *
+ * The address is omitted rather than sent empty when unknown — the API treats a
+ * blank header as absent anyway, and an empty one in a request log invites the
+ * reader to think it was measured and found to be nothing.
+ */
+function authHeaders(token: string, clientIp: string | null): Record<string, string> {
+  return {
+    authorization: `Bearer ${token}`,
+    ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+  };
+}
+
 function describe(error: unknown): string {
   if (error instanceof Error) {
     return error.name === 'TimeoutError'
@@ -102,6 +117,7 @@ export async function fetchMyProfile(
   apiBaseUrl: string,
   token: string | null,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
 ): Promise<ProfileOutcome> {
   if (token === null || token === '') return { kind: 'signed-out' };
 
@@ -109,7 +125,7 @@ export async function fetchMyProfile(
   try {
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: { authorization: `Bearer ${token}` },
+      headers: authHeaders(token, clientIp),
     });
   } catch (error) {
     return { kind: 'unreachable', reason: describe(error) };
@@ -144,6 +160,7 @@ export async function saveMyProfile(
   token: string | null,
   input: ProfileInput,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
 ): Promise<SaveOutcome> {
   if (token === null || token === '') return { kind: 'signed-out' };
 
@@ -152,10 +169,7 @@ export async function saveMyProfile(
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       method: 'PUT',
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-      },
+      headers: { ...authHeaders(token, clientIp), 'content-type': 'application/json' },
       body: JSON.stringify(input),
     });
   } catch (error) {

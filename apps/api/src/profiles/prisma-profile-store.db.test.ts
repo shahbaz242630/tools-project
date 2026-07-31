@@ -71,6 +71,12 @@ describe('save and find', () => {
     await store.save(userId, changes);
 
     await expect(store.find(userId)).resolves.toEqual({
+      // The profile row's own id, which is what an audit entry names as its
+      // target — using the user id would be ambiguous the moment profiles stop
+      // being one-per-account.
+      id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      ),
       userId,
       displayName: 'Sarah M.',
       phone: '+447700900123',

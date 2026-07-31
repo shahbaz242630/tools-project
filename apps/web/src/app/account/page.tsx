@@ -1,7 +1,9 @@
 import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
 import Link from 'next/link';
 import { AccountReport } from '../../components/account-report';
 import { fetchAccount } from '../../lib/account';
+import { clientIpFrom } from '../../lib/client-ip';
 import { webEnv } from '../../lib/env';
 
 /**
@@ -23,7 +25,11 @@ export default async function AccountPage() {
   const { getToken } = await auth();
   const token = await getToken();
 
-  const outcome = await fetchAccount(webEnv().API_BASE_URL, token);
+  // Forwarded because `account.provisioned` fires on whichever authenticated
+  // request happens to be first, and for a new sign-up that is usually this one.
+  const clientIp = clientIpFrom((await headers()).get('x-forwarded-for'));
+
+  const outcome = await fetchAccount(webEnv().API_BASE_URL, token, undefined, clientIp);
 
   return (
     <main>
@@ -45,6 +51,9 @@ export default async function AccountPage() {
                 being asked for a home address should be one click from the page
                 that proves how little of it is published. */}
             <Link href={`/users/${outcome.account.id}`}>View your public profile</Link>
+          </li>
+          <li>
+            <Link href="/account/activity">Account activity</Link>
           </li>
         </ul>
       ) : null}

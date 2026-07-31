@@ -2,6 +2,8 @@ import { Inject, Injectable, SetMetadata, UnauthorizedException } from '@nestjs/
 import { ForbiddenException } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { isIP } from 'node:net';
+import { CLIENT_IP_HEADER } from '@platform/contracts';
 import type { Logger } from '@platform/observability';
 import { AccountDeletedError } from './identity.service.js';
 import type { IdentityService } from './identity.service.js';
@@ -31,6 +33,45 @@ export interface AuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
   user?: MirroredUser;
   sessionId?: string;
+
+  /**
+   * The client's address as the web app reported it, or null.
+   *
+   * Resolved once by the guard and attached, rather than each controller
+   * reaching for the header itself — one place to change if the trust model
+   * ever does, and one place a reviewer has to look to see what it rests on.
+   */
+  clientIp?: string | null;
+}
+
+/**
+ * The client's address, from the header the web app sets.
+ *
+ * Validated with `isIP` rather than merely trimmed, and that is not belt and
+ * braces — it is load-bearing. The address lands in an `inet` column, so a
+ * malformed value makes the insert throw; the audit write is deliberately
+ * fail-closed, so that throw would take down the request it was auditing.
+ * A header nobody validated could therefore turn every authenticated request
+ * into a 500. Recording null is the honest answer to "we cannot tell", and it
+ * keeps a bad header from becoming an outage.
+ *
+ * **Fastify joins a repeated header into one comma-separated string**, so
+ * `x-client-ip: a` sent twice arrives as `"a,b"` — a string, not an array, and
+ * therefore past any `typeof` check. `isIP` rejects it, which is the point:
+ * two values means something sits between us and the web app, and picking one
+ * would record a guess as fact.
+ *
+ * The value is trusted because the API is unreachable from the internet, not
+ * because the header is authoritative — see ADR 0017.
+ */
+export function clientIpFrom(
+  headers: Record<string, string | string[] | undefined>,
+): string | null {
+  const value = headers[CLIENT_IP_HEADER];
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  return isIP(trimmed) === 0 ? null : trimmed;
 }
 
 /**
@@ -78,12 +119,15 @@ export class AuthGuard implements CanActivate {
     }
 
     const session = await this.verify(token);
+    const clientIp = clientIpFrom(request.headers);
+
     const user = await this.resolve(session.clerkUserId, () =>
-      this.identity.resolveSession(session),
+      this.identity.resolveSession(session, clientIp),
     );
 
     request.user = user;
     request.sessionId = session.sessionId;
+    request.clientIp = clientIp;
 
     this.authorise(context, user);
 

@@ -14,6 +14,8 @@ import { createIdentityFakes } from '../identity/testing/fakes.js';
 import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { ProfilesService } from './profiles.service.js';
 import { InMemoryAccountLookup, InMemoryProfileStore } from './testing/fakes.js';
+import { createAuditFakes } from '../audit/testing/fakes.js';
+import type { AuditFakes } from '../audit/testing/fakes.js';
 
 /**
  * Boots the real application — real routing, real guard, real exception filter
@@ -49,6 +51,7 @@ let app: NestFastifyApplication;
 let identity: IdentityFakes;
 let profiles: InMemoryProfileStore;
 let accounts: InMemoryAccountLookup;
+let audit: AuditFakes;
 
 /** Ids are minted by the identity fake on first authenticated request. */
 async function idOf(token: string): Promise<string> {
@@ -61,11 +64,13 @@ async function idOf(token: string): Promise<string> {
 }
 
 beforeEach(async () => {
-  identity = createIdentityFakes();
+  audit = createAuditFakes();
+  identity = createIdentityFakes(audit);
   identity.sessionVerifier.accept('alice-token', ALICE).accept('bob-token', BOB);
 
   profiles = new InMemoryProfileStore();
   accounts = new InMemoryAccountLookup();
+  audit = createAuditFakes();
 
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -76,7 +81,8 @@ beforeEach(async () => {
           sessionVerifier: identity.sessionVerifier,
           service: identity.service,
         },
-        profiles: new ProfilesService(profiles, accounts),
+        profiles: new ProfilesService(profiles, accounts, audit.service),
+        audit: audit.service,
       }),
     ],
   }).compile();

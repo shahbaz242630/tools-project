@@ -7,6 +7,7 @@ import {
 import type { VerifiedSession } from './session-verifier.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { UserConflictError } from './user-directory.js';
+import { createAuditFakes } from '../audit/testing/fakes.js';
 
 const SESSION: VerifiedSession = {
   clerkUserId: 'user_1',
@@ -21,7 +22,7 @@ let service: IdentityService;
 beforeEach(() => {
   users = new InMemoryUserDirectory();
   ledger = new InMemoryWebhookLedger();
-  service = new IdentityService(users, ledger);
+  service = new IdentityService(users, ledger, createAuditFakes().service);
 });
 
 describe('resolveSession', () => {
@@ -297,5 +298,115 @@ describe('conflicting accounts', () => {
         email: 'ALICE@EXAMPLE.COM',
       }),
     ).rejects.toBeInstanceOf(UserConflictError);
+  });
+});
+
+describe('the audit trail', () => {
+  it('records provisioning the first time a session is seen', async () => {
+    const audit = createAuditFakes();
+    const directory = new InMemoryUserDirectory();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+    );
+
+    const user = await identity.resolveSession(
+      { clerkUserId: 'user_a', sessionId: 'sess_a', email: 'alice@example.com' },
+      '203.0.113.7',
+    );
+
+    expect(audit.log.entries()).toHaveLength(1);
+    expect(audit.log.entries()[0]).toMatchObject({
+      actorId: user.id,
+      action: 'account.provisioned',
+      targetType: 'user',
+      targetId: user.id,
+      ipAddress: '203.0.113.7',
+      beforeHash: null,
+    });
+  });
+
+  it('records it once, however many times the session is seen again', async () => {
+    // Provisioning is an event, not a state. A second entry on every request
+    // would bury the one that mattered under thousands that did not.
+    const audit = createAuditFakes();
+    const identity = new IdentityService(
+      new InMemoryUserDirectory(),
+      new InMemoryWebhookLedger(),
+      audit.service,
+    );
+    const session = {
+      clerkUserId: 'user_a',
+      sessionId: 'sess_a',
+      email: 'a@example.com',
+    };
+
+    await identity.resolveSession(session);
+    await identity.resolveSession(session);
+    await identity.resolveSession(session);
+
+    expect(audit.log.entries()).toHaveLength(1);
+  });
+
+  it('records no email, only a digest of the account state', async () => {
+    const audit = createAuditFakes();
+    const identity = new IdentityService(
+      new InMemoryUserDirectory(),
+      new InMemoryWebhookLedger(),
+      audit.service,
+    );
+
+    await identity.resolveSession({
+      clerkUserId: 'user_a',
+      sessionId: 'sess_a',
+      email: 'alice@example.com',
+    });
+
+    expect(JSON.stringify(audit.log.entries())).not.toContain('alice@example.com');
+  });
+
+  it('attributes a webhook-provisioned account to nobody', async () => {
+    // No session was held, so there is no actor and no address. Recording the
+    // account as its own actor would invent a sign-in that never happened.
+    const audit = createAuditFakes();
+    const identity = new IdentityService(
+      new InMemoryUserDirectory(),
+      new InMemoryWebhookLedger(),
+      audit.service,
+    );
+
+    await identity.applyEvent('msg_1', {
+      type: 'user.upserted',
+      clerkUserId: 'user_a',
+      email: 'alice@example.com',
+    });
+
+    expect(audit.log.entries()[0]).toMatchObject({
+      actorId: null,
+      ipAddress: null,
+      action: 'account.provisioned',
+    });
+  });
+
+  it('records nothing when a webhook merely updates an existing account', async () => {
+    const audit = createAuditFakes();
+    const identity = new IdentityService(
+      new InMemoryUserDirectory(),
+      new InMemoryWebhookLedger(),
+      audit.service,
+    );
+    const event = {
+      type: 'user.upserted',
+      clerkUserId: 'user_a',
+      email: 'alice@example.com',
+    } as const;
+
+    await identity.applyEvent('msg_1', event);
+    await identity.applyEvent('msg_2', { ...event, email: 'new@example.com' });
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'account.provisioned'),
+    ).toHaveLength(1);
   });
 });

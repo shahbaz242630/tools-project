@@ -23,6 +23,15 @@ export interface AddressDetail {
 
 /** A stored profile, as its owner may see it. */
 export interface StoredProfile {
+  /**
+   * The profile row's own identifier.
+   *
+   * Here so an audit entry can name what it changed. Using `userId` as the
+   * target would work today, when profiles are one-per-account, and would be
+   * quietly wrong the moment that stops being true — an audit trail is the last
+   * place to leave an ambiguous reference.
+   */
+  readonly id: string;
   readonly userId: string;
   readonly displayName: string;
   readonly phone: string | null;

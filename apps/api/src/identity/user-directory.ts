@@ -28,6 +28,12 @@ export interface MirroredUser {
   readonly createdAt: Date;
 }
 
+/** The row, and whether this call is the one that brought it into existence. */
+export interface UpsertResult {
+  readonly user: MirroredUser;
+  readonly created: boolean;
+}
+
 export interface UpsertUserInput {
   readonly clerkUserId: string;
   readonly email: string;
@@ -68,11 +74,16 @@ export interface UserDirectory {
   /**
    * Create the mirror row, or return the existing one.
    *
+   * Reports **whether it created**, because "this account came into existence"
+   * is an auditable event and "we looked one up" is not. Deriving that from a
+   * read beforehand would be a lie under concurrency: two requests both see no
+   * row, both call this, and one of them is wrong.
+   *
    * Throws `UserConflictError` when the insert loses a race, rather than
    * swallowing it — the caller decides whether re-reading is the right
    * response, and silently returning stale state is how mirrors drift.
    */
-  upsert(input: UpsertUserInput): Promise<MirroredUser>;
+  upsert(input: UpsertUserInput): Promise<UpsertResult>;
 
   update(id: string, changes: UserChanges): Promise<MirroredUser>;
 }

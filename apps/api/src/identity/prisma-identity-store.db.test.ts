@@ -57,10 +57,13 @@ describe('PrismaUserDirectory', () => {
     const clerkUserId = uniqueClerkId();
     const email = uniqueEmail();
 
-    const user = await users.upsert({ clerkUserId, email });
+    const { user, created } = await users.upsert({ clerkUserId, email });
 
     expect(user).toMatchObject({ clerkUserId, email, role: 'USER', deletedAt: null });
     expect(user.id).toMatch(/^[0-9a-f-]{36}$/);
+    // Reported, not inferred: "this account came into existence" is auditable
+    // and a read beforehand would be a lie under concurrency.
+    expect(created).toBe(true);
   });
 
   it('returns the existing row rather than creating a second', async () => {
@@ -68,8 +71,10 @@ describe('PrismaUserDirectory', () => {
     const first = await users.upsert({ clerkUserId, email: uniqueEmail() });
     const second = await users.upsert({ clerkUserId, email: uniqueEmail() });
 
-    expect(second.id).toBe(first.id);
+    expect(second.user.id).toBe(first.user.id);
     expect(await client.user.count()).toBe(1);
+    // Only the first call created it, so only the first is audited.
+    expect([first.created, second.created]).toEqual([true, false]);
   });
 
   it('keeps the stored address when a repeat upsert carries a different one', async () => {
@@ -81,7 +86,7 @@ describe('PrismaUserDirectory', () => {
     await users.upsert({ clerkUserId, email: original });
 
     const again = await users.upsert({ clerkUserId, email: uniqueEmail() });
-    expect(again.email).toBe(original);
+    expect(again.user.email).toBe(original);
   });
 
   it('refuses to attach one address to two Clerk accounts', async () => {
@@ -115,20 +120,26 @@ describe('PrismaUserDirectory', () => {
     // The end-to-end version of the deletion rule: a retained unique row would
     // lock that person out of the platform permanently.
     const email = uniqueEmail();
-    const original = await users.upsert({ clerkUserId: uniqueClerkId(), email });
+    const { user: original } = await users.upsert({
+      clerkUserId: uniqueClerkId(),
+      email,
+    });
 
     await users.update(original.id, {
       deletedAt: new Date(),
       email: `deleted+${original.id}@deleted.invalid`,
     });
 
-    const returning = await users.upsert({ clerkUserId: uniqueClerkId(), email });
+    const { user: returning } = await users.upsert({
+      clerkUserId: uniqueClerkId(),
+      email,
+    });
     expect(returning.id).not.toBe(original.id);
     expect(returning.email).toBe(email);
   });
 
   it('reads the role back as one of the two values', async () => {
-    const user = await users.upsert({
+    const { user } = await users.upsert({
       clerkUserId: uniqueClerkId(),
       email: uniqueEmail(),
     });

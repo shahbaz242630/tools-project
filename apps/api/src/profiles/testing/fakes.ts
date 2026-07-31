@@ -19,10 +19,18 @@ import type {
   ProfileStore,
   StoredProfile,
 } from '../profile-store.js';
+import { createAuditFakes } from '../../audit/testing/fakes.js';
+import type { AuditFakes } from '../../audit/testing/fakes.js';
 import { ProfilesService } from '../profiles.service.js';
 
 export class InMemoryProfileStore implements ProfileStore {
   private readonly rows = new Map<string, StoredProfile>();
+  private nextId = 1;
+
+  /** Deterministic ids: a failing assertion should name a stable value. */
+  private mintId(): string {
+    return `00000000-0000-4000-9000-${String(this.nextId++).padStart(12, '0')}`;
+  }
 
   /** Fails the next save, to exercise the paths above it. */
   private failure: Error | null = null;
@@ -55,6 +63,9 @@ export class InMemoryProfileStore implements ProfileStore {
     // Replace, not merge. The real store does the same, and a fake that merged
     // would let a test pass while a cleared phone number silently survived.
     const saved: StoredProfile = {
+      // Kept across saves — an edit does not replace the row, so the audit
+      // trail for a profile has one stable target.
+      id: this.rows.get(userId)?.id ?? this.mintId(),
       userId,
       displayName: changes.displayName,
       phone: changes.phone,
@@ -94,6 +105,8 @@ export interface ProfileFakes {
   readonly profiles: InMemoryProfileStore;
   readonly accounts: InMemoryAccountLookup;
   readonly service: ProfilesService;
+  /** Exposed so a test can assert what the module recorded. */
+  readonly audit: AuditFakes;
 }
 
 /**
@@ -101,12 +114,13 @@ export interface ProfileFakes {
  * `AppModule.register` — so a test can boot the real application, with real
  * routing and the real guard, without Postgres.
  */
-export function createProfileFakes(): ProfileFakes {
+export function createProfileFakes(audit = createAuditFakes()): ProfileFakes {
   const profiles = new InMemoryProfileStore();
   const accounts = new InMemoryAccountLookup();
   return {
     profiles,
     accounts,
-    service: new ProfilesService(profiles, accounts),
+    audit,
+    service: new ProfilesService(profiles, accounts, audit.service),
   };
 }

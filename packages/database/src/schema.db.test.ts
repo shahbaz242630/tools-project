@@ -56,6 +56,7 @@ beforeEach(async () => {
   // file then fails for a reason that has nothing to do with what it asserts.
   await client.profile.deleteMany();
   await client.address.deleteMany();
+  await client.auditLog.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });
@@ -333,5 +334,115 @@ describe('addresses', () => {
     await client.address.create({ data: newAddress(user.id) });
 
     await expect(client.user.delete({ where: { id: user.id } })).rejects.toThrow();
+  });
+});
+
+describe('audit_logs', () => {
+  const entry = (actorId: string | null) => ({
+    actorId,
+    action: 'profile.updated',
+    targetType: 'profile',
+    targetId: randomUUID(),
+    beforeHash: 'a'.repeat(64),
+    afterHash: 'b'.repeat(64),
+    ipAddress: '203.0.113.7',
+  });
+
+  it('records an entry against an actor', async () => {
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.auditLog.create({ data: entry(user.id) });
+
+    expect(created).toMatchObject({
+      actorId: user.id,
+      action: 'profile.updated',
+      targetType: 'profile',
+    });
+    expect(created.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('allows an entry with no actor, for actions nobody took', async () => {
+    await expect(client.auditLog.create({ data: entry(null) })).resolves.toMatchObject({
+      actorId: null,
+    });
+  });
+
+  it('allows an entry with no address, because it is often genuinely unknown', async () => {
+    // The API never sees a browser — only the web app is on the edge network —
+    // so the address is only as good as the hop that forwarded it. Recording
+    // the web container's own address instead would be misleading evidence.
+    const user = await client.user.create({ data: newUser() });
+    await expect(
+      client.auditLog.create({ data: { ...entry(user.id), ipAddress: null } }),
+    ).resolves.toMatchObject({ ipAddress: null });
+  });
+
+  it('rejects a malformed address at the database level', async () => {
+    // The column is `inet`, so a value that is not an address cannot be stored
+    // and later believed. The header it arrives on is attacker-influenced.
+    const user = await client.user.create({ data: newUser() });
+    await expect(
+      client.auditLog.create({
+        data: { ...entry(user.id), ipAddress: 'not-an-address' },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('stores an IPv6 address', async () => {
+    const user = await client.user.create({ data: newUser() });
+    await expect(
+      client.auditLog.create({ data: { ...entry(user.id), ipAddress: '2001:db8::1' } }),
+    ).resolves.toMatchObject({ ipAddress: '2001:db8::1' });
+  });
+
+  it('refuses an entry naming an actor that does not exist', async () => {
+    // An audit trail naming somebody who never existed is worse than no trail.
+    await expect(
+      client.auditLog.create({ data: entry(randomUUID()) }),
+    ).rejects.toThrow();
+  });
+
+  it('keeps the entry when a hard delete removes its actor', async () => {
+    // ON DELETE SET NULL, unlike profiles' RESTRICT. Accounts are soft-deleted
+    // so this should never fire — but if it ever does, losing the actor's name
+    // is far better than losing the record that something happened. §10.1
+    // retains security logs for six years; the event is the obligation.
+    const user = await client.user.create({ data: newUser() });
+    await client.auditLog.create({ data: entry(user.id) });
+
+    await client.user.delete({ where: { id: user.id } });
+
+    const remaining = await client.auditLog.findMany();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.actorId).toBeNull();
+    expect(remaining[0]?.action).toBe('profile.updated');
+  });
+
+  it('stores no value, only digests of one', async () => {
+    // BRD §6.2 records a *hash* of before and after. Storing the values would
+    // make this table a second, longer-lived copy of the personal data the rest
+    // of the system is careful about — retained six years while the original is
+    // erasable, inverting §10.1. If a value column ever appears here, that
+    // decision is being reversed (ADR 0017).
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.auditLog.create({ data: entry(user.id) });
+
+    expect(Object.keys(created).sort()).toEqual([
+      'action',
+      'actorId',
+      'afterHash',
+      'beforeHash',
+      'createdAt',
+      'id',
+      'ipAddress',
+      'targetId',
+      'targetType',
+    ]);
+  });
+
+  it('has no updatedAt, because nothing updates', async () => {
+    // Append-only is the property; the absence of the column is the reminder.
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.auditLog.create({ data: entry(user.id) });
+    expect(created).not.toHaveProperty('updatedAt');
   });
 });

@@ -82,6 +82,11 @@ model User {
   profile Profile?
   address Address?
 
+  /// Audit entries this account was the actor of. Same caveat as above — the
+  /// relation exists because Prisma requires both ends declared, not so that
+  /// another module can read the log through a user.
+  auditEntries AuditLog[]
+
   @@map("users")
 }
 
@@ -252,4 +257,77 @@ model WebhookEvent {
 
   @@unique([provider, externalId])
   @@map("webhook_events")
+}
+
+/// One security-relevant thing that happened, recorded so it cannot be denied.
+///
+/// **Append-only.** BRD §17's risk table calls for immutable audit logs, and the
+/// port above this table offers no update and no delete — the same discipline
+/// the ledger will have. A log that can be edited by the code it audits is a
+/// log that proves nothing about that code.
+///
+/// **It records that a value changed, never what it changed to** (BRD §6.2,
+/// "before/after hash"). Storing the values would make this table a second,
+/// longer-lived copy of exactly the personal data the rest of the system is
+/// careful about — retained six years while the original is erasable, which
+/// inverts the retention rules in §10.1. ADR 0017.
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Who did it. Nullable for actions the system takes on nobody's behalf.
+  ///
+  /// A foreign key rather than a loose id, because an audit trail naming an
+  /// actor that never existed is worse than no trail. Accounts are soft-deleted
+  /// (see `User.deletedAt`), so this survives a deletion request — which is the
+  /// point: §10.1 retains security logs for a year hot and six years cold, and
+  /// erasing the evidence along with the account would defeat that.
+  actorId String? @db.Uuid
+  actor   User?   @relation(fields: [actorId], references: [id])
+
+  /// Dotted and past-tense — `profile.updated`, `account.provisioned`.
+  ///
+  /// A string rather than an enum: a Postgres enum needs a migration to add a
+  /// value, so every new audited action in every future module would queue
+  /// behind a schema change. The vocabulary is defined in the audit module and
+  /// asserted there instead.
+  action String @db.Text
+
+  /// What it happened to. Deliberately not a foreign key: the target may be a
+  /// profile, a listing or a booking, and a polymorphic reference cannot be
+  /// constrained without a column per type. Integrity here is worth less than
+  /// being able to audit anything.
+  targetType String @db.Text
+  targetId   String @db.Uuid
+
+  /// HMAC-SHA256 of the canonical state before and after, keyed with a secret
+  /// the database does not hold.
+  ///
+  /// Not a bare hash, though the BRD says "hash". A display name has a tiny
+  /// value space, so an unkeyed digest is guessable offline by anybody holding
+  /// this table — the protection would be theatre. Keyed, the digests still
+  /// compare equal for equal inputs, which is all change-detection needs, and
+  /// tell an attacker nothing. `beforeHash` is null for a creation.
+  beforeHash String? @db.Text
+  afterHash  String? @db.Text
+
+  /// The client's address, as forwarded by the web app.
+  ///
+  /// Nullable because it genuinely is sometimes unknown: the API is not
+  /// reachable from the internet, so it never sees a browser directly and this
+  /// value is only as good as the hop that forwarded it. Recording the web
+  /// container's own address instead would be misleading evidence in a security
+  /// log, which is worse than an empty column. ADR 0017.
+  ///
+  /// `inet` rather than text so a malformed value is rejected by Postgres
+  /// rather than stored and believed.
+  ipAddress String? @db.Inet
+
+  /// Stored UTC. No `updatedAt`, because nothing updates.
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// Serves the one query that exists: "what happened on my account, newest
+  /// first". Composite rather than two indexes — a scan of every entry an actor
+  /// ever made, sorted afterwards, is the shape that gets slow first.
+  @@index([actorId, createdAt(sort: Desc)])
+  @@map("audit_logs")
 }

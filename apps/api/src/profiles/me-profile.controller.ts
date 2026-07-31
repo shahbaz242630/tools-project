@@ -5,12 +5,14 @@ import {
   Get,
   Inject,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ME_PROFILE_PATH, parseProfileInput } from '@platform/contracts';
 import type { MyProfile, MyProfileResponse } from '@platform/contracts';
 import { ContractViolationError } from '@platform/contracts';
 import { AuthGuard } from '../identity/auth.guard.js';
+import type { AuthenticatedRequest } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
 import { PROFILES_SERVICE } from './profiles.tokens.js';
@@ -46,6 +48,7 @@ export class MeProfileController {
   async save(
     @CurrentUser() user: MirroredUser,
     @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
   ): Promise<MyProfile> {
     // Validated here rather than by a Nest pipe, so the same schema the web app
     // uses is the one enforced, and the two cannot drift into disagreeing about
@@ -66,6 +69,13 @@ export class MeProfileController {
       throw error;
     }
 
-    return this.profiles.saveMine(user.id, input);
+    // The actor is assembled from what the guard verified and what it resolved
+    // from the forwarded header — never from the body. A request that could
+    // name its own actor could forge an audit trail, which is worse than having
+    // none.
+    return this.profiles.saveMine(
+      { userId: user.id, ipAddress: request.clientIp ?? null },
+      input,
+    );
   }
 }

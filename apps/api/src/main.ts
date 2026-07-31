@@ -25,6 +25,9 @@ import {
   PrismaUserDirectory,
   PrismaWebhookLedger,
 } from './identity/prisma-identity-store.js';
+import { AuditService } from './audit/audit.service.js';
+import { PrismaAuditLog } from './audit/prisma-audit-log.js';
+import { createStateDigest } from './audit/state-digest.js';
 import { NestLoggerAdapter } from './observability/nest-logger.js';
 import { createFieldEncryptor } from './profiles/field-encryption.js';
 import { PrismaProfileStore } from './profiles/prisma-profile-store.js';
@@ -95,9 +98,18 @@ async function bootstrap(): Promise<void> {
     authorizedParties: identityEnv.CLERK_AUTHORIZED_PARTIES,
   });
 
+  // Built before identity and profiles, because both write to it. Its digest
+  // key is derived from the same master secret that encrypts addresses, with a
+  // distinct purpose string — one secret to operate, two independent keys.
+  const audit = new AuditService(
+    new PrismaAuditLog(database),
+    createStateDigest(personalDataEnv.PERSONAL_DATA_ENCRYPTION_KEY),
+  );
+
   const identity = new IdentityService(
     new PrismaUserDirectory(database),
     new PrismaWebhookLedger(database),
+    audit,
   );
 
   const profiles = new ProfilesService(
@@ -115,6 +127,7 @@ async function bootstrap(): Promise<void> {
         return user === null ? null : { id: user.id, createdAt: user.createdAt };
       },
     },
+    audit,
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -128,6 +141,7 @@ async function bootstrap(): Promise<void> {
       logger,
       identity: { sessionVerifier, service: identity },
       profiles,
+      audit,
     }),
     new FastifyAdapter(),
     { logger: new NestLoggerAdapter(logger) },
