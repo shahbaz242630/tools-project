@@ -21,6 +21,10 @@ import { ClerkEventsController } from './identity/clerk-events.controller.js';
 import { MeController } from './identity/me.controller.js';
 import type { IdentityService } from './identity/identity.service.js';
 import type { SessionVerifier } from './identity/session-verifier.js';
+import { MeProfileController } from './profiles/me-profile.controller.js';
+import { PROFILES_SERVICE } from './profiles/profiles.tokens.js';
+import { PublicProfileController } from './profiles/public-profile.controller.js';
+import type { ProfilesService } from './profiles/profiles.service.js';
 
 export interface AppModuleOptions {
   /** Built in the composition root, so no provider SDK is imported here. */
@@ -38,6 +42,14 @@ export interface AppModuleOptions {
     readonly sessionVerifier: SessionVerifier;
     readonly service: IdentityService;
   };
+
+  /**
+   * Profiles, assembled outside for the same reasons as identity — and one
+   * more: the address store needs an encryption key, and building it here would
+   * put `PERSONAL_DATA_ENCRYPTION_KEY` in reach of every test that boots the
+   * module.
+   */
+  readonly profiles: ProfilesService;
 }
 
 /**
@@ -52,7 +64,16 @@ export class AppModule implements NestModule {
   static register(options: AppModuleOptions): DynamicModule {
     return {
       module: AppModule,
-      controllers: [HealthController, MeController, ClerkEventsController],
+      controllers: [
+        HealthController,
+        MeController,
+        ClerkEventsController,
+        MeProfileController,
+        // Unguarded by design — BRD §2 gives visitors public profiles. It is a
+        // separate controller so that decision is visible rather than looking
+        // like a missing decorator. See PublicProfileController.
+        PublicProfileController,
+      ],
       providers: [
         ReadinessService,
         { provide: DEPENDENCY_CHECKS, useValue: options.checks },
@@ -70,6 +91,8 @@ export class AppModule implements NestModule {
         { provide: SESSION_VERIFIER, useValue: options.identity.sessionVerifier },
         { provide: IDENTITY_SERVICE, useValue: options.identity.service },
         { provide: AUTH_LOGGER, useValue: options.logger },
+
+        { provide: PROFILES_SERVICE, useValue: options.profiles },
       ],
     };
   }

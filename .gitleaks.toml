@@ -24,6 +24,14 @@ regexes = [
   '''local_dev_only''',
 ]
 
+# Note on PERSONAL_DATA_ENCRYPTION_KEY (ADR 0016): there is deliberately **no**
+# allowlist entry for it. A key that satisfies the startup schema is 44
+# characters of base64 and is indistinguishable from a real one to any scanner,
+# so every placeholder is computed instead of written down — `Buffer.alloc(32)`
+# in the config tests, `head -c 32 /dev/zero | base64` in CI. Nothing to
+# allowlist means nothing to keep true, and a genuine key committed to any of
+# those files is still caught.
+
 [[rules]]
 id = "postgres-connection-string-with-password"
 description = "Postgres connection string carrying a non-placeholder password"

@@ -87,6 +87,21 @@ export class IdentityService {
   }
 
   /**
+   * Look up an account by our own identifier.
+   *
+   * The identity module's public answer to "does this account exist, and is it
+   * still active" — the question every other module has about a user id it was
+   * handed. Returns null for a soft-deleted account as well as an absent one:
+   * to a caller deciding whether to show somebody's page, "gone" and "never
+   * existed" are the same answer, and distinguishing them leaks that an account
+   * once existed at that id.
+   */
+  async findActiveById(id: string): Promise<MirroredUser | null> {
+    const user = await this.users.findById(id);
+    return user === null || user.deletedAt !== null ? null : user;
+  }
+
+  /**
    * Apply a provider event to the mirror, exactly once.
    *
    * Returns `false` when the delivery was already recorded, so the caller can

@@ -40,6 +40,26 @@ export function nowUtc(): Date {
   return new Date();
 }
 
+/**
+ * Parse an ISO 8601 string into an instant.
+ *
+ * The inverse of `toIsoUtc`, and the reason it exists here rather than as a
+ * `new Date(...)` at each call site: `new Date('2026-07-15')` is read as UTC
+ * while `new Date('2026-07-15T09:00')` is read as *local* time, so two strings
+ * that look equally explicit resolve differently depending on where the process
+ * runs. Luxon rejects the ambiguity instead of guessing.
+ *
+ * Throws rather than returning an Invalid Date, which propagates silently and
+ * surfaces as `NaN` somewhere unrelated.
+ */
+export function fromIsoUtc(iso: string): Date {
+  const parsed = DateTime.fromISO(iso, { zone: 'utc' });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid ISO 8601 instant: ${iso}`);
+  }
+  return parsed.toJSDate();
+}
+
 /** ISO 8601 string in UTC, for storage and logging. */
 export function toIsoUtc(instant: Date): string {
   const iso = toDateTime(instant, 'utc').toISO();

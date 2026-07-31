@@ -17,6 +17,15 @@ export interface MirroredUser {
   readonly email: string;
   readonly role: UserRole;
   readonly deletedAt: Date | null;
+
+  /**
+   * When the account was mirrored — effectively when the person joined.
+   *
+   * Here because the public profile shows "member since", and taking that from
+   * the profile row instead would date somebody from when they filled in a form
+   * rather than from when they signed up.
+   */
+  readonly createdAt: Date;
 }
 
 export interface UpsertUserInput {
@@ -45,6 +54,16 @@ export class UserConflictError extends Error {
 
 export interface UserDirectory {
   findByClerkUserId(clerkUserId: string): Promise<MirroredUser | null>;
+
+  /**
+   * Look up by our own identifier.
+   *
+   * Added for the profiles module, which is handed a `userId` from a public URL
+   * and must decide whether that account exists and is still active. It asks
+   * through the identity service rather than reading `users` itself — the
+   * cross-module read CLAUDE.md bans.
+   */
+  findById(id: string): Promise<MirroredUser | null>;
 
   /**
    * Create the mirror row, or return the existing one.

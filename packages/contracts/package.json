@@ -19,6 +19,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@platform/core": "workspace:*",
     "zod": "^4.4.3"
   }
 }

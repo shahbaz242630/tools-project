@@ -51,6 +51,11 @@ const newUser = (overrides: { email?: string; clerkUserId?: string } = {}) => ({
 });
 
 beforeEach(async () => {
+  // Children before parents. The foreign keys are ON DELETE RESTRICT, so
+  // clearing `users` first does not cascade — it throws, and every test in the
+  // file then fails for a reason that has nothing to do with what it asserts.
+  await client.profile.deleteMany();
+  await client.address.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });
@@ -216,5 +221,117 @@ describe('webhook_events', () => {
       'provider',
       'receivedAt',
     ]);
+  });
+});
+
+describe('profiles', () => {
+  const newProfile = (userId: string) => ({ userId, displayName: 'Sarah M.' });
+
+  it('stores a profile against an account', async () => {
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.profile.create({ data: newProfile(user.id) });
+
+    expect(created).toMatchObject({ userId: user.id, displayName: 'Sarah M.' });
+    // Nullable because BRD §8.1 requires a verified phone before listing or
+    // booking, not before having a profile.
+    expect(created.phone).toBeNull();
+  });
+
+  it('allows only one profile per account', async () => {
+    // Two profiles for one user makes "what is this person called" a question
+    // with two answers, decided by whichever row sorts first.
+    const user = await client.user.create({ data: newUser() });
+    await client.profile.create({ data: newProfile(user.id) });
+
+    await expect(
+      client.profile.create({ data: newProfile(user.id) }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a profile for an account that does not exist', async () => {
+    // The foreign key, doing the job application code would otherwise have to
+    // remember to do on every write path.
+    await expect(
+      client.profile.create({ data: newProfile(randomUUID()) }),
+    ).rejects.toThrow();
+  });
+
+  it('allows two accounts to choose the same display name', async () => {
+    // Deliberately not unique. Uniqueness invites squatting and a registration
+    // race, and it does not stop impersonation anyway — "Support" and
+    // "Support " are different strings. That is a Trust & Safety problem.
+    const [one, two] = await Promise.all([
+      client.user.create({ data: newUser() }),
+      client.user.create({ data: newUser() }),
+    ]);
+
+    await client.profile.create({ data: newProfile(one.id) });
+    await expect(
+      client.profile.create({ data: newProfile(two.id) }),
+    ).resolves.toMatchObject({ displayName: 'Sarah M.' });
+  });
+
+  it('blocks a hard delete of an account that still has a profile', async () => {
+    // ON DELETE RESTRICT. Accounts are soft-deleted, so anything reaching this
+    // constraint is doing what the identity module deliberately does not, and
+    // failing loudly beats silently discarding the row.
+    const user = await client.user.create({ data: newUser() });
+    await client.profile.create({ data: newProfile(user.id) });
+
+    await expect(client.user.delete({ where: { id: user.id } })).rejects.toThrow();
+  });
+});
+
+describe('addresses', () => {
+  const newAddress = (userId: string) => ({
+    userId,
+    postcode: 'BS7 8AA',
+    outwardCode: 'BS7',
+    town: 'Bristol',
+    encryptedDetail: 'v1:aXY=:dGFn:Y2lwaGVy',
+  });
+
+  it('stores the public and private parts in separate columns', async () => {
+    // The grading that makes a leak visible rather than silent: a public query
+    // selects `outwardCode`, a column that has never held the inward code.
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.address.create({ data: newAddress(user.id) });
+
+    expect(created.outwardCode).toBe('BS7');
+    expect(created.outwardCode).not.toContain('8AA');
+    expect(created.postcode).toBe('BS7 8AA');
+  });
+
+  it('allows only one address per account', async () => {
+    const user = await client.user.create({ data: newUser() });
+    await client.address.create({ data: newAddress(user.id) });
+
+    await expect(
+      client.address.create({ data: newAddress(user.id) }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses an address for an account that does not exist', async () => {
+    await expect(
+      client.address.create({ data: newAddress(randomUUID()) }),
+    ).rejects.toThrow();
+  });
+
+  it('holds street lines only as ciphertext', async () => {
+    // The column stores an envelope, never plaintext. This asserts the shape
+    // the schema expects; that the application never writes plaintext into it
+    // is proved in the profiles module's own tests, against the real encryptor.
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.address.create({ data: newAddress(user.id) });
+
+    expect(created.encryptedDetail).toMatch(/^v1:/);
+    expect(created.encryptedDetail).not.toContain('Acacia');
+  });
+
+  it('blocks a hard delete of an account that still has an address', async () => {
+    const user = await client.user.create({ data: newUser() });
+    await client.address.create({ data: newAddress(user.id) });
+
+    await expect(client.user.delete({ where: { id: user.id } })).rejects.toThrow();
   });
 });
