@@ -35,6 +35,20 @@ export default async function AccountPage() {
 
       <AccountReport outcome={outcome} />
 
+      {outcome.kind === 'signed-in' ? (
+        <ul>
+          <li>
+            <Link href="/account/profile">Edit your profile</Link>
+          </li>
+          <li>
+            {/* What everybody else sees. Linked from here on purpose: a person
+                being asked for a home address should be one click from the page
+                that proves how little of it is published. */}
+            <Link href={`/users/${outcome.account.id}`}>View your public profile</Link>
+          </li>
+        </ul>
+      ) : null}
+
       <p>
         <Link href="/">Back</Link>
       </p>

@@ -142,3 +142,32 @@ describe('representation', () => {
 function rentalDays(startIso: string, endIso: string): number {
   return T.rentalDayCount(london(startIso), london(endIso));
 }
+
+describe('fromIsoUtc', () => {
+  it('parses an ISO instant', () => {
+    expect(T.toIsoUtc(T.fromIsoUtc('2026-07-15T09:00:00.000Z'))).toBe(
+      '2026-07-15T09:00:00.000Z',
+    );
+  });
+
+  it('reads a bare date as UTC, not as local time', () => {
+    // `new Date('2026-07-15')` is UTC but `new Date('2026-07-15T09:00')` is
+    // local, so two strings that look equally explicit resolve differently.
+    // Pinning the zone is the whole reason this helper exists.
+    expect(T.toIsoUtc(T.fromIsoUtc('2026-07-15'))).toBe('2026-07-15T00:00:00.000Z');
+  });
+
+  it('round-trips with toIsoUtc', () => {
+    const iso = '2026-11-27T23:45:12.345Z';
+    expect(T.toIsoUtc(T.fromIsoUtc(iso))).toBe(iso);
+  });
+
+  it.each(['', 'not a date', '2026-13-01', 'July 2026'])(
+    'throws on %s rather than yielding an Invalid Date',
+    (value) => {
+      // An Invalid Date propagates silently and surfaces as NaN somewhere
+      // unrelated, usually in a total.
+      expect(() => T.fromIsoUtc(value)).toThrow(T.TimeError);
+    },
+  );
+});

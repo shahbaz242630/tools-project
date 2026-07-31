@@ -218,6 +218,7 @@ jobs:
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             -e 'CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----ci-only-not-a-real-key-----END PUBLIC KEY-----' \
             -e CLERK_AUTHORIZED_PARTIES=http://localhost:3000 \
+            -e PERSONAL_DATA_ENCRYPTION_KEY="$(head -c 32 /dev/zero | base64)" \
             rental-api:ci
 
           # Generous: a cold Node start on a loaded runner has been seen to take
@@ -384,6 +385,13 @@ jobs:
           # across two lines, silently corrupting the env file. The startup
           # check only validates the `-----BEGIN PUBLIC KEY-----` prefix, and
           # the unescaping is covered by unit tests in @platform/config.
+          #
+          # The encryption key is fake but has to be *well formed* -- base64 of
+          # exactly 32 bytes -- because the startup schema checks the length. A
+          # placeholder like `rehearsal-only` is rejected and the API never
+          # boots, which is the same trap the Clerk publishable key set: a
+          # structurally meaningful value cannot be faked with arbitrary text.
+          # This one decodes to `rehearsal-only-not-a-real-key!!!`.
           sed -e 's|^IMAGE_REPOSITORY=.*|IMAGE_REPOSITORY=local/rental|' \
               -e 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=rehearsal-only|' \
               -e 's|^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.*|NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_cmVoZWFyc2FsLmNsZXJrLmFjY291bnRzLmRldiQ|' \
@@ -391,6 +399,7 @@ jobs:
               -e 's|^CLERK_WEBHOOK_SIGNING_SECRET=.*|CLERK_WEBHOOK_SIGNING_SECRET=whsec_rehearsal|' \
               -e 's|^CLERK_JWT_PUBLIC_KEY=.*|CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----rehearsal-only-not-a-real-key-----END PUBLIC KEY-----|' \
               -e 's|^CLERK_AUTHORIZED_PARTIES=.*|CLERK_AUTHORIZED_PARTIES=http://localhost|' \
+              -e "s|^PERSONAL_DATA_ENCRYPTION_KEY=.*|PERSONAL_DATA_ENCRYPTION_KEY=$(head -c 32 /dev/zero | base64)|" \
               infra/compose/app.env.example > "${RUNNER_TEMP}/release-root/staging.env"
 
           sed -e 's|^ACME_EMAIL=.*|ACME_EMAIL=rehearsal@example.invalid|' \

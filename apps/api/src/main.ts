@@ -5,7 +5,12 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { verifyToken } from '@clerk/backend';
-import { describeEnv, loadEnv, loadIdentityEnv } from '@platform/config';
+import {
+  describeEnv,
+  loadEnv,
+  loadIdentityEnv,
+  loadPersonalDataEnv,
+} from '@platform/config';
 import { createLogger } from '@platform/observability';
 import type { Logger } from '@platform/observability';
 import { createPrismaClient, ping } from '@platform/database';
@@ -21,6 +26,9 @@ import {
   PrismaWebhookLedger,
 } from './identity/prisma-identity-store.js';
 import { NestLoggerAdapter } from './observability/nest-logger.js';
+import { createFieldEncryptor } from './profiles/field-encryption.js';
+import { PrismaProfileStore } from './profiles/prisma-profile-store.js';
+import { ProfilesService } from './profiles/profiles.service.js';
 import { createShutdown } from '@platform/runtime';
 
 /**
@@ -49,6 +57,12 @@ async function bootstrap(): Promise<void> {
   // missing key still fails at startup naming the variable rather than at the
   // first authenticated request.
   const identityEnv = loadIdentityEnv();
+
+  // Separate again, and for the same reason: the worker has no business holding
+  // a key that decrypts home addresses. Loaded at startup so a missing or
+  // wrong-length key names the variable here rather than throwing inside a
+  // cipher on whichever request first saves an address.
+  const personalDataEnv = loadPersonalDataEnv();
 
   const logger = createLogger({ service: 'api', level: env.LOG_LEVEL });
 
@@ -86,6 +100,23 @@ async function bootstrap(): Promise<void> {
     new PrismaWebhookLedger(database),
   );
 
+  const profiles = new ProfilesService(
+    new PrismaProfileStore(
+      database,
+      createFieldEncryptor(personalDataEnv.PERSONAL_DATA_ENCRYPTION_KEY),
+    ),
+    // The profiles module's `AccountLookup` port, answered by the identity
+    // service. An adapter rather than a direct dependency: Profiles & Trust
+    // states the question it has, Identity & Access answers it, and neither
+    // imports the other's internals (BRD §5.1).
+    {
+      findActive: async (userId) => {
+        const user = await identity.findActiveById(userId);
+        return user === null ? null : { id: user.id, createdAt: user.createdAt };
+      },
+    },
+  );
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       checks: [
@@ -96,6 +127,7 @@ async function bootstrap(): Promise<void> {
       ],
       logger,
       identity: { sessionVerifier, service: identity },
+      profiles,
     }),
     new FastifyAdapter(),
     { logger: new NestLoggerAdapter(logger) },
