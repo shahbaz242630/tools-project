@@ -32,6 +32,28 @@ export interface VerifiedSession {
    * subject beside it.
    */
   readonly email: string;
+
+  /**
+   * How long ago the session's **second** factor was verified, in minutes, or
+   * null when it never was.
+   *
+   * From Clerk's `fva` claim — factor verification age, a pair of
+   * `[first, second]` where `-1` means "not verified in this session". Only the
+   * second element is surfaced, because the first is implied by holding a valid
+   * token at all.
+   *
+   * **Null when the claim is absent, and that is deliberate.** An instance
+   * without it produces correctly-signed tokens that carry no proof of a second
+   * factor, and the only safe reading of "we cannot tell" is "not verified" —
+   * so admin access is refused rather than granted (ADR 0021). The alternative,
+   * treating an absent claim as satisfied, turns a missing configuration into
+   * an open admin surface.
+   *
+   * An age rather than a boolean because BRD §8.13 wants step-up authentication
+   * for high-risk actions, and "verified at some point in this session" is not
+   * the same claim as "verified in the last few minutes".
+   */
+  readonly secondFactorAgeMinutes: number | null;
 }
 
 /**

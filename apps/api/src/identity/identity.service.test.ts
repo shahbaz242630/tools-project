@@ -14,6 +14,7 @@ const SESSION: VerifiedSession = {
   clerkUserId: 'user_1',
   sessionId: 'sess_1',
   email: 'alice@example.com',
+  secondFactorAgeMinutes: null,
 };
 
 let users: InMemoryUserDirectory;
@@ -212,6 +213,7 @@ describe('applyEvent', () => {
         clerkUserId: 'user_2',
         sessionId: 'sess_2',
         email: 'alice@example.com',
+        secondFactorAgeMinutes: null,
       });
 
       expect(returning.email).toBe('alice@example.com');
@@ -289,6 +291,7 @@ describe('conflicting accounts', () => {
         clerkUserId: 'user_2',
         sessionId: 'sess_2',
         email: 'alice@example.com',
+        secondFactorAgeMinutes: null,
       }),
     ).rejects.toBeInstanceOf(UserConflictError);
   });
@@ -303,6 +306,7 @@ describe('conflicting accounts', () => {
         clerkUserId: 'user_2',
         sessionId: 'sess_2',
         email: 'ALICE@EXAMPLE.COM',
+        secondFactorAgeMinutes: null,
       }),
     ).rejects.toBeInstanceOf(UserConflictError);
   });
@@ -321,7 +325,12 @@ describe('the audit trail', () => {
     );
 
     const user = await identity.resolveSession(
-      { clerkUserId: 'user_a', sessionId: 'sess_a', email: 'alice@example.com' },
+      {
+        clerkUserId: 'user_a',
+        sessionId: 'sess_a',
+        email: 'alice@example.com',
+        secondFactorAgeMinutes: null,
+      },
       '203.0.113.7',
     );
 
@@ -351,6 +360,7 @@ describe('the audit trail', () => {
       clerkUserId: 'user_a',
       sessionId: 'sess_a',
       email: 'a@example.com',
+      secondFactorAgeMinutes: null,
     };
 
     await identity.resolveSession(session);
@@ -374,6 +384,7 @@ describe('the audit trail', () => {
       clerkUserId: 'user_a',
       sessionId: 'sess_a',
       email: 'alice@example.com',
+      secondFactorAgeMinutes: null,
     });
 
     expect(JSON.stringify(audit.log.entries())).not.toContain('alice@example.com');
@@ -447,6 +458,7 @@ describe('requestDeletion', () => {
       clerkUserId: 'user_a',
       sessionId: 'sess_a',
       email: 'alice@example.com',
+      secondFactorAgeMinutes: null,
     });
 
     return { id: user.id, audit, eraser, directory, identity };
@@ -559,6 +571,7 @@ describe('requestDeletion', () => {
         clerkUserId: 'user_a',
         sessionId: 'sess_a',
         email: 'alice@example.com',
+        secondFactorAgeMinutes: null,
       }),
     ).rejects.toThrow(AccountDeletedError);
   });
@@ -583,6 +596,7 @@ describe('exportFor', () => {
       clerkUserId: 'user_a',
       sessionId: 'sess_a',
       email: 'alice@example.com',
+      secondFactorAgeMinutes: null,
     });
 
     return { id: user.id, audit, source, directory, identity };
@@ -728,6 +742,7 @@ describe('correcting the email', () => {
     clerkUserId: 'user_a',
     sessionId: 'sess_a',
     email,
+    secondFactorAgeMinutes: null,
   });
 
   async function provision(email = 'old@example.com') {
@@ -840,6 +855,7 @@ describe('correcting the email', () => {
       clerkUserId: 'user_b',
       sessionId: 'sess_b',
       email: 'taken@example.com',
+      secondFactorAgeMinutes: null,
     });
     const mine = await identity.resolveSession(SESSION('old@example.com'));
 
@@ -866,6 +882,7 @@ describe('correcting the email', () => {
       clerkUserId: 'user_b',
       sessionId: 'sess_b',
       email: 'taken@example.com',
+      secondFactorAgeMinutes: null,
     });
     await identity.resolveSession(SESSION('old@example.com'));
     await identity.resolveSession(SESSION('taken@example.com'));

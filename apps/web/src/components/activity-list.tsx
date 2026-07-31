@@ -34,6 +34,7 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
                 <th scope="col">What happened</th>
                 <th scope="col">When</th>
                 <th scope="col">From</th>
+                <th scope="col">Reason</th>
               </tr>
             </thead>
             <tbody>
@@ -53,6 +54,13 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
                         unless a proxy forwarded one. Saying "not recorded" is
                         honest; a blank cell reads as a bug. */}
                     {entry.ipAddress ?? 'Not recorded'}
+                  </td>
+                  <td>
+                    {/* Present when somebody was accountable for the action —
+                        an administrator reaching into this account has to say
+                        why, and the person it happened to can read it (BRD
+                        §8.13). Ordinary actions owe no explanation. */}
+                    {entry.reason ?? '—'}
                   </td>
                 </tr>
               ))}

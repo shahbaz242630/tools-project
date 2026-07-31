@@ -32,12 +32,26 @@ import type { PersonalDataEraser } from '../personal-data-eraser.js';
 import type { PersonalDataSource } from '../personal-data-source.js';
 import type { ExportedProfile } from '@platform/contracts';
 
+/**
+ * What a test supplies for a session.
+ *
+ * `secondFactorAgeMinutes` is optional and **defaults to null — no second
+ * factor**. Fail-closed in the double as well as in production: a test that
+ * expects to reach an admin route has to say so, rather than inheriting
+ * privilege from a fixture nobody reread.
+ */
+export type SessionInput = Omit<VerifiedSession, 'secondFactorAgeMinutes'> &
+  Partial<Pick<VerifiedSession, 'secondFactorAgeMinutes'>>;
+
 /** Accepts exactly the tokens it was given, rejects everything else. */
 export class FakeSessionVerifier implements SessionVerifier {
   private readonly sessions = new Map<string, VerifiedSession>();
 
-  accept(token: string, session: VerifiedSession): this {
-    this.sessions.set(token, session);
+  accept(token: string, session: SessionInput): this {
+    this.sessions.set(token, {
+      ...session,
+      secondFactorAgeMinutes: session.secondFactorAgeMinutes ?? null,
+    });
     return this;
   }
 
@@ -61,6 +75,22 @@ export class InMemoryUserDirectory implements UserDirectory {
 
   seed(user: MirroredUser): this {
     this.rows.set(user.id, user);
+    return this;
+  }
+
+  /**
+   * Make an existing row an administrator.
+   *
+   * **Test-only, and deliberately not on `UserDirectory`.** Granting a role is
+   * an administrative action that will need its own route, its own reason and
+   * its own audit entry when it arrives; adding it to the production port now
+   * would create an ungoverned way to do it. Until that slice exists, tests
+   * that need an admin say so here.
+   */
+  promote(id: string): this {
+    const existing = this.rows.get(id);
+    if (existing === undefined) throw new Error(`no such user: ${id}`);
+    this.rows.set(id, { ...existing, role: 'ADMIN' });
     return this;
   }
 

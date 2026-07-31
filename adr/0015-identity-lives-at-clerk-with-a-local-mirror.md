@@ -38,7 +38,7 @@ The identity mirror can drift, and that is now a permanent property of the syste
 
 `users` is no longer self-contained. Creating a usable account requires a Clerk account to exist, which means no seeding fixtures without one, and integration tests use fakes rather than a real instance.
 
-**Clerk instance configuration is now load-bearing and lives outside version control.** The custom `email` claim and the webhook endpoint are dashboard state. An instance without the claim produces correctly-signed tokens that this API rejects — deliberately loudly, naming the configuration, because the alternative failure is a `NOT NULL` violation that points nowhere near the cause.
+**Clerk instance configuration is now load-bearing and lives outside version control.** The custom `email` claim, **the `fva` factor-verification claim** (added by ADR 0021 — without it nobody can be an administrator, because an unprovable second factor is refused) and the webhook endpoint are dashboard state. An instance without the claim produces correctly-signed tokens that this API rejects — deliberately loudly, naming the configuration, because the alternative failure is a `NOT NULL` violation that points nowhere near the cause.
 
 Staging and production must use **different Clerk instances**. A shared one means a staging sign-up creates a production account.
 
