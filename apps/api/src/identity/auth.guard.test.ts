@@ -3,6 +3,7 @@ import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import { RecordingEraser } from './testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AuthGuard, Roles, bearerToken, clientIpFrom } from './auth.guard.js';
 import { currentUserFrom } from './current-user.decorator.js';
@@ -80,7 +81,12 @@ beforeEach(() => {
   guard = new AuthGuard(
     new Reflector(),
     verifier,
-    new IdentityService(users, new InMemoryWebhookLedger(), createAuditFakes().service),
+    new IdentityService(
+      users,
+      new InMemoryWebhookLedger(),
+      createAuditFakes().service,
+      new RecordingEraser(),
+    ),
     createRecordingLogger().logger,
   );
 });
@@ -124,6 +130,7 @@ describe('AuthGuard', () => {
       email: 'alice@example.com',
       role: 'ADMIN',
       deletedAt: null,
+      deletionRequestedAt: null,
       createdAt: new Date('2026-07-15T09:00:00.000Z'),
     };
     admin.seed(seeded);
@@ -135,6 +142,7 @@ describe('AuthGuard', () => {
         admin,
         new InMemoryWebhookLedger(),
         createAuditFakes().service,
+        new RecordingEraser(),
       ),
       createRecordingLogger().logger,
     );
@@ -193,6 +201,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         users,
         new InMemoryWebhookLedger(),
         createAuditFakes().service,
+        new RecordingEraser(),
       ),
       createRecordingLogger().logger,
     );
@@ -216,6 +225,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         failing,
         new InMemoryWebhookLedger(),
         createAuditFakes().service,
+        new RecordingEraser(),
       ),
       createRecordingLogger().logger,
     );
@@ -232,6 +242,7 @@ describe('currentUserFrom', () => {
       email: 'nine@example.com',
       role: 'USER',
       deletedAt: null,
+      deletionRequestedAt: null,
       createdAt: new Date('2026-07-15T09:00:00.000Z'),
     };
     expect(currentUserFrom(contextFor({ headers: {}, user }))).toBe(user);

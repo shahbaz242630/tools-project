@@ -68,6 +68,38 @@ export class ProfilesService {
   }
 
   /**
+   * Remove everything this module holds about somebody.
+   *
+   * Called through a port by the identity module when a deletion is requested —
+   * Profiles & Trust owns this data, so Profiles & Trust is what erases it. The
+   * alternative, letting Identity reach into these tables, is the cross-module
+   * write CLAUDE.md bans and would put personal-data handling in two places.
+   *
+   * It writes its own audit entry, for the same reason: the module that knows
+   * what was removed is the one that can say so.
+   */
+  async eraseFor(actor: Actor): Promise<void> {
+    const before = await this.profiles.find(actor.userId);
+
+    await this.profiles.erase(actor.userId);
+
+    // Nothing to record when there was nothing to erase. An entry claiming a
+    // profile was removed from somebody who never made one is a false line in
+    // a trail that is retained for six years.
+    if (before === null) return;
+
+    await this.audit.record({
+      actor,
+      action: 'profile.erased',
+      targetType: 'profile',
+      targetId: before.id,
+      before: auditableState(before),
+      // Absent, not empty. There is no resulting state — the row is gone.
+      after: undefined,
+    });
+  }
+
+  /**
    * What a stranger may see.
    *
    * Null when the account does not exist, has been deleted, or has no profile

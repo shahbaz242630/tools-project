@@ -220,3 +220,63 @@ describe('constraints', () => {
     expect(await client.profile.count()).toBe(2);
   });
 });
+
+describe('erase', () => {
+  it('removes the profile and the address', async () => {
+    const userId = await newUser();
+    await store.save(userId, changes);
+
+    await store.erase(userId);
+
+    expect(await client.profile.count()).toBe(0);
+    expect(await client.address.count()).toBe(0);
+    await expect(store.find(userId)).resolves.toBeNull();
+  });
+
+  it('leaves the account row, which the ledger will reference', async () => {
+    // A real delete of the personal data, and a deliberate non-delete of the
+    // account. From Phase 5 the ledger points at this row and can never lose
+    // its counterparty — that is the record we are obliged to keep, and it is
+    // not the profile.
+    const userId = await newUser();
+    await store.save(userId, changes);
+
+    await store.erase(userId);
+
+    expect(await client.user.count()).toBe(1);
+  });
+
+  it('is idempotent', async () => {
+    // A retry after a partial failure must be able to finish, and somebody who
+    // never made a profile is still entitled to ask for erasure.
+    const userId = await newUser();
+    await store.save(userId, changes);
+
+    await store.erase(userId);
+    await expect(store.erase(userId)).resolves.toBeUndefined();
+    await expect(store.erase(await newUser())).resolves.toBeUndefined();
+  });
+
+  it('touches nobody else’s rows', async () => {
+    const [alice, bob] = [await newUser(), await newUser()];
+    await store.save(alice, changes);
+    await store.save(bob, changes);
+
+    await store.erase(alice);
+
+    expect(await client.profile.count()).toBe(1);
+    await expect(store.find(bob)).resolves.not.toBeNull();
+  });
+
+  it('leaves no ciphertext behind for a stolen backup to hold', async () => {
+    // The point of erasing rather than flagging. A soft-deleted address row
+    // would keep the encrypted street lines in every backup taken afterwards,
+    // with a retention clock nobody is watching.
+    const userId = await newUser();
+    await store.save(userId, changes);
+
+    await store.erase(userId);
+
+    expect(await client.address.findMany()).toEqual([]);
+  });
+});

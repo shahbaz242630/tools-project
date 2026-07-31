@@ -1,5 +1,7 @@
 import { Time } from '@platform/core';
+import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
+import type { PersonalDataEraser } from './personal-data-eraser.js';
 import type { MirroredUser, UserDirectory } from './user-directory.js';
 import type { VerifiedSession } from './session-verifier.js';
 import type { WebhookLedger } from './webhook-ledger.js';
@@ -69,6 +71,7 @@ export class IdentityService {
     private readonly users: UserDirectory,
     private readonly ledger: WebhookLedger,
     private readonly audit: AuditService,
+    private readonly eraser: PersonalDataEraser,
   ) {}
 
   /**
@@ -128,6 +131,56 @@ export class IdentityService {
   async findActiveById(id: string): Promise<MirroredUser | null> {
     const user = await this.users.findById(id);
     return user === null || user.deletedAt !== null ? null : user;
+  }
+
+  /**
+   * Act on a request to be deleted.
+   *
+   * **Order is the decision here** (ADR 0018). Personal data is erased first,
+   * then the account is tombstoned. The reverse — tombstone, then erase — means
+   * a failure between the two leaves somebody locked out of an account that
+   * still holds their address, with no way to ask again. This way a failure
+   * leaves the account usable and the request repeatable.
+   *
+   * Deleting the credential at Clerk happens afterwards, in the web app, which
+   * is the only service holding a key that can (ADR 0015). Clerk's own
+   * `user.deleted` webhook then arrives and applies against an already-deleted
+   * row, which `apply` treats as a success.
+   *
+   * **Idempotent.** A second request is a success and records nothing new: the
+   * state asked for is already the state.
+   */
+  async requestDeletion(actor: Actor): Promise<void> {
+    const user = await this.users.findById(actor.userId);
+
+    // Already gone, or never existed. Both are the requested state, and both
+    // must answer success — a retry after a partial failure has to finish
+    // rather than be told it is too late.
+    if (user === null) return;
+    if (user.deletedAt !== null) return;
+
+    // Erase before tombstoning. Each module writes its own entry for what it
+    // removed, so this produces the `profile.erased` line in the trail.
+    await this.eraser.erase(actor);
+
+    const at = Time.nowUtc();
+    const deleted = await this.users.update(user.id, {
+      deletedAt: at,
+      deletionRequestedAt: at,
+      email: tombstoneEmail(user.id),
+    });
+
+    // Recorded last, so the entry describes a completed deletion rather than an
+    // attempted one. It is retained after the erasure it describes — that is
+    // the point of §10.1, and it survives because it holds digests, not values.
+    await this.audit.record({
+      actor,
+      action: 'account.deletion_requested',
+      targetType: 'user',
+      targetId: user.id,
+      before: auditableAccount(user),
+      after: auditableAccount(deleted),
+    });
   }
 
   /**

@@ -68,6 +68,16 @@ model User {
   /// a later slice — BRD §14 Phase 1 asks only for a deletion *skeleton*.
   deletedAt DateTime? @db.Timestamptz(3)
 
+  /// When the person asked to be deleted, as distinct from when we acted on it.
+  ///
+  /// Two columns rather than one because they answer different questions and
+  /// will diverge. `deletedAt` is the state the guard checks; this is the
+  /// *request*, which is what a data-protection enquiry asks about — "when did
+  /// they ask, and how long did you take". They are set together today because
+  /// there is no grace period; a later slice that adds one would leave this set
+  /// and `deletedAt` null for the duration, and nothing above has to change.
+  deletionRequestedAt DateTime? @db.Timestamptz(3)
+
   /// Stored UTC. Rendering and rental-period arithmetic happen in the booking's
   /// stored IANA timezone (BRD §6.1), never in the database.
   createdAt DateTime @default(now()) @db.Timestamptz(3)

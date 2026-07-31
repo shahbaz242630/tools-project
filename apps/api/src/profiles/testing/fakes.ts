@@ -53,6 +53,12 @@ export class InMemoryProfileStore implements ProfileStore {
     return Promise.resolve(this.rows.get(userId) ?? null);
   }
 
+  erase(userId: string): Promise<void> {
+    // A real removal, and idempotent — deleting what is not there is a success.
+    this.rows.delete(userId);
+    return Promise.resolve();
+  }
+
   save(userId: string, changes: ProfileChanges): Promise<StoredProfile> {
     if (this.failure !== null) {
       const error = this.failure;

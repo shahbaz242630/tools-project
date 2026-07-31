@@ -22,6 +22,7 @@ import { MeActivityController } from './audit/me-activity.controller.js';
 import type { AuditService } from './audit/audit.service.js';
 import { ClerkEventsController } from './identity/clerk-events.controller.js';
 import { MeController } from './identity/me.controller.js';
+import { MeDeletionController } from './identity/me-deletion.controller.js';
 import type { IdentityService } from './identity/identity.service.js';
 import type { SessionVerifier } from './identity/session-verifier.js';
 import { MeProfileController } from './profiles/me-profile.controller.js';
@@ -78,6 +79,7 @@ export class AppModule implements NestModule {
         HealthController,
         MeController,
         ClerkEventsController,
+        MeDeletionController,
         MeProfileController,
         MeActivityController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a

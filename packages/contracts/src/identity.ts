@@ -81,6 +81,34 @@ export const clerkEventResultSchema = z.object({
 });
 export type ClerkEventResult = z.infer<typeof clerkEventResultSchema>;
 
+/**
+ * Where the API accepts a request to be deleted.
+ *
+ * A *request* rather than `DELETE /me`, and the name is the honest one: BRD
+ * §14 calls it a deletion request, and what happens is not a hard delete. The
+ * personal data is erased, the account row survives as a tombstone because the
+ * ledger will need a counterparty from Phase 5, and the audit trail is retained
+ * for six years under §10.1. Calling it `DELETE` would promise more than the
+ * platform can lawfully do. ADR 0018.
+ */
+export const ME_DELETION_PATH = '/me/deletion-request';
+
+/**
+ * What the API answers once the deletion has been applied.
+ *
+ * `deleted` covers a first request and a repeat alike — the state asked for is
+ * the state, and a caller retrying after a dropped connection needs a success
+ * rather than a complaint that it is too late.
+ */
+export const deletionResponseSchema = z.object({
+  outcome: z.literal('deleted'),
+});
+export type DeletionResponse = z.infer<typeof deletionResponseSchema>;
+
+export function parseDeletionResponse(raw: unknown): DeletionResponse {
+  return parseWith(deletionResponseSchema, 'The deletion response', raw);
+}
+
 export function parseMeResponse(raw: unknown): MeResponse {
   return parseWith(meResponseSchema, 'The identity response', raw);
 }

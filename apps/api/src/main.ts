@@ -106,13 +106,18 @@ async function bootstrap(): Promise<void> {
     createStateDigest(personalDataEnv.PERSONAL_DATA_ENCRYPTION_KEY),
   );
 
-  const identity = new IdentityService(
+  // Declared before `profiles` exists so the two can reference each other; the
+  // eraser is the one direction that has to be late-bound. When listings and
+  // messages hold personal data too, several erasers compose into this one
+  // function and nothing inside the identity module changes.
+  const identity: IdentityService = new IdentityService(
     new PrismaUserDirectory(database),
     new PrismaWebhookLedger(database),
     audit,
+    { erase: (actor) => profiles.eraseFor(actor) },
   );
 
-  const profiles = new ProfilesService(
+  const profiles: ProfilesService = new ProfilesService(
     new PrismaProfileStore(
       database,
       createFieldEncryptor(personalDataEnv.PERSONAL_DATA_ENCRYPTION_KEY),
