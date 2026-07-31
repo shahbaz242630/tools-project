@@ -1,0 +1,38 @@
+-- Migration: account_deletion_request
+--
+-- Records when somebody asked to be deleted, as distinct from when we acted on
+-- it (BRD §14 Phase 1, §10.1). ADR 0018.
+--
+-- Data impact
+-- -----------
+-- One nullable column on `users`. Nullable with no default, so Postgres records
+-- it in the catalogue without rewriting the table — the add is O(1) and takes a
+-- brief ACCESS EXCLUSIVE lock rather than a rewrite. Every existing row reads
+-- null, which is correct: nobody has asked.
+--
+-- No backfill. `deletedAt` being set on an existing row does not imply a
+-- request was made — the tombstoning path can also be reached by a provider
+-- webhook, where nobody asked us for anything. Inventing a request timestamp
+-- for those rows would fabricate the exact fact a data-protection enquiry cares
+-- about.
+--
+-- Expand-and-contract
+-- -------------------
+-- Not applicable: a nullable column that no previous release reads is safe in a
+-- single deploy. The old code cannot observe it.
+--
+-- Application rollback: safe. Nothing in the previous release references the
+-- column.
+--
+-- Schema rollback:
+--   ALTER TABLE "users" DROP COLUMN "deletionRequestedAt";
+--   DELETE FROM _prisma_migrations
+--     WHERE migration_name LIKE '%account_deletion_request';
+--
+-- Backup first? Not for the forward migration, which drops nothing. The
+-- rollback discards evidence of when deletion requests were made, which is
+-- exactly the sort of record a regulator asks for — take one before running it
+-- against a database holding rows.
+
+-- AlterTable
+ALTER TABLE "users" ADD COLUMN     "deletionRequestedAt" TIMESTAMPTZ(3);

@@ -27,6 +27,8 @@ import type {
   UserDirectory,
 } from '../user-directory.js';
 import type { WebhookDelivery, WebhookLedger } from '../webhook-ledger.js';
+import type { Actor } from '../../audit/audit-log.js';
+import type { PersonalDataEraser } from '../personal-data-eraser.js';
 
 /** Accepts exactly the tokens it was given, rejects everything else. */
 export class FakeSessionVerifier implements SessionVerifier {
@@ -92,6 +94,7 @@ export class InMemoryUserDirectory implements UserDirectory {
       email: input.email,
       role: 'USER',
       deletedAt: null,
+      deletionRequestedAt: null,
       // Fixed rather than `new Date()`: "member since" is rendered from this,
       // and a test asserting the rendered month must not depend on the clock
       // the suite happens to run under.
@@ -111,6 +114,9 @@ export class InMemoryUserDirectory implements UserDirectory {
       ...existing,
       ...(changes.email === undefined ? {} : { email: changes.email }),
       ...(changes.deletedAt === undefined ? {} : { deletedAt: changes.deletedAt }),
+      ...(changes.deletionRequestedAt === undefined
+        ? {}
+        : { deletionRequestedAt: changes.deletionRequestedAt }),
     };
     this.rows.set(id, updated);
     return Promise.resolve(updated);
@@ -151,6 +157,33 @@ export class InMemoryWebhookLedger implements WebhookLedger {
   }
 }
 
+/**
+ * Records what it was asked to erase, and erases nothing.
+ *
+ * Behavioural enough for the identity module's purposes: what matters there is
+ * that erasure is attempted *before* the tombstone, and in the right order. The
+ * profiles module tests what erasure actually does.
+ */
+export class RecordingEraser implements PersonalDataEraser {
+  readonly erased: string[] = [];
+  private failure: Error | null = null;
+
+  failNextErase(error: Error): this {
+    this.failure = error;
+    return this;
+  }
+
+  erase(actor: Actor): Promise<void> {
+    if (this.failure !== null) {
+      const error = this.failure;
+      this.failure = null;
+      return Promise.reject(error);
+    }
+    this.erased.push(actor.userId);
+    return Promise.resolve();
+  }
+}
+
 export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
@@ -158,6 +191,7 @@ export interface IdentityFakes {
   readonly service: IdentityService;
   /** Exposed so a test can assert what the module recorded. */
   readonly audit: AuditFakes;
+  readonly eraser: RecordingEraser;
 }
 
 /**
@@ -169,11 +203,13 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const sessionVerifier = new FakeSessionVerifier();
   const users = new InMemoryUserDirectory();
   const ledger = new InMemoryWebhookLedger();
+  const eraser = new RecordingEraser();
   return {
     sessionVerifier,
     users,
     ledger,
     audit,
-    service: new IdentityService(users, ledger, audit.service),
+    eraser,
+    service: new IdentityService(users, ledger, audit.service, eraser),
   };
 }

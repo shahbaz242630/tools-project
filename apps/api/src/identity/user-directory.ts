@@ -17,6 +17,7 @@ export interface MirroredUser {
   readonly email: string;
   readonly role: UserRole;
   readonly deletedAt: Date | null;
+  readonly deletionRequestedAt: Date | null;
 
   /**
    * When the account was mirrored — effectively when the person joined.
@@ -42,6 +43,15 @@ export interface UpsertUserInput {
 export interface UserChanges {
   readonly email?: string;
   readonly deletedAt?: Date;
+
+  /**
+   * When the person asked, as distinct from when we acted.
+   *
+   * Separate from `deletedAt` because a provider webhook can tombstone an
+   * account that nobody asked us about, and recording a request in that case
+   * would fabricate the one fact a data-protection enquiry cares about.
+   */
+  readonly deletionRequestedAt?: Date;
 }
 
 /**

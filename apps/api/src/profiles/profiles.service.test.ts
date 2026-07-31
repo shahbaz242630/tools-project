@@ -298,3 +298,74 @@ describe('the audit trail', () => {
     );
   });
 });
+
+describe('eraseFor', () => {
+  it('removes the profile and its address', async () => {
+    await service.saveMine(ALICE, input);
+    await service.eraseFor(ALICE);
+
+    await expect(service.findMine(ALICE_ID)).resolves.toBeNull();
+    expect(profiles.all()).toHaveLength(0);
+  });
+
+  it('stops the profile being publicly visible', async () => {
+    // The debt slice 1.4 left: until now a deleted account's profile survived
+    // and only the disclosure check kept it off the internet. Now it is gone.
+    accounts.add(ALICE_ID);
+    await service.saveMine(ALICE, input);
+    await expect(service.findPublic(ALICE_ID)).resolves.not.toBeNull();
+
+    await service.eraseFor(ALICE);
+
+    await expect(service.findPublic(ALICE_ID)).resolves.toBeNull();
+  });
+
+  it('records what it erased', async () => {
+    await service.saveMine(ALICE, input);
+    await service.eraseFor(ALICE);
+
+    const entry = audit.log.entries().find((e) => e.action === 'profile.erased');
+    expect(entry).toMatchObject({ actorId: ALICE_ID, targetType: 'profile' });
+    // Before, but no after: there is no resulting state, the row is gone.
+    expect(entry?.beforeHash).not.toBeNull();
+    expect(entry?.afterHash).toBeNull();
+  });
+
+  it('keeps no personal data in that record', async () => {
+    await service.saveMine(ALICE, input);
+    await service.eraseFor(ALICE);
+
+    const serialised = JSON.stringify(audit.log.entries());
+    expect(serialised).not.toContain('Sarah');
+    expect(serialised).not.toContain('Acacia');
+    expect(serialised).not.toContain('900123');
+  });
+
+  it('is idempotent', async () => {
+    await service.saveMine(ALICE, input);
+    await service.eraseFor(ALICE);
+
+    await expect(service.eraseFor(ALICE)).resolves.toBeUndefined();
+  });
+
+  it('records nothing for somebody who never made a profile', async () => {
+    // An entry claiming a profile was removed from somebody who never had one
+    // is a false line in a trail retained for six years.
+    await service.eraseFor(ALICE);
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'profile.erased'),
+    ).toHaveLength(0);
+  });
+
+  it('touches nobody else’s data', async () => {
+    await service.saveMine(ALICE, input);
+    await service.saveMine(BOB, { ...input, displayName: 'Bob B.' });
+
+    await service.eraseFor(ALICE);
+
+    await expect(service.findMine(BOB_ID)).resolves.toMatchObject({
+      displayName: 'Bob B.',
+    });
+  });
+});

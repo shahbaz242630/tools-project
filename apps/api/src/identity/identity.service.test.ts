@@ -8,6 +8,7 @@ import type { VerifiedSession } from './session-verifier.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { UserConflictError } from './user-directory.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import { RecordingEraser } from './testing/fakes.js';
 
 const SESSION: VerifiedSession = {
   clerkUserId: 'user_1',
@@ -22,7 +23,12 @@ let service: IdentityService;
 beforeEach(() => {
   users = new InMemoryUserDirectory();
   ledger = new InMemoryWebhookLedger();
-  service = new IdentityService(users, ledger, createAuditFakes().service);
+  service = new IdentityService(
+    users,
+    ledger,
+    createAuditFakes().service,
+    new RecordingEraser(),
+  );
 });
 
 describe('resolveSession', () => {
@@ -309,6 +315,7 @@ describe('the audit trail', () => {
       directory,
       new InMemoryWebhookLedger(),
       audit.service,
+      new RecordingEraser(),
     );
 
     const user = await identity.resolveSession(
@@ -335,6 +342,7 @@ describe('the audit trail', () => {
       new InMemoryUserDirectory(),
       new InMemoryWebhookLedger(),
       audit.service,
+      new RecordingEraser(),
     );
     const session = {
       clerkUserId: 'user_a',
@@ -355,6 +363,7 @@ describe('the audit trail', () => {
       new InMemoryUserDirectory(),
       new InMemoryWebhookLedger(),
       audit.service,
+      new RecordingEraser(),
     );
 
     await identity.resolveSession({
@@ -374,6 +383,7 @@ describe('the audit trail', () => {
       new InMemoryUserDirectory(),
       new InMemoryWebhookLedger(),
       audit.service,
+      new RecordingEraser(),
     );
 
     await identity.applyEvent('msg_1', {
@@ -395,6 +405,7 @@ describe('the audit trail', () => {
       new InMemoryUserDirectory(),
       new InMemoryWebhookLedger(),
       audit.service,
+      new RecordingEraser(),
     );
     const event = {
       type: 'user.upserted',
@@ -408,5 +419,140 @@ describe('the audit trail', () => {
     expect(
       audit.log.entries().filter((e) => e.action === 'account.provisioned'),
     ).toHaveLength(1);
+  });
+});
+
+describe('requestDeletion', () => {
+  const ACTOR = (id: string) => ({ userId: id, ipAddress: '203.0.113.7' });
+
+  async function provision() {
+    const audit = createAuditFakes();
+    const eraser = new RecordingEraser();
+    const directory = new InMemoryUserDirectory();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      eraser,
+    );
+
+    const user = await identity.resolveSession({
+      clerkUserId: 'user_a',
+      sessionId: 'sess_a',
+      email: 'alice@example.com',
+    });
+
+    return { id: user.id, audit, eraser, directory, identity };
+  }
+
+  it('erases the personal data other modules hold', async () => {
+    const { id, eraser, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+
+    expect(eraser.erased).toEqual([id]);
+  });
+
+  it('tombstones the address and marks the account deleted', async () => {
+    const { id, directory, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+
+    const user = await directory.findById(id);
+    expect(user?.deletedAt).toBeInstanceOf(Date);
+    expect(user?.deletionRequestedAt).toBeInstanceOf(Date);
+    // `.invalid` is reserved by RFC 2606, so it can never collide with a real
+    // address — and replacing it frees the real one for re-registration, which
+    // a retained unique row would block forever.
+    expect(user?.email).toBe(`deleted+${id}@deleted.invalid`);
+  });
+
+  it('erases before it tombstones', async () => {
+    // The ordering decision (ADR 0018). Tombstoning first would leave somebody
+    // locked out of an account that still holds their address, with no way to
+    // ask again. This proves a failed erasure leaves the account usable.
+    const { id, directory, identity, eraser } = await provision();
+    eraser.failNextErase(new Error('storage unavailable'));
+
+    await expect(identity.requestDeletion(ACTOR(id))).rejects.toThrow(
+      /storage unavailable/,
+    );
+
+    const user = await directory.findById(id);
+    expect(user?.deletedAt).toBeNull();
+    expect(user?.email).toBe('alice@example.com');
+  });
+
+  it('is idempotent — a second request succeeds and changes nothing', async () => {
+    const { id, identity, directory, eraser } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+    const first = await directory.findById(id);
+
+    await expect(identity.requestDeletion(ACTOR(id))).resolves.toBeUndefined();
+
+    expect(await directory.findById(id)).toMatchObject({
+      deletedAt: first?.deletedAt,
+      email: first?.email,
+    });
+    // Erased once. A repeat must not re-run erasure it has already done.
+    expect(eraser.erased).toEqual([id]);
+  });
+
+  it('succeeds for an account that never existed', async () => {
+    // A retry after a dropped connection must be able to finish rather than be
+    // told it is too late.
+    const { identity } = await provision();
+    await expect(
+      identity.requestDeletion(ACTOR('00000000-0000-4000-8000-00000000dead')),
+    ).resolves.toBeUndefined();
+  });
+
+  it('writes an audit entry that survives the erasure it describes', async () => {
+    const { id, audit, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+
+    const entry = audit.log
+      .entries()
+      .find((e) => e.action === 'account.deletion_requested');
+    expect(entry).toMatchObject({
+      actorId: id,
+      targetType: 'user',
+      targetId: id,
+      ipAddress: '203.0.113.7',
+    });
+    // Before and after differ: the email was replaced.
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('keeps no personal data in the audit trail', async () => {
+    // The reason the entry can be retained six years while the account's data
+    // is erased: it holds digests, not values (ADR 0017).
+    const { id, audit, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+
+    expect(JSON.stringify(audit.log.entries())).not.toContain('alice@example.com');
+  });
+
+  it('records nothing extra on a repeat request', async () => {
+    const { id, audit, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+    await identity.requestDeletion(ACTOR(id));
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'account.deletion_requested'),
+    ).toHaveLength(1);
+  });
+
+  it('leaves a deleted account unable to resolve a session', async () => {
+    // The end-to-end consequence: the guard refuses it, so the credential still
+    // existing at Clerk does not let anybody back in.
+    const { id, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+
+    await expect(
+      identity.resolveSession({
+        clerkUserId: 'user_a',
+        sessionId: 'sess_a',
+        email: 'alice@example.com',
+      }),
+    ).rejects.toThrow(AccountDeletedError);
   });
 });

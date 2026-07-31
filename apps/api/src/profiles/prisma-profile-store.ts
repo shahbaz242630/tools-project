@@ -153,6 +153,24 @@ export class PrismaProfileStore implements ProfileStore {
   }
 
   /**
+   * Remove the profile and the address, as one unit.
+   *
+   * In a transaction because a half-erased person is the worst outcome
+   * available here: an address removed while the display name survives looks
+   * like the request was honoured, and nothing will ever revisit it.
+   *
+   * `deleteMany` rather than `delete` on both, because a missing row is not an
+   * error — somebody who never filled in a profile is still entitled to ask for
+   * erasure, and a retry after a partial failure must be able to finish.
+   */
+  async erase(userId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.address.deleteMany({ where: { userId } });
+      await tx.profile.deleteMany({ where: { userId } });
+    });
+  }
+
+  /**
    * The user id is bound into the ciphertext as additional authenticated data.
    *
    * It means an encrypted address copied onto another person's row fails to

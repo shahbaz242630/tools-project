@@ -51,6 +51,7 @@ interface UserRow {
   email: string;
   role: string;
   deletedAt: Date | null;
+  deletionRequestedAt: Date | null;
   createdAt: Date;
 }
 
@@ -63,6 +64,7 @@ function toMirroredUser(row: UserRow): MirroredUser {
     // be stored. Narrowed rather than asserted so the cast is visible.
     role: row.role === 'ADMIN' ? 'ADMIN' : ('USER' satisfies UserRole),
     deletedAt: row.deletedAt,
+    deletionRequestedAt: row.deletionRequestedAt,
     createdAt: row.createdAt,
   };
 }

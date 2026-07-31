@@ -55,6 +55,9 @@ export default async function AccountPage() {
           <li>
             <Link href="/account/activity">Account activity</Link>
           </li>
+          <li>
+            <Link href="/account/delete">Delete your account</Link>
+          </li>
         </ul>
       ) : null}
 

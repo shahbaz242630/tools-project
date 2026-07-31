@@ -63,6 +63,21 @@ export interface ProfileStore {
   find(userId: string): Promise<StoredProfile | null>;
 
   /**
+   * Remove everything this module holds about a person.
+   *
+   * A real delete, not a flag: this is what a deletion request is *for*, and a
+   * soft-deleted profile row would leave the display name and the encrypted
+   * address sitting in the database with no purpose and a retention clock
+   * nobody is watching (BRD §10.1). The `users` row survives instead, because
+   * the ledger will need a counterparty — that is the record we are obliged to
+   * keep, and it is not this one.
+   *
+   * **Idempotent.** Erasing twice is a success, not an error: a retry after a
+   * partial failure must be able to finish the job.
+   */
+  erase(userId: string): Promise<void>;
+
+  /**
    * Create or replace the profile for `userId`.
    *
    * Replace rather than merge, and the whole object rather than a patch: a

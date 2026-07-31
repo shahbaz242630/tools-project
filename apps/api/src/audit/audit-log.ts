@@ -24,7 +24,18 @@
  */
 export type AuditAction =
   /** A session was seen for an account we had no mirror row for, so one was made. */
-  'account.provisioned' | 'profile.created' | 'profile.updated';
+  | 'account.provisioned'
+  | 'profile.created'
+  | 'profile.updated'
+  /**
+   * Somebody asked to be deleted. Recorded on the account, and **retained**
+   * after the erasure it describes — §10.1 keeps security logs six years, and
+   * "when did they ask, and did you act" is precisely what an enquiry asks.
+   * The entry survives because it holds digests, not values (ADR 0017).
+   */
+  | 'account.deletion_requested'
+  /** The personal data a module held about somebody was removed. */
+  | 'profile.erased';
 
 /**
  * Who did it, and from where.
