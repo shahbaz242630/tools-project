@@ -7,6 +7,7 @@ import type { DependencyCheck } from './dependency-check.js';
 import { CORRELATION_HEADER } from '../observability/correlation.middleware.js';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createIdentityFakes } from '../identity/testing/fakes.js';
+import { createAuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 
 /**
@@ -43,6 +44,7 @@ async function boot(
         readinessTimeoutMs: 50,
         identity: { sessionVerifier, service },
         profiles: createProfileFakes().service,
+        audit: createAuditFakes().service,
       }),
     ],
   }).compile();

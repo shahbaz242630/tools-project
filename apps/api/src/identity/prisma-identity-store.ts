@@ -3,6 +3,7 @@ import type { PrismaClient } from '@platform/database';
 import { UserConflictError } from './user-directory.js';
 import type {
   MirroredUser,
+  UpsertResult,
   UpsertUserInput,
   UserChanges,
   UserDirectory,
@@ -95,15 +96,15 @@ export class PrismaUserDirectory implements UserDirectory {
    * repoints an existing account — with foreign keys arriving in Phase 2 that
    * would hand one person another's listings and bookings.
    */
-  async upsert(input: UpsertUserInput): Promise<MirroredUser> {
+  async upsert(input: UpsertUserInput): Promise<UpsertResult> {
     const existing = await this.findByClerkUserId(input.clerkUserId);
-    if (existing !== null) return existing;
+    if (existing !== null) return { user: existing, created: false };
 
     try {
       const row = await this.prisma.user.create({
         data: { clerkUserId: input.clerkUserId, email: input.email },
       });
-      return toMirroredUser(row);
+      return { user: toMirroredUser(row), created: true };
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
 
@@ -111,8 +112,10 @@ export class PrismaUserDirectory implements UserDirectory {
       // correct. Lost it on `email` instead: two Clerk accounts claim one
       // address, the re-read finds nothing, and the conflict surfaces rather
       // than being papered over.
+      // Lost the race, so this call did not create it — whichever request won
+      // records the provisioning event, exactly once.
       const raced = await this.findByClerkUserId(input.clerkUserId);
-      if (raced !== null) return raced;
+      if (raced !== null) return { user: raced, created: false };
 
       throw new UserConflictError(error);
     }

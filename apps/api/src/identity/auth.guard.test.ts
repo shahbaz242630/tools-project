@@ -2,8 +2,9 @@ import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { createRecordingLogger } from '@platform/observability/testing';
+import { createAuditFakes } from '../audit/testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AuthGuard, Roles, bearerToken } from './auth.guard.js';
+import { AuthGuard, Roles, bearerToken, clientIpFrom } from './auth.guard.js';
 import { currentUserFrom } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
 import { IdentityService } from './identity.service.js';
@@ -79,7 +80,7 @@ beforeEach(() => {
   guard = new AuthGuard(
     new Reflector(),
     verifier,
-    new IdentityService(users, new InMemoryWebhookLedger()),
+    new IdentityService(users, new InMemoryWebhookLedger(), createAuditFakes().service),
     createRecordingLogger().logger,
   );
 });
@@ -130,7 +131,11 @@ describe('AuthGuard', () => {
     const adminGuard = new AuthGuard(
       new Reflector(),
       verifier,
-      new IdentityService(admin, new InMemoryWebhookLedger()),
+      new IdentityService(
+        admin,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+      ),
       createRecordingLogger().logger,
     );
 
@@ -184,7 +189,11 @@ describe('AuthGuard — failures that are not authentication failures', () => {
     const broken = new AuthGuard(
       new Reflector(),
       exploding(boom),
-      new IdentityService(users, new InMemoryWebhookLedger()),
+      new IdentityService(
+        users,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+      ),
       createRecordingLogger().logger,
     );
 
@@ -203,7 +212,11 @@ describe('AuthGuard — failures that are not authentication failures', () => {
     const broken = new AuthGuard(
       new Reflector(),
       verifier,
-      new IdentityService(failing, new InMemoryWebhookLedger()),
+      new IdentityService(
+        failing,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+      ),
       createRecordingLogger().logger,
     );
 
@@ -229,5 +242,48 @@ describe('currentUserFrom', () => {
     // unauthenticated request as an anonymous but permitted one, which is
     // precisely what Phase 1 exists to make impossible.
     expect(() => currentUserFrom(contextFor({ headers: {} }))).toThrow(/AuthGuard/);
+  });
+});
+
+describe('clientIpFrom', () => {
+  const header = (value: string | string[] | undefined) => ({ 'x-client-ip': value });
+
+  it('reads a forwarded IPv4 address', () => {
+    expect(clientIpFrom(header('203.0.113.7'))).toBe('203.0.113.7');
+  });
+
+  it('reads a forwarded IPv6 address', () => {
+    expect(clientIpFrom(header('2001:db8::1'))).toBe('2001:db8::1');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(clientIpFrom(header('  203.0.113.7  '))).toBe('203.0.113.7');
+  });
+
+  it('refuses a header sent twice, which Fastify joins into one string', () => {
+    // The bug this test exists for. Two values arrive as "a,b" — a *string*,
+    // so a `typeof` check passes it straight through. It would then reach an
+    // `inet` column, throw, and take down the request it was auditing, because
+    // audit writes are deliberately fail-closed.
+    expect(clientIpFrom(header('203.0.113.7,198.51.100.4'))).toBeNull();
+    expect(clientIpFrom(header('203.0.113.7, 198.51.100.4'))).toBeNull();
+  });
+
+  it('refuses an array, for the same reason', () => {
+    expect(clientIpFrom(header(['203.0.113.7', '198.51.100.4']))).toBeNull();
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['not an address', 'localhost'],
+    ['an address with a port', '203.0.113.7:54321'],
+    ['a truncated address', '203.0.113'],
+    ['an injection attempt', "203.0.113.7'; DROP TABLE audit_logs;--"],
+  ])('refuses %s', (_label, value) => {
+    // Recording null is the honest answer to "we cannot tell", and it keeps a
+    // malformed header from becoming an outage.
+    expect(clientIpFrom(header(value))).toBeNull();
   });
 });

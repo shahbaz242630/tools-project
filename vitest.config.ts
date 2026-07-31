@@ -191,6 +191,16 @@ export default defineConfig({
         // tables, and that what lands in the encrypted column is unreadable —
         // is precisely what a double cannot. Keep this exclusion narrow.
         '**/api/src/profiles/prisma-profile-store.ts',
+        // And again for the audit trail: prisma-audit-log.db.test.ts proves the
+        // foreign key, the `inet` column rejecting a malformed address, and the
+        // ordering — none of which a double can. Keep this exclusion narrow.
+        '**/api/src/audit/prisma-audit-log.ts',
+        // Declaration-only: a type union and three interfaces, so it emits no
+        // executable JavaScript and v8 reports its source lines as uncovered
+        // because there is nothing to run. The same case as webhook-ledger.ts.
+        // If any code appears in here, delete this line rather than keeping it
+        // honest by accident.
+        '**/api/src/audit/audit-log.ts',
         // Declaration-only: two interfaces and nothing else, so it emits no
         // executable JavaScript at all and v8 reports its source lines as
         // uncovered because there is nothing to run. If any code appears in

@@ -17,6 +17,9 @@ import {
   IDENTITY_SERVICE,
   SESSION_VERIFIER,
 } from './identity/auth.guard.js';
+import { AUDIT_SERVICE } from './audit/audit.tokens.js';
+import { MeActivityController } from './audit/me-activity.controller.js';
+import type { AuditService } from './audit/audit.service.js';
 import { ClerkEventsController } from './identity/clerk-events.controller.js';
 import { MeController } from './identity/me.controller.js';
 import type { IdentityService } from './identity/identity.service.js';
@@ -50,6 +53,13 @@ export interface AppModuleOptions {
    * module.
    */
   readonly profiles: ProfilesService;
+
+  /**
+   * The audit trail. Assembled outside for the same reason as the rest — it
+   * needs a key derived from PERSONAL_DATA_ENCRYPTION_KEY, and building it here
+   * would put that secret in reach of every test that boots the module.
+   */
+  readonly audit: AuditService;
 }
 
 /**
@@ -69,6 +79,7 @@ export class AppModule implements NestModule {
         MeController,
         ClerkEventsController,
         MeProfileController,
+        MeActivityController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
         // like a missing decorator. See PublicProfileController.
@@ -93,6 +104,7 @@ export class AppModule implements NestModule {
         { provide: AUTH_LOGGER, useValue: options.logger },
 
         { provide: PROFILES_SERVICE, useValue: options.profiles },
+        { provide: AUDIT_SERVICE, useValue: options.audit },
       ],
     };
   }

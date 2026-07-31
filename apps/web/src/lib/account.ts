@@ -12,7 +12,12 @@
  * `fetch` is injected so all of it is testable without a server.
  */
 
-import { AUTHORIZATION_HEADER, ME_PATH, parseMeResponse } from '@platform/contracts';
+import {
+  AUTHORIZATION_HEADER,
+  CLIENT_IP_HEADER,
+  ME_PATH,
+  parseMeResponse,
+} from '@platform/contracts';
 import type { MeResponse } from '@platform/contracts';
 
 /**
@@ -63,6 +68,12 @@ export async function fetchAccount(
   apiBaseUrl: string,
   token: string | null,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  /**
+   * Forwarded so the audit log can record where a first sign-in came from —
+   * `account.provisioned` fires on whichever authenticated request happens to
+   * be first, which is often this one. Null when there is no proxy in front.
+   */
+  clientIp: string | null = null,
 ): Promise<AccountOutcome> {
   if (token === null || token === '') return { kind: 'signed-out' };
 
@@ -72,7 +83,10 @@ export async function fetchAccount(
   try {
     response = await fetchImpl(url, {
       signal: AbortSignal.timeout(ACCOUNT_TIMEOUT_MS),
-      headers: { [AUTHORIZATION_HEADER]: `Bearer ${token}` },
+      headers: {
+        [AUTHORIZATION_HEADER]: `Bearer ${token}`,
+        ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+      },
     });
   } catch (error) {
     return { kind: 'unreachable', reason: describe(error) };

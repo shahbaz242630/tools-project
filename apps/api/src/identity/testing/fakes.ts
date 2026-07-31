@@ -13,12 +13,15 @@
  */
 
 import { Time } from '@platform/core';
+import { createAuditFakes } from '../../audit/testing/fakes.js';
+import type { AuditFakes } from '../../audit/testing/fakes.js';
 import { IdentityService } from '../identity.service.js';
 import { SessionVerificationError } from '../session-verifier.js';
 import type { SessionVerifier, VerifiedSession } from '../session-verifier.js';
 import { UserConflictError } from '../user-directory.js';
 import type {
   MirroredUser,
+  UpsertResult,
   UpsertUserInput,
   UserChanges,
   UserDirectory,
@@ -72,9 +75,9 @@ export class InMemoryUserDirectory implements UserDirectory {
     return Promise.resolve(this.rows.get(id) ?? null);
   }
 
-  async upsert(input: UpsertUserInput): Promise<MirroredUser> {
+  async upsert(input: UpsertUserInput): Promise<UpsertResult> {
     const existing = await this.findByClerkUserId(input.clerkUserId);
-    if (existing !== null) return existing;
+    if (existing !== null) return { user: existing, created: false };
 
     // The email constraint is case-insensitive in Postgres because the column
     // is citext. Folding here keeps the double honest about that.
@@ -95,7 +98,7 @@ export class InMemoryUserDirectory implements UserDirectory {
       createdAt: Time.fromIsoUtc('2026-07-15T09:00:00.000Z'),
     };
     this.rows.set(user.id, user);
-    return user;
+    return { user, created: true };
   }
 
   update(id: string, changes: UserChanges): Promise<MirroredUser> {
@@ -153,6 +156,8 @@ export interface IdentityFakes {
   readonly users: InMemoryUserDirectory;
   readonly ledger: InMemoryWebhookLedger;
   readonly service: IdentityService;
+  /** Exposed so a test can assert what the module recorded. */
+  readonly audit: AuditFakes;
 }
 
 /**
@@ -160,7 +165,7 @@ export interface IdentityFakes {
  * `AppModule.register`. Lets a test boot the whole application — real guard,
  * real routing — without Postgres or a Clerk instance.
  */
-export function createIdentityFakes(): IdentityFakes {
+export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const sessionVerifier = new FakeSessionVerifier();
   const users = new InMemoryUserDirectory();
   const ledger = new InMemoryWebhookLedger();
@@ -168,6 +173,7 @@ export function createIdentityFakes(): IdentityFakes {
     sessionVerifier,
     users,
     ledger,
-    service: new IdentityService(users, ledger),
+    audit,
+    service: new IdentityService(users, ledger, audit.service),
   };
 }

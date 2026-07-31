@@ -45,3 +45,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0014](0014-prisma-lives-in-a-package-and-migrations-ship-as-an-image.md) | Prisma lives in a package, migrations ship as an image            | Accepted |
 | [0015](0015-identity-lives-at-clerk-with-a-local-mirror.md)               | Put identity at Clerk and keep a local mirror as the record       | Accepted |
 | [0016](0016-profiles-publish-a-district-not-an-address.md)                | Publish a postal district, gate contact data behind a booking     | Accepted |
+| [0017](0017-audit-log-keeps-keyed-digests-not-values.md)                  | Keep keyed digests in the audit log, not values, and fail closed  | Accepted |

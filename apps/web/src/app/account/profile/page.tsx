@@ -1,6 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
 import Link from 'next/link';
 import { ProfileForm } from '../../../components/profile-form';
+import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchMyProfile } from '../../../lib/profile';
 import { webEnv } from '../../../lib/env';
 
@@ -14,7 +16,14 @@ export const metadata = { title: 'Your profile' };
 
 export default async function ProfilePage() {
   const { getToken } = await auth();
-  const outcome = await fetchMyProfile(webEnv().API_BASE_URL, await getToken());
+  const clientIp = clientIpFrom((await headers()).get('x-forwarded-for'));
+
+  const outcome = await fetchMyProfile(
+    webEnv().API_BASE_URL,
+    await getToken(),
+    undefined,
+    clientIp,
+  );
 
   return (
     <main>

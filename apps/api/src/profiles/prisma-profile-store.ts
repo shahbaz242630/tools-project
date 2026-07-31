@@ -46,6 +46,7 @@ interface EncryptedDetail {
 }
 
 interface ProfileRow {
+  id: string;
   userId: string;
   displayName: string;
   phone: string | null;
@@ -167,6 +168,7 @@ export class PrismaProfileStore implements ProfileStore {
     address: AddressRow | null,
   ): StoredProfile {
     return {
+      id: profile.id,
       userId: profile.userId,
       displayName: profile.displayName,
       phone: profile.phone,
