@@ -112,6 +112,19 @@ export class InMemoryUserDirectory implements UserDirectory {
       return Promise.reject(new Error(`no such user: ${id}`));
     }
 
+    // The email constraint applies to updates, not only to inserts — and the
+    // real store surfaces a collision here as `UserConflictError`. A double
+    // that enforced it on `upsert` alone would let a test pass while the
+    // behaviour it is checking could not happen, which is exactly what this
+    // file's header warns against. Case-folded, because the column is citext.
+    if (changes.email !== undefined) {
+      const taken = [...this.rows.values()].some(
+        (row) =>
+          row.id !== id && row.email.toLowerCase() === changes.email?.toLowerCase(),
+      );
+      if (taken) return Promise.reject(new UserConflictError());
+    }
+
     const updated: MirroredUser = {
       ...existing,
       ...(changes.email === undefined ? {} : { email: changes.email }),

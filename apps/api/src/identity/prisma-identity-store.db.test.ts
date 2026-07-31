@@ -138,6 +138,48 @@ describe('PrismaUserDirectory', () => {
     expect(returning.email).toBe(email);
   });
 
+  it('reports a colliding email correction as a conflict, not a raw error', async () => {
+    // The collision the correction path has to survive: our mirror holds a
+    // stale address that another row already carries. Postgres raises P2002;
+    // the store turns it into the domain error so the service can decide that
+    // a stale mirror beats a 500 on an ordinary page load (ADR 0020).
+    const taken = uniqueEmail();
+    await users.upsert({ clerkUserId: uniqueClerkId(), email: taken });
+    const { user } = await users.upsert({
+      clerkUserId: uniqueClerkId(),
+      email: uniqueEmail(),
+    });
+
+    await expect(users.update(user.id, { email: taken })).rejects.toThrow(
+      UserConflictError,
+    );
+  });
+
+  it('treats a case-different collision as a collision, because citext', async () => {
+    const taken = uniqueEmail();
+    await users.upsert({ clerkUserId: uniqueClerkId(), email: taken });
+    const { user } = await users.upsert({
+      clerkUserId: uniqueClerkId(),
+      email: uniqueEmail(),
+    });
+
+    await expect(users.update(user.id, { email: taken.toUpperCase() })).rejects.toThrow(
+      UserConflictError,
+    );
+  });
+
+  it('still applies a correction that does not collide', async () => {
+    const { user } = await users.upsert({
+      clerkUserId: uniqueClerkId(),
+      email: uniqueEmail(),
+    });
+    const next = uniqueEmail();
+
+    await expect(users.update(user.id, { email: next })).resolves.toMatchObject({
+      email: next,
+    });
+  });
+
   it('reads the role back as one of the two values', async () => {
     const { user } = await users.upsert({
       clerkUserId: uniqueClerkId(),

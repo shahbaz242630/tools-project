@@ -44,7 +44,16 @@ export type AuditAction =
    * An access log with a hole exactly where the sensitive operation is would be
    * worse than none.
    */
-  | 'account.exported';
+  | 'account.exported'
+  /**
+   * The mirrored email address was corrected to match the provider's.
+   *
+   * Security-relevant out of proportion to how ordinary it looks: changing the
+   * address on an account is how a takeover is made permanent, and it is the
+   * one identity fact that can change without anything else about the account
+   * changing. Recorded whichever path corrected it (ADR 0020).
+   */
+  | 'account.email_changed';
 
 /**
  * Who did it, and from where.
