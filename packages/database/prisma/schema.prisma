@@ -320,6 +320,17 @@ model AuditLog {
   beforeHash String? @db.Text
   afterHash  String? @db.Text
 
+  /// Why the actor did it.
+  ///
+  /// BRD §8.13: "Every admin action records actor, **reason**, target and
+  /// before/after state." Nullable because an ordinary user action has no
+  /// reason to give — somebody editing their own profile is not accountable to
+  /// anyone for it — while an administrator reaching into another account is.
+  /// The requirement is enforced where the distinction exists, in the admin
+  /// routes, rather than by a NOT NULL that would force every user action to
+  /// invent one (ADR 0021).
+  reason String? @db.Text
+
   /// The client's address, as forwarded by the web app.
   ///
   /// Nullable because it genuinely is sometimes unknown: the API is not

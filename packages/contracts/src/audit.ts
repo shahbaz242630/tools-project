@@ -32,6 +32,42 @@ export const ME_ACTIVITY_PATH = '/me/activity';
 export const CLIENT_IP_HEADER = 'x-client-ip';
 
 /**
+ * Where an administrator reads somebody else's activity.
+ *
+ * A function, so the id is encoded once and the *administrative* path is
+ * visibly distinct from `/me/activity` at every call site.
+ */
+export function adminActivityPath(userId: string, reason: string): string {
+  return `/admin/users/${encodeURIComponent(userId)}/activity?reason=${encodeURIComponent(reason)}`;
+}
+
+/** The Nest route pattern for the above. Kept beside it so the two cannot drift. */
+export const ADMIN_ACTIVITY_ROUTE = '/admin/users/:userId/activity';
+
+/**
+ * The shortest reason an administrator may give.
+ *
+ * A bound rather than a judgement of quality — nothing can stop somebody typing
+ * "x" twelve times. What it does stop is an empty box being submitted by habit,
+ * which is how a mandatory field becomes a meaningless one.
+ */
+export const MIN_ADMIN_REASON_LENGTH = 12;
+export const MAX_ADMIN_REASON_LENGTH = 500;
+
+export const adminReasonSchema = z
+  .string()
+  .trim()
+  .min(
+    MIN_ADMIN_REASON_LENGTH,
+    `must be at least ${MIN_ADMIN_REASON_LENGTH} characters`,
+  )
+  .max(MAX_ADMIN_REASON_LENGTH);
+
+export function parseAdminReason(raw: unknown): string {
+  return parseWith(adminReasonSchema, 'The reason', raw);
+}
+
+/**
  * One thing that happened, as its own actor may read it back.
  *
  * Deliberately without the before/after digests. They are not useful to the
@@ -42,6 +78,15 @@ export const activityEntrySchema = z.object({
   id: z.uuid(),
   action: z.string().min(1),
   targetType: z.string().min(1),
+  /**
+   * Why, for actions that owe an explanation.
+   *
+   * Null for an ordinary user action. Present on administrative ones, where BRD
+   * §8.13 requires "actor, reason, target and before/after state" — and visible
+   * to the person whose account it was, because being able to read *why*
+   * somebody looked at your account is most of the point of recording it.
+   */
+  reason: z.string().nullable(),
   /** Null when it was not known — see `CLIENT_IP_HEADER`. */
   ipAddress: z.string().nullable(),
   createdAt: z.iso.datetime(),

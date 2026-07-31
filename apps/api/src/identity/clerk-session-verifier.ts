@@ -40,6 +40,7 @@ export interface VerifyTokenFn {
  * correctly signed and still be missing the custom claim we depend on.
  */
 export interface VerifiedClaims {
+  fva?: unknown;
   readonly sub?: string;
   readonly sid?: string;
   /** Custom claim; see `VerifiedSession.email`. */
@@ -88,7 +89,7 @@ export class ClerkSessionVerifier implements SessionVerifier {
       throw new SessionVerificationError(error);
     }
 
-    const { sub, sid, email } = claims;
+    const { sub, sid, email, fva } = claims;
 
     // A result with neither errors nor a subject should be impossible. Treating
     // it as success would authenticate a request as nobody, which is the one
@@ -118,6 +119,36 @@ export class ClerkSessionVerifier implements SessionVerifier {
       );
     }
 
-    return { clerkUserId: sub, sessionId: sid, email };
+    return {
+      clerkUserId: sub,
+      sessionId: sid,
+      email,
+      secondFactorAgeMinutes: secondFactorAge(fva),
+    };
   }
+}
+
+/**
+ * Read the second factor's age out of Clerk's `fva` claim.
+ *
+ * The claim is a pair — `[firstFactorAge, secondFactorAge]` in minutes, with
+ * `-1` meaning "not verified in this session". Only the second matters here:
+ * the first is implied by holding a valid token at all.
+ *
+ * **Everything unexpected reads as null, which the guard treats as "no second
+ * factor".** An instance that does not emit the claim, a claim of the wrong
+ * shape, a negative age — all of them mean the same thing, that we cannot prove
+ * a second factor was used, and the only safe reading of that is to refuse
+ * (ADR 0021). Guessing "probably fine" here would turn a missing configuration
+ * into an open admin surface.
+ */
+export function secondFactorAge(fva: unknown): number | null {
+  if (!Array.isArray(fva)) return null;
+
+  const second: unknown = fva[1];
+  if (typeof second !== 'number' || !Number.isFinite(second)) return null;
+
+  // -1 is Clerk's "not verified". Any other negative value is nonsense, and
+  // both are answered the same way.
+  return second < 0 ? null : second;
 }

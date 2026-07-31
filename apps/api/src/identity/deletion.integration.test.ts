@@ -8,6 +8,7 @@ import {
   ME_PATH,
   ME_EXPORT_PATH,
   ME_PROFILE_PATH,
+  adminActivityPath,
   activityResponseSchema,
   dataExportSchema,
   exportFilename,
@@ -46,6 +47,16 @@ const ALICE = {
   email: 'alice@example.com',
 };
 const BOB = { clerkUserId: 'user_bob', sessionId: 'sess_b', email: 'bob@example.com' };
+const ADMIN = {
+  clerkUserId: 'user_admin',
+  sessionId: 'sess_ad',
+  email: 'admin@example.com',
+};
+const ADMIN_NO_CLAIM = {
+  clerkUserId: 'user_admin2',
+  sessionId: 'sess_ad2',
+  email: 'admin2@example.com',
+};
 
 const PROFILE = {
   displayName: 'Alice A.',
@@ -72,7 +83,12 @@ beforeEach(async () => {
 
   const sessionVerifier = new FakeSessionVerifier()
     .accept('alice-token', ALICE)
-    .accept('bob-token', BOB);
+    .accept('bob-token', BOB)
+    // A second factor verified five minutes ago.
+    .accept('admin-token', { ...ADMIN, secondFactorAgeMinutes: 5 })
+    // Deliberately no `secondFactorAgeMinutes` — the shape a token from an
+    // instance that was never provisioned with the claim arrives in.
+    .accept('admin-no-claim', ADMIN_NO_CLAIM);
 
   // The real cycle: identity erases through a port that reaches profiles, and
   // profiles asks identity whether an account is active. Wired here the same
@@ -132,6 +148,13 @@ const requestDeletion = (token?: string, ip?: string) =>
       ...(ip === undefined ? {} : { [CLIENT_IP_HEADER]: ip }),
     },
   });
+
+/** Provision the account behind a token, then make it an administrator. */
+async function promote(token: string): Promise<string> {
+  const id = await idOf(token);
+  users.promote(id);
+  return id;
+}
 
 async function idOf(token: string): Promise<string> {
   const response = await app.inject({
@@ -415,5 +438,141 @@ describe('GET /me/export', () => {
     expect(exportFilename(document.exportedAt)).toMatch(
       /^account-data-\d{4}-\d{2}-\d{2}\.json$/,
     );
+  });
+});
+
+describe('GET /admin/users/:userId/activity', () => {
+  const REASON = 'support ticket 4821, account access query';
+
+  const asAdmin = (token: string, userId: string, reason = REASON) =>
+    app.inject({
+      method: 'GET',
+      url: adminActivityPath(userId, reason),
+      headers: auth(token),
+    });
+
+  it('rejects an unauthenticated request', async () => {
+    expect(
+      (await app.inject({ method: 'GET', url: adminActivityPath('x', REASON) }))
+        .statusCode,
+    ).toBe(401);
+  });
+
+  it('refuses an ordinary user', async () => {
+    // 403 rather than 404: they already know the URL, and hiding it makes a
+    // genuine permissions bug indistinguishable from a typo.
+    const bobId = await idOf('bob-token');
+    expect((await asAdmin('alice-token', bobId)).statusCode).toBe(403);
+  });
+
+  it('refuses an administrator with no verified second factor', async () => {
+    // The ordinary case — an admin signed in with a password alone. MFA is
+    // required of administrators (BRD §8.1), enforced at the guard so it
+    // cannot be forgotten on a route.
+    const bobId = await idOf('bob-token');
+    await promote('alice-token');
+
+    expect((await asAdmin('alice-token', bobId)).statusCode).toBe(403);
+  });
+
+  it('refuses an administrator whose token carries no factor claim', async () => {
+    // The failure that matters most: an instance provisioned without the claim
+    // emits correctly-signed tokens carrying no proof of a second factor.
+    // Treating that as satisfied would open the admin surface silently.
+    const bobId = await idOf('bob-token');
+    await promote('admin-no-claim');
+
+    expect((await asAdmin('admin-no-claim', bobId)).statusCode).toBe(403);
+  });
+
+  it('allows an administrator with a recent second factor', async () => {
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    const response = await asAdmin('admin-token', bobId);
+    expect(response.statusCode).toBe(200);
+    expect(
+      activityResponseSchema.parse(response.json()).entries.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['absent', ''],
+    ['too short', 'because'],
+    ['only whitespace', '            '],
+  ])('refuses a reason that is %s', async (_label, reason) => {
+    // BRD §8.13 requires a reason on every admin action. The length bound does
+    // not judge quality — nothing stops somebody typing nonsense — but it does
+    // stop an empty box being submitted by habit.
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/admin/users/${bobId}/activity?reason=${encodeURIComponent(reason)}`,
+      headers: auth('admin-token'),
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('records the disclosure with its reason, before performing it', async () => {
+    const bobId = await idOf('bob-token');
+    const adminId = await promote('admin-token');
+
+    await asAdmin('admin-token', bobId);
+
+    const entry = audit.log.entries().find((e) => e.action === 'admin.activity_viewed');
+    expect(entry).toMatchObject({
+      actorId: adminId,
+      targetType: 'user',
+      targetId: bobId,
+      reason: REASON,
+    });
+  });
+
+  it('records nothing when the reason was refused', async () => {
+    // The read did not happen, so the trail must not claim it did.
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    await asAdmin('admin-token', bobId, 'no');
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'admin.activity_viewed'),
+    ).toHaveLength(0);
+  });
+
+  it('shows the subject who looked at their account, and why', async () => {
+    // Most of the point of recording a reason: the person it happened to can
+    // read it on their own activity page.
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+    await asAdmin('admin-token', bobId);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: ME_ACTIVITY_PATH,
+      headers: auth('bob-token'),
+    });
+
+    // The admin's read targets Bob but is recorded against the admin as actor,
+    // so it is not in Bob's own trail — his trail is what *he* did. This
+    // asserts the shape a support enquiry would actually follow.
+    const { entries } = activityResponseSchema.parse(response.json());
+    expect(entries.every((e) => e.action !== 'admin.activity_viewed')).toBe(true);
+  });
+
+  it('returns the target’s entries, not the administrator’s own', async () => {
+    const bobId = await idOf('bob-token');
+    await saveProfile('bob-token');
+    await promote('admin-token');
+
+    const { entries } = activityResponseSchema.parse(
+      (await asAdmin('admin-token', bobId)).json(),
+    );
+
+    // Bob provisioned and created a profile; the admin did neither.
+    expect(entries.map((e) => e.action)).toContain('profile.created');
   });
 });

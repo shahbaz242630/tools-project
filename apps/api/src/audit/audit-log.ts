@@ -25,6 +25,8 @@
 export type AuditAction =
   /** A session was seen for an account we had no mirror row for, so one was made. */
   | 'account.provisioned'
+  /** An administrator read somebody else's activity. A disclosure, so audited. */
+  | 'admin.activity_viewed'
   | 'profile.created'
   | 'profile.updated'
   /**
@@ -87,6 +89,16 @@ export interface AuditEntry {
   readonly beforeHash: string | null;
   readonly afterHash: string | null;
   readonly ipAddress: string | null;
+
+  /**
+   * Why, for actions that owe an explanation.
+   *
+   * Null for an ordinary user action — somebody editing their own profile is
+   * not accountable to anyone for it. Required of administrative actions, where
+   * BRD §8.13 asks for "actor, reason, target and before/after state", and
+   * enforced by the admin routes rather than by this type (ADR 0021).
+   */
+  readonly reason: string | null;
 }
 
 /** A stored entry, as its own actor may read it back. */
@@ -94,6 +106,7 @@ export interface RecordedEntry {
   readonly id: string;
   readonly action: AuditAction;
   readonly targetType: string;
+  readonly reason: string | null;
   readonly ipAddress: string | null;
   readonly createdAt: Date;
 }

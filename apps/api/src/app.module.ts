@@ -18,6 +18,7 @@ import {
   SESSION_VERIFIER,
 } from './identity/auth.guard.js';
 import { AUDIT_SERVICE } from './audit/audit.tokens.js';
+import { AdminActivityController } from './audit/admin-activity.controller.js';
 import { MeActivityController } from './audit/me-activity.controller.js';
 import type { AuditService } from './audit/audit.service.js';
 import { ClerkEventsController } from './identity/clerk-events.controller.js';
@@ -84,6 +85,7 @@ export class AppModule implements NestModule {
         MeExportController,
         MeProfileController,
         MeActivityController,
+        AdminActivityController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
         // like a missing decorator. See PublicProfileController.

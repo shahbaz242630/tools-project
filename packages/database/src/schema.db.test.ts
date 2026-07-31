@@ -434,6 +434,11 @@ describe('audit_logs', () => {
       'createdAt',
       'id',
       'ipAddress',
+      // Why, for actions that owe an explanation — an administrator reaching
+      // into somebody else's account (BRD §8.13). Free text, and the one
+      // column here a person writes: it is a stated justification, not a copy
+      // of the data it justifies looking at.
+      'reason',
       'targetId',
       'targetType',
     ]);

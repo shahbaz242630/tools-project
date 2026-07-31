@@ -31,6 +31,7 @@ const DOCUMENT = {
     {
       action: 'account.provisioned',
       targetType: 'user',
+      reason: null,
       ipAddress: '203.0.113.7',
       createdAt: '2026-07-15T09:00:00.000Z',
     },

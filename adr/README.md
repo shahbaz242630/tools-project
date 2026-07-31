@@ -49,3 +49,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0018](0018-delete-our-data-before-the-credential.md)                     | Erase our data before deleting the credential, and say what survives | Accepted |
 | [0019](0019-the-export-is-the-one-plaintext-egress.md)                    | Treat the data export as the one plaintext egress, and audit it      | Accepted |
 | [0020](0020-email-correction-stays-at-the-provider.md)                    | Correct the email at the provider, and let the mirror converge       | Accepted |
+| [0021](0021-admin-access-requires-a-second-factor-and-a-reason.md)        | Require a second factor and a stated reason for admin access         | Accepted |

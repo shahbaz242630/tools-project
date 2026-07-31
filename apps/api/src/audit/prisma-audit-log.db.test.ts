@@ -34,6 +34,7 @@ const entry = (actorId: string | null, over: Partial<AuditEntry> = {}): AuditEnt
   beforeHash: 'a'.repeat(64),
   afterHash: 'b'.repeat(64),
   ipAddress: '203.0.113.7',
+  reason: null,
   ...over,
 });
 
@@ -147,6 +148,10 @@ describe('listForActor', () => {
       'createdAt',
       'id',
       'ipAddress',
+      // Served deliberately: being able to read *why* an administrator looked
+      // at your account is most of the point of recording it. The digests are
+      // still absent, which is what this test is really guarding.
+      'reason',
       'targetType',
     ]);
   });

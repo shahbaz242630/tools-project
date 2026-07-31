@@ -37,6 +37,9 @@ export interface RecordChange {
   readonly before?: unknown;
   /** Absent for a deletion — there is no resulting state. */
   readonly after?: unknown;
+
+  /** Why. Required of admin actions by their routes, absent for user actions. */
+  readonly reason?: string;
 }
 
 export class AuditService {
@@ -66,6 +69,7 @@ export class AuditService {
       afterHash: change.after === undefined ? null : this.digest.of(change.after),
 
       ipAddress: change.actor?.ipAddress ?? null,
+      reason: change.reason ?? null,
     });
   }
 

@@ -8,7 +8,7 @@ import type { Logger } from '@platform/observability';
 import { AccountDeletedError } from './identity.service.js';
 import type { IdentityService } from './identity.service.js';
 import { SessionVerificationError } from './session-verifier.js';
-import type { SessionVerifier } from './session-verifier.js';
+import type { SessionVerifier, VerifiedSession } from './session-verifier.js';
 import type { MirroredUser, UserRole } from './user-directory.js';
 
 export const SESSION_VERIFIER = Symbol('SESSION_VERIFIER');
@@ -16,6 +16,16 @@ export const IDENTITY_SERVICE = Symbol('IDENTITY_SERVICE');
 export const AUTH_LOGGER = Symbol('AUTH_LOGGER');
 
 const REQUIRED_ROLES = Symbol('REQUIRED_ROLES');
+
+/**
+ * How recently an administrator's second factor must have been verified.
+ *
+ * An engineering bound on how long a privileged session stays privileged, not a
+ * business rule — BRD §8.13 asks for step-up authentication on high-risk
+ * actions without naming a number. Twelve hours keeps a support shift working
+ * without leaving a forgotten browser tab administratively capable overnight.
+ */
+export const MAX_SECOND_FACTOR_AGE_MINUTES = 12 * 60;
 
 /**
  * Restrict a route to the listed roles.
@@ -33,6 +43,9 @@ export interface AuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
   user?: MirroredUser;
   sessionId?: string;
+
+  /** Minutes since the second factor was verified, or null if it never was. */
+  secondFactorAgeMinutes?: number | null;
 
   /**
    * The client's address as the web app reported it, or null.
@@ -128,8 +141,9 @@ export class AuthGuard implements CanActivate {
     request.user = user;
     request.sessionId = session.sessionId;
     request.clientIp = clientIp;
+    request.secondFactorAgeMinutes = session.secondFactorAgeMinutes;
 
-    this.authorise(context, user);
+    this.authorise(context, user, session);
 
     return true;
   }
@@ -163,7 +177,11 @@ export class AuthGuard implements CanActivate {
     }
   }
 
-  private authorise(context: ExecutionContext, user: MirroredUser): void {
+  private authorise(
+    context: ExecutionContext,
+    user: MirroredUser,
+    session: VerifiedSession,
+  ): void {
     const required = this.reflector.getAllAndOverride<readonly UserRole[] | undefined>(
       REQUIRED_ROLES,
       [context.getHandler(), context.getClass()],
@@ -179,6 +197,39 @@ export class AuthGuard implements CanActivate {
         userId: user.id,
         role: user.role,
         required,
+      });
+      throw new ForbiddenException();
+    }
+
+    // MFA is enforced here rather than by a decorator per route, because BRD
+    // §8.1 requires it *of administrators* rather than of particular actions.
+    // Folding it into the role check means an admin route cannot be added
+    // without it by forgetting something — the same reasoning that makes an
+    // absent `@Roles` mean "authenticated" rather than "anyone".
+    if (required.includes('ADMIN')) {
+      this.requireSecondFactor(user, session);
+    }
+  }
+
+  /**
+   * Refuse unless the session proves a recent second factor.
+   *
+   * **Null fails.** It means the token carried no factor-verification claim,
+   * which happens when the Clerk instance was not provisioned with one — and
+   * the only safe reading of "we cannot tell" is "not verified". Treating it as
+   * satisfied would turn a missing piece of instance configuration into an open
+   * admin surface, silently, on a correctly-signed token (ADR 0021).
+   */
+  private requireSecondFactor(user: MirroredUser, session: VerifiedSession): void {
+    const age = session.secondFactorAgeMinutes;
+
+    if (age === null || age > MAX_SECOND_FACTOR_AGE_MINUTES) {
+      this.logger.warn('rejected admin request without a recent second factor', {
+        userId: user.id,
+        // The age, not the reason for the decision — an administrator debugging
+        // their own lockout needs to see whether the claim was absent or stale.
+        secondFactorAgeMinutes: age,
+        maximumMinutes: MAX_SECOND_FACTOR_AGE_MINUTES,
       });
       throw new ForbiddenException();
     }

@@ -1,0 +1,38 @@
+-- Migration: audit_reason
+--
+-- Adds the "why" that BRD §8.13 requires of every admin action: "actor, reason,
+-- target and before/after state". ADR 0021.
+--
+-- Data impact
+-- -----------
+-- One nullable column on `audit_logs`, no default, so Postgres records it in
+-- the catalogue without rewriting the table. Every existing row reads null,
+-- which is correct: they are all user actions, and a user editing their own
+-- profile owes nobody a reason.
+--
+-- **Deliberately not NOT NULL.** The requirement is about admin actions, and a
+-- non-null constraint would force every ordinary action to invent a reason —
+-- which is how a mandatory field becomes a meaningless one. The rule is
+-- enforced in the admin routes, where the distinction actually exists.
+--
+-- No backfill. There is no honest reason to assign retrospectively, and
+-- inventing one would put fabricated text in a record kept for six years
+-- precisely so it can be trusted.
+--
+-- Expand-and-contract
+-- -------------------
+-- Not applicable: a nullable column no previous release reads is safe in a
+-- single deploy.
+--
+-- Application rollback: safe. Nothing in the previous release references it.
+--
+-- Schema rollback:
+--   ALTER TABLE "audit_logs" DROP COLUMN "reason";
+--   DELETE FROM _prisma_migrations WHERE migration_name LIKE '%audit_reason';
+--
+-- Backup first? Not for the forward migration. The rollback discards the stated
+-- justification for every administrative access — take one before running it
+-- against a database holding rows.
+
+-- AlterTable
+ALTER TABLE "audit_logs" ADD COLUMN     "reason" TEXT;

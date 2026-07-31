@@ -67,6 +67,7 @@ export class InMemoryAuditLog implements AuditLog {
           id: row.id,
           action: row.action,
           targetType: row.targetType,
+          reason: row.reason,
           ipAddress: row.ipAddress,
           createdAt: row.createdAt,
         })),

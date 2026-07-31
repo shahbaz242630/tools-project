@@ -37,6 +37,10 @@ export class MeActivityController {
         id: entry.id,
         action: entry.action,
         targetType: entry.targetType,
+        // Visible to the person it happened to. Being able to read *why* an
+        // administrator looked at your account is most of the point of
+        // recording it (BRD §8.13).
+        reason: entry.reason,
         ipAddress: entry.ipAddress,
         // ISO on the wire; the page renders it in the reader's locale. The
         // digests are absent because the service never returns them.

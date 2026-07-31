@@ -27,6 +27,7 @@ export class PrismaAuditLog implements AuditLog {
         beforeHash: entry.beforeHash,
         afterHash: entry.afterHash,
         ipAddress: entry.ipAddress,
+        reason: entry.reason,
       },
     });
   }
@@ -49,6 +50,7 @@ export class PrismaAuditLog implements AuditLog {
         id: true,
         action: true,
         targetType: true,
+        reason: true,
         ipAddress: true,
         createdAt: true,
       },
@@ -61,6 +63,7 @@ export class PrismaAuditLog implements AuditLog {
       // so the one place that trusts the database is visible.
       action: row.action as AuditAction,
       targetType: row.targetType,
+      reason: row.reason,
       ipAddress: row.ipAddress,
       createdAt: row.createdAt,
     }));

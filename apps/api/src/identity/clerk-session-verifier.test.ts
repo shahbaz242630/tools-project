@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ClerkSessionVerifier } from './clerk-session-verifier.js';
+import { ClerkSessionVerifier, secondFactorAge } from './clerk-session-verifier.js';
 import type { VerifiedClaims, VerifyTokenFn } from './clerk-session-verifier.js';
 import { SessionVerificationError } from './session-verifier.js';
 
@@ -32,6 +32,10 @@ describe('ClerkSessionVerifier', () => {
       clerkUserId: 'user_123',
       sessionId: 'sess_456',
       email: 'alice@example.com',
+      // Null because the fixture carries no `fva` claim — an instance that does
+      // not emit it cannot prove a second factor, and the safe reading of that
+      // is "not verified" (ADR 0021).
+      secondFactorAgeMinutes: null,
     });
   });
 
@@ -118,5 +122,39 @@ describe('ClerkSessionVerifier', () => {
         message: expect.stringContaining('custom session claim'),
       }),
     });
+  });
+});
+
+describe('secondFactorAge', () => {
+  it('reads the second element of Clerk’s fva pair', () => {
+    // [firstFactorAge, secondFactorAge] in minutes. Only the second matters —
+    // the first is implied by holding a valid token at all.
+    expect(secondFactorAge([12, 3])).toBe(3);
+  });
+
+  it('treats zero as verified just now', () => {
+    expect(secondFactorAge([0, 0])).toBe(0);
+  });
+
+  it('treats -1 as never verified', () => {
+    // Clerk's own encoding for "not verified in this session".
+    expect(secondFactorAge([5, -1])).toBeNull();
+  });
+
+  it.each([
+    ['an absent claim', undefined],
+    ['null', null],
+    ['a string', '5'],
+    ['a number', 5],
+    ['an empty array', []],
+    ['a one-element array', [5]],
+    ['a non-numeric second element', [5, 'yes']],
+    ['NaN', [5, Number.NaN]],
+    ['a nonsense negative', [5, -99]],
+  ])('reads %s as no second factor', (_label, fva) => {
+    // Everything unexpected means the same thing: we cannot prove a second
+    // factor was used. Guessing "probably fine" would turn a missing instance
+    // configuration into an open admin surface (ADR 0021).
+    expect(secondFactorAge(fva)).toBeNull();
   });
 });
