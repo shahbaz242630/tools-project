@@ -2,6 +2,9 @@ import { Time } from '@platform/core';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { PersonalDataEraser } from './personal-data-eraser.js';
+import type { PersonalDataSource } from './personal-data-source.js';
+import type { DataExport } from '@platform/contracts';
+import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
 import type { MirroredUser, UserDirectory } from './user-directory.js';
 import type { VerifiedSession } from './session-verifier.js';
 import type { WebhookLedger } from './webhook-ledger.js';
@@ -72,6 +75,7 @@ export class IdentityService {
     private readonly ledger: WebhookLedger,
     private readonly audit: AuditService,
     private readonly eraser: PersonalDataEraser,
+    private readonly profileSource: PersonalDataSource,
   ) {}
 
   /**
@@ -131,6 +135,70 @@ export class IdentityService {
   async findActiveById(id: string): Promise<MirroredUser | null> {
     const user = await this.users.findById(id);
     return user === null || user.deletedAt !== null ? null : user;
+  }
+
+  /**
+   * Assemble everything the platform holds about somebody.
+   *
+   * Identity assembles it because it owns the account, but it does not *hold*
+   * most of it — each module supplies its own section through a port, for the
+   * same reason erasure works that way. Reaching into `profiles` from here
+   * would be the cross-module read the boundary exists to prevent, and this
+   * module has no way to decrypt an address in any case.
+   *
+   * **Audited.** This is the one bulk disclosure the platform performs and the
+   * only path by which a decrypted address leaves the database. An access log
+   * with a hole exactly where the sensitive operation is would be worse than
+   * none (ADR 0019). Recorded before the document is returned, so a disclosure
+   * that happened cannot fail to be recorded.
+   */
+  async exportFor(actor: Actor): Promise<DataExport | null> {
+    const user = await this.users.findById(actor.userId);
+    if (user === null) return null;
+
+    const [profile, activity] = await Promise.all([
+      this.profileSource.exportFor(user.id),
+      this.audit.listForActor(user.id),
+    ]);
+
+    const exportedAt = Time.toIsoUtc(Time.nowUtc());
+
+    await this.audit.record({
+      actor,
+      action: 'account.exported',
+      targetType: 'user',
+      targetId: user.id,
+      // No before or after: nothing changed. An export is a disclosure, not a
+      // mutation, and inventing a state transition for it would make the two
+      // indistinguishable in the trail.
+    });
+
+    return {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt,
+      account: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        createdAt: Time.toIsoUtc(user.createdAt),
+        deletedAt: user.deletedAt === null ? null : Time.toIsoUtc(user.deletedAt),
+        deletionRequestedAt:
+          user.deletionRequestedAt === null
+            ? null
+            : Time.toIsoUtc(user.deletionRequestedAt),
+      },
+      profile,
+      // The export itself is deliberately absent from the activity it contains
+      // — it is recorded above, so it appears in the *next* export. Including
+      // it would mean a document describing its own creation, which reads as a
+      // bug to anyone comparing two exports.
+      activity: activity.map((entry) => ({
+        action: entry.action,
+        targetType: entry.targetType,
+        ipAddress: entry.ipAddress,
+        createdAt: Time.toIsoUtc(entry.createdAt),
+      })),
+    };
   }
 
   /**

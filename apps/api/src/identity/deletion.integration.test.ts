@@ -6,8 +6,11 @@ import {
   ME_ACTIVITY_PATH,
   ME_DELETION_PATH,
   ME_PATH,
+  ME_EXPORT_PATH,
   ME_PROFILE_PATH,
   activityResponseSchema,
+  dataExportSchema,
+  exportFilename,
   deletionResponseSchema,
   publicProfilePath,
 } from '@platform/contracts';
@@ -84,6 +87,7 @@ beforeEach(async () => {
     new InMemoryWebhookLedger(),
     audit.service,
     { erase: (actor) => profiles.eraseFor(actor) },
+    { exportFor: (userId) => profiles.exportFor(userId) },
   );
 
   const moduleRef = await Test.createTestingModule({
@@ -320,5 +324,96 @@ describe('the activity trail of a deletion', () => {
 
     const { entries } = activityResponseSchema.parse(response.json());
     expect(entries.every((entry) => entry.action === 'account.provisioned')).toBe(true);
+  });
+});
+
+describe('GET /me/export', () => {
+  const exportFor = (token?: string, ip?: string) =>
+    app.inject({
+      method: 'GET',
+      url: ME_EXPORT_PATH,
+      headers: {
+        ...(token === undefined ? {} : auth(token)),
+        ...(ip === undefined ? {} : { [CLIENT_IP_HEADER]: ip }),
+      },
+    });
+
+  it('rejects an unauthenticated request', async () => {
+    // The single most important 401 in the codebase after deletion: this route
+    // returns a decrypted home address.
+    expect((await exportFor()).statusCode).toBe(401);
+  });
+
+  it('rejects a token it cannot verify', async () => {
+    expect((await exportFor('forged-token')).statusCode).toBe(401);
+  });
+
+  it('returns everything held about the caller, address included', async () => {
+    await saveProfile('alice-token');
+
+    const response = await exportFor('alice-token', '203.0.113.7');
+    expect(response.statusCode).toBe(200);
+
+    const document = dataExportSchema.parse(response.json());
+    expect(document.account.email).toBe('alice@example.com');
+    expect(document.profile?.displayName).toBe('Alice A.');
+    // Decrypted, and this is the only response in the application that carries
+    // a street line in full (ADR 0019).
+    expect(document.profile?.address?.line1).toBe('12 Acacia Avenue');
+    expect(document.profile?.address?.postcode).toBe('BS7 8AA');
+  });
+
+  it('returns only the caller’s own data, never another’s', async () => {
+    // Both accounts have profiles; each export must contain exactly one of
+    // them. There is no id in the path, so there is no ownership check to
+    // forget — this asserts the structural guarantee holds over HTTP.
+    await saveProfile('alice-token');
+    await saveProfile('bob-token');
+
+    const alice = dataExportSchema.parse((await exportFor('alice-token')).json());
+    const bob = dataExportSchema.parse((await exportFor('bob-token')).json());
+
+    expect(alice.account.email).toBe('alice@example.com');
+    expect(bob.account.email).toBe('bob@example.com');
+    expect(alice.account.id).not.toBe(bob.account.id);
+  });
+
+  it('ignores a query parameter naming somebody else', async () => {
+    const bobId = await idOf('bob-token');
+    await saveProfile('bob-token');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `${ME_EXPORT_PATH}?userId=${bobId}`,
+      headers: auth('alice-token'),
+    });
+
+    const document = dataExportSchema.parse(response.json());
+    expect(document.account.id).not.toBe(bobId);
+    expect(document.account.email).toBe('alice@example.com');
+  });
+
+  it('records the disclosure against the caller', async () => {
+    await exportFor('alice-token', '198.51.100.4');
+
+    const entry = audit.log.entries().find((e) => e.action === 'account.exported');
+    expect(entry).toMatchObject({ targetType: 'user', ipAddress: '198.51.100.4' });
+  });
+
+  it('is refused for a deleted account', async () => {
+    // The guard refuses the session, so a deleted person cannot pull a copy of
+    // data that no longer exists. Worth pinning: an export route that outlived
+    // deletion would be a way to read a tombstone.
+    await saveProfile('alice-token');
+    await requestDeletion('alice-token');
+
+    expect((await exportFor('alice-token')).statusCode).toBe(401);
+  });
+
+  it('names a dated file, so two exports do not collide', async () => {
+    const document = dataExportSchema.parse((await exportFor('alice-token')).json());
+    expect(exportFilename(document.exportedAt)).toMatch(
+      /^account-data-\d{4}-\d{2}-\d{2}\.json$/,
+    );
   });
 });

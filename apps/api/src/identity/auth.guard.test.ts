@@ -3,7 +3,7 @@ import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import { RecordingEraser } from './testing/fakes.js';
+import { RecordingEraser, StubDataSource } from './testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AuthGuard, Roles, bearerToken, clientIpFrom } from './auth.guard.js';
 import { currentUserFrom } from './current-user.decorator.js';
@@ -86,6 +86,7 @@ beforeEach(() => {
       new InMemoryWebhookLedger(),
       createAuditFakes().service,
       new RecordingEraser(),
+      new StubDataSource(),
     ),
     createRecordingLogger().logger,
   );
@@ -143,6 +144,7 @@ describe('AuthGuard', () => {
         new InMemoryWebhookLedger(),
         createAuditFakes().service,
         new RecordingEraser(),
+        new StubDataSource(),
       ),
       createRecordingLogger().logger,
     );
@@ -202,6 +204,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         new InMemoryWebhookLedger(),
         createAuditFakes().service,
         new RecordingEraser(),
+        new StubDataSource(),
       ),
       createRecordingLogger().logger,
     );
@@ -226,6 +229,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         new InMemoryWebhookLedger(),
         createAuditFakes().service,
         new RecordingEraser(),
+        new StubDataSource(),
       ),
       createRecordingLogger().logger,
     );

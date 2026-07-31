@@ -115,6 +115,7 @@ async function bootstrap(): Promise<void> {
     new PrismaWebhookLedger(database),
     audit,
     { erase: (actor) => profiles.eraseFor(actor) },
+    { exportFor: (userId) => profiles.exportFor(userId) },
   );
 
   const profiles: ProfilesService = new ProfilesService(
