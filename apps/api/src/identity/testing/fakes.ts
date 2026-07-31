@@ -29,6 +29,8 @@ import type {
 import type { WebhookDelivery, WebhookLedger } from '../webhook-ledger.js';
 import type { Actor } from '../../audit/audit-log.js';
 import type { PersonalDataEraser } from '../personal-data-eraser.js';
+import type { PersonalDataSource } from '../personal-data-source.js';
+import type { ExportedProfile } from '@platform/contracts';
 
 /** Accepts exactly the tokens it was given, rejects everything else. */
 export class FakeSessionVerifier implements SessionVerifier {
@@ -184,6 +186,20 @@ export class RecordingEraser implements PersonalDataEraser {
   }
 }
 
+/** Returns whatever a test seeds, standing in for the profiles module. */
+export class StubDataSource implements PersonalDataSource {
+  private profile: ExportedProfile = null;
+
+  returns(profile: ExportedProfile): this {
+    this.profile = profile;
+    return this;
+  }
+
+  exportFor(): Promise<ExportedProfile> {
+    return Promise.resolve(this.profile);
+  }
+}
+
 export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
@@ -192,6 +208,7 @@ export interface IdentityFakes {
   /** Exposed so a test can assert what the module recorded. */
   readonly audit: AuditFakes;
   readonly eraser: RecordingEraser;
+  readonly source: StubDataSource;
 }
 
 /**
@@ -204,12 +221,14 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const users = new InMemoryUserDirectory();
   const ledger = new InMemoryWebhookLedger();
   const eraser = new RecordingEraser();
+  const source = new StubDataSource();
   return {
     sessionVerifier,
     users,
     ledger,
     audit,
     eraser,
-    service: new IdentityService(users, ledger, audit.service, eraser),
+    source,
+    service: new IdentityService(users, ledger, audit.service, eraser, source),
   };
 }

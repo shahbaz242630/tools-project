@@ -8,7 +8,7 @@ import type { VerifiedSession } from './session-verifier.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { UserConflictError } from './user-directory.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import { RecordingEraser } from './testing/fakes.js';
+import { RecordingEraser, StubDataSource } from './testing/fakes.js';
 
 const SESSION: VerifiedSession = {
   clerkUserId: 'user_1',
@@ -28,6 +28,7 @@ beforeEach(() => {
     ledger,
     createAuditFakes().service,
     new RecordingEraser(),
+    new StubDataSource(),
   );
 });
 
@@ -316,6 +317,7 @@ describe('the audit trail', () => {
       new InMemoryWebhookLedger(),
       audit.service,
       new RecordingEraser(),
+      new StubDataSource(),
     );
 
     const user = await identity.resolveSession(
@@ -343,6 +345,7 @@ describe('the audit trail', () => {
       new InMemoryWebhookLedger(),
       audit.service,
       new RecordingEraser(),
+      new StubDataSource(),
     );
     const session = {
       clerkUserId: 'user_a',
@@ -364,6 +367,7 @@ describe('the audit trail', () => {
       new InMemoryWebhookLedger(),
       audit.service,
       new RecordingEraser(),
+      new StubDataSource(),
     );
 
     await identity.resolveSession({
@@ -384,6 +388,7 @@ describe('the audit trail', () => {
       new InMemoryWebhookLedger(),
       audit.service,
       new RecordingEraser(),
+      new StubDataSource(),
     );
 
     await identity.applyEvent('msg_1', {
@@ -406,6 +411,7 @@ describe('the audit trail', () => {
       new InMemoryWebhookLedger(),
       audit.service,
       new RecordingEraser(),
+      new StubDataSource(),
     );
     const event = {
       type: 'user.upserted',
@@ -434,6 +440,7 @@ describe('requestDeletion', () => {
       new InMemoryWebhookLedger(),
       audit.service,
       eraser,
+      new StubDataSource(),
     );
 
     const user = await identity.resolveSession({
@@ -554,5 +561,164 @@ describe('requestDeletion', () => {
         email: 'alice@example.com',
       }),
     ).rejects.toThrow(AccountDeletedError);
+  });
+});
+
+describe('exportFor', () => {
+  const ACTOR = (id: string) => ({ userId: id, ipAddress: '203.0.113.7' });
+
+  async function provision() {
+    const audit = createAuditFakes();
+    const source = new StubDataSource();
+    const directory = new InMemoryUserDirectory();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      new RecordingEraser(),
+      source,
+    );
+
+    const user = await identity.resolveSession({
+      clerkUserId: 'user_a',
+      sessionId: 'sess_a',
+      email: 'alice@example.com',
+    });
+
+    return { id: user.id, audit, source, directory, identity };
+  }
+
+  it('includes the account', async () => {
+    const { id, identity } = await provision();
+    const document = await identity.exportFor(ACTOR(id));
+
+    expect(document?.account).toMatchObject({
+      id,
+      email: 'alice@example.com',
+      role: 'USER',
+      deletedAt: null,
+      deletionRequestedAt: null,
+    });
+  });
+
+  it('carries a schema version and an export timestamp', async () => {
+    // A person may keep this file for years. Without a version, an old export
+    // is indistinguishable from a malformed one.
+    const { id, identity } = await provision();
+    const document = await identity.exportFor(ACTOR(id));
+
+    expect(document?.schemaVersion).toBe(1);
+    expect(document?.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('includes the profile section a module contributed, decrypted', async () => {
+    const { id, source, identity } = await provision();
+    source.returns({
+      displayName: 'Sarah M.',
+      phone: '+447700900123',
+      address: {
+        line1: '12 Acacia Avenue',
+        line2: null,
+        town: 'Bristol',
+        postcode: 'BS7 8AA',
+      },
+      updatedAt: '2026-07-31T09:00:00.000Z',
+    });
+
+    const document = await identity.exportFor(ACTOR(id));
+
+    // The one place plaintext street lines leave the database (ADR 0019).
+    expect(document?.profile?.address?.line1).toBe('12 Acacia Avenue');
+    expect(document?.profile?.phone).toBe('+447700900123');
+  });
+
+  it('reports no profile as null rather than as an empty one', async () => {
+    // Different facts, and worth the distinction in a file read years later.
+    const { id, identity } = await provision();
+    await expect(identity.exportFor(ACTOR(id))).resolves.toMatchObject({
+      profile: null,
+    });
+  });
+
+  it('includes the person’s own activity', async () => {
+    const { id, identity } = await provision();
+    const document = await identity.exportFor(ACTOR(id));
+
+    // Provisioning happened when the session first resolved.
+    expect(document?.activity.map((entry) => entry.action)).toContain(
+      'account.provisioned',
+    );
+  });
+
+  it('leaves the digests out of the activity', async () => {
+    // Keyed with a secret the reader does not have, so meaningless to them.
+    // Article 15 is about the personal data we hold, not our integrity checks.
+    const { id, identity } = await provision();
+    const document = await identity.exportFor(ACTOR(id));
+
+    for (const entry of document?.activity ?? []) {
+      expect(entry).not.toHaveProperty('beforeHash');
+      expect(entry).not.toHaveProperty('afterHash');
+    }
+  });
+
+  it('records the export itself', async () => {
+    // The one bulk disclosure the platform performs. An access log with a hole
+    // exactly where the sensitive operation is would be worse than none.
+    const { id, audit, identity } = await provision();
+    await identity.exportFor(ACTOR(id));
+
+    expect(audit.log.entries().at(-1)).toMatchObject({
+      actorId: id,
+      action: 'account.exported',
+      targetType: 'user',
+      targetId: id,
+      ipAddress: '203.0.113.7',
+    });
+  });
+
+  it('records the export as a disclosure, not as a change', async () => {
+    // No before and no after: nothing was mutated. Inventing a state
+    // transition would make disclosures and changes indistinguishable.
+    const { id, audit, identity } = await provision();
+    await identity.exportFor(ACTOR(id));
+
+    expect(audit.log.entries().at(-1)).toMatchObject({
+      beforeHash: null,
+      afterHash: null,
+    });
+  });
+
+  it('does not describe its own creation', async () => {
+    // The entry is recorded before the document is built, so it appears in the
+    // *next* export. A file describing its own creation reads as a bug to
+    // anyone comparing two of them.
+    const { id, identity } = await provision();
+    const first = await identity.exportFor(ACTOR(id));
+
+    expect(first?.activity.map((entry) => entry.action)).not.toContain(
+      'account.exported',
+    );
+
+    const second = await identity.exportFor(ACTOR(id));
+    expect(second?.activity.map((entry) => entry.action)).toContain('account.exported');
+  });
+
+  it('is null for an account that does not exist', async () => {
+    const { identity } = await provision();
+    await expect(
+      identity.exportFor(ACTOR('00000000-0000-4000-8000-00000000dead')),
+    ).resolves.toBeNull();
+  });
+
+  it('shows a deleted account as deleted rather than hiding it', async () => {
+    // Somebody exporting after a deletion request should see that it happened,
+    // and when they asked. Both timestamps are personal data about them.
+    const { id, identity } = await provision();
+    await identity.requestDeletion(ACTOR(id));
+
+    const document = await identity.exportFor(ACTOR(id));
+    expect(document?.account.deletedAt).not.toBeNull();
+    expect(document?.account.deletionRequestedAt).not.toBeNull();
   });
 });

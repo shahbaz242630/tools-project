@@ -1,5 +1,10 @@
 import { Postcode } from '@platform/core';
-import type { MyProfile, ProfileInput, PublicProfile } from '@platform/contracts';
+import type {
+  ExportedProfile,
+  MyProfile,
+  ProfileInput,
+  PublicProfile,
+} from '@platform/contracts';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { AccountLookup, ProfileStore, StoredProfile } from './profile-store.js';
@@ -65,6 +70,23 @@ export class ProfilesService {
     });
 
     return toMyProfile(saved);
+  }
+
+  /**
+   * This module's contribution to a data export.
+   *
+   * The address arrives **decrypted**, which is the whole reason this lives
+   * here rather than in the module assembling the document: the encryptor
+   * belongs to the profiles store, and handing it out so somebody else could
+   * decrypt would put the key in a second place.
+   *
+   * Reuses the owner's own projection, so the export cannot drift from what a
+   * person already sees on their profile page — two shapes for the same data
+   * is how one of them ends up missing a field.
+   */
+  async exportFor(userId: string): Promise<ExportedProfile> {
+    const stored = await this.profiles.find(userId);
+    return stored === null ? null : toMyProfile(stored);
   }
 
   /**

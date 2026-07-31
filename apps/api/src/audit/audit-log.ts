@@ -35,7 +35,16 @@ export type AuditAction =
    */
   | 'account.deletion_requested'
   /** The personal data a module held about somebody was removed. */
-  | 'profile.erased';
+  | 'profile.erased'
+  /**
+   * Everything held about somebody was assembled and handed to them.
+   *
+   * Audited because it is the one bulk disclosure the platform performs, and
+   * the only path by which a decrypted address leaves the database (ADR 0019).
+   * An access log with a hole exactly where the sensitive operation is would be
+   * worse than none.
+   */
+  | 'account.exported';
 
 /**
  * Who did it, and from where.

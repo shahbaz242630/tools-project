@@ -1,0 +1,74 @@
+import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
+import { exportFilename } from '@platform/contracts';
+import { clientIpFrom } from '../../../../lib/client-ip';
+import { fetchDataExport } from '../../../../lib/data-export';
+import { webEnv } from '../../../../lib/env';
+
+/**
+ * Downloading your own data export.
+ *
+ * **This is the second browser-reachable non-page route in the application**,
+ * after the Clerk webhook, and CLAUDE.md asks that adding one be a deliberate
+ * act rather than a convenience. The reason it has to be a route handler: a
+ * file download needs a `Content-Disposition` header, and a server action
+ * cannot set response headers. The alternative — returning the document to a
+ * client component and assembling a Blob there — needs JavaScript to work at
+ * all, for something that should be a link.
+ *
+ * It is not an API. It returns one file to one authenticated person and takes
+ * no parameters. The API itself remains unreachable from the internet; this
+ * calls it server-side like every other page does.
+ */
+export async function GET(): Promise<Response> {
+  const { getToken } = await auth();
+  const token = await getToken();
+
+  // Not `redirect()`: this is fetched as a download rather than navigated to,
+  // and a redirect to a sign-in page would be saved as an HTML file called
+  // account-data.json.
+  if (token === null) {
+    return new Response('Sign in to download your data.', {
+      status: 401,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
+
+  const clientIp = clientIpFrom((await headers()).get('x-forwarded-for'));
+  const outcome = await fetchDataExport(
+    webEnv().API_BASE_URL,
+    token,
+    undefined,
+    clientIp,
+  );
+
+  if (outcome.kind === 'signed-out') {
+    return new Response(
+      'Your session has expired. Sign in again to download your data.',
+      {
+        status: 401,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      },
+    );
+  }
+
+  if (outcome.kind !== 'ready') {
+    // 502 rather than 500: the failure is upstream, and saying so distinguishes
+    // "the API could not answer" from "this route is broken".
+    return new Response(`Your data could not be exported — ${outcome.reason}`, {
+      status: 502,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
+
+  return new Response(outcome.body, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': `attachment; filename="${exportFilename(outcome.exportedAt)}"`,
+      // The response contains a home address. `no-store` keeps it out of any
+      // shared cache and out of the browser's own back-forward cache.
+      'cache-control': 'no-store, max-age=0',
+    },
+  });
+}

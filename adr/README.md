@@ -47,3 +47,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0016](0016-profiles-publish-a-district-not-an-address.md)                | Publish a postal district, gate contact data behind a booking        | Accepted |
 | [0017](0017-audit-log-keeps-keyed-digests-not-values.md)                  | Keep keyed digests in the audit log, not values, and fail closed     | Accepted |
 | [0018](0018-delete-our-data-before-the-credential.md)                     | Erase our data before deleting the credential, and say what survives | Accepted |
+| [0019](0019-the-export-is-the-one-plaintext-egress.md)                    | Treat the data export as the one plaintext egress, and audit it      | Accepted |

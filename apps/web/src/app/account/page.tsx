@@ -56,6 +56,9 @@ export default async function AccountPage() {
             <Link href="/account/activity">Account activity</Link>
           </li>
           <li>
+            <Link href="/account/data">Download your data</Link>
+          </li>
+          <li>
             <Link href="/account/delete">Delete your account</Link>
           </li>
         </ul>
