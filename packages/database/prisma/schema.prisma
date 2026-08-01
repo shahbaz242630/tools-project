@@ -78,6 +78,43 @@ model User {
   /// and `deletedAt` null for the duration, and nothing above has to change.
   deletionRequestedAt DateTime? @db.Timestamptz(3)
 
+  /// When the account was suspended, or null if it is not.
+  ///
+  /// **Distinct from deletion in every way that matters.** Deletion is the
+  /// person's own request and erases their data (ADR 0018); suspension is done
+  /// *to* them by an administrator, is reversible, and destroys nothing. A
+  /// suspended account can still sign in — it must, because UK GDPR access and
+  /// erasure rights do not lapse because somebody was suspended, and an account
+  /// that cannot authenticate cannot exercise them (ADR 0024).
+  ///
+  /// BRD §5.1 gives suspension to Trust & Safety, which does not exist yet.
+  /// This is the mechanism that module will eventually drive; §14 Phase 1 asks
+  /// for the skeleton and the policy comes later.
+  suspendedAt DateTime? @db.Timestamptz(3)
+
+  /// Which administrator did it.
+  ///
+  /// ON DELETE SET NULL rather than RESTRICT: losing who suspended somebody is
+  /// bad, but the audit trail holds that permanently and it must not be
+  /// possible for an old suspension to block an account removal. The same
+  /// trade the audit log's actor makes.
+  suspendedById String? @db.Uuid
+  suspendedBy   User?   @relation("SuspendedAccounts", fields: [suspendedById], references: [id])
+
+  /// Why, in the administrator's own words.
+  ///
+  /// **Shown to the suspended person**, which is deliberate and is the same
+  /// bargain ADR 0021 struck for administrative reads: an administrator writing
+  /// a reason knows who will read it, and that is what makes it a real control
+  /// rather than a box to clear. It also means a suspension reason must be
+  /// something you would be willing to say to the person's face, which is the
+  /// right constraint on it.
+  suspensionReason String? @db.Text
+
+  /// Accounts this administrator suspended. Declared because Prisma requires
+  /// both ends of a relation, not so anything reads suspensions through a user.
+  suspendedAccounts User[] @relation("SuspendedAccounts")
+
   /// Stored UTC. Rendering and rental-period arithmetic happen in the booking's
   /// stored IANA timezone (BRD §6.1), never in the database.
   createdAt DateTime @default(now()) @db.Timestamptz(3)

@@ -49,6 +49,20 @@ export type AuditAction =
   | 'admin.approval_granted'
   /** A proposal was withdrawn before anybody acted on it. */
   | 'admin.approval_cancelled'
+  /**
+   * An administrator suspended an account, or lifted a suspension.
+   *
+   * The reason reaches the suspended person twice over: on their own activity
+   * page, through the target-side read, and on their account page, from the
+   * column. Both are deliberate — somebody has to be able to find out what
+   * happened without asking the person who did it (ADR 0024).
+   *
+   * **Nothing writes these until slice 1.10b**, which adds the routes. The
+   * vocabulary is here because 1.10a is what makes the entries readable, and
+   * an action added at the same moment as its writer is one nobody reviews.
+   */
+  | 'account.suspended'
+  | 'account.reinstated'
   | 'profile.created'
   | 'profile.updated'
   /**

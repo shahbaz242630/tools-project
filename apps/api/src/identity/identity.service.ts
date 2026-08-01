@@ -200,10 +200,17 @@ export class IdentityService {
    * to a caller deciding whether to show somebody's page, "gone" and "never
    * existed" are the same answer, and distinguishing them leaks that an account
    * once existed at that id.
+   *
+   * **A suspended account is not active either**, and that is how suspension
+   * reaches the public profile without Profiles & Trust knowing the word: it
+   * asks this question already, and the answer simply changed. A suspended
+   * person stops being published to strangers, which is most of what suspension
+   * means from outside (ADR 0024).
    */
   async findActiveById(id: string): Promise<MirroredUser | null> {
     const user = await this.users.findById(id);
-    return user === null || user.deletedAt !== null ? null : user;
+    if (user === null) return null;
+    return user.deletedAt !== null || user.suspendedAt !== null ? null : user;
   }
 
   /**

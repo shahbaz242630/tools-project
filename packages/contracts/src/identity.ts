@@ -57,6 +57,29 @@ export const meResponseSchema = z.object({
   id: z.uuid(),
   email: z.email(),
   role: userRoleSchema,
+
+  /**
+   * When an administrator suspended this account, or null.
+   *
+   * Served to the account holder alone — this route only ever answers for the
+   * caller — so it discloses nothing about anybody else. A suspended person can
+   * still reach this route, deliberately: they have to be able to find out that
+   * they are suspended, and UK GDPR rights do not lapse either (ADR 0024).
+   *
+   * **Nullable with a default**, so an API that predates suspension stays
+   * parseable during a deploy skew. `null` is the honest reading of a response
+   * from a version that could not suspend anybody.
+   */
+  suspendedAt: z.iso.datetime().nullable().default(null),
+
+  /**
+   * Why, in the administrator's own words.
+   *
+   * Shown to the person it was written about — the same bargain ADR 0021 struck
+   * for administrative reads. It means a suspension reason has to be something
+   * you would be willing to say to their face, which is the right constraint.
+   */
+  suspensionReason: z.string().nullable().default(null),
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 

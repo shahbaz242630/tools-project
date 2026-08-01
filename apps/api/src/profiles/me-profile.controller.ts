@@ -11,7 +11,7 @@ import {
 import { ME_PROFILE_PATH, parseProfileInput } from '@platform/contracts';
 import type { MyProfile, MyProfileResponse } from '@platform/contracts';
 import { ContractViolationError } from '@platform/contracts';
-import { AuthGuard } from '../identity/auth.guard.js';
+import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import type { AuthenticatedRequest } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -37,7 +37,11 @@ import type { ProfilesService } from './profiles.service.js';
 export class MeProfileController {
   constructor(@Inject(PROFILES_SERVICE) private readonly profiles: ProfilesService) {}
 
+  // Reading your own profile survives suspension; the `@Put` below deliberately
+  // does not. A suspended person may see what we hold and take a copy of it —
+  // they may not change what other people would see (ADR 0024).
   @Get(ME_PROFILE_PATH)
+  @AllowsSuspended()
   async find(@CurrentUser() user: MirroredUser): Promise<MyProfileResponse> {
     // `null` rather than 404: not having filled in a profile is a normal state
     // the page renders a form for, and 404 would say the route is missing.

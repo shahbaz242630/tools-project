@@ -117,13 +117,42 @@ export class InMemoryUserDirectory implements UserDirectory {
     return Promise.resolve(this.rows.get(id) ?? null);
   }
 
+  /**
+   * Suspend or reinstate a row. **Test-only, and deliberately not on the port.**
+   *
+   * Suspension has no production route until slice 1.10b; until then it is a
+   * database write, the same escape hatch role assignment used before 1.9.
+   * Enforces the all-or-nothing shape the CHECK constraint enforces, so a test
+   * cannot set a state Postgres would refuse.
+   */
+  suspend(id: string, byId: string, reason: string): this {
+    const existing = this.rows.get(id);
+    if (existing === undefined) throw new Error(`no such user: ${id}`);
+    this.rows.set(id, {
+      ...existing,
+      suspendedAt: Time.nowUtc(),
+      suspensionReason: reason,
+    });
+    void byId;
+    return this;
+  }
+
+  reinstate(id: string): this {
+    const existing = this.rows.get(id);
+    if (existing === undefined) throw new Error(`no such user: ${id}`);
+    this.rows.set(id, { ...existing, suspendedAt: null, suspensionReason: null });
+    return this;
+  }
+
   countAdministrators(): Promise<number> {
-    // Active only, matching the real store. Counting soft-deleted
-    // administrators would let the last usable one be demoted on the strength
-    // of somebody who cannot sign in.
+    // Usable only, matching the real store. A deleted administrator cannot sign
+    // in and a suspended one is refused every admin route, so counting either
+    // would let the last usable one be demoted on the strength of somebody who
+    // cannot act.
     return Promise.resolve(
       [...this.rows.values()].filter(
-        (row) => row.role === 'ADMIN' && row.deletedAt === null,
+        (row) =>
+          row.role === 'ADMIN' && row.deletedAt === null && row.suspendedAt === null,
       ).length,
     );
   }
@@ -146,6 +175,8 @@ export class InMemoryUserDirectory implements UserDirectory {
       role: 'USER',
       deletedAt: null,
       deletionRequestedAt: null,
+      suspendedAt: null,
+      suspensionReason: null,
       // Fixed rather than `new Date()`: "member since" is rendered from this,
       // and a test asserting the rendered month must not depend on the clock
       // the suite happens to run under.

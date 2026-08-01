@@ -52,6 +52,8 @@ interface UserRow {
   role: string;
   deletedAt: Date | null;
   deletionRequestedAt: Date | null;
+  suspendedAt: Date | null;
+  suspensionReason: string | null;
   createdAt: Date;
 }
 
@@ -65,6 +67,8 @@ function toMirroredUser(row: UserRow): MirroredUser {
     role: row.role === 'ADMIN' ? 'ADMIN' : ('USER' satisfies UserRole),
     deletedAt: row.deletedAt,
     deletionRequestedAt: row.deletionRequestedAt,
+    suspendedAt: row.suspendedAt,
+    suspensionReason: row.suspensionReason,
     createdAt: row.createdAt,
   };
 }
@@ -124,10 +128,13 @@ export class PrismaUserDirectory implements UserDirectory {
   }
 
   countAdministrators(): Promise<number> {
-    // Active only. A soft-deleted administrator cannot authenticate, so
-    // counting them would let the last usable administrator be demoted on the
-    // strength of somebody who cannot sign in.
-    return this.prisma.user.count({ where: { role: 'ADMIN', deletedAt: null } });
+    // Usable only. A deleted administrator cannot authenticate and a suspended
+    // one is refused every admin route, so counting either would let the last
+    // *usable* administrator be demoted on the strength of somebody who cannot
+    // act — the lockout the rule exists to prevent, reached another way.
+    return this.prisma.user.count({
+      where: { role: 'ADMIN', deletedAt: null, suspendedAt: null },
+    });
   }
 
   async update(id: string, changes: UserChanges): Promise<MirroredUser> {

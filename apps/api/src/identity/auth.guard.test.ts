@@ -149,6 +149,8 @@ describe('AuthGuard', () => {
       role: 'ADMIN',
       deletedAt: null,
       deletionRequestedAt: null,
+      suspendedAt: null,
+      suspensionReason: null,
       createdAt: new Date('2026-07-15T09:00:00.000Z'),
     };
     admin.seed(seeded);
@@ -274,6 +276,8 @@ describe('currentUserFrom', () => {
       role: 'USER',
       deletedAt: null,
       deletionRequestedAt: null,
+      suspendedAt: null,
+      suspensionReason: null,
       createdAt: new Date('2026-07-15T09:00:00.000Z'),
     };
     expect(currentUserFrom(contextFor({ headers: {}, user }))).toBe(user);
@@ -340,6 +344,8 @@ describe('the second factor an admin route requires', () => {
       role: 'ADMIN',
       deletedAt: null,
       deletionRequestedAt: null,
+      suspendedAt: null,
+      suspensionReason: null,
       createdAt: new Date('2026-07-15T09:00:00.000Z'),
     });
 

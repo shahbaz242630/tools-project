@@ -16,6 +16,7 @@ export const IDENTITY_SERVICE = Symbol('IDENTITY_SERVICE');
 export const AUTH_LOGGER = Symbol('AUTH_LOGGER');
 
 const REQUIRED_ROLES = Symbol('REQUIRED_ROLES');
+const ALLOWS_SUSPENDED = Symbol('ALLOWS_SUSPENDED');
 
 /**
  * How recently an administrator's second factor must have been verified.
@@ -37,6 +38,25 @@ export const MAX_SECOND_FACTOR_AGE_MINUTES = 12 * 60;
  */
 export const Roles = (...roles: readonly UserRole[]): MethodDecorator =>
   SetMetadata(REQUIRED_ROLES, roles);
+
+/**
+ * Let a suspended account reach this route.
+ *
+ * **Default-deny**, the opposite of `@Roles`. A suspended account is refused
+ * everything unless a route says otherwise, so a route added later is closed to
+ * suspended users by forgetting nothing — the failure mode of an opt-out scheme
+ * is a suspended person still able to act, which is the whole thing suspension
+ * exists to prevent.
+ *
+ * What carries this decorator is therefore a short and deliberate list: reading
+ * your own account, your own profile, your own activity, exporting your data
+ * and deleting it. **UK GDPR access and erasure rights do not lapse because
+ * somebody was suspended**, and an account that cannot authenticate cannot
+ * exercise them (ADR 0024). Everything else — anything that acts on the
+ * platform or changes anything — stays refused.
+ */
+export const AllowsSuspended = (): MethodDecorator =>
+  SetMetadata(ALLOWS_SUSPENDED, true);
 
 /** The request, once the guard has resolved who is making it. */
 export interface AuthenticatedRequest {
@@ -182,6 +202,8 @@ export class AuthGuard implements CanActivate {
     user: MirroredUser,
     session: VerifiedSession,
   ): void {
+    this.refuseIfSuspended(context, user);
+
     const required = this.reflector.getAllAndOverride<readonly UserRole[] | undefined>(
       REQUIRED_ROLES,
       [context.getHandler(), context.getClass()],
@@ -209,6 +231,37 @@ export class AuthGuard implements CanActivate {
     if (required.includes('ADMIN')) {
       this.requireSecondFactor(user, session);
     }
+  }
+
+  /**
+   * Refuse a suspended account, unless the route opted in.
+   *
+   * **403, not 401.** The session is perfectly valid and signing in again will
+   * not help — answering 401 would send somebody round a loop of re-signing-in
+   * that cannot end, which is exactly what a deleted account *does* get,
+   * because there the session genuinely is dead.
+   *
+   * A suspended administrator is refused every admin route by this, since none
+   * of them opt in. That is deliberate: the role is not what makes somebody
+   * able to act, and an administrator under investigation should not be able to
+   * lift their own suspension.
+   */
+  private refuseIfSuspended(context: ExecutionContext, user: MirroredUser): void {
+    if (user.suspendedAt === null) return;
+
+    const allowed = this.reflector.getAllAndOverride<boolean | undefined>(
+      ALLOWS_SUSPENDED,
+      [context.getHandler(), context.getClass()],
+    );
+    if (allowed === true) return;
+
+    this.logger.warn('rejected request from a suspended account', {
+      userId: user.id,
+      // Not the reason — it is the person's, and a log line is not where it
+      // belongs. The audit trail and their own account page both carry it.
+      suspendedAt: user.suspendedAt.toISOString(),
+    });
+    throw new ForbiddenException();
   }
 
   /**

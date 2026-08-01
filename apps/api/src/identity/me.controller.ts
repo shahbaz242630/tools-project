@@ -1,7 +1,7 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ME_PATH } from '@platform/contracts';
 import type { MeResponse } from '@platform/contracts';
-import { AuthGuard } from './auth.guard.js';
+import { AllowsSuspended, AuthGuard } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { MirroredUser } from './user-directory.js';
 
@@ -19,10 +19,18 @@ import type { MirroredUser } from './user-directory.js';
 @UseGuards(AuthGuard)
 export class MeController {
   @Get(ME_PATH)
+  @AllowsSuspended()
   me(@CurrentUser() user: MirroredUser): MeResponse {
     // Field by field rather than spreading the row. A mirrored record grows
-    // columns — Clerk ids, deletion timestamps, later a suspension reason — and
-    // a spread would serialise each new one the day it was added.
-    return { id: user.id, email: user.email, role: user.role };
+    // columns — Clerk ids, deletion timestamps, a suspension reason — and a
+    // spread would serialise each new one the day it was added.
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      // Only ever the caller's own, because this route answers for nobody else.
+      suspendedAt: user.suspendedAt?.toISOString() ?? null,
+      suspensionReason: user.suspensionReason,
+    };
   }
 }

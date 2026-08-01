@@ -7,6 +7,8 @@ const ACCOUNT = {
   id: '11111111-1111-4111-8111-111111111111',
   email: 'alice@example.com',
   role: 'USER',
+  suspendedAt: null,
+  suspensionReason: null,
 } as const;
 
 describe('AccountReport', () => {
