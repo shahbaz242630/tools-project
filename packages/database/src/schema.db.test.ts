@@ -57,6 +57,7 @@ beforeEach(async () => {
   await client.profile.deleteMany();
   await client.address.deleteMany();
   await client.auditLog.deleteMany();
+  await client.adminApproval.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });

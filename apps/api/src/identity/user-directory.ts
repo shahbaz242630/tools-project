@@ -96,4 +96,23 @@ export interface UserDirectory {
   upsert(input: UpsertUserInput): Promise<UpsertResult>;
 
   update(id: string, changes: UserChanges): Promise<MirroredUser>;
+
+  /**
+   * How many active administrators exist.
+   *
+   * Exists for exactly one rule: refusing a demotion that would leave nobody
+   * able to administer anything. Role assignment is itself behind dual approval
+   * (ADR 0023), so demoting the last administrator would need two
+   * administrators to undo and leave one — recovery would be a database write
+   * on a production box.
+   *
+   * A count rather than a list, because the rule needs a number and handing out
+   * the administrators would be a disclosure nothing has asked for.
+   *
+   * **There is deliberately no `promote` here.** Changing a role is an
+   * administrative action with its own route, reason, second approver and audit
+   * entry; a port method that did it directly would be an ungoverned way round
+   * all four.
+   */
+  countAdministrators(): Promise<number>;
 }

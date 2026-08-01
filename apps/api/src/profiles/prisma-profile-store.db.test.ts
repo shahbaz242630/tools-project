@@ -58,6 +58,7 @@ async function newUser(): Promise<string> {
 beforeEach(async () => {
   await client.profile.deleteMany();
   await client.address.deleteMany();
+  await client.adminApproval.deleteMany();
   await client.user.deleteMany();
 });
 

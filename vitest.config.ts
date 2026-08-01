@@ -201,6 +201,13 @@ export default defineConfig({
         // If any code appears in here, delete this line rather than keeping it
         // honest by accident.
         '**/api/src/audit/audit-log.ts',
+        // And again for dual approval. prisma-admin-approval-store.db.test.ts
+        // proves the things that only Postgres can: that the CHECK constraint
+        // refuses a self-approval however the row is reached, that a failed
+        // effect rolls the approval back, and that a conditional claim makes
+        // two simultaneous approvals resolve to one. A double asserting any of
+        // those would be asserting itself. Keep this exclusion narrow.
+        '**/api/src/identity/prisma-admin-approval-store.ts',
         // Declaration-only: two interfaces and nothing else, so it emits no
         // executable JavaScript at all and v8 reports its source lines as
         // uncovered because there is nothing to run. If any code appears in

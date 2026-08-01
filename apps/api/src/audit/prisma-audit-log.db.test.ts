@@ -50,6 +50,7 @@ async function newUser(): Promise<string> {
 
 beforeEach(async () => {
   await client.auditLog.deleteMany();
+  await client.adminApproval.deleteMany();
   await client.user.deleteMany();
 });
 

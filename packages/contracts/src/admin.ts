@@ -156,3 +156,93 @@ export type AdminUserView = z.infer<typeof adminUserViewSchema>;
 export function parseAdminUserView(raw: unknown): AdminUserView {
   return parseWith(adminUserViewSchema, 'The account view', raw);
 }
+
+/**
+ * Dual approval — BRD §8.13's "for selected actions, dual approval".
+ *
+ * One administrator proposes, a **different** one agrees, and only then does
+ * anything happen. The first and only approvable action is changing an
+ * account's role, which is privilege escalation and the write where a single
+ * administrator acting alone is worst (ADR 0023).
+ */
+export const ADMIN_APPROVALS_PATH = '/admin/approvals';
+
+export function adminApprovalDecisionPath(
+  id: string,
+  decision: 'approve' | 'cancel',
+): string {
+  return `/admin/approvals/${encodeURIComponent(id)}/${decision}`;
+}
+
+export const ADMIN_APPROVE_ROUTE = '/admin/approvals/:id/approve';
+export const ADMIN_CANCEL_ROUTE = '/admin/approvals/:id/cancel';
+
+/** What may be proposed. One variant today; suspension is the obvious second. */
+export const approvableActionSchema = z.object({
+  kind: z.literal('role.changed'),
+  userId: z.uuid(),
+  role: userRoleSchema,
+});
+export type ApprovableActionView = z.infer<typeof approvableActionSchema>;
+
+/** What an administrator submits to propose a role change. */
+export const roleChangeProposalSchema = z.object({
+  userId: z.uuid('must be an account id'),
+  role: userRoleSchema,
+  reason: adminReasonSchema,
+});
+export type RoleChangeProposal = z.infer<typeof roleChangeProposalSchema>;
+
+export function parseRoleChangeProposal(raw: unknown): RoleChangeProposal {
+  return parseWith(roleChangeProposalSchema, 'The proposal', raw);
+}
+
+/** A decision on somebody else's proposal. The reason is not optional. */
+export const approvalDecisionSchema = z.object({ reason: adminReasonSchema });
+export type ApprovalDecisionInput = z.infer<typeof approvalDecisionSchema>;
+
+export function parseApprovalDecision(raw: unknown): ApprovalDecisionInput {
+  return parseWith(approvalDecisionSchema, 'The decision', raw);
+}
+
+/**
+ * A proposal, as the approval queue shows it.
+ *
+ * It carries **both** administrators' ids and reasons. That is the disclosure
+ * the mechanism is for: an approval nobody can attribute is not dual approval,
+ * it is two clicks. The queue is administrator-only, so this discloses admin
+ * identities to other administrators and to nobody else.
+ */
+export const adminApprovalSchema = z.object({
+  id: z.uuid(),
+  action: approvableActionSchema,
+  targetId: z.uuid(),
+  state: z.enum(['pending', 'approved', 'cancelled', 'expired']),
+
+  proposedById: z.uuid(),
+  proposedReason: z.string(),
+  proposedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+
+  approvedById: z.uuid().nullable(),
+  approvedReason: z.string().nullable(),
+  approvedAt: z.iso.datetime().nullable(),
+
+  cancelledById: z.uuid().nullable(),
+  cancelledReason: z.string().nullable(),
+  cancelledAt: z.iso.datetime().nullable(),
+});
+export type AdminApprovalView = z.infer<typeof adminApprovalSchema>;
+
+export const adminApprovalListSchema = z.object({
+  approvals: z.array(adminApprovalSchema),
+});
+export type AdminApprovalList = z.infer<typeof adminApprovalListSchema>;
+
+export function parseAdminApproval(raw: unknown): AdminApprovalView {
+  return parseWith(adminApprovalSchema, 'The proposal', raw);
+}
+
+export function parseAdminApprovalList(raw: unknown): AdminApprovalList {
+  return parseWith(adminApprovalListSchema, 'The approval queue', raw);
+}

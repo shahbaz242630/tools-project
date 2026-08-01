@@ -7,6 +7,7 @@ import {
   RecordingEraser,
   StubDataSource,
   StubProfileSummarySource,
+  InMemoryAdminApprovalStore,
 } from './testing/fakes.js';
 import type { SessionInput } from './testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -102,6 +103,7 @@ beforeEach(() => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     ),
     createRecordingLogger().logger,
   );
@@ -164,6 +166,7 @@ describe('AuthGuard', () => {
         new RecordingEraser(),
         new StubDataSource(),
         new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
       ),
       createRecordingLogger().logger,
     );
@@ -225,6 +228,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         new RecordingEraser(),
         new StubDataSource(),
         new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
       ),
       createRecordingLogger().logger,
     );
@@ -239,6 +243,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
       findById: () => Promise.reject(boom),
       upsert: () => Promise.reject(boom),
       update: () => Promise.reject(boom),
+      countAdministrators: () => Promise.reject(boom),
     };
 
     const broken = new AuthGuard(
@@ -251,6 +256,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         new RecordingEraser(),
         new StubDataSource(),
         new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
       ),
       createRecordingLogger().logger,
     );
@@ -347,6 +353,7 @@ describe('the second factor an admin route requires', () => {
         new RecordingEraser(),
         new StubDataSource(),
         new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
       ),
       createRecordingLogger().logger,
     );

@@ -31,6 +31,13 @@ import type { Actor } from '../../audit/audit-log.js';
 import type { PersonalDataEraser } from '../personal-data-eraser.js';
 import type { PersonalDataSource } from '../personal-data-source.js';
 import type { ProfileSummarySource } from '../profile-summary-source.js';
+import { ApprovalConflictError } from '../admin-approval.js';
+import type {
+  AdminApproval,
+  AdminApprovalStore,
+  ApprovalDecision,
+  ProposeApproval,
+} from '../admin-approval.js';
 import type { AdminProfile, ExportedProfile } from '@platform/contracts';
 
 /**
@@ -108,6 +115,17 @@ export class InMemoryUserDirectory implements UserDirectory {
 
   findById(id: string): Promise<MirroredUser | null> {
     return Promise.resolve(this.rows.get(id) ?? null);
+  }
+
+  countAdministrators(): Promise<number> {
+    // Active only, matching the real store. Counting soft-deleted
+    // administrators would let the last usable one be demoted on the strength
+    // of somebody who cannot sign in.
+    return Promise.resolve(
+      [...this.rows.values()].filter(
+        (row) => row.role === 'ADMIN' && row.deletedAt === null,
+      ).length,
+    );
   }
 
   async upsert(input: UpsertUserInput): Promise<UpsertResult> {
@@ -266,6 +284,138 @@ export class StubProfileSummarySource implements ProfileSummarySource {
   }
 }
 
+/**
+ * Dual approval, in memory.
+ *
+ * **It enforces the two-person rule and the single-outcome rule**, because
+ * Postgres enforces them as CHECK constraints and a double that did not would
+ * let a test pass for a situation that cannot occur in it. That defect has now
+ * appeared twice in this codebase — `InMemoryUserDirectory` in slice 1.7 and
+ * `InMemoryAuditLog` in 1.8b-i — and here the rule being mirrored is the one
+ * the whole mechanism exists for.
+ */
+export class InMemoryAdminApprovalStore implements AdminApprovalStore {
+  private readonly rows = new Map<string, AdminApproval>();
+  private nextId = 1;
+
+  /** Everything recorded, for a test to assert against. */
+  all(): readonly AdminApproval[] {
+    return [...this.rows.values()];
+  }
+
+  /**
+   * Overwrite a row wholesale. **Test-only, and only for ageing a proposal.**
+   *
+   * The approval window is a day, so a test that waited for expiry is a test
+   * nobody runs. This is deliberately not on `AdminApprovalStore` — a
+   * production port that could rewrite an approval would be a way round the
+   * two-person rule, which is the one thing this table exists to enforce.
+   */
+  replace(approval: AdminApproval): this {
+    this.rows.set(approval.id, approval);
+    return this;
+  }
+
+  propose(input: ProposeApproval): Promise<AdminApproval> {
+    const id = `00000000-0000-4000-9000-${String(this.nextId++).padStart(12, '0')}`;
+    const approval: AdminApproval = {
+      id,
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      proposedById: input.proposedById,
+      proposedReason: input.proposedReason,
+      proposedAt: Time.nowUtc(),
+      expiresAt: input.expiresAt,
+      approvedById: null,
+      approvedReason: null,
+      approvedAt: null,
+      cancelledById: null,
+      cancelledReason: null,
+      cancelledAt: null,
+    };
+    this.rows.set(id, approval);
+    return Promise.resolve(approval);
+  }
+
+  find(id: string): Promise<AdminApproval | null> {
+    return Promise.resolve(this.rows.get(id) ?? null);
+  }
+
+  listPending(now: Date, limit: number): Promise<readonly AdminApproval[]> {
+    return Promise.resolve(
+      [...this.rows.values()]
+        .filter(
+          (row) =>
+            row.approvedAt === null &&
+            row.cancelledAt === null &&
+            row.expiresAt.getTime() > now.getTime(),
+        )
+        .reverse()
+        .slice(0, limit),
+    );
+  }
+
+  approveAndApply(decision: ApprovalDecision): Promise<AdminApproval> {
+    const row = this.claim(
+      decision,
+      (r) => r.expiresAt.getTime() > decision.at.getTime(),
+    );
+
+    // The CHECK constraint, mirrored. Without it a test could approve its own
+    // proposal here and pass, while Postgres would have refused outright.
+    if (row.proposedById === decision.byId) {
+      return Promise.reject(new ApprovalConflictError());
+    }
+
+    const approved: AdminApproval = {
+      ...row,
+      approvedById: decision.byId,
+      approvedReason: decision.reason,
+      approvedAt: decision.at,
+    };
+    this.rows.set(row.id, approved);
+
+    // The effect, applied by whoever wired this up. The real store does it in
+    // the same transaction; here the caller passes an applier so a test can
+    // assert the role actually changed.
+    this.apply?.(approved);
+
+    return Promise.resolve(approved);
+  }
+
+  cancel(decision: ApprovalDecision): Promise<AdminApproval> {
+    const row = this.claim(decision, () => true);
+    const cancelled: AdminApproval = {
+      ...row,
+      cancelledById: decision.byId,
+      cancelledReason: decision.reason,
+      cancelledAt: decision.at,
+    };
+    this.rows.set(row.id, cancelled);
+    return Promise.resolve(cancelled);
+  }
+
+  /** Set by the test wiring, standing in for the store's transaction. */
+  apply?: (approval: AdminApproval) => void;
+
+  private claim(
+    decision: ApprovalDecision,
+    stillOpen: (row: AdminApproval) => boolean,
+  ): AdminApproval {
+    const row = this.rows.get(decision.approvalId);
+    if (row === undefined) throw new ApprovalConflictError();
+
+    // The single-outcome CHECK, mirrored: a row that already has an outcome
+    // cannot take another one.
+    if (row.approvedAt !== null || row.cancelledAt !== null || !stillOpen(row)) {
+      throw new ApprovalConflictError();
+    }
+
+    return row;
+  }
+}
+
 export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
@@ -276,6 +426,7 @@ export interface IdentityFakes {
   readonly eraser: RecordingEraser;
   readonly source: StubDataSource;
   readonly summaries: StubProfileSummarySource;
+  readonly approvals: InMemoryAdminApprovalStore;
 }
 
 /**
@@ -290,6 +441,18 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const eraser = new RecordingEraser();
   const source = new StubDataSource();
   const summaries = new StubProfileSummarySource();
+  const approvals = new InMemoryAdminApprovalStore();
+
+  // Stands in for the transaction the real store performs. Wired here so the
+  // fake's `approveAndApply` really does change the role, and a test asserting
+  // that the effect happened is asserting the mechanism rather than a flag.
+  approvals.apply = (approval) => {
+    const target = users.all().find((row) => row.id === approval.action.userId);
+    if (target !== undefined) {
+      users.seed({ ...target, role: approval.action.role });
+    }
+  };
+
   return {
     sessionVerifier,
     users,
@@ -298,6 +461,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     eraser,
     source,
     summaries,
+    approvals,
     service: new IdentityService(
       users,
       ledger,
@@ -305,6 +469,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
       eraser,
       source,
       summaries,
+      approvals,
     ),
   };
 }

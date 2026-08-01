@@ -123,6 +123,13 @@ export class PrismaUserDirectory implements UserDirectory {
     }
   }
 
+  countAdministrators(): Promise<number> {
+    // Active only. A soft-deleted administrator cannot authenticate, so
+    // counting them would let the last usable administrator be demoted on the
+    // strength of somebody who cannot sign in.
+    return this.prisma.user.count({ where: { role: 'ADMIN', deletedAt: null } });
+  }
+
   async update(id: string, changes: UserChanges): Promise<MirroredUser> {
     try {
       const row = await this.prisma.user.update({ where: { id }, data: changes });
