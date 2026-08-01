@@ -52,15 +52,27 @@ Dual approval also cannot be built alone. A mechanism with no registered action 
 
 **A `state` column instead of derived state.** Easier to query and index. Rejected for the reason `users` has no `status` column either: a state column is a second thing to keep true alongside the timestamps that already say everything, and the two disagree the first time a write is partial. `approvalState()` derives it in one place, and the CHECK constraints keep the timestamps consistent.
 
-**Let the proposer approve when they are the only administrator.** Charitable to a single-administrator deployment, which is exactly what this platform has today. Rejected, and this is the one worth being firm about: a bypass that activates precisely when oversight is impossible is not a bypass, it is the absence of the control. The single administrator is a _fact to fix_, not a case to special-case.
+**Let the proposer approve when they are the only administrator.** Charitable to a thinly-staffed deployment, which is what this platform will have for a long time. Rejected, and this is the one worth being firm about: a bypass that activates precisely when oversight is impossible is not a bypass, it is the absence of the control. Too few administrators is a _fact to fix_, not a case to special-case.
 
 **Block any change reducing the count below two, rather than below one.** Would prevent the platform ever getting stuck with one administrator unable to approve anything. Rejected as too strict: with exactly two administrators, neither could ever be demoted without promoting a third first, which turns an ordinary personnel change into a puzzle. Going from two to one is legitimate; it just has a consequence, stated below.
 
 ## Consequences
 
-**With one administrator, nothing can be approved.** That is today's reality: the product owner is the only administrator, so the first proposal will sit pending until a second administrator exists. **Creating that second one is a database write** — the same escape hatch role assignment has always used, deliberately kept outside the application, because any in-application route to a first administrator is a route round the rule. This is a product-owner task, and the approvals page says so in plain words rather than letting somebody discover it by pressing a button.
+**The first _two_ administrators are both database writes.** Work the arithmetic through, because it is one step longer than it looks:
 
-**Going from two administrators to one leaves the platform unable to approve anything** until a third is added by hand. Legitimate but worth knowing before doing it. The last-administrator rule stops the _total_ lockout; it does not stop this one.
+| Administrators | What is possible                                                                        |
+| -------------- | --------------------------------------------------------------------------------------- |
+| 0              | Nobody can even propose. Every admin route is closed.                                   |
+| 1              | They can propose. Nobody can approve — an approver must be a _different_ administrator. |
+| 2              | The mechanism carries itself. Every change from here goes through the queue.            |
+
+So bootstrapping needs two manual promotions, not one. That is the correct cost of the rule rather than a gap in it: the escape hatch is deliberately kept **outside the application**, because any in-application route to a first administrator is a route round the rule, and a route to a _second_ one is the same route wearing a different name.
+
+**As of today this platform has zero administrators.** The only account in the database is the product owner's, and it is an ordinary user — so the admin surface currently refuses everyone, which is the correct default and worth knowing before somebody reads a 403 as a bug.
+
+**Dual approval needs two people, and this is a two-person team of which one does not write code.** The mechanism is therefore built and proven but idle, and the right response is to leave it idle. Creating a second account for the same human to hold both sides would satisfy the constraint and defeat the control — the same objection that rejected a single-administrator bypass above, arrived at from the other direction. §8.13 requires this for the platform that will exist; role changes are rare enough that its being idle costs nothing.
+
+**Going from two administrators to one leaves the platform unable to approve anything** until another is added by hand — the same state bootstrapping starts in. Legitimate but worth knowing before doing it. The last-administrator rule stops the _total_ lockout; it does not stop this one.
 
 **The admin surface now has three pages and no index.** Cross-links were enough at two. At three they are borderline, and at four they will not be.
 

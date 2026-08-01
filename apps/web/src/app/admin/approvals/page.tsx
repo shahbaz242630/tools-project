@@ -51,10 +51,14 @@ export default async function ApprovalsPage() {
       </p>
 
       <p>
-        If you are the only administrator, nothing here can be approved. A second
-        administrator has to exist first, and the very first one is created directly in
-        the database &mdash; deliberately, because any way round this rule inside the
-        application would be a way round the rule.
+        If you are the only administrator, nothing here can be approved &mdash; an
+        approver has to be somebody else.{' '}
+        <strong>
+          The first two administrators are both created directly in the database
+        </strong>
+        , deliberately, because any way to make one from inside the application would be
+        a way round this rule. From the third onwards, every change goes through this
+        page.
       </p>
 
       <section aria-labelledby="propose">
