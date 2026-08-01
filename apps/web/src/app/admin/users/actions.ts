@@ -6,6 +6,7 @@ import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
 import type { AdminUserView } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchAdminUser } from '../../../lib/admin-user';
+import { decideSuspension } from '../../../lib/admin-approvals';
 import { webEnv } from '../../../lib/env';
 
 /**
@@ -130,6 +131,102 @@ export async function lookUpAccountAction(
         ...typed,
         status: 'error',
         message: `The lookup did not complete — ${outcome.reason}`,
+      };
+  }
+}
+
+/**
+ * Suspending an account, or lifting a suspension.
+ *
+ * Separate from the lookup action even though both live on the same page: one
+ * reads and one changes something, and a single action handling both would make
+ * the write reachable by a stray form field.
+ */
+export interface SuspensionActionState {
+  readonly status: 'idle' | 'done' | 'error';
+  readonly message: string | null;
+  readonly reason: string;
+}
+
+export const INITIAL_SUSPENSION_STATE: SuspensionActionState = {
+  status: 'idle',
+  message: null,
+  reason: '',
+};
+
+export async function decideSuspensionAction(
+  _previous: SuspensionActionState,
+  form: FormData,
+): Promise<SuspensionActionState> {
+  const userId = String(form.get('userId') ?? '').trim();
+  const decision = form.get('decision') === 'reinstate' ? 'reinstate' : 'suspend';
+  const reason = String(form.get('reason') ?? '').trim();
+
+  if (reason.length < MIN_ADMIN_REASON_LENGTH) {
+    return {
+      status: 'error',
+      reason,
+      message: `Give a reason of at least ${String(MIN_ADMIN_REASON_LENGTH)} characters. The account holder reads this, so write something you would say to them.`,
+    };
+  }
+
+  const { getToken } = await auth();
+  const clientIp = clientIpFrom((await headers()).get('x-forwarded-for'));
+
+  const outcome = await decideSuspension(
+    webEnv().API_BASE_URL,
+    await getToken(),
+    userId,
+    decision,
+    reason,
+    undefined,
+    clientIp,
+  );
+
+  switch (outcome.kind) {
+    case 'loaded':
+      return {
+        status: 'done',
+        reason,
+        message:
+          decision === 'suspend'
+            ? 'Suspended. They can still sign in to read and download their data, and to delete the account.'
+            : 'Reinstated. The account works normally again.',
+      };
+
+    case 'refused':
+      // The request was fine and the state of the world refused it — already
+      // suspended, yourself, the last administrator. Retyping will not help.
+      return { status: 'error', reason, message: outcome.reason };
+
+    case 'invalid':
+      return { status: 'error', reason, message: outcome.issues.join('; ') };
+
+    case 'not-found':
+      return { status: 'error', reason, message: 'No account with that id.' };
+
+    case 'forbidden':
+      return {
+        status: 'error',
+        reason,
+        message:
+          'You do not have access to this. Administrator access needs a second ' +
+          'factor verified recently — sign in again with it if you have one.',
+      };
+
+    case 'signed-out':
+      return {
+        status: 'error',
+        reason,
+        message: 'Your session has expired. Sign in again.',
+      };
+
+    case 'unreachable':
+    case 'malformed':
+      return {
+        status: 'error',
+        reason,
+        message: `That did not complete — ${outcome.reason}`,
       };
   }
 }

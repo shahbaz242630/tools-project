@@ -75,6 +75,26 @@ export interface UserChanges {
 }
 
 /**
+ * A suspension, as a single value.
+ *
+ * **The CHECK constraint made into a type.** `users` requires the timestamp and
+ * the reason to be set together or not at all, and a port that took them as
+ * three optional fields would let a caller write a state the database refuses —
+ * discovering it as a 500 rather than a compile error. Passing `null` for the
+ * whole thing is how a suspension is lifted, which is also the one shape
+ * `UserChanges` cannot express: its optional fields mean "leave alone", so
+ * there is no way to say "set back to null".
+ *
+ * `byId` is outside the CHECK deliberately (ADR 0024) — it goes null if the
+ * suspending administrator is ever removed, and the suspension survives.
+ */
+export interface Suspension {
+  readonly at: Date;
+  readonly byId: string;
+  readonly reason: string;
+}
+
+/**
  * Raised when a write loses a race with a concurrent one — a duplicate webhook
  * delivery arriving while a first request is provisioning the same user, most
  * realistically. The caller retries a read rather than surfacing a 500, because
@@ -116,6 +136,17 @@ export interface UserDirectory {
   upsert(input: UpsertUserInput): Promise<UpsertResult>;
 
   update(id: string, changes: UserChanges): Promise<MirroredUser>;
+
+  /**
+   * Suspend an account, or lift a suspension by passing `null`.
+   *
+   * Separate from `update` because it is a state transition over three coupled
+   * columns rather than a field edit, and because `UserChanges` cannot express
+   * clearing a value at all. One method for both directions keeps the pair
+   * symmetrical — a `suspend` with no matching `reinstate` is how a reversible
+   * action quietly becomes a permanent one.
+   */
+  setSuspension(id: string, suspension: Suspension | null): Promise<MirroredUser>;
 
   /**
    * How many administrators can actually administer anything.

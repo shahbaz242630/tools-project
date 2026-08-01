@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
 vi.mock('../app/admin/users/actions', () => ({
   INITIAL_ADMIN_USER_STATE: state.current,
   lookUpAccountAction: vi.fn(),
+  INITIAL_SUSPENSION_STATE: { status: 'idle', message: null, reason: '' },
+  decideSuspensionAction: vi.fn(),
 }));
 
 vi.mock('react', async (importOriginal) => {
@@ -51,6 +53,8 @@ const VIEW = {
     createdAt: '2026-07-15T09:00:00.000Z',
     deletedAt: null,
     deletionRequestedAt: null,
+    suspendedAt: null,
+    suspensionReason: null,
   },
   profile: {
     displayName: 'Bob B.',
@@ -185,13 +189,55 @@ describe('AdminUserLookup', () => {
     expect(screen.queryByText(/^Account$/)).not.toBeInTheDocument();
   });
 
-  it('offers no control that changes anything', () => {
-    // BRD §8.13 prohibits write-capable impersonation at launch. The only
-    // button on this screen is the lookup itself (ADR 0022).
+  it('offers the lookup and suspension, and nothing else', () => {
+    // This assertion used to read "no control that changes anything", which was
+    // true when the view was purely read-only (ADR 0022) and is deliberately
+    // not any more: slice 1.10b adds suspension. What still holds is the rule
+    // that mattered — BRD §8.13 prohibits write-capable impersonation at
+    // launch, so there is no control here that acts *as* the account holder.
     withState({ status: 'loaded', view: VIEW, message: null });
     render(<AdminUserLookup />);
 
-    expect(screen.getAllByRole('button')).toHaveLength(1);
-    expect(screen.getByRole('button')).toHaveTextContent(/look up account/i);
+    const labels = screen.getAllByRole('button').map((b) => b.textContent);
+    expect(labels).toEqual(['Look up account', 'Suspend']);
+  });
+
+  it('offers reinstatement instead once the account is suspended', () => {
+    // One button, chosen by the state the account is in. Both would be a
+    // control the API refuses, and a button that answers 409 reads as a fault.
+    withState({
+      status: 'loaded',
+      message: null,
+      view: {
+        ...VIEW,
+        account: {
+          ...VIEW.account,
+          suspendedAt: '2026-08-01T09:00:00.000Z',
+          suspensionReason: 'suspected fraud, ticket 4821',
+        },
+      },
+    });
+    render(<AdminUserLookup />);
+
+    const labels = screen.getAllByRole('button').map((b) => b.textContent);
+    expect(labels).toEqual(['Look up account', 'Reinstate']);
+    expect(screen.getByText('suspected fraud, ticket 4821')).toBeInTheDocument();
+  });
+
+  it('offers no suspension control for a deleted account', () => {
+    // The API refuses it, so the button would only ever produce a 409.
+    withState({
+      status: 'loaded',
+      message: null,
+      view: {
+        ...VIEW,
+        account: { ...VIEW.account, deletedAt: '2026-07-31T12:00:00.000Z' },
+      },
+    });
+    render(<AdminUserLookup />);
+
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Look up account',
+    ]);
   });
 });

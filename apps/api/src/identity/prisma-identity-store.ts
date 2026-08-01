@@ -3,6 +3,7 @@ import type { PrismaClient } from '@platform/database';
 import { UserConflictError } from './user-directory.js';
 import type {
   MirroredUser,
+  Suspension,
   UpsertResult,
   UpsertUserInput,
   UserChanges,
@@ -135,6 +136,26 @@ export class PrismaUserDirectory implements UserDirectory {
     return this.prisma.user.count({
       where: { role: 'ADMIN', deletedAt: null, suspendedAt: null },
     });
+  }
+
+  async setSuspension(
+    id: string,
+    suspension: Suspension | null,
+  ): Promise<MirroredUser> {
+    // All three written every time, in both directions. Writing only the
+    // columns that changed would leave a stale reason behind on reinstatement —
+    // and the CHECK constraint would not catch it, because a row with no
+    // timestamp and no reason is the only shape it rejects.
+    const row = await this.prisma.user.update({
+      where: { id },
+      data: {
+        suspendedAt: suspension?.at ?? null,
+        suspendedById: suspension?.byId ?? null,
+        suspensionReason: suspension?.reason ?? null,
+      },
+    });
+
+    return toMirroredUser(row);
   }
 
   async update(id: string, changes: UserChanges): Promise<MirroredUser> {

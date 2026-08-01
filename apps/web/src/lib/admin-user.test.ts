@@ -15,6 +15,8 @@ const VIEW = {
     createdAt: '2026-07-15T09:00:00.000Z',
     deletedAt: null,
     deletionRequestedAt: null,
+    suspendedAt: null,
+    suspensionReason: null,
   },
   profile: {
     displayName: 'Bob B.',

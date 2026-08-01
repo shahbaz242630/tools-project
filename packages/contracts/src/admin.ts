@@ -60,6 +60,38 @@ export function adminUserPath(userId: string, reason: string): string {
 export const ADMIN_USER_ROUTE = '/admin/users/:userId';
 
 /**
+ * Where an administrator suspends an account or lifts a suspension.
+ *
+ * **One administrator, not two** — deliberately outside the dual approval a
+ * role change needs. Suspension is protective, urgent and reversible, and a
+ * control that cannot act quickly is not a safety control (ADR 0024).
+ */
+export function adminSuspensionPath(
+  userId: string,
+  decision: 'suspend' | 'reinstate',
+): string {
+  return `/admin/users/${encodeURIComponent(userId)}/${decision}`;
+}
+
+export const ADMIN_SUSPEND_ROUTE = '/admin/users/:userId/suspend';
+export const ADMIN_REINSTATE_ROUTE = '/admin/users/:userId/reinstate';
+
+/**
+ * The reason for a suspension, or for lifting one.
+ *
+ * The same shape and the same minimum as every other admin reason — but this
+ * one is **shown verbatim to the person it is about**, so it has to be
+ * something you would be willing to say to their face. That is the constraint,
+ * and it is the point.
+ */
+export const suspensionDecisionSchema = z.object({ reason: adminReasonSchema });
+export type SuspensionDecisionInput = z.infer<typeof suspensionDecisionSchema>;
+
+export function parseSuspensionDecision(raw: unknown): SuspensionDecisionInput {
+  return parseWith(suspensionDecisionSchema, 'The reason', raw);
+}
+
+/**
  * The account itself, as support may see it.
  *
  * Identity facts only. The email is here because it *is* the account — support
@@ -80,8 +112,23 @@ export const adminAccountSchema = z.object({
   createdAt: z.iso.datetime(),
   deletedAt: z.iso.datetime().nullable(),
   deletionRequestedAt: z.iso.datetime().nullable(),
+
+  /**
+   * Whether the account is suspended, and why.
+   *
+   * Support needs both: an account that cannot do anything is the most likely
+   * thing somebody is writing in about, and "when, and on what grounds" is the
+   * whole of the answer. Nullable with a default so an API predating suspension
+   * stays parseable during a deploy skew.
+   */
+  suspendedAt: z.iso.datetime().nullable().default(null),
+  suspensionReason: z.string().nullable().default(null),
 });
 export type AdminAccount = z.infer<typeof adminAccountSchema>;
+
+export function parseAdminAccount(raw: unknown): AdminAccount {
+  return parseWith(adminAccountSchema, 'The account', raw);
+}
 
 /**
  * The profile, as support may see it. **A third projection, and the narrowest

@@ -93,7 +93,23 @@ export function tombstoneEmail(userId: string): string {
  * provider reference that says nothing about the account's own state.
  */
 function auditableAccount(user: MirroredUser): unknown {
-  return { id: user.id, email: user.email, role: user.role };
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+
+    /**
+     * Whether the account is suspended — a boolean, not the timestamp.
+     *
+     * It has to be here or a suspension would digest identically before and
+     * after, and the entry would claim nothing changed about the one thing that
+     * did. A boolean rather than `suspendedAt` for the reason `updatedAt` is
+     * excluded entirely: the state is what a reader compares, and a timestamp
+     * would make a re-suspension with identical circumstances look like a
+     * different change.
+     */
+    suspended: user.suspendedAt !== null,
+  };
 }
 
 export class IdentityService {
@@ -327,9 +343,140 @@ export class IdentityService {
           user.deletionRequestedAt === null
             ? null
             : Time.toIsoUtc(user.deletionRequestedAt),
+        suspendedAt: user.suspendedAt === null ? null : Time.toIsoUtc(user.suspendedAt),
+        suspensionReason: user.suspensionReason,
       },
       profile: await this.profileSummaries.summaryFor(user.id),
     };
+  }
+
+  /**
+   * Suspend an account.
+   *
+   * **One administrator, deliberately** — not the dual approval a role change
+   * needs (ADR 0024). Suspension is protective and urgent and completely
+   * reversible; a control that cannot act quickly is not a safety control. The
+   * accountability is the reason, the audit entry, and the fact that the person
+   * it happened to reads both.
+   *
+   * Records **before and after state**, which is the first time an admin action
+   * here has any: §8.13 has asked for it since slice 1.8a, and every admin
+   * action until now was a read.
+   */
+  async suspend(actor: Actor, userId: string, reason: string): Promise<MirroredUser> {
+    const target = await this.requireSuspendable(actor, userId);
+
+    if (target.suspendedAt !== null) {
+      throw new ApprovalRefusedError('that account is already suspended');
+    }
+
+    await this.refuseIfLastUsableAdministrator(target);
+
+    const suspended = await this.users.setSuspension(target.id, {
+      at: Time.nowUtc(),
+      byId: actor.userId,
+      reason,
+    });
+
+    await this.audit.record({
+      actor,
+      action: 'account.suspended',
+      targetType: 'user',
+      targetId: target.id,
+      reason,
+      before: auditableAccount(target),
+      after: auditableAccount(suspended),
+    });
+
+    return suspended;
+  }
+
+  /**
+   * Lift a suspension.
+   *
+   * Also one administrator, and for a sharper reason than suspending is:
+   * correcting a wrong suspension must not be the slow path. The reason is
+   * mandatory here too — "why is this person back" is exactly as worth
+   * recording as why they were stopped.
+   */
+  async reinstate(actor: Actor, userId: string, reason: string): Promise<MirroredUser> {
+    const target = await this.requireSuspendable(actor, userId, { self: 'allowed' });
+
+    if (target.suspendedAt === null) {
+      throw new ApprovalRefusedError('that account is not suspended');
+    }
+
+    const reinstated = await this.users.setSuspension(target.id, null);
+
+    await this.audit.record({
+      actor,
+      action: 'account.reinstated',
+      targetType: 'user',
+      targetId: target.id,
+      reason,
+      before: auditableAccount(target),
+      after: auditableAccount(reinstated),
+    });
+
+    return reinstated;
+  }
+
+  /**
+   * The checks both directions share.
+   *
+   * Suspending yourself is refused because a suspended administrator loses the
+   * admin surface (ADR 0024) and so could not undo it — a one-way door with no
+   * handle on the far side. **Reinstating yourself is a different question**
+   * and is not reachable anyway: a suspended administrator cannot call this
+   * route at all. Allowing it in the service keeps the refusal in one place —
+   * the guard — rather than two that could disagree.
+   */
+  private async requireSuspendable(
+    actor: Actor,
+    userId: string,
+    options: { self?: 'allowed' } = {},
+  ): Promise<MirroredUser> {
+    if (options.self !== 'allowed' && userId === actor.userId) {
+      throw new ApprovalRefusedError(
+        'you cannot suspend yourself — you would not be able to undo it',
+      );
+    }
+
+    const target = await this.users.findById(userId);
+    if (target === null) throw new ApprovalRefusedError('no such account');
+    if (target.deletedAt !== null) {
+      throw new ApprovalRefusedError('that account has been deleted');
+    }
+
+    return target;
+  }
+
+  /**
+   * Refuse a suspension that would leave nobody able to administer anything.
+   *
+   * The same lockout ADR 0023 guards against on demotion, reached the other
+   * way: suspending the last usable administrator leaves zero, and role
+   * assignment needs two administrators to work at all. Recovery would be a
+   * database write on a production box.
+   *
+   * **Unreachable through the admin route today, and kept anyway.** Over HTTP
+   * the caller must themselves be a usable administrator — the guard refuses a
+   * suspended or deleted one — so at this point the count is always at least
+   * two, them and the target. The rule exists for the caller that does not
+   * exist yet: BRD §5.1 gives suspension to Trust & Safety, and an automated
+   * risk check has no session behind it and no such guarantee. The test for it
+   * calls this service directly and says so, because driving it over HTTP would
+   * pass on a different refusal entirely.
+   */
+  private async refuseIfLastUsableAdministrator(target: MirroredUser): Promise<void> {
+    if (target.role !== 'ADMIN') return;
+
+    const administrators = await this.users.countAdministrators();
+    if (administrators <= 1) {
+      throw new ApprovalRefusedError(
+        'that is the last administrator — promote somebody else first',
+      );
+    }
   }
 
   /**

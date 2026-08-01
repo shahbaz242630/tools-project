@@ -12,10 +12,12 @@ import {
   AUTHORIZATION_HEADER,
   CLIENT_IP_HEADER,
   adminApprovalDecisionPath,
+  adminSuspensionPath,
+  parseAdminAccount,
   parseAdminApproval,
   parseAdminApprovalList,
 } from '@platform/contracts';
-import type { AdminApprovalView, UserRole } from '@platform/contracts';
+import type { AdminAccount, AdminApprovalView, UserRole } from '@platform/contracts';
 
 export const ADMIN_APPROVALS_TIMEOUT_MS = 5_000;
 
@@ -167,6 +169,33 @@ export function proposeRoleChange(
     fetchImpl,
     parseAdminApproval,
     { method: 'POST', body: proposal },
+  );
+}
+
+/**
+ * Suspend an account, or lift a suspension.
+ *
+ * Lives here rather than in `admin-user.ts` because that module reads and this
+ * one writes — the same split `admin-activity.ts` keeps from `activity.ts`, and
+ * for the same reason: a module that could both would let a wrong argument
+ * become a change.
+ */
+export function decideSuspension(
+  apiBaseUrl: string,
+  token: string | null,
+  userId: string,
+  decision: 'suspend' | 'reinstate',
+  reason: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<AdminApprovalOutcome<AdminAccount>> {
+  return call(
+    new URL(adminSuspensionPath(userId, decision), apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseAdminAccount,
+    { method: 'POST', body: { reason } },
   );
 }
 
