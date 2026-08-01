@@ -52,3 +52,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0021](0021-admin-access-requires-a-second-factor-and-a-reason.md)        | Require a second factor and a stated reason for admin access          | Accepted, corrected 2026-08-01 |
 | [0022](0022-view-as-user-is-a-projection-not-a-session.md)                | Build "view as user" as a read-only projection, never a session       | Accepted                       |
 | [0023](0023-role-changes-need-two-administrators.md)                      | Require two administrators to change a role, enforced in the database | Accepted                       |
+| [0024](0024-suspension-keeps-data-rights-and-takes-one-administrator.md)  | Suspension takes one administrator and keeps data rights              | Accepted                       |

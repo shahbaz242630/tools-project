@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import Link from 'next/link';
 import { AccountReport } from '../../components/account-report';
+import { SuspensionNotice } from '../../components/suspension-notice';
 import { fetchAccount } from '../../lib/account';
 import { clientIpFrom } from '../../lib/client-ip';
 import { webEnv } from '../../lib/env';
@@ -39,22 +40,37 @@ export default async function AccountPage() {
         The account below is the platform record — not the identity provider’s.
       </p>
 
+      {/* Above the account details, because "why can I not do anything" is the
+          question a suspended person arrives with. */}
+      {outcome.kind === 'signed-in' ? (
+        <SuspensionNotice account={outcome.account} />
+      ) : null}
+
       <AccountReport outcome={outcome} />
 
       {outcome.kind === 'signed-in' ? (
         <ul>
-          <li>
-            <Link href="/account/profile">Edit your profile</Link>
-          </li>
-          <li>
-            <Link href="/account/email">Email and sign-in</Link>
-          </li>
-          <li>
-            {/* What everybody else sees. Linked from here on purpose: a person
-                being asked for a home address should be one click from the page
-                that proves how little of it is published. */}
-            <Link href={`/users/${outcome.account.id}`}>View your public profile</Link>
-          </li>
+          {/* The three the API refuses while suspended are dropped rather than
+              shown and then rejected — a link that answers 403 reads as a fault
+              in the site. Data rights stay, because they still work. */}
+          {outcome.account.suspendedAt === null ? (
+            <>
+              <li>
+                <Link href="/account/profile">Edit your profile</Link>
+              </li>
+              <li>
+                <Link href="/account/email">Email and sign-in</Link>
+              </li>
+              <li>
+                {/* What everybody else sees. Linked from here on purpose: a
+                    person being asked for a home address should be one click
+                    from the page that proves how little of it is published. */}
+                <Link href={`/users/${outcome.account.id}`}>
+                  View your public profile
+                </Link>
+              </li>
+            </>
+          ) : null}
           <li>
             <Link href="/account/activity">Account activity</Link>
           </li>

@@ -8,6 +8,8 @@ const ACCOUNT = {
   id: '11111111-1111-4111-8111-111111111111',
   email: 'alice@example.com',
   role: 'USER',
+  suspendedAt: null,
+  suspensionReason: null,
 };
 
 const answering = (status: number, body: unknown): FetchLike =>
@@ -22,6 +24,19 @@ const answering = (status: number, body: unknown): FetchLike =>
 describe('fetchAccount', () => {
   it('returns the account when the API answers', async () => {
     const outcome = await fetchAccount(BASE, 'token', answering(200, ACCOUNT));
+    expect(outcome).toEqual({ kind: 'signed-in', account: ACCOUNT });
+  });
+
+  it('reads an account from an API that predates suspension', async () => {
+    // The services deploy independently, so the web app is briefly talking to
+    // the previous API. An API that could not suspend anybody has nobody
+    // suspended, so defaulting both fields to null is the honest reading — and
+    // a required field would have made the skew window a broken account page.
+    const older: Record<string, unknown> = { ...ACCOUNT };
+    delete older['suspendedAt'];
+    delete older['suspensionReason'];
+
+    const outcome = await fetchAccount(BASE, 'token', answering(200, older));
     expect(outcome).toEqual({ kind: 'signed-in', account: ACCOUNT });
   });
 

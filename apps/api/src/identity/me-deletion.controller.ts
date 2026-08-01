@@ -1,7 +1,7 @@
 import { Controller, HttpCode, Inject, Post, Req, UseGuards } from '@nestjs/common';
 import { ME_DELETION_PATH } from '@platform/contracts';
 import type { DeletionResponse } from '@platform/contracts';
-import { AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
+import { AllowsSuspended, AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
 import type { IdentityService } from './identity.service.js';
@@ -26,6 +26,7 @@ export class MeDeletionController {
   constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
 
   @Post(ME_DELETION_PATH)
+  @AllowsSuspended()
   // 200 rather than 202: by the time this answers, the erasure has happened.
   // Accepted would suggest something is still queued, and there is nothing to
   // come back for.

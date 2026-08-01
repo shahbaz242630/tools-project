@@ -192,6 +192,135 @@ describe('PrismaUserDirectory', () => {
   });
 });
 
+describe('suspension', () => {
+  async function newAdmin(): Promise<string> {
+    const { user } = await users.upsert({
+      clerkUserId: uniqueClerkId(),
+      email: uniqueEmail(),
+    });
+    await client.user.update({ where: { id: user.id }, data: { role: 'ADMIN' } });
+    return user.id;
+  }
+
+  it('refuses a half-written suspension, because of the CHECK constraint', async () => {
+    // A row with a `suspendedAt` and no reason is one the account page cannot
+    // render sensibly — it would tell somebody they are suspended and be unable
+    // to say why. All three columns or none.
+    const admin = await newAdmin();
+
+    await expect(
+      client.user.update({
+        where: { id: admin },
+        data: { suspendedAt: new Date() },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts a complete suspension', async () => {
+    // The counterpart. Without it the test above would pass just as well if the
+    // constraint refused every suspension.
+    const [admin, target] = [await newAdmin(), await newAdmin()];
+
+    await expect(
+      client.user.update({
+        where: { id: target },
+        data: {
+          suspendedAt: new Date(),
+          suspendedById: admin,
+          suspensionReason: 'suspected fraud, ticket 4821',
+        },
+      }),
+    ).resolves.toMatchObject({ suspendedById: admin });
+  });
+
+  it('reads the suspension back onto the mirrored user', async () => {
+    const [admin, target] = [await newAdmin(), await newAdmin()];
+    await client.user.update({
+      where: { id: target },
+      data: {
+        suspendedAt: new Date(),
+        suspendedById: admin,
+        suspensionReason: 'suspected fraud, ticket 4821',
+      },
+    });
+
+    const read = await users.findById(target);
+    expect(read?.suspendedAt).not.toBeNull();
+    expect(read?.suspensionReason).toBe('suspected fraud, ticket 4821');
+  });
+
+  it('does not count a suspended administrator', async () => {
+    // The interaction with slice 1.9's last-administrator rule. A suspended
+    // administrator holds the role and cannot use it, so counting them would
+    // let the last *usable* one be demoted on the strength of somebody who
+    // cannot act.
+    const [keeper, suspended] = [await newAdmin(), await newAdmin()];
+    expect(await users.countAdministrators()).toBe(2);
+
+    await client.user.update({
+      where: { id: suspended },
+      data: {
+        suspendedAt: new Date(),
+        suspendedById: keeper,
+        suspensionReason: 'suspected fraud, ticket 4821',
+      },
+    });
+
+    expect(await users.countAdministrators()).toBe(1);
+  });
+
+  it('does not count a deleted administrator either', async () => {
+    const admin = await newAdmin();
+    expect(await users.countAdministrators()).toBe(1);
+
+    await client.user.update({ where: { id: admin }, data: { deletedAt: new Date() } });
+
+    expect(await users.countAdministrators()).toBe(0);
+  });
+
+  it('reverses cleanly, leaving nothing on the row', async () => {
+    // Suspension destroys nothing — unlike deletion, which erases. The audit
+    // trail is what remembers it ever happened.
+    const [admin, target] = [await newAdmin(), await newAdmin()];
+    await client.user.update({
+      where: { id: target },
+      data: {
+        suspendedAt: new Date(),
+        suspendedById: admin,
+        suspensionReason: 'suspected fraud, ticket 4821',
+      },
+    });
+
+    await client.user.update({
+      where: { id: target },
+      data: { suspendedAt: null, suspendedById: null, suspensionReason: null },
+    });
+
+    const read = await users.findById(target);
+    expect(read?.suspendedAt).toBeNull();
+    expect(read?.suspensionReason).toBeNull();
+  });
+
+  it('keeps the suspension when the suspending administrator is removed', async () => {
+    // ON DELETE SET NULL. Losing who did it is bad, but an old suspension must
+    // never block removing an account, and the audit trail holds the actor.
+    const [admin, target] = [await newAdmin(), await newAdmin()];
+    await client.user.update({
+      where: { id: target },
+      data: {
+        suspendedAt: new Date(),
+        suspendedById: admin,
+        suspensionReason: 'suspected fraud, ticket 4821',
+      },
+    });
+
+    await client.user.delete({ where: { id: admin } });
+
+    const read = await users.findById(target);
+    expect(read?.suspendedAt).not.toBeNull();
+  });
+});
+
 describe('PrismaWebhookLedger', () => {
   const delivery = (externalId: string) => ({
     provider: 'clerk',

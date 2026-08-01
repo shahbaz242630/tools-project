@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ME_EXPORT_PATH } from '@platform/contracts';
 import type { DataExport } from '@platform/contracts';
-import { AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
+import { AllowsSuspended, AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
 import type { IdentityService } from './identity.service.js';
@@ -32,6 +32,7 @@ export class MeExportController {
   constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
 
   @Get(ME_EXPORT_PATH)
+  @AllowsSuspended()
   async export(
     @CurrentUser() user: MirroredUser,
     @Req() request: AuthenticatedRequest,

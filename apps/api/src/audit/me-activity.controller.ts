@@ -1,7 +1,7 @@
 import { Controller, Get, Inject, Req, UseGuards } from '@nestjs/common';
 import { ME_ACTIVITY_PATH } from '@platform/contracts';
 import type { ActivityResponse } from '@platform/contracts';
-import { AuthGuard } from '../identity/auth.guard.js';
+import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { AuthenticatedRequest } from '../identity/auth.guard.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -30,7 +30,10 @@ import { AUDIT_SERVICE } from './audit.tokens.js';
 export class MeActivityController {
   constructor(@Inject(AUDIT_SERVICE) private readonly audit: AuditService) {}
 
+  // Survives suspension, and it matters most then: this is where somebody sees
+  // that an administrator suspended their account and the reason they gave.
   @Get(ME_ACTIVITY_PATH)
+  @AllowsSuspended()
   async list(
     @CurrentUser() user: MirroredUser,
     @Req() _request: AuthenticatedRequest,
