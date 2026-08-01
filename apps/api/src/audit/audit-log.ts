@@ -27,6 +27,16 @@ export type AuditAction =
   | 'account.provisioned'
   /** An administrator read somebody else's activity. A disclosure, so audited. */
   | 'admin.activity_viewed'
+  /**
+   * An administrator read somebody's account state — BRD §8.13's read-only
+   * "view as user".
+   *
+   * Separate from `admin.activity_viewed` rather than one `admin.viewed`,
+   * because the two disclose different things and the person reading their own
+   * trail is entitled to know which happened. Collapsing them would make the
+   * narrower access indistinguishable from the wider one (ADR 0022).
+   */
+  | 'admin.user_viewed'
   | 'profile.created'
   | 'profile.updated'
   /**

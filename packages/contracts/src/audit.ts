@@ -32,40 +32,13 @@ export const ME_ACTIVITY_PATH = '/me/activity';
 export const CLIENT_IP_HEADER = 'x-client-ip';
 
 /**
- * Where an administrator reads somebody else's activity.
+ * The reason rules and the admin route helpers now live in `admin.ts`.
  *
- * A function, so the id is encoded once and the *administrative* path is
- * visibly distinct from `/me/activity` at every call site.
+ * They moved when the administrative surface grew past the single route this
+ * file was written around — the whole of what an administrator can reach is
+ * worth reading in one sitting. Every one of them is still re-exported from the
+ * package root, so no import outside this package changed.
  */
-export function adminActivityPath(userId: string, reason: string): string {
-  return `/admin/users/${encodeURIComponent(userId)}/activity?reason=${encodeURIComponent(reason)}`;
-}
-
-/** The Nest route pattern for the above. Kept beside it so the two cannot drift. */
-export const ADMIN_ACTIVITY_ROUTE = '/admin/users/:userId/activity';
-
-/**
- * The shortest reason an administrator may give.
- *
- * A bound rather than a judgement of quality — nothing can stop somebody typing
- * "x" twelve times. What it does stop is an empty box being submitted by habit,
- * which is how a mandatory field becomes a meaningless one.
- */
-export const MIN_ADMIN_REASON_LENGTH = 12;
-export const MAX_ADMIN_REASON_LENGTH = 500;
-
-export const adminReasonSchema = z
-  .string()
-  .trim()
-  .min(
-    MIN_ADMIN_REASON_LENGTH,
-    `must be at least ${MIN_ADMIN_REASON_LENGTH} characters`,
-  )
-  .max(MAX_ADMIN_REASON_LENGTH);
-
-export function parseAdminReason(raw: unknown): string {
-  return parseWith(adminReasonSchema, 'The reason', raw);
-}
 
 /**
  * One thing that happened, as its own actor may read it back.

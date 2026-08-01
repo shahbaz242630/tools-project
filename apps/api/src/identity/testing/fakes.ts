@@ -30,7 +30,8 @@ import type { WebhookDelivery, WebhookLedger } from '../webhook-ledger.js';
 import type { Actor } from '../../audit/audit-log.js';
 import type { PersonalDataEraser } from '../personal-data-eraser.js';
 import type { PersonalDataSource } from '../personal-data-source.js';
-import type { ExportedProfile } from '@platform/contracts';
+import type { ProfileSummarySource } from '../profile-summary-source.js';
+import type { AdminProfile, ExportedProfile } from '@platform/contracts';
 
 /**
  * What a test supplies for a session.
@@ -243,6 +244,28 @@ export class StubDataSource implements PersonalDataSource {
   }
 }
 
+/**
+ * The profiles module's administrative summary, stubbed.
+ *
+ * Deliberately *not* folded into `StubDataSource`. The two ports answer
+ * different questions — "everything, for the person themselves" and "the least
+ * that helps support" — and a double that returned one value for both would let
+ * a test pass while the two projections had silently become the same thing,
+ * which is the exact failure the split exists to prevent.
+ */
+export class StubProfileSummarySource implements ProfileSummarySource {
+  private summary: AdminProfile = null;
+
+  returns(summary: AdminProfile): this {
+    this.summary = summary;
+    return this;
+  }
+
+  summaryFor(): Promise<AdminProfile> {
+    return Promise.resolve(this.summary);
+  }
+}
+
 export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
@@ -252,6 +275,7 @@ export interface IdentityFakes {
   readonly audit: AuditFakes;
   readonly eraser: RecordingEraser;
   readonly source: StubDataSource;
+  readonly summaries: StubProfileSummarySource;
 }
 
 /**
@@ -265,6 +289,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const ledger = new InMemoryWebhookLedger();
   const eraser = new RecordingEraser();
   const source = new StubDataSource();
+  const summaries = new StubProfileSummarySource();
   return {
     sessionVerifier,
     users,
@@ -272,6 +297,14 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     audit,
     eraser,
     source,
-    service: new IdentityService(users, ledger, audit.service, eraser, source),
+    summaries,
+    service: new IdentityService(
+      users,
+      ledger,
+      audit.service,
+      eraser,
+      source,
+      summaries,
+    ),
   };
 }

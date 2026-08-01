@@ -3,7 +3,11 @@ import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import { RecordingEraser, StubDataSource } from './testing/fakes.js';
+import {
+  RecordingEraser,
+  StubDataSource,
+  StubProfileSummarySource,
+} from './testing/fakes.js';
 import type { SessionInput } from './testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -97,6 +101,7 @@ beforeEach(() => {
       createAuditFakes().service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     ),
     createRecordingLogger().logger,
   );
@@ -158,6 +163,7 @@ describe('AuthGuard', () => {
         createAuditFakes().service,
         new RecordingEraser(),
         new StubDataSource(),
+        new StubProfileSummarySource(),
       ),
       createRecordingLogger().logger,
     );
@@ -218,6 +224,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         createAuditFakes().service,
         new RecordingEraser(),
         new StubDataSource(),
+        new StubProfileSummarySource(),
       ),
       createRecordingLogger().logger,
     );
@@ -243,6 +250,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         createAuditFakes().service,
         new RecordingEraser(),
         new StubDataSource(),
+        new StubProfileSummarySource(),
       ),
       createRecordingLogger().logger,
     );
@@ -338,6 +346,7 @@ describe('the second factor an admin route requires', () => {
         createAuditFakes().service,
         new RecordingEraser(),
         new StubDataSource(),
+        new StubProfileSummarySource(),
       ),
       createRecordingLogger().logger,
     );

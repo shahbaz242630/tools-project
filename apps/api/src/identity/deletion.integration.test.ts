@@ -9,6 +9,8 @@ import {
   ME_EXPORT_PATH,
   ME_PROFILE_PATH,
   adminActivityPath,
+  adminUserPath,
+  adminUserViewSchema,
   activityResponseSchema,
   dataExportSchema,
   exportFilename,
@@ -104,6 +106,7 @@ beforeEach(async () => {
     audit.service,
     { erase: (actor) => profiles.eraseFor(actor) },
     { exportFor: (userId) => profiles.exportFor(userId) },
+    { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
   );
 
   const moduleRef = await Test.createTestingModule({
@@ -678,5 +681,190 @@ describe('GET /admin/users/:userId/activity', () => {
     expect(
       audit.log.entries().filter((e) => e.action === 'admin.activity_viewed'),
     ).toHaveLength(0);
+  });
+});
+
+describe('GET /admin/users/:userId', () => {
+  const REASON = 'support ticket 4821, cannot sign in';
+
+  const viewAs = (token: string, userId: string, reason = REASON) =>
+    app.inject({
+      method: 'GET',
+      url: adminUserPath(userId, reason),
+      headers: auth(token),
+    });
+
+  it('rejects an unauthenticated request', async () => {
+    expect(
+      (await app.inject({ method: 'GET', url: adminUserPath('x', REASON) })).statusCode,
+    ).toBe(401);
+  });
+
+  it('refuses an ordinary user', async () => {
+    const bobId = await idOf('bob-token');
+    expect((await viewAs('alice-token', bobId)).statusCode).toBe(403);
+  });
+
+  it('refuses an administrator with no verified second factor', async () => {
+    // MFA is required of administrators at the guard, for the role rather than
+    // the route, so a new admin route cannot exist without it (ADR 0021).
+    const bobId = await idOf('bob-token');
+    await promote('alice-token');
+
+    expect((await viewAs('alice-token', bobId)).statusCode).toBe(403);
+  });
+
+  it('refuses an administrator whose token carries no factor claim', async () => {
+    const bobId = await idOf('bob-token');
+    await promote('admin-no-claim');
+
+    expect((await viewAs('admin-no-claim', bobId)).statusCode).toBe(403);
+  });
+
+  it.each([
+    ['absent', ''],
+    ['too short', 'because'],
+    ['only whitespace', '            '],
+  ])('refuses a reason that is %s', async (_label, reason) => {
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    expect((await viewAs('admin-token', bobId, reason)).statusCode).toBe(400);
+  });
+
+  it('answers with the account and the profile summary', async () => {
+    const bobId = await idOf('bob-token');
+    await saveProfile('bob-token');
+    await promote('admin-token');
+
+    const view = adminUserViewSchema.parse((await viewAs('admin-token', bobId)).json());
+
+    expect(view.account).toMatchObject({ id: bobId, email: 'bob@example.com' });
+    expect(view.profile).toMatchObject({
+      displayName: PROFILE.displayName,
+      hasPhone: true,
+      address: { town: 'Bristol', outwardCode: 'BS7' },
+    });
+  });
+
+  it('never carries a street line, a full postcode or a phone number', async () => {
+    // Asserted against the **raw body**, not the parsed object. Zod strips
+    // unknown keys, so parsing first would hide the very leak this is looking
+    // for and the test would pass for the wrong reason (slice 1.4's lesson).
+    const bobId = await idOf('bob-token');
+    await saveProfile('bob-token');
+    await promote('admin-token');
+
+    const body = (await viewAs('admin-token', bobId)).body;
+
+    expect(body).not.toContain(PROFILE.address.line1);
+    expect(body).not.toContain(PROFILE.address.postcode);
+    // The stored number is normalised to E.164, so check both forms.
+    expect(body).not.toContain(PROFILE.phone);
+    expect(body).not.toContain('+447700900123');
+    // ...and the district really is there, so the assertions above are not
+    // passing merely because the profile was empty.
+    expect(body).toContain('BS7');
+  });
+
+  it('says a profile is absent rather than inventing an empty one', async () => {
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    const view = adminUserViewSchema.parse((await viewAs('admin-token', bobId)).json());
+    expect(view.profile).toBeNull();
+  });
+
+  it('shows a deleted account, with its timestamps', async () => {
+    // The opposite of the public profile route, deliberately. Support is asked
+    // about a deleted account precisely because it was deleted, and the
+    // anti-enumeration reasoning does not apply to a named administrator in an
+    // audit trail.
+    const bobId = await idOf('bob-token');
+    await saveProfile('bob-token');
+    await requestDeletion('bob-token');
+    await promote('admin-token');
+
+    const view = adminUserViewSchema.parse((await viewAs('admin-token', bobId)).json());
+
+    expect(view.account.deletedAt).not.toBeNull();
+    expect(view.account.deletionRequestedAt).not.toBeNull();
+    // Erased in 1.5b, so there is nothing left to summarise.
+    expect(view.profile).toBeNull();
+  });
+
+  it('records the disclosure with its reason, before performing it', async () => {
+    const bobId = await idOf('bob-token');
+    const adminId = await promote('admin-token');
+
+    await viewAs('admin-token', bobId);
+
+    expect(
+      audit.log.entries().find((e) => e.action === 'admin.user_viewed'),
+    ).toMatchObject({
+      actorId: adminId,
+      targetType: 'user',
+      targetId: bobId,
+      reason: REASON,
+    });
+  });
+
+  it('records a lookup that found nothing', async () => {
+    // A well-formed id for an account that does not exist. The administrator
+    // asked, and a trail holding only the successful lookups is the wrong half.
+    await promote('admin-token');
+
+    const response = await viewAs(
+      'admin-token',
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(
+      audit.log.entries().filter((e) => e.action === 'admin.user_viewed'),
+    ).toHaveLength(1);
+  });
+
+  it('records nothing when the reason was refused', async () => {
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    await viewAs('admin-token', bobId, 'no');
+
+    expect(
+      audit.log.entries().filter((e) => e.action === 'admin.user_viewed'),
+    ).toHaveLength(0);
+  });
+
+  it('answers 404 for a malformed account id, and records nothing', async () => {
+    await promote('admin-token');
+
+    expect((await viewAs('admin-token', 'banana')).statusCode).toBe(404);
+    expect(
+      audit.log.entries().filter((e) => e.action === 'admin.user_viewed'),
+    ).toHaveLength(0);
+  });
+
+  it('shows the subject who looked at their account, and why', async () => {
+    // The same control the activity disclosure has, on the wider disclosure.
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+    await viewAs('admin-token', bobId);
+
+    const { entries } = activityResponseSchema.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: ME_ACTIVITY_PATH,
+          headers: auth('bob-token'),
+        })
+      ).json(),
+    );
+
+    expect(entries.find((e) => e.action === 'admin.user_viewed')).toMatchObject({
+      by: 'administrator',
+      reason: REASON,
+      ipAddress: null,
+    });
   });
 });

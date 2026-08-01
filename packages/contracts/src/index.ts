@@ -1,3 +1,4 @@
+export * from './admin.js';
 export * from './audit.js';
 export * from './export.js';
 export * from './health.js';

@@ -40,6 +40,7 @@ export default function AdminActivityPage() {
       <AdminActivityLookup />
 
       <p>
+        <Link href="/admin/users">Look up an account</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>
     </main>

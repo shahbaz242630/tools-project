@@ -3,7 +3,8 @@ import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { PersonalDataEraser } from './personal-data-eraser.js';
 import type { PersonalDataSource } from './personal-data-source.js';
-import type { DataExport } from '@platform/contracts';
+import type { ProfileSummarySource } from './profile-summary-source.js';
+import type { AdminUserView, DataExport } from '@platform/contracts';
 import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
 import { UserConflictError } from './user-directory.js';
 import type { MirroredUser, UserDirectory } from './user-directory.js';
@@ -77,6 +78,7 @@ export class IdentityService {
     private readonly audit: AuditService,
     private readonly eraser: PersonalDataEraser,
     private readonly profileSource: PersonalDataSource,
+    private readonly profileSummaries: ProfileSummarySource,
   ) {}
 
   /**
@@ -239,6 +241,61 @@ export class IdentityService {
         ipAddress: entry.ipAddress,
         createdAt: Time.toIsoUtc(entry.createdAt),
       })),
+    };
+  }
+
+  /**
+   * What an administrator may see of somebody's account.
+   *
+   * BRD §8.13's read-only "view as user", built as a **projection rather than a
+   * session**: the administrator's own session stays theirs, nothing here mints
+   * a token as another person, and there is no shape in this method that could
+   * change anything. Write-capable impersonation is prohibited at launch, and
+   * the cheapest way to honour that is to have no mechanism for it (ADR 0022).
+   *
+   * **Audited before the read**, with the reason, the same ordering as the
+   * export and the activity disclosure: a disclosure that happened cannot fail
+   * to be recorded. The entry names the account as target, so it reaches that
+   * person's own activity page (ADR 0021's correction).
+   *
+   * Uses `findById` rather than `findActiveById` deliberately. A deleted
+   * account is exactly what support is asked about after a deletion, and the
+   * timestamps are the answer; the public route's refusal to distinguish
+   * "deleted" from "never existed" is an anti-enumeration measure, and the
+   * caller here is a named administrator in an audit trail.
+   */
+  async adminViewFor(
+    actor: Actor,
+    userId: string,
+    reason: string,
+  ): Promise<AdminUserView | null> {
+    await this.audit.record({
+      actor,
+      action: 'admin.user_viewed',
+      targetType: 'user',
+      targetId: userId,
+      reason,
+      // No before or after: nothing changed. Inventing a state transition for a
+      // read would make disclosures and modifications indistinguishable in a
+      // trail retained for six years.
+    });
+
+    const user = await this.users.findById(userId);
+    if (user === null) return null;
+
+    return {
+      account: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        createdAt: Time.toIsoUtc(user.createdAt),
+        deletedAt: user.deletedAt === null ? null : Time.toIsoUtc(user.deletedAt),
+        deletionRequestedAt:
+          user.deletionRequestedAt === null
+            ? null
+            : Time.toIsoUtc(user.deletionRequestedAt),
+      },
+      profile: await this.profileSummaries.summaryFor(user.id),
     };
   }
 
