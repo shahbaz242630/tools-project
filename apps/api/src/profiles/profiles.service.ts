@@ -1,5 +1,6 @@
 import { Postcode } from '@platform/core';
 import type {
+  AdminProfile,
   ExportedProfile,
   MyProfile,
   ProfileInput,
@@ -87,6 +88,52 @@ export class ProfilesService {
   async exportFor(userId: string): Promise<ExportedProfile> {
     const stored = await this.profiles.find(userId);
     return stored === null ? null : toMyProfile(stored);
+  }
+
+  /**
+   * This module's contribution to the administrative account view.
+   *
+   * **The narrowest projection here that carries a name**, and the narrowing is
+   * the point. `toMyProfile` gives the owner their street lines and phone
+   * number; this gives support neither. What support is actually asked is
+   * whether a profile exists, whether it is complete enough to list or book
+   * (BRD §8.1 gates that on contact details), and roughly where the person is —
+   * and all three are answerable without disclosing either (ADR 0022).
+   *
+   * Built here rather than by the identity module that assembles the view, for
+   * the same reason `exportFor` is: the address lives behind this module's
+   * encryptor, and a projection assembled elsewhere is a projection whose rules
+   * live away from the data they constrain.
+   *
+   * Unlike `findPublic`, this does **not** check that the account is active.
+   * Support is most often asked about an account precisely because something
+   * has gone wrong with it, and the deletion state is Identity's to report.
+   */
+  async adminSummaryFor(userId: string): Promise<AdminProfile> {
+    const stored = await this.profiles.find(userId);
+    if (stored === null) return null;
+
+    return {
+      displayName: stored.displayName,
+
+      // Whether a number is saved, never the digits. Nothing has verified it,
+      // so it is not a fact about the person — and the question support has is
+      // "did they give us one", which the boolean answers completely.
+      hasPhone: stored.phone !== null,
+
+      address:
+        stored.address === null
+          ? null
+          : {
+              town: stored.address.town,
+              // The district, derived from the stored postcode the same way the
+              // public projection derives it. Never the full code, and never a
+              // street line — those reach exactly one response, the export.
+              outwardCode: Postcode.outwardCode(stored.address.postcode),
+            },
+
+      updatedAt: stored.updatedAt.toISOString(),
+    };
   }
 
   /**

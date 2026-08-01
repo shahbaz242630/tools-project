@@ -208,6 +208,78 @@ describe('findPublic', () => {
   });
 });
 
+describe('adminSummaryFor', () => {
+  it('is null when no profile was ever made', async () => {
+    // Different from an empty profile, and the distinction is what tells
+    // support "they never filled this in" rather than "something is broken".
+    await expect(service.adminSummaryFor(ALICE_ID)).resolves.toBeNull();
+  });
+
+  it('reports the district, never the full postcode', async () => {
+    await service.saveMine(ALICE, input);
+
+    await expect(service.adminSummaryFor(ALICE_ID)).resolves.toMatchObject({
+      displayName: 'Sarah M.',
+      address: { town: 'Bristol', outwardCode: 'BS7' },
+    });
+  });
+
+  it('carries no street line, postcode or phone number at all', async () => {
+    // The property that keeps ADR 0019's claim true — the export stays the one
+    // path by which a decrypted street line leaves the database. Asserted over
+    // the serialised summary so a field added later is caught here.
+    await service.saveMine(ALICE, input);
+
+    const serialised = JSON.stringify(await service.adminSummaryFor(ALICE_ID));
+
+    expect(serialised).not.toContain('Acacia');
+    expect(serialised).not.toContain('BS7 8AA');
+    expect(serialised).not.toContain('447700900123');
+    expect(serialised).toContain('BS7');
+  });
+
+  it('says whether a phone number is saved, not what it is', async () => {
+    await service.saveMine(ALICE, input);
+    await service.saveMine(BOB, { ...input, phone: null });
+
+    await expect(service.adminSummaryFor(ALICE_ID)).resolves.toMatchObject({
+      hasPhone: true,
+    });
+    await expect(service.adminSummaryFor(BOB_ID)).resolves.toMatchObject({
+      hasPhone: false,
+    });
+  });
+
+  it('distinguishes no address from an address', async () => {
+    await service.saveMine(ALICE, { ...input, address: null });
+
+    await expect(service.adminSummaryFor(ALICE_ID)).resolves.toMatchObject({
+      address: null,
+    });
+  });
+
+  it('answers for an account the lookup no longer calls active', async () => {
+    // Unlike `findPublic`, which checks first. Support is asked about an
+    // account precisely when something has gone wrong with it, and the
+    // deletion state is Identity's to report rather than this module's to hide.
+    await service.saveMine(ALICE, input);
+    accounts.remove(ALICE_ID);
+
+    await expect(service.adminSummaryFor(ALICE_ID)).resolves.not.toBeNull();
+  });
+
+  it('records nothing — the disclosure is the caller’s to audit', async () => {
+    // Identity writes `admin.user_viewed` before calling this. A second entry
+    // here would double-count one disclosure in a six-year trail.
+    await service.saveMine(ALICE, input);
+    const before = audit.log.entries().length;
+
+    await service.adminSummaryFor(ALICE_ID);
+
+    expect(audit.log.entries()).toHaveLength(before);
+  });
+});
+
 describe('ProfileConflictError', () => {
   it('carries a name, which is what callers match on', () => {
     // Matched by name rather than by `instanceof` in places that cross a module

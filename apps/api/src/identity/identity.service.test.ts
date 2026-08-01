@@ -8,7 +8,11 @@ import type { VerifiedSession } from './session-verifier.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { UserConflictError } from './user-directory.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import { RecordingEraser, StubDataSource } from './testing/fakes.js';
+import {
+  RecordingEraser,
+  StubDataSource,
+  StubProfileSummarySource,
+} from './testing/fakes.js';
 
 const SESSION: VerifiedSession = {
   clerkUserId: 'user_1',
@@ -30,6 +34,7 @@ beforeEach(() => {
     createAuditFakes().service,
     new RecordingEraser(),
     new StubDataSource(),
+    new StubProfileSummarySource(),
   );
 });
 
@@ -322,6 +327,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     const user = await identity.resolveSession(
@@ -355,6 +361,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
     const session = {
       clerkUserId: 'user_a',
@@ -378,6 +385,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     await identity.resolveSession({
@@ -400,6 +408,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     await identity.applyEvent('msg_1', {
@@ -423,6 +432,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
     const event = {
       type: 'user.upserted',
@@ -452,6 +462,7 @@ describe('requestDeletion', () => {
       audit.service,
       eraser,
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     const user = await identity.resolveSession({
@@ -590,6 +601,7 @@ describe('exportFor', () => {
       audit.service,
       new RecordingEraser(),
       source,
+      new StubProfileSummarySource(),
     );
 
     const user = await identity.resolveSession({
@@ -754,6 +766,7 @@ describe('correcting the email', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     const user = await identity.resolveSession(SESSION(email));
@@ -849,6 +862,7 @@ describe('correcting the email', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     await identity.resolveSession({
@@ -876,6 +890,7 @@ describe('correcting the email', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubProfileSummarySource(),
     );
 
     await identity.resolveSession({

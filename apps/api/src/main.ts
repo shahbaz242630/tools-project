@@ -116,6 +116,7 @@ async function bootstrap(): Promise<void> {
     audit,
     { erase: (actor) => profiles.eraseFor(actor) },
     { exportFor: (userId) => profiles.exportFor(userId) },
+    { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
   );
 
   const profiles: ProfilesService = new ProfilesService(
