@@ -3,12 +3,17 @@ import {
   Controller,
   Get,
   Inject,
+  NotFoundException,
   Param,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ADMIN_ACTIVITY_ROUTE, parseAdminReason } from '@platform/contracts';
+import {
+  ADMIN_ACTIVITY_ROUTE,
+  isAccountId,
+  parseAdminReason,
+} from '@platform/contracts';
 import { ContractViolationError } from '@platform/contracts';
 import type { ActivityResponse } from '@platform/contracts';
 import { AuthGuard, Roles } from '../identity/auth.guard.js';
@@ -50,6 +55,16 @@ export class AdminActivityController {
     @CurrentUser() admin: MirroredUser,
     @Req() request: AuthenticatedRequest,
   ): Promise<ActivityResponse> {
+    // Before anything is written. `audit_logs.targetId` is a `uuid` column, so
+    // recording a malformed path parameter makes the insert throw — and because
+    // audit writes are fail-closed, that throw becomes a 500 on the very action
+    // it was supposed to record. 404 rather than 400, matching the public
+    // profile route: "that is not an id" and "no such account" are the same
+    // answer to a caller.
+    if (!isAccountId(userId)) {
+      throw new NotFoundException();
+    }
+
     let reason: string;
     try {
       reason = parseAdminReason(rawReason);
@@ -74,13 +89,20 @@ export class AdminActivityController {
       reason,
     });
 
-    const entries = await this.audit.listForActor(userId);
+    // The same merged trail the account holder sees on their own page, and
+    // deliberately so: a support view that showed *less* than the person can
+    // see themselves makes every enquiry start with the two sides describing
+    // different histories. It includes the disclosure recorded a moment ago,
+    // which reads oddly for a line and then stops — an administrator watching
+    // their own access appear is the control working, not noise.
+    const entries = await this.audit.listActivityFor(userId);
 
     return {
       entries: entries.map((entry) => ({
         id: entry.id,
         action: entry.action,
         targetType: entry.targetType,
+        by: entry.by,
         reason: entry.reason,
         ipAddress: entry.ipAddress,
         createdAt: entry.createdAt.toISOString(),

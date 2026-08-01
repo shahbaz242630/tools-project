@@ -9,6 +9,7 @@ const ENTRY = {
   id: '11111111-1111-4111-8111-111111111111',
   action: 'profile.updated',
   targetType: 'profile',
+  by: 'subject',
   reason: null,
   ipAddress: '203.0.113.7',
   createdAt: '2026-07-31T09:00:00.000Z',

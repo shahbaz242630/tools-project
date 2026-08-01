@@ -26,6 +26,26 @@ export const userRoleSchema = z.enum(['USER', 'ADMIN']);
 export type UserRole = z.infer<typeof userRoleSchema>;
 
 /**
+ * Whether a string could be one of our account ids.
+ *
+ * A shape check, not an existence check — it answers "is it worth asking the
+ * database", and the answer is load-bearing for anything that writes before it
+ * reads. `users.id` and `audit_logs.targetId` are both `uuid` columns, so
+ * Postgres *raises* on a malformed value rather than returning no rows; an
+ * audit write is fail-closed, so a path parameter passed straight through turns
+ * a wrong URL into a 500 on the action it was meant to record.
+ *
+ * Exported from the contract rather than re-spelled per module because it is
+ * the same question in the API, the store and the test doubles, and three
+ * regexes that must agree are two too many.
+ */
+const ACCOUNT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isAccountId(value: string): boolean {
+  return ACCOUNT_ID.test(value);
+}
+
+/**
  * The signed-in account, as the API reports it.
  *
  * `id` is *our* identifier, not Clerk's, and that is the whole point of the

@@ -100,6 +100,118 @@ describe('record', () => {
       log.record(entry(actorId, { ipAddress: 'not-an-address' })),
     ).rejects.toThrow();
   });
+
+  it('rejects a malformed target id, because the column is uuid', async () => {
+    // The behaviour `InMemoryAuditLog` now mirrors. `targetId` reaches this
+    // from a path parameter on the admin route, and because audit writes are
+    // fail-closed, a throw here is a 500 on the action being recorded. A double
+    // that accepted any string let that pass every test.
+    const actorId = await newUser();
+    await expect(log.record(entry(actorId, { targetId: 'banana' }))).rejects.toThrow();
+  });
+});
+
+describe('listForSubject', () => {
+  it('returns what somebody else did to this account', async () => {
+    const [alice, admin] = [await newUser(), await newUser()];
+
+    await log.record(
+      entry(admin, {
+        action: 'admin.activity_viewed',
+        targetType: 'user',
+        targetId: alice,
+        reason: 'ticket 4821',
+      }),
+    );
+
+    const entries = await log.listForSubject(alice, 10);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      action: 'admin.activity_viewed',
+      reason: 'ticket 4821',
+      byAnotherUser: true,
+    });
+  });
+
+  it('returns an entry with no actor at all', async () => {
+    // The case an inequality alone would silently drop: SQL `<>` does not match
+    // NULL, so `NOT (actorId = alice)` excludes exactly the webhook-applied
+    // rows — which had reached no trail at all before this query existed.
+    const alice = await newUser();
+
+    await log.record(
+      entry(null, {
+        action: 'account.email_changed',
+        targetType: 'user',
+        targetId: alice,
+      }),
+    );
+
+    const entries = await log.listForSubject(alice, 10);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.byAnotherUser).toBe(false);
+  });
+
+  it('excludes what the account did to itself', async () => {
+    // `account.provisioned` names the account as both actor and target, so
+    // without this the merged trail would show it twice.
+    const alice = await newUser();
+
+    await log.record(
+      entry(alice, {
+        action: 'account.provisioned',
+        targetType: 'user',
+        targetId: alice,
+      }),
+    );
+
+    await expect(log.listForSubject(alice, 10)).resolves.toEqual([]);
+  });
+
+  it('never selects the address or the digests', async () => {
+    // Asserted against the real query, not the mapping. The address on these
+    // rows is the *administrator's*, and a `select` widened later would put it
+    // in front of the person they looked at.
+    const [alice, admin] = [await newUser(), await newUser()];
+    await log.record(entry(admin, { targetType: 'user', targetId: alice }));
+
+    const [read] = await log.listForSubject(alice, 10);
+    expect(Object.keys(read!).sort()).toEqual([
+      'action',
+      'byAnotherUser',
+      'createdAt',
+      'id',
+      'reason',
+      'targetType',
+    ]);
+  });
+
+  it('returns newest first', async () => {
+    const [alice, admin] = [await newUser(), await newUser()];
+
+    for (let index = 0; index < 3; index += 1) {
+      await log.record(entry(admin, { targetType: 'user', targetId: alice }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    const entries = await log.listForSubject(alice, 10);
+    expect(entries[0]!.createdAt.getTime()).toBeGreaterThan(
+      entries[2]!.createdAt.getTime(),
+    );
+  });
+
+  it('honours the limit', async () => {
+    const [alice, admin] = [await newUser(), await newUser()];
+    for (let index = 0; index < 5; index += 1) {
+      await log.record(entry(admin, { targetType: 'user', targetId: alice }));
+    }
+
+    await expect(log.listForSubject(alice, 2)).resolves.toHaveLength(2);
+  });
+
+  it('is empty for an account nobody has touched', async () => {
+    await expect(log.listForSubject(await newUser(), 10)).resolves.toEqual([]);
+  });
 });
 
 describe('listForActor', () => {
@@ -170,6 +282,7 @@ describe('immutability', () => {
     expect(Object.getOwnPropertyNames(Object.getPrototypeOf(log)).sort()).toEqual([
       'constructor',
       'listForActor',
+      'listForSubject',
       'record',
     ]);
   });

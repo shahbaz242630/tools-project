@@ -111,6 +111,38 @@ export interface RecordedEntry {
   readonly createdAt: Date;
 }
 
+/**
+ * An entry recording something *somebody else* did to this account.
+ *
+ * A separate type from `RecordedEntry`, not the same one with a nulled field,
+ * for the reason ADR 0016 gives about profiles: an optional `ipAddress?: string`
+ * compiles identically whether or not the store remembered to drop it, so the
+ * guarantee would live in whichever query somebody edits next.
+ *
+ * **There is no `ipAddress`, and its absence is the point.** On these entries
+ * the address belongs to the *actor* — an administrator — not to the person
+ * reading them. Handing a support worker's home address to the account they
+ * were asked to investigate is a safety problem, and it is the kind that only
+ * becomes visible after it has happened.
+ */
+export interface DisclosedEntry {
+  readonly id: string;
+  readonly action: AuditAction;
+  readonly targetType: string;
+  readonly reason: string | null;
+  readonly createdAt: Date;
+
+  /**
+   * Whether a person did this, as opposed to it happening automatically.
+   *
+   * A boolean rather than an actor id, because the subject has no business
+   * knowing *which* administrator read their account — only that one did, when,
+   * and why. False means the entry has no actor at all: a provider webhook
+   * applied a change that nobody was holding a session for.
+   */
+  readonly byAnotherUser: boolean;
+}
+
 export interface AuditLog {
   /**
    * Append one entry.
@@ -125,4 +157,19 @@ export interface AuditLog {
 
   /** An actor's own entries, newest first. There is no "everyone's" query yet. */
   listForActor(actorId: string, limit: number): Promise<readonly RecordedEntry[]>;
+
+  /**
+   * Entries where this account was the **target** of somebody else's action.
+   *
+   * The other half of a person's history, and the half that was missing.
+   * `listForActor` answers "what did I do"; without this, an administrator
+   * reading your account was recorded against *them* and appeared nowhere you
+   * could see it — which made BRD §8.13's reason requirement a note in a table
+   * rather than a control (ADR 0021's correction).
+   *
+   * Excludes entries this account is itself the actor of, so an action on your
+   * own row — `account.provisioned`, `account.deletion_requested` — is not
+   * returned twice when the two lists are merged.
+   */
+  listForSubject(subjectId: string, limit: number): Promise<readonly DisclosedEntry[]>;
 }

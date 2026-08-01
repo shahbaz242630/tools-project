@@ -350,5 +350,13 @@ model AuditLog {
   /// first". Composite rather than two indexes — a scan of every entry an actor
   /// ever made, sorted afterwards, is the shape that gets slow first.
   @@index([actorId, createdAt(sort: Desc)])
+
+  /// The mirror of the above, for "what did somebody else do to my account".
+  ///
+  /// A person's activity page merges both directions, so every page load runs
+  /// this query too. Without it the target side is a sequential scan of the
+  /// whole table — and this table only ever grows, because nothing deletes from
+  /// it and §10.1 retains security logs for six years.
+  @@index([targetId, createdAt(sort: Desc)])
   @@map("audit_logs")
 }

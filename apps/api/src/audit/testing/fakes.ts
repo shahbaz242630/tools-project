@@ -12,12 +12,35 @@
  */
 
 import { Time } from '@platform/core';
-import type { AuditEntry, AuditLog, RecordedEntry } from '../audit-log.js';
+import type {
+  AuditEntry,
+  AuditLog,
+  DisclosedEntry,
+  RecordedEntry,
+} from '../audit-log.js';
 import { AuditService } from '../audit.service.js';
 import { createStateDigest } from '../state-digest.js';
 
 /** A fixed 32-byte key. Never a real one — those live in the secret manager. */
 export const TEST_DIGEST_KEY = Buffer.alloc(32, 11).toString('base64');
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Raised for an id Postgres would reject.
+ *
+ * `actorId` and `targetId` are `uuid` columns, so the real store throws on a
+ * malformed value — and because audit writes are fail-closed, that throw takes
+ * down the action being audited. A double that accepted any string let a test
+ * pass for a situation that could not occur in it, which is exactly the defect
+ * this file's header warns about and which cost an hour in slice 1.7.
+ */
+export class InvalidAuditIdError extends Error {
+  constructor(field: string, value: string) {
+    super(`${field} must be a uuid, got ${JSON.stringify(value)}`);
+    this.name = 'InvalidAuditIdError';
+  }
+}
 
 export class InMemoryAuditLog implements AuditLog {
   private readonly rows: (AuditEntry & { id: string; createdAt: Date })[] = [];
@@ -41,6 +64,16 @@ export class InMemoryAuditLog implements AuditLog {
       const error = this.failure;
       this.failure = null;
       return Promise.reject(error);
+    }
+
+    // Enforced here because Postgres enforces it there. Both columns are
+    // `uuid`; a caller that passes a path parameter straight through gets a
+    // 500 in production and a green test without this.
+    if (entry.actorId !== null && !UUID.test(entry.actorId)) {
+      return Promise.reject(new InvalidAuditIdError('actorId', entry.actorId));
+    }
+    if (!UUID.test(entry.targetId)) {
+      return Promise.reject(new InvalidAuditIdError('targetId', entry.targetId));
     }
 
     this.rows.push({
@@ -70,6 +103,28 @@ export class InMemoryAuditLog implements AuditLog {
           reason: row.reason,
           ipAddress: row.ipAddress,
           createdAt: row.createdAt,
+        })),
+    );
+  }
+
+  listForSubject(subjectId: string, limit: number): Promise<readonly DisclosedEntry[]> {
+    return Promise.resolve(
+      this.rows
+        // Somebody else's action on this account, or nobody's. The null-actor
+        // case is a provider webhook, and it matters: those entries reached no
+        // trail at all before this query existed.
+        .filter((row) => row.targetId === subjectId && row.actorId !== subjectId)
+        .reverse()
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          action: row.action,
+          targetType: row.targetType,
+          reason: row.reason,
+          createdAt: row.createdAt,
+          byAnotherUser: row.actorId !== null,
+          // No `ipAddress`, matching the real store — the type has no such
+          // field, so a double that carried one would not compile.
         })),
     );
   }

@@ -1,5 +1,11 @@
 import type { PrismaClient } from '@platform/database';
-import type { AuditAction, AuditEntry, AuditLog, RecordedEntry } from './audit-log.js';
+import type {
+  AuditAction,
+  AuditEntry,
+  AuditLog,
+  DisclosedEntry,
+  RecordedEntry,
+} from './audit-log.js';
 
 /**
  * Postgres-backed audit trail.
@@ -66,6 +72,48 @@ export class PrismaAuditLog implements AuditLog {
       reason: row.reason,
       ipAddress: row.ipAddress,
       createdAt: row.createdAt,
+    }));
+  }
+
+  async listForSubject(
+    subjectId: string,
+    limit: number,
+  ): Promise<readonly DisclosedEntry[]> {
+    const rows = await this.prisma.auditLog.findMany({
+      where: {
+        targetId: subjectId,
+
+        // "Somebody other than me, or nobody at all." Spelled as an explicit
+        // OR rather than `NOT: { actorId: subjectId }`, because SQL inequality
+        // does not match NULL — and the null-actor rows are exactly the ones
+        // worth keeping. A provider webhook applies an email change with no
+        // session behind it, and until now that reached nobody's trail at all.
+        OR: [{ actorId: null }, { actorId: { not: subjectId } }],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+
+      // `actorId` is selected but never served — it decides `byAnotherUser` and
+      // is dropped in the same expression. `ipAddress` is not selected at all:
+      // on these rows it is the administrator's address, and a column that is
+      // never read cannot be leaked by a later change to the mapping below.
+      select: {
+        id: true,
+        action: true,
+        targetType: true,
+        reason: true,
+        createdAt: true,
+        actorId: true,
+      },
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      action: row.action as AuditAction,
+      targetType: row.targetType,
+      reason: row.reason,
+      createdAt: row.createdAt,
+      byAnotherUser: row.actorId !== null,
     }));
   }
 }

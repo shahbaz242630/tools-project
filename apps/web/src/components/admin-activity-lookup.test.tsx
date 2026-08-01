@@ -37,6 +37,7 @@ const ENTRY = {
   id: '22222222-2222-4222-8222-222222222222',
   action: 'profile.updated',
   targetType: 'profile',
+  by: 'subject',
   reason: null,
   ipAddress: '203.0.113.7',
   createdAt: '2026-07-31T09:00:00.000Z',
@@ -94,8 +95,42 @@ describe('AdminActivityLookup', () => {
     withState({ status: 'loaded', entries: [ENTRY], message: null });
     render(<AdminActivityLookup />);
 
-    expect(screen.getByText('profile.updated')).toBeInTheDocument();
+    expect(screen.getByText('Profile updated')).toBeInTheDocument();
     expect(screen.getByText('203.0.113.7')).toBeInTheDocument();
+  });
+
+  it('calls the subject the account holder, never "you"', () => {
+    // The reader here is the administrator, not the subject. "You" on this
+    // screen is how a support worker misreads whose action they are looking at.
+    withState({ status: 'loaded', entries: [ENTRY], message: null });
+    render(<AdminActivityLookup />);
+
+    expect(screen.getByText('Account holder')).toBeInTheDocument();
+    expect(screen.queryByText('You')).not.toBeInTheDocument();
+  });
+
+  it('shows a colleague’s earlier access to the same account', () => {
+    // Support sees the same history the account holder does, so an enquiry does
+    // not start with the two sides describing different pasts.
+    withState({
+      status: 'loaded',
+      message: null,
+      entries: [
+        {
+          ...ENTRY,
+          id: '33333333-3333-4333-8333-333333333333',
+          action: 'admin.activity_viewed',
+          by: 'administrator',
+          reason: 'support ticket 4820, earlier query',
+          ipAddress: null,
+        },
+      ],
+    });
+    render(<AdminActivityLookup />);
+
+    expect(screen.getByText('Account activity viewed')).toBeInTheDocument();
+    expect(screen.getByText('An administrator')).toBeInTheDocument();
+    expect(screen.getByText('support ticket 4820, earlier query')).toBeInTheDocument();
   });
 
   it('says plainly when there is nothing recorded', () => {

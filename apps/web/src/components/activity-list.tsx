@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import { describeAction, describeActor } from '../lib/activity-display';
 import type { ActivityOutcome } from '../lib/activity';
 
 /**
@@ -32,6 +33,7 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
             <thead>
               <tr>
                 <th scope="col">What happened</th>
+                <th scope="col">Who</th>
                 <th scope="col">When</th>
                 <th scope="col">From</th>
                 <th scope="col">Reason</th>
@@ -41,6 +43,13 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
               {outcome.entries.map((entry) => (
                 <tr key={entry.id}>
                   <td>{describeAction(entry.action)}</td>
+                  <td>
+                    {/* The column this page existed without. An administrator
+                        reading your account is recorded against them, so until
+                        the trail was read from the target side too it appeared
+                        nowhere you could see it (BRD §8.13, ADR 0021). */}
+                    {describeActor(entry.by)}
+                  </td>
                   <td>
                     {/* The machine-readable value stays in the markup so the
                         rendered text can be friendly without losing precision. */}
@@ -52,7 +61,10 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
                     {/* Genuinely unknown rather than missing: the API never sees
                         a browser directly, so there is no address to record
                         unless a proxy forwarded one. Saying "not recorded" is
-                        honest; a blank cell reads as a bug. */}
+                        honest; a blank cell reads as a bug.
+
+                        Always empty on somebody else's action — that address is
+                        the administrator's, and the API withholds it. */}
                     {entry.ipAddress ?? 'Not recorded'}
                   </td>
                   <td>
@@ -90,25 +102,6 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
         </section>
       );
   }
-}
-
-/**
- * `profile.updated` → "Profile updated".
- *
- * A lookup rather than a string transform, because the vocabulary is closed and
- * a machine-readable action is not a sentence. An unrecognised action falls
- * back to the raw value: a new action added to the API before this map is a
- * slightly ugly row, not a missing one, and a missing row in an audit trail is
- * the failure that matters.
- */
-const DESCRIPTIONS: Record<string, string> = {
-  'account.provisioned': 'Account created',
-  'profile.created': 'Profile created',
-  'profile.updated': 'Profile updated',
-};
-
-function describeAction(action: string): string {
-  return DESCRIPTIONS[action] ?? action;
 }
 
 function formatWhen(iso: string): string {

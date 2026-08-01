@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
+import { describeAction, describeActorForAdmin } from '../lib/activity-display';
 import {
   INITIAL_ADMIN_LOOKUP_STATE,
   lookUpActivityAction,
@@ -77,6 +78,7 @@ export function AdminActivityLookup() {
               <thead>
                 <tr>
                   <th scope="col">What happened</th>
+                  <th scope="col">Who</th>
                   <th scope="col">When</th>
                   <th scope="col">From</th>
                   <th scope="col">Reason</th>
@@ -85,7 +87,13 @@ export function AdminActivityLookup() {
               <tbody>
                 {state.entries.map((entry) => (
                   <tr key={entry.id}>
-                    <td>{entry.action}</td>
+                    <td>{describeAction(entry.action)}</td>
+                    <td>
+                      {/* "Account holder", never "You" — the reader here is not
+                          the subject, and getting that backwards is how a
+                          support worker misreads whose action they see. */}
+                      {describeActorForAdmin(entry.by)}
+                    </td>
                     <td>
                       <time dateTime={entry.createdAt}>{entry.createdAt}</time>
                     </td>

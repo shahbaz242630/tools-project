@@ -247,3 +247,146 @@ describe('listForActor', () => {
     expect(entries.length).toBeLessThanOrEqual(MAX_ACTIVITY_LIMIT);
   });
 });
+
+describe('listActivityFor', () => {
+  /** Alice edits her own profile. */
+  const ownAction = () =>
+    service.record({
+      actor: ALICE,
+      action: 'profile.updated',
+      targetType: 'profile',
+      targetId: TARGET,
+      after: { displayName: 'Alice A.' },
+    });
+
+  /**
+   * Bob, an administrator, reads Alice's account.
+   *
+   * With an address of his own — `BOB` has none, and asserting that the
+   * subject sees null would then pass whether or not anything was withheld.
+   */
+  const ADMIN: Actor = { userId: BOB.userId, ipAddress: '198.51.100.9' };
+
+  const disclosure = (reason = 'ticket 4821, access query') =>
+    service.record({
+      actor: ADMIN,
+      action: 'admin.activity_viewed',
+      targetType: 'user',
+      targetId: ALICE.userId,
+      reason,
+    });
+
+  /** A provider webhook changes Alice's address with nobody holding a session. */
+  const systemAction = () =>
+    service.record({
+      actor: null,
+      action: 'account.email_changed',
+      targetType: 'user',
+      targetId: ALICE.userId,
+      before: { email: 'a@example.com' },
+      after: { email: 'b@example.com' },
+    });
+
+  it('returns what the person did and what was done to them', async () => {
+    await ownAction();
+    await disclosure();
+
+    const entries = await service.listActivityFor(ALICE.userId);
+
+    expect(entries.map((e) => e.action)).toEqual([
+      'admin.activity_viewed',
+      'profile.updated',
+    ]);
+  });
+
+  it('marks who acted', async () => {
+    await ownAction();
+    await disclosure();
+    await systemAction();
+
+    const entries = await service.listActivityFor(ALICE.userId);
+    const by = new Map(entries.map((e) => [e.action, e.by]));
+
+    expect(by.get('profile.updated')).toBe('subject');
+    expect(by.get('admin.activity_viewed')).toBe('administrator');
+    // No actor at all — a webhook applied it. Calling that "administrator"
+    // would name a person who was not involved.
+    expect(by.get('account.email_changed')).toBe('system');
+  });
+
+  it('withholds the actor’s address on somebody else’s action', async () => {
+    await disclosure();
+
+    const [entry] = await service.listActivityFor(ALICE.userId);
+    expect(entry!.ipAddress).toBeNull();
+
+    // Withheld, not absent. Without this the test above passes just as well
+    // when the address was never captured in the first place.
+    expect(log.entries()[0]?.ipAddress).toBe('198.51.100.9');
+  });
+
+  it('keeps the reader’s own address on their own action', async () => {
+    await ownAction();
+
+    const [entry] = await service.listActivityFor(ALICE.userId);
+    expect(entry!.ipAddress).toBe(ALICE.ipAddress);
+  });
+
+  it('carries the reason through to the subject', async () => {
+    // The whole point of ADR 0021's reason requirement: it is a control only
+    // because the person it was written about can read it.
+    await disclosure('ticket 5150, investigating a report');
+
+    const [entry] = await service.listActivityFor(ALICE.userId);
+    expect(entry!.reason).toBe('ticket 5150, investigating a report');
+  });
+
+  it('does not repeat an action on one’s own account', async () => {
+    // `account.provisioned` is recorded with the account as both actor and
+    // target, so a naive union of the two queries would show it twice.
+    await service.record({
+      actor: ALICE,
+      action: 'account.provisioned',
+      targetType: 'user',
+      targetId: ALICE.userId,
+      after: { id: ALICE.userId },
+    });
+
+    const entries = await service.listActivityFor(ALICE.userId);
+    expect(entries).toHaveLength(1);
+  });
+
+  it('leaves an uninvolved account alone', async () => {
+    // Neither actor nor target of anything recorded here. Not `BOB` — he is the
+    // administrator in these fixtures, so the disclosure is genuinely his own
+    // action and would come back correctly.
+    const stranger = '00000000-0000-4000-8000-0000000000ff';
+
+    await ownAction();
+    await disclosure();
+
+    await expect(service.listActivityFor(stranger)).resolves.toEqual([]);
+  });
+
+  it('caps the merged list rather than each half', async () => {
+    // Both sides are fetched at the full limit, so a naive concatenation would
+    // return twice what was asked for.
+    for (let index = 0; index < 3; index += 1) {
+      await ownAction();
+      await disclosure();
+    }
+
+    const entries = await service.listActivityFor(ALICE.userId, 4);
+    expect(entries).toHaveLength(4);
+  });
+
+  it('caps an unbounded request', async () => {
+    await ownAction();
+    const entries = await service.listActivityFor(ALICE.userId, 10_000);
+    expect(entries.length).toBeLessThanOrEqual(MAX_ACTIVITY_LIMIT);
+  });
+
+  it('is empty for an account with no history', async () => {
+    await expect(service.listActivityFor(ALICE.userId)).resolves.toEqual([]);
+  });
+});

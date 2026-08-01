@@ -11,6 +11,7 @@ const ENTRY = {
   id: '22222222-2222-4222-8222-222222222222',
   action: 'profile.updated',
   targetType: 'profile',
+  by: 'subject',
   reason: null,
   ipAddress: '203.0.113.7',
   createdAt: '2026-07-31T09:00:00.000Z',
@@ -29,6 +30,26 @@ describe('fetchAdminActivity', () => {
       REASON,
       responds(200, JSON.stringify({ entries: [ENTRY] })),
     );
+    expect(outcome).toEqual({ kind: 'loaded', entries: [ENTRY] });
+  });
+
+  it('reads an entry from an API that predates the "who" field', async () => {
+    // The services deploy independently, so the web app is briefly talking to
+    // the previous API. An older one served only entries the reader was the
+    // actor of, which is exactly `subject` — so the default is correct rather
+    // than merely convenient, and a required field would have made the skew
+    // window a parse failure on the activity page.
+    const withoutBy: Record<string, unknown> = { ...ENTRY };
+    delete withoutBy['by'];
+
+    const outcome = await fetchAdminActivity(
+      API,
+      TOKEN,
+      USER,
+      REASON,
+      responds(200, JSON.stringify({ entries: [withoutBy] })),
+    );
+
     expect(outcome).toEqual({ kind: 'loaded', entries: [ENTRY] });
   });
 
