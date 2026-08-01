@@ -60,6 +60,22 @@ export function fromIsoUtc(iso: string): Date {
   return parsed.toJSDate();
 }
 
+/**
+ * Add elapsed hours to an instant.
+ *
+ * **Deliberately not calendar arithmetic**, and that is the whole distinction
+ * from `addRentalDays`. A rental day is a local calendar day, so it is 23 or 25
+ * hours long across a BST transition (ADR 0003). This is the opposite: a
+ * deadline measured in elapsed time, where the answer must not depend on the
+ * clocks having changed. An administrator given 24 hours to approve something
+ * gets 24 hours in March as in June.
+ *
+ * Use it for windows, timeouts and expiries. Never for a rental period.
+ */
+export function addHours(instant: Date, hours: number): Date {
+  return toDateTime(instant, 'utc').plus({ hours }).toJSDate();
+}
+
 /** ISO 8601 string in UTC, for storage and logging. */
 export function toIsoUtc(instant: Date): string {
   const iso = toDateTime(instant, 'utc').toISO();

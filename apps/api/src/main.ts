@@ -21,6 +21,7 @@ import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
 import { ClerkSessionVerifier } from './identity/clerk-session-verifier.js';
 import { IdentityService } from './identity/identity.service.js';
+import { PrismaAdminApprovalStore } from './identity/prisma-admin-approval-store.js';
 import {
   PrismaUserDirectory,
   PrismaWebhookLedger,
@@ -117,6 +118,7 @@ async function bootstrap(): Promise<void> {
     { erase: (actor) => profiles.eraseFor(actor) },
     { exportFor: (userId) => profiles.exportFor(userId) },
     { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
+    new PrismaAdminApprovalStore(database),
   );
 
   const profiles: ProfilesService = new ProfilesService(

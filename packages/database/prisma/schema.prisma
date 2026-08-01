@@ -97,6 +97,16 @@ model User {
   /// another module can read the log through a user.
   auditEntries AuditLog[]
 
+  /// The three sides of an administrative approval this account took part in.
+  ///
+  /// Three named relations because Prisma cannot tell them apart otherwise, not
+  /// because anything reads an approval through a user. The distinction that
+  /// matters is enforced in the database rather than here: a CHECK constraint
+  /// stops `approvedById` ever equalling `proposedById`.
+  proposedApprovals  AdminApproval[] @relation("ProposedApprovals")
+  grantedApprovals   AdminApproval[] @relation("GrantedApprovals")
+  cancelledApprovals AdminApproval[] @relation("CancelledApprovals")
+
   @@map("users")
 }
 
@@ -359,4 +369,76 @@ model AuditLog {
   /// it and §10.1 retains security logs for six years.
   @@index([targetId, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+/// An administrative action that needs a second administrator to agree.
+///
+/// BRD §8.13: "High-risk actions require step-up authentication and, for
+/// selected actions, dual approval." §17 names dual approval as a mitigation
+/// for admin misuse, beside least privilege, MFA and immutable audit logs.
+///
+/// **The two-person rule is a CHECK constraint, not only a service check.** The
+/// same reasoning as the booking overlap constraint (ADR 0004): a rule that
+/// exists only in application code is a rule the next code path forgets. Here
+/// the cost of forgetting is one administrator granting themselves whatever
+/// they like, so the database refuses it independently of anything above it.
+///
+/// Rows are never deleted. A refused or expired proposal is part of the record
+/// of what administrators tried to do, which is most of the point.
+model AdminApproval {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What is being proposed — `role.changed` today.
+  ///
+  /// Text with a closed union in code, for the reason `AuditLog.action` is:
+  /// a Postgres enum would put every future approvable action behind a schema
+  /// migration.
+  action String @db.Text
+
+  /// What it would happen to. `targetType` is text for the same polymorphic
+  /// reason the audit log's is; today it is always `user`.
+  targetType String @db.Text
+  targetId   String @db.Uuid
+
+  /// The parameters of the proposed change — `{"role":"ADMIN"}` today.
+  ///
+  /// JSON rather than a column per action, because the alternative is a table
+  /// that grows a nullable column every time an action is added and where no
+  /// row ever uses more than one of them. The shape is validated in code
+  /// against the closed action union before it is written.
+  payload Json @db.JsonB
+
+  proposedById   String   @db.Uuid
+  proposedBy     User     @relation("ProposedApprovals", fields: [proposedById], references: [id])
+  /// Why. Mandatory here, unlike `AuditLog.reason` — every row in this table is
+  /// an administrative action, so there is no ordinary user action to burden.
+  proposedReason String   @db.Text
+  proposedAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  /// When the proposal stops being approvable.
+  ///
+  /// A window rather than an indefinite queue: an approval sitting for a month
+  /// is approved against circumstances nobody remembers, and a stale queue is
+  /// one people rubber-stamp to clear.
+  expiresAt DateTime @db.Timestamptz(3)
+
+  /// Set together, in one transaction with the effect itself.
+  ///
+  /// There is deliberately no separate "executed" timestamp. Approval *is* the
+  /// execution — a window in which a decision is recorded but not applied is a
+  /// window somebody has to reconcile, and this way a failure to apply rolls
+  /// the approval back and leaves the proposal pending and retryable.
+  approvedById   String?   @db.Uuid
+  approvedBy     User?     @relation("GrantedApprovals", fields: [approvedById], references: [id])
+  approvedReason String?   @db.Text
+  approvedAt     DateTime? @db.Timestamptz(3)
+
+  cancelledById   String?   @db.Uuid
+  cancelledBy     User?     @relation("CancelledApprovals", fields: [cancelledById], references: [id])
+  cancelledReason String?   @db.Text
+  cancelledAt     DateTime? @db.Timestamptz(3)
+
+  /// Serves the one query: the pending queue, newest first.
+  @@index([proposedAt(sort: Desc)])
+  @@map("admin_approvals")
 }

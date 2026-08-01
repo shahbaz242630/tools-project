@@ -37,6 +37,18 @@ export type AuditAction =
    * narrower access indistinguishable from the wider one (ADR 0022).
    */
   | 'admin.user_viewed'
+  /**
+   * An administrator proposed a change that needs a second one to agree.
+   *
+   * Recorded against the **target**, not the proposer, so the person whose role
+   * somebody proposed changing sees it on their own activity page — the same
+   * reasoning that makes an administrative read visible to its subject.
+   */
+  | 'admin.approval_proposed'
+  /** A second administrator agreed, and the change took effect (ADR 0023). */
+  | 'admin.approval_granted'
+  /** A proposal was withdrawn before anybody acted on it. */
+  | 'admin.approval_cancelled'
   | 'profile.created'
   | 'profile.updated'
   /**

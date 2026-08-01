@@ -30,6 +30,7 @@ import {
 import { IdentityService } from './identity.service.js';
 import {
   FakeSessionVerifier,
+  InMemoryAdminApprovalStore,
   InMemoryUserDirectory,
   InMemoryWebhookLedger,
 } from './testing/fakes.js';
@@ -76,10 +77,12 @@ let audit: AuditFakes;
 let users: InMemoryUserDirectory;
 let profileStore: InMemoryProfileStore;
 let accounts: InMemoryAccountLookup;
+let approvals: InMemoryAdminApprovalStore;
 
 beforeEach(async () => {
   audit = createAuditFakes();
   users = new InMemoryUserDirectory();
+  approvals = new InMemoryAdminApprovalStore();
   profileStore = new InMemoryProfileStore();
   accounts = new InMemoryAccountLookup();
 
@@ -107,7 +110,15 @@ beforeEach(async () => {
     { erase: (actor) => profiles.eraseFor(actor) },
     { exportFor: (userId) => profiles.exportFor(userId) },
     { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
+    approvals,
   );
+
+  // Stands in for the transaction the real store performs, so approving a
+  // proposal in these tests really does change the role.
+  approvals.apply = (approval) => {
+    const target = users.all().find((row) => row.id === approval.action.userId);
+    if (target !== undefined) users.seed({ ...target, role: approval.action.role });
+  };
 
   const moduleRef = await Test.createTestingModule({
     imports: [

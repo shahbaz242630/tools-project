@@ -12,6 +12,7 @@ import {
   RecordingEraser,
   StubDataSource,
   StubProfileSummarySource,
+  InMemoryAdminApprovalStore,
 } from './testing/fakes.js';
 
 const SESSION: VerifiedSession = {
@@ -35,6 +36,7 @@ beforeEach(() => {
     new RecordingEraser(),
     new StubDataSource(),
     new StubProfileSummarySource(),
+    new InMemoryAdminApprovalStore(),
   );
 });
 
@@ -328,6 +330,7 @@ describe('the audit trail', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     const user = await identity.resolveSession(
@@ -362,6 +365,7 @@ describe('the audit trail', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
     const session = {
       clerkUserId: 'user_a',
@@ -386,6 +390,7 @@ describe('the audit trail', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     await identity.resolveSession({
@@ -409,6 +414,7 @@ describe('the audit trail', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     await identity.applyEvent('msg_1', {
@@ -433,6 +439,7 @@ describe('the audit trail', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
     const event = {
       type: 'user.upserted',
@@ -463,6 +470,7 @@ describe('requestDeletion', () => {
       eraser,
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     const user = await identity.resolveSession({
@@ -602,6 +610,7 @@ describe('exportFor', () => {
       new RecordingEraser(),
       source,
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     const user = await identity.resolveSession({
@@ -767,6 +776,7 @@ describe('correcting the email', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     const user = await identity.resolveSession(SESSION(email));
@@ -863,6 +873,7 @@ describe('correcting the email', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     await identity.resolveSession({
@@ -891,6 +902,7 @@ describe('correcting the email', () => {
       new RecordingEraser(),
       new StubDataSource(),
       new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
     );
 
     await identity.resolveSession({

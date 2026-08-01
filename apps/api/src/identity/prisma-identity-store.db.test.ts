@@ -44,6 +44,7 @@ beforeEach(async () => {
   // so clearing `users` first throws rather than cascading.
   await client.profile.deleteMany();
   await client.address.deleteMany();
+  await client.adminApproval.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });

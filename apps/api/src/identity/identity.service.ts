@@ -1,13 +1,23 @@
 import { Time } from '@platform/core';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
+import {
+  APPROVAL_WINDOW_HOURS,
+  ApprovalConflictError,
+  approvalState,
+} from './admin-approval.js';
+import type {
+  AdminApproval,
+  AdminApprovalStore,
+  ApprovableAction,
+} from './admin-approval.js';
 import type { PersonalDataEraser } from './personal-data-eraser.js';
 import type { PersonalDataSource } from './personal-data-source.js';
 import type { ProfileSummarySource } from './profile-summary-source.js';
 import type { AdminUserView, DataExport } from '@platform/contracts';
 import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
 import { UserConflictError } from './user-directory.js';
-import type { MirroredUser, UserDirectory } from './user-directory.js';
+import type { MirroredUser, UserDirectory, UserRole } from './user-directory.js';
 import type { VerifiedSession } from './session-verifier.js';
 import type { WebhookLedger } from './webhook-ledger.js';
 
@@ -25,6 +35,21 @@ export class AccountDeletedError extends Error {
   constructor() {
     super('account has been deleted');
     this.name = 'AccountDeletedError';
+  }
+}
+
+/**
+ * Raised when a proposal is refused on its own merits rather than the caller's.
+ *
+ * Distinct from `ApprovalConflictError`, which means somebody else got there
+ * first. This one means the request itself does not make sense — the target
+ * does not exist, or already holds that role, or the change would leave the
+ * platform with no administrator at all.
+ */
+export class ApprovalRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ApprovalRefusedError';
   }
 }
 
@@ -79,6 +104,7 @@ export class IdentityService {
     private readonly eraser: PersonalDataEraser,
     private readonly profileSource: PersonalDataSource,
     private readonly profileSummaries: ProfileSummarySource,
+    private readonly approvals: AdminApprovalStore,
   ) {}
 
   /**
@@ -297,6 +323,193 @@ export class IdentityService {
       },
       profile: await this.profileSummaries.summaryFor(user.id),
     };
+  }
+
+  /**
+   * Propose a role change for a second administrator to agree to.
+   *
+   * BRD §8.13 asks for dual approval on selected actions. Changing a role is
+   * the first, and the one where a single administrator acting alone is worst:
+   * it is privilege escalation, and an administrator who can grant themselves
+   * anything makes every other control here decorative (ADR 0023).
+   *
+   * The proposal is checked now *and* the effect is checked again at approval,
+   * because a day may pass between them.
+   */
+  async proposeRoleChange(
+    actor: Actor,
+    userId: string,
+    role: UserRole,
+    reason: string,
+  ): Promise<AdminApproval> {
+    const target = await this.users.findById(userId);
+
+    // Not `findActiveById`: the wording matters, and a deleted account is not
+    // something to change the role of. Refused rather than 404 so the
+    // administrator is told which of the two it is.
+    if (target === null) throw new ApprovalRefusedError('no such account');
+    if (target.deletedAt !== null) {
+      throw new ApprovalRefusedError('that account has been deleted');
+    }
+    if (target.role === role) {
+      throw new ApprovalRefusedError(`that account is already ${role}`);
+    }
+
+    await this.refuseIfLastAdministrator(target, role);
+
+    const action: ApprovableAction = { kind: 'role.changed', userId, role };
+    const proposal = await this.approvals.propose({
+      action,
+      targetType: 'user',
+      targetId: userId,
+      proposedById: actor.userId,
+      proposedReason: reason,
+      // Elapsed hours, not calendar days — a deadline must not move because the
+      // clocks did. `Time.addHours` exists for exactly this distinction.
+      expiresAt: Time.addHours(Time.nowUtc(), APPROVAL_WINDOW_HOURS),
+    });
+
+    // Recorded against the *target*, so the person whose role somebody proposed
+    // changing sees it on their own activity page — the same reasoning that
+    // makes an administrative read visible to its subject (ADR 0021).
+    await this.audit.record({
+      actor,
+      action: 'admin.approval_proposed',
+      targetType: 'user',
+      targetId: userId,
+      reason,
+    });
+
+    return proposal;
+  }
+
+  /** Proposals still waiting for a second administrator. */
+  listPendingApprovals(limit = 50): Promise<readonly AdminApproval[]> {
+    return this.approvals.listPending(Time.nowUtc(), limit);
+  }
+
+  /**
+   * Agree to somebody else's proposal, and carry it out.
+   *
+   * **The approver is never the proposer.** Checked here, checked again in the
+   * store's conditional claim, and refused by a database CHECK constraint under
+   * both. Three layers for one rule is not belt and braces for its own sake:
+   * this is the rule the entire mechanism exists to enforce, and the cost of it
+   * failing is one administrator granting themselves whatever they like.
+   */
+  async approve(
+    actor: Actor,
+    approvalId: string,
+    reason: string,
+  ): Promise<AdminApproval> {
+    const proposal = await this.requirePending(approvalId);
+
+    if (proposal.proposedById === actor.userId) {
+      throw new ApprovalRefusedError(
+        'you proposed this, so somebody else has to approve it',
+      );
+    }
+
+    // Re-checked at approval, not only at proposal. A day is a long time: the
+    // other administrator may have been demoted in between, and approving now
+    // could leave nobody able to administer anything.
+    const target = await this.users.findById(proposal.action.userId);
+    if (target === null || target.deletedAt !== null) {
+      throw new ApprovalRefusedError('that account no longer exists');
+    }
+    await this.refuseIfLastAdministrator(target, proposal.action.role);
+
+    const approved = await this.approvals.approveAndApply({
+      approvalId,
+      byId: actor.userId,
+      reason,
+      at: Time.nowUtc(),
+    });
+
+    await this.audit.record({
+      actor,
+      action: 'admin.approval_granted',
+      targetType: 'user',
+      targetId: proposal.action.userId,
+      reason,
+      before: auditableAccount(target),
+      after: auditableAccount({ ...target, role: proposal.action.role }),
+    });
+
+    return approved;
+  }
+
+  /**
+   * Withdraw a proposal.
+   *
+   * Anyone with the role may cancel, **including the proposer**. Withdrawing
+   * your own request is not what dual approval guards against — the rule is
+   * about causing an effect, and cancelling causes none.
+   */
+  async cancelApproval(
+    actor: Actor,
+    approvalId: string,
+    reason: string,
+  ): Promise<AdminApproval> {
+    const proposal = await this.requirePending(approvalId);
+
+    const cancelled = await this.approvals.cancel({
+      approvalId,
+      byId: actor.userId,
+      reason,
+      at: Time.nowUtc(),
+    });
+
+    await this.audit.record({
+      actor,
+      action: 'admin.approval_cancelled',
+      targetType: 'user',
+      targetId: proposal.action.userId,
+      reason,
+    });
+
+    return cancelled;
+  }
+
+  private async requirePending(approvalId: string): Promise<AdminApproval> {
+    const proposal = await this.approvals.find(approvalId);
+    if (proposal === null) throw new ApprovalRefusedError('no such proposal');
+
+    const state = approvalState(proposal, Time.nowUtc());
+    if (state !== 'pending') {
+      // A conflict rather than a refusal: the request was well formed and would
+      // have been fine a moment earlier. The distinction reaches the caller as
+      // 409 rather than 400.
+      throw new ApprovalConflictError(`that proposal is already ${state}`);
+    }
+
+    return proposal;
+  }
+
+  /**
+   * Refuse a change that would leave nobody able to administer anything.
+   *
+   * The lockout ADR 0021 warned about, in its most permanent form: demote the
+   * last administrator and there is no one left to promote anybody, and no
+   * route that could — role assignment is *this* mechanism, which needs two
+   * administrators to work at all. Recovery would be a database write on a
+   * production box.
+   *
+   * Only demotions can trigger it, and only when the target is currently the
+   * administrator being counted.
+   */
+  private async refuseIfLastAdministrator(
+    target: MirroredUser,
+    role: UserRole,
+  ): Promise<void> {
+    if (role === 'ADMIN' || target.role !== 'ADMIN') return;
+
+    const administrators = await this.users.countAdministrators();
+    if (administrators <= 1) {
+      throw new ApprovalRefusedError(
+        'that is the last administrator — promote somebody else first',
+      );
+    }
   }
 
   /**
