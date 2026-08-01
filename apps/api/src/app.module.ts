@@ -22,6 +22,7 @@ import { AdminActivityController } from './audit/admin-activity.controller.js';
 import { MeActivityController } from './audit/me-activity.controller.js';
 import type { AuditService } from './audit/audit.service.js';
 import { AdminApprovalsController } from './identity/admin-approvals.controller.js';
+import { AdminSuspensionController } from './identity/admin-suspension.controller.js';
 import { AdminUserController } from './identity/admin-user.controller.js';
 import { ClerkEventsController } from './identity/clerk-events.controller.js';
 import { MeController } from './identity/me.controller.js';
@@ -90,6 +91,7 @@ export class AppModule implements NestModule {
         AdminActivityController,
         AdminUserController,
         AdminApprovalsController,
+        AdminSuspensionController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
         // like a missing decorator. See PublicProfileController.

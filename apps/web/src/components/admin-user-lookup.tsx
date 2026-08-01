@@ -7,12 +7,14 @@ import {
   INITIAL_ADMIN_USER_STATE,
   lookUpAccountAction,
 } from '../app/admin/users/actions';
+import { SuspensionControls } from './suspension-controls';
 
 /**
  * The account lookup form and what it found.
  *
- * Read-only by construction: there is nothing on this screen that submits a
- * change, because the API offers none. BRD §8.13 permits read-only support
+ * **The view itself is read-only; suspension is the one thing on this screen
+ * that changes anything**, and it is a separate form with its own action for
+ * that reason. BRD §8.13 permits read-only support
  * access from Phase 1 and prohibits write-capable impersonation at launch
  * (ADR 0022).
  */
@@ -100,7 +102,28 @@ function AccountView({ view }: { view: AdminUserView }) {
         {/* Shown rather than hidden. Support is asked about deleted accounts
             precisely because they are deleted, and "when" is the answer. */}
         <dd>{account.deletedAt ?? 'No'}</dd>
+
+        <dt>Suspended</dt>
+        {/* The likeliest support case of all: somebody writing in because
+            nothing works. "When, and on what grounds" is the whole answer. */}
+        <dd>{account.suspendedAt ?? 'No'}</dd>
+
+        {account.suspensionReason === null ? null : (
+          <>
+            <dt>Suspension reason</dt>
+            <dd>{account.suspensionReason}</dd>
+          </>
+        )}
       </dl>
+
+      {/* Not offered for a deleted account: the API refuses it, and a button
+          that answers 409 reads as a fault rather than a decision. */}
+      {account.deletedAt === null ? (
+        <SuspensionControls
+          userId={account.id}
+          suspended={account.suspendedAt !== null}
+        />
+      ) : null}
 
       <h2>Profile</h2>
 

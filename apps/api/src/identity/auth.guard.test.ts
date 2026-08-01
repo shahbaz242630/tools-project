@@ -246,6 +246,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
       upsert: () => Promise.reject(boom),
       update: () => Promise.reject(boom),
       countAdministrators: () => Promise.reject(boom),
+      setSuspension: () => Promise.reject(boom),
     };
 
     const broken = new AuthGuard(

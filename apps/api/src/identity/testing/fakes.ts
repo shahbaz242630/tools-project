@@ -21,6 +21,7 @@ import type { SessionVerifier, VerifiedSession } from '../session-verifier.js';
 import { UserConflictError } from '../user-directory.js';
 import type {
   MirroredUser,
+  Suspension,
   UpsertResult,
   UpsertUserInput,
   UserChanges,
@@ -118,30 +119,39 @@ export class InMemoryUserDirectory implements UserDirectory {
   }
 
   /**
-   * Suspend or reinstate a row. **Test-only, and deliberately not on the port.**
+   * Put a row straight into a suspended state, without going through a route.
    *
-   * Suspension has no production route until slice 1.10b; until then it is a
-   * database write, the same escape hatch role assignment used before 1.9.
-   * Enforces the all-or-nothing shape the CHECK constraint enforces, so a test
-   * cannot set a state Postgres would refuse.
+   * Test-only, and it stays useful now that `setSuspension` exists: a test of
+   * what a *suspended person* experiences should not have to drive an
+   * administrator through an admin route to get there.
    */
   suspend(id: string, byId: string, reason: string): this {
-    const existing = this.rows.get(id);
-    if (existing === undefined) throw new Error(`no such user: ${id}`);
-    this.rows.set(id, {
-      ...existing,
-      suspendedAt: Time.nowUtc(),
-      suspensionReason: reason,
-    });
-    void byId;
+    void this.setSuspension(id, { at: Time.nowUtc(), byId, reason });
     return this;
   }
 
   reinstate(id: string): this {
-    const existing = this.rows.get(id);
-    if (existing === undefined) throw new Error(`no such user: ${id}`);
-    this.rows.set(id, { ...existing, suspendedAt: null, suspensionReason: null });
+    void this.setSuspension(id, null);
     return this;
+  }
+
+  setSuspension(id: string, suspension: Suspension | null): Promise<MirroredUser> {
+    const existing = this.rows.get(id);
+    if (existing === undefined) {
+      return Promise.reject(new Error(`no such user: ${id}`));
+    }
+
+    // All three written every time, in both directions, matching the real
+    // store. Leaving a stale reason behind on reinstatement is a state the
+    // CHECK constraint would *not* catch — it only rejects a row with a
+    // timestamp and no reason, never the reverse.
+    const updated: MirroredUser = {
+      ...existing,
+      suspendedAt: suspension?.at ?? null,
+      suspensionReason: suspension?.reason ?? null,
+    };
+    this.rows.set(id, updated);
+    return Promise.resolve(updated);
   }
 
   countAdministrators(): Promise<number> {
