@@ -74,10 +74,29 @@ export function parseAdminReason(raw: unknown): string {
  * person reading their own activity and are not theirs to reason about;
  * serving them would put them in an HTTP response for no purpose.
  */
+/**
+ * Who performed the action, from the reader's point of view.
+ *
+ * `subject` means the account whose trail this is — rendered "You" on a
+ * person's own page and "This account" on the administrative one, because the
+ * same list is served to both and "you" would be wrong on the second.
+ *
+ * **Defaulted rather than required**, and the default is the honest one. The
+ * services deploy independently, so the web app is briefly talking to the
+ * previous API (see `health.ts`); an API without this field served only entries
+ * the reader was the actor of, which is precisely `subject`. A required field
+ * would turn that skew window into a parse failure on the activity page.
+ */
+export const activityActorSchema = z
+  .enum(['subject', 'administrator', 'system'])
+  .default('subject');
+export type ActivityActor = z.infer<typeof activityActorSchema>;
+
 export const activityEntrySchema = z.object({
   id: z.uuid(),
   action: z.string().min(1),
   targetType: z.string().min(1),
+  by: activityActorSchema,
   /**
    * Why, for actions that owe an explanation.
    *
@@ -87,7 +106,16 @@ export const activityEntrySchema = z.object({
    * somebody looked at your account is most of the point of recording it.
    */
   reason: z.string().nullable(),
-  /** Null when it was not known — see `CLIENT_IP_HEADER`. */
+  /**
+   * Null when it was not known — see `CLIENT_IP_HEADER` — **and always null
+   * when `by` is not `subject`.**
+   *
+   * On somebody else's action the address is the administrator's, not the
+   * reader's. Withholding it is deliberate: a support worker's address handed
+   * to the account they were asked to look into is a safety problem, and the
+   * reader cannot tell the two cases apart, which is why the page says
+   * "not recorded" rather than inventing a distinction.
+   */
   ipAddress: z.string().nullable(),
   createdAt: z.iso.datetime(),
 });

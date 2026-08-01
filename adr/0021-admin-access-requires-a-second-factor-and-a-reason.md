@@ -1,6 +1,6 @@
 # 0021. Require a second factor and a stated reason for administrative access
 
-- **Status:** Accepted
+- **Status:** Accepted, with a correction of 2026-08-01 — see the end
 - **Date:** 2026-07-31
 - **Relates to:** BRD §8.1, §8.13, §14 Phase 1, §17 risk table; ADR 0015, ADR 0017
 
@@ -65,3 +65,31 @@ It also means the claim joins the `email` claim as **instance configuration this
 **Dual approval is not built.** §8.13 asks for it on "selected actions", and none of the actions that would need it exist yet. Worth remembering before the first destructive admin capability lands, because retrofitting approval onto an action people already use is much harder than building it in.
 
 **Nothing records before/after state for admin actions yet**, beyond the digests every entry already carries. §8.13 asks for it; a read has no state change, so the requirement first bites on the first admin _write_, which does not exist.
+
+## Correction — 2026-08-01
+
+**The decision stands. The claim that the subject could see the disclosure was false when this was written, and is only true now.**
+
+This ADR argued, twice, that what makes a mandatory reason a control rather than a box to clear is that _the person whose account was read can see it on their own activity page_. They could not.
+
+The disclosure is recorded with the administrator as `actorId` and the subject as `targetId` — correctly. But the only read that existed, `listForActor`, filtered on `actorId` alone, so the entry landed in the **administrator's** trail and appeared on no page the subject could open. The deterrent the reason depends on did not exist, and the admin page told administrators it did.
+
+Three things said so and none of them was checked against the query:
+
+- this document, in its Decision section;
+- `apps/web/src/app/admin/activity/page.tsx`, in copy shown to a real administrator;
+- an integration test named `shows the subject who looked at their account, and why`, whose body asserted the **opposite** — that the entry was absent from the subject's trail — with a comment explaining why that was fine.
+
+That last one is the part worth remembering. A test can carry a name that reads as proof of a control and a body that pins its absence, and nothing about a green suite distinguishes the two. The name is documentation; only the assertion is evidence.
+
+**What changed.** `AuditLog` gained `listForSubject`, the mirror of `listForActor`: entries where this account is the target and the actor is somebody else, or nobody at all. `AuditService.listActivityFor` merges both directions and is what both `/me/activity` and the admin route now serve, so support sees the same history the account holder does. A `(targetId, createdAt desc)` index backs the new side.
+
+**The subject does not get the administrator's IP address, and `DisclosedEntry` has no field for it.** The address on those rows belongs to the actor. Handing a support worker's address to the account they were asked to investigate is a safety problem, so it is withheld by the shape of the type rather than by a controller remembering to drop it — the same reasoning ADR 0016 uses for the two profile projections. The subject learns that an administrator read their account, when, and why; not which one, and not from where.
+
+**Entries with no actor at all now reach the subject too.** A `user.updated` webhook corrects a mirrored email with nobody holding a session, so `actorId` is null and `targetId` is the account. Those had reached no trail whatsoever. They render as "Automatic" rather than naming an administrator who was not involved.
+
+**A malformed account id no longer 500s the admin route.** `audit_logs.targetId` is a `uuid` column and the disclosure is recorded _before_ the read, so a path parameter passed straight through threw on the insert — and a fail-closed audit write turns that into a 500 on the action it was meant to record. `isAccountId` now rejects it with a 404, recording nothing, matching the public profile route's reading that "that is not an id" and "no such account" are one answer.
+
+**`InMemoryAuditLog` now enforces the uuid constraint Postgres enforces.** It accepted any string, which is why every test passed. Same defect class as slice 1.7's `InMemoryUserDirectory`, which enforced email uniqueness on `upsert` but not on `update` — the second occurrence in two slices, and the reason a database test now pins the real column's behaviour beside it.
+
+**Still outstanding:** the data export carries only `listForActor`, so a disclosure of somebody's account does not appear in their export the way it now appears on their activity page. Fixing it means bumping `EXPORT_SCHEMA_VERSION` and revisiting ADR 0019, which is its own decision rather than a line in this one.

@@ -1,0 +1,39 @@
+-- Migration: audit_index_on_target
+--
+-- Serves the query that lets a person see what somebody *else* did to their
+-- account. The trail has always recorded it — an administrator's read is stored
+-- with the administrator as actor and the subject as target — but nothing ever
+-- selected on `targetId`, so the entry reached no page. ADR 0021's correction.
+--
+-- Data impact
+-- -----------
+-- One index, no column changes, no backfill, no rewrite of existing rows.
+-- Nothing about the data changes; only what can be found quickly.
+--
+-- The table only ever grows. Nothing deletes from it and §10.1 retains security
+-- logs for six years, so the target-side scan this replaces would get steadily
+-- slower for as long as the platform exists.
+--
+-- Built non-concurrently, which takes an ACCESS SHARE-blocking lock for the
+-- duration. Correct here and worth stating: the table is empty in every
+-- environment that exists today, and `prisma migrate deploy` runs before the
+-- stack comes up (ADR 0014), so nothing is serving traffic while it runs. The
+-- day that stops being true, this needs CREATE INDEX CONCURRENTLY — which
+-- cannot run inside a transaction and so cannot be a Prisma migration at all.
+--
+-- Expand-and-contract
+-- -------------------
+-- Not applicable: an index is invisible to the application. The previous
+-- release neither knows nor cares that it exists.
+--
+-- Application rollback: safe. The old code never queried this column.
+--
+-- Schema rollback:
+--   DROP INDEX "audit_logs_targetId_createdAt_idx";
+--   DELETE FROM _prisma_migrations WHERE migration_name LIKE '%audit_index_on_target';
+--
+-- Backup first? No. Nothing is destroyed and the rollback destroys nothing —
+-- dropping an index loses no row.
+
+-- CreateIndex
+CREATE INDEX "audit_logs_targetId_createdAt_idx" ON "audit_logs"("targetId", "createdAt" DESC);

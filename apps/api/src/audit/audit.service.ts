@@ -1,4 +1,10 @@
-import type { Actor, AuditAction, AuditLog, RecordedEntry } from './audit-log.js';
+import type {
+  Actor,
+  AuditAction,
+  AuditLog,
+  DisclosedEntry,
+  RecordedEntry,
+} from './audit-log.js';
 import type { StateDigest } from './state-digest.js';
 
 /**
@@ -26,6 +32,41 @@ export const DEFAULT_ACTIVITY_LIMIT = 50;
  * history into memory to render fifty rows.
  */
 export const MAX_ACTIVITY_LIMIT = 200;
+
+/**
+ * Who did the thing, from the reader's point of view.
+ *
+ * `subject` rather than `you`, because the same trail is served to two readers:
+ * the person themselves, and an administrator looking at their account. "You"
+ * would be a lie on the second page, and a vocabulary that means different
+ * things depending on who is reading it is one somebody eventually renders
+ * wrong.
+ *
+ * `administrator` is a claim about *today's* routes: the only way one account
+ * acts on another is through the admin surface, which requires the role and a
+ * second factor (ADR 0021). The store below knows only "another user", so if a
+ * non-administrative cross-account action is ever added, this mapping is what
+ * has to change — and it is one expression in one file.
+ */
+export type ActivityActor = 'subject' | 'administrator' | 'system';
+
+/** One entry in the merged trail, whichever direction it came from. */
+export interface ActivityRecord {
+  readonly id: string;
+  readonly action: AuditAction;
+  readonly targetType: string;
+  readonly reason: string | null;
+
+  /**
+   * Always null for an entry the reader was not the actor of.
+   *
+   * Not "unknown" — deliberately withheld. On those rows the address belongs to
+   * the administrator who acted, and it is not the subject's to see.
+   */
+  readonly ipAddress: string | null;
+  readonly createdAt: Date;
+  readonly by: ActivityActor;
+}
 
 export interface RecordChange {
   readonly actor: Actor | null;
@@ -85,7 +126,69 @@ export class AuditService {
     actorId: string,
     limit = DEFAULT_ACTIVITY_LIMIT,
   ): Promise<readonly RecordedEntry[]> {
-    const bounded = Math.min(Math.max(Math.trunc(limit), 1), MAX_ACTIVITY_LIMIT);
-    return this.log.listForActor(actorId, bounded);
+    return this.log.listForActor(actorId, this.bound(limit));
   }
+
+  /**
+   * Everything on one account: what they did, and what was done to them.
+   *
+   * The second half is the part that was missing. An administrator reading
+   * somebody's account is recorded with the administrator as actor, so it only
+   * ever appeared in the administrator's own trail — and BRD §8.13's reason
+   * requirement is only a control if the person it was written for can read it
+   * (ADR 0021's correction).
+   *
+   * Both sides are fetched at the full limit and merged down to it, which is
+   * correct rather than merely convenient: the newest `n` overall are
+   * necessarily among the newest `n` of each side.
+   */
+  async listActivityFor(
+    userId: string,
+    limit = DEFAULT_ACTIVITY_LIMIT,
+  ): Promise<readonly ActivityRecord[]> {
+    const bounded = this.bound(limit);
+
+    const [own, disclosed] = await Promise.all([
+      this.log.listForActor(userId, bounded),
+      this.log.listForSubject(userId, bounded),
+    ]);
+
+    return [...own.map(asOwnAction), ...disclosed.map(asDisclosure)]
+      .sort(newestFirst)
+      .slice(0, bounded);
+  }
+
+  /** Clamp a caller's page size. Unchanged behaviour, now shared by both reads. */
+  private bound(limit: number): number {
+    return Math.min(Math.max(Math.trunc(limit), 1), MAX_ACTIVITY_LIMIT);
+  }
+}
+
+function asOwnAction(entry: RecordedEntry): ActivityRecord {
+  return { ...entry, by: 'subject' };
+}
+
+function asDisclosure(entry: DisclosedEntry): ActivityRecord {
+  const { byAnotherUser, ...rest } = entry;
+  return {
+    ...rest,
+    // Null, not absent, and not the actor's. See `ActivityRecord.ipAddress`.
+    ipAddress: null,
+    by: byAnotherUser ? 'administrator' : 'system',
+  };
+}
+
+/**
+ * Newest first, breaking ties on id.
+ *
+ * The tiebreak is not decoration. `createdAt` is `timestamptz(3)`, so two
+ * entries written in the same millisecond — which is the *normal* case for an
+ * admin read, since the disclosure is recorded immediately before the query
+ * that returns it — compare equal, and `Array.prototype.sort` would then order
+ * them by whichever list happened to be concatenated first. Falling through to
+ * the id makes the answer stable across calls, which is all a reader needs.
+ */
+function newestFirst(a: ActivityRecord, b: ActivityRecord): number {
+  const byTime = b.createdAt.getTime() - a.createdAt.getTime();
+  return byTime !== 0 ? byTime : b.id.localeCompare(a.id);
 }

@@ -131,11 +131,14 @@ afterEach(async () => {
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
-const saveProfile = (token: string) =>
+const saveProfile = (token: string, ip?: string) =>
   app.inject({
     method: 'PUT',
     url: ME_PROFILE_PATH,
-    headers: auth(token),
+    headers: {
+      ...auth(token),
+      ...(ip === undefined ? {} : { [CLIENT_IP_HEADER]: ip }),
+    },
     payload: PROFILE as never,
   });
 
@@ -545,7 +548,9 @@ describe('GET /admin/users/:userId/activity', () => {
 
   it('shows the subject who looked at their account, and why', async () => {
     // Most of the point of recording a reason: the person it happened to can
-    // read it on their own activity page.
+    // read it on their own activity page. The entry is stored against the
+    // *administrator* as actor, so reaching Bob depends entirely on the trail
+    // being read from the target side too — which is what this asserts.
     const bobId = await idOf('bob-token');
     await promote('admin-token');
     await asAdmin('admin-token', bobId);
@@ -556,11 +561,66 @@ describe('GET /admin/users/:userId/activity', () => {
       headers: auth('bob-token'),
     });
 
-    // The admin's read targets Bob but is recorded against the admin as actor,
-    // so it is not in Bob's own trail — his trail is what *he* did. This
-    // asserts the shape a support enquiry would actually follow.
     const { entries } = activityResponseSchema.parse(response.json());
-    expect(entries.every((e) => e.action !== 'admin.activity_viewed')).toBe(true);
+    const disclosure = entries.find((e) => e.action === 'admin.activity_viewed');
+
+    expect(disclosure).toMatchObject({ by: 'administrator', reason: REASON });
+  });
+
+  it('does not give the subject the administrator’s address', async () => {
+    // The address on that entry belongs to the administrator, not to Bob.
+    // Handing a support worker's address to the account they were asked to
+    // investigate is the kind of leak only noticed after it matters.
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    await app.inject({
+      method: 'GET',
+      url: adminActivityPath(bobId, REASON),
+      headers: { ...auth('admin-token'), [CLIENT_IP_HEADER]: '198.51.100.9' },
+    });
+
+    const { entries } = activityResponseSchema.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: ME_ACTIVITY_PATH,
+          headers: auth('bob-token'),
+        })
+      ).json(),
+    );
+
+    const disclosure = entries.find((e) => e.action === 'admin.activity_viewed');
+    expect(disclosure?.ipAddress).toBeNull();
+
+    // And the address really was recorded — this is withholding, not an empty
+    // column. Asserting only the null above would pass just as well if the
+    // header had never been read.
+    expect(
+      audit.log.entries().find((e) => e.action === 'admin.activity_viewed'),
+    ).toMatchObject({ ipAddress: '198.51.100.9' });
+  });
+
+  it('keeps the subject’s own address on their own actions', async () => {
+    // The counterpart to the test above: withholding applies to somebody
+    // else's entries, not to a person's own, where the address is the whole
+    // value of the record.
+    await saveProfile('bob-token', '203.0.113.20');
+
+    const { entries } = activityResponseSchema.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: ME_ACTIVITY_PATH,
+          headers: auth('bob-token'),
+        })
+      ).json(),
+    );
+
+    expect(entries.find((e) => e.action === 'profile.created')).toMatchObject({
+      by: 'subject',
+      ipAddress: '203.0.113.20',
+    });
   });
 
   it('returns the target’s entries, not the administrator’s own', async () => {
@@ -574,5 +634,49 @@ describe('GET /admin/users/:userId/activity', () => {
 
     // Bob provisioned and created a profile; the admin did neither.
     expect(entries.map((e) => e.action)).toContain('profile.created');
+  });
+
+  it('shows support the same history the account holder sees', async () => {
+    // A support view that showed less than the person can see themselves makes
+    // every enquiry start with the two sides describing different histories.
+    const bobId = await idOf('bob-token');
+    await saveProfile('bob-token');
+    await promote('admin-token');
+    await asAdmin('admin-token', bobId);
+
+    const adminView = activityResponseSchema.parse(
+      (await asAdmin('admin-token', bobId)).json(),
+    );
+    const ownView = activityResponseSchema.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: ME_ACTIVITY_PATH,
+          headers: auth('bob-token'),
+        })
+      ).json(),
+    );
+
+    // The admin's second read is recorded before it returns, so their view
+    // carries one entry the earlier own-view fetch cannot. Compare the actions
+    // present rather than the counts.
+    expect(new Set(adminView.entries.map((e) => e.action))).toEqual(
+      new Set(ownView.entries.map((e) => e.action)),
+    );
+  });
+
+  it('answers 404 for a malformed account id, and records nothing', async () => {
+    // `audit_logs.targetId` is a uuid column and the disclosure is recorded
+    // before the read, so an unvalidated path parameter would throw on the
+    // insert — and a fail-closed audit write turns that into a 500 on the
+    // action it was meant to record.
+    await promote('admin-token');
+
+    const response = await asAdmin('admin-token', 'banana');
+
+    expect(response.statusCode).toBe(404);
+    expect(
+      audit.log.entries().filter((e) => e.action === 'admin.activity_viewed'),
+    ).toHaveLength(0);
   });
 });

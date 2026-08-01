@@ -28,7 +28,13 @@ export default function AdminActivityPage() {
 
       <p>
         Read another account&rsquo;s activity for support. This is recorded against that
-        account with the reason you give, and <strong>they can read it</strong>.
+        account with the reason you give, and <strong>they can read it</strong> on their
+        own activity page — including your reason, but not your name or your address.
+      </p>
+
+      <p>
+        You will see the same history the account holder sees, so a colleague&rsquo;s
+        earlier access to this account appears here too.
       </p>
 
       <AdminActivityLookup />
