@@ -90,6 +90,28 @@ export const activityEntrySchema = z.object({
    * "not recorded" rather than inventing a distinction.
    */
   ipAddress: z.string().nullable(),
+  /**
+   * Which of the reader's own sign-ins this happened in — **and null whenever
+   * `by` is not `subject`**, for the same reason `ipAddress` is.
+   *
+   * The join key to `signInEntrySchema.sessionId`, which the sign-in history
+   * already serves. Nothing resolves it on the API side and nothing should: the
+   * activity trail belongs to Audit and the sign-ins to Identity & Access, and
+   * having Audit read back from Identity would close a cycle between two modules
+   * (ADR 0025). The page holds both lists and matches them there.
+   *
+   * **Defaulted rather than required**, the same skew argument as `by`: the
+   * services deploy independently, so the web app briefly talks to the previous
+   * API. A required field would turn that window into a parse failure on the
+   * activity page, and null is exactly what an API that could not record a
+   * session means.
+   *
+   * Null is also the ordinary answer for an action with no session behind it, an
+   * entry older than the column, and a sign-in whose webhook never arrived. The
+   * page must not distinguish them — to a reader they all mean "we cannot say
+   * which sign-in".
+   */
+  sessionId: z.string().nullable().default(null),
   createdAt: z.iso.datetime(),
 });
 export type ActivityEntry = z.infer<typeof activityEntrySchema>;

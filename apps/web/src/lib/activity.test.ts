@@ -12,6 +12,7 @@ const ENTRY = {
   by: 'subject',
   reason: null,
   ipAddress: '203.0.113.7',
+  sessionId: 'sess_alice',
   createdAt: '2026-07-31T09:00:00.000Z',
 };
 
@@ -27,6 +28,26 @@ describe('fetchActivity', () => {
       responds(200, JSON.stringify({ entries: [ENTRY] })),
     );
     expect(outcome).toEqual({ kind: 'loaded', entries: [ENTRY] });
+  });
+
+  it('reads an entry from an API that predates the session field', async () => {
+    // The services deploy independently, so the web app briefly talks to the
+    // previous API. A required field would turn that window into a parse
+    // failure on the activity page; null is the honest reading of a response
+    // from a version that could not record a session.
+    const older: Record<string, unknown> = { ...ENTRY };
+    delete older['sessionId'];
+
+    const outcome = await fetchActivity(
+      API,
+      TOKEN,
+      responds(200, JSON.stringify({ entries: [older] })),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'loaded',
+      entries: [{ ...older, sessionId: null }],
+    });
   });
 
   it('returns an empty list as loaded, not as an error', async () => {

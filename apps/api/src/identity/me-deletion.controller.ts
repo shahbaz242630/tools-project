@@ -38,6 +38,7 @@ export class MeDeletionController {
     await this.identity.requestDeletion({
       userId: user.id,
       ipAddress: request.clientIp ?? null,
+      sessionId: request.sessionId ?? null,
     });
 
     return { outcome: 'deleted' };

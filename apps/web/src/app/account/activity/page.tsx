@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import Link from 'next/link';
 import { ActivityList } from '../../../components/activity-list';
 import { SignInList } from '../../../components/sign-in-list';
+import { devicesBySession } from '../../../lib/activity-display';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchActivity } from '../../../lib/activity';
 import { fetchSignIns } from '../../../lib/sign-ins';
@@ -43,7 +44,21 @@ export default async function ActivityPage() {
         cannot edit or remove an entry, and neither can anyone else.
       </p>
 
-      <ActivityList outcome={outcome} />
+      {/* The join between the two tables, made here because this is the only
+          place that holds both. Identity serves the sign-ins and Audit the
+          trail; resolving a device inside Audit would mean it reading back from
+          Identity and closing a cycle (ADR 0025).
+
+          An empty map when the sign-in history failed to load, which is the
+          right degradation: the activity table loses the device column's extra
+          detail and keeps every row, rather than one failed fetch blanking a
+          table that loaded perfectly well. */}
+      <ActivityList
+        outcome={outcome}
+        devices={
+          signIns.kind === 'loaded' ? devicesBySession(signIns.entries) : new Map()
+        }
+      />
 
       <SignInList outcome={signIns} />
 

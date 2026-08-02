@@ -432,6 +432,13 @@ describe('audit_logs', () => {
       'actorId',
       'afterHash',
       'beforeHash',
+      // Which sign-in the action happened in — an identifier for the *sitting*,
+      // not for anything that changed. It joins to `authentication_events`,
+      // which is where the device and the address live; on its own it says
+      // nothing about a person and cannot be turned back into the state this
+      // table refuses to store. Same category as `actorId` and `ipAddress`
+      // beside it, and the same six-year retention argument covers it.
+      'clerkSessionId',
       'createdAt',
       'id',
       'ipAddress',

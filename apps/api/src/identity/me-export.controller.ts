@@ -40,6 +40,7 @@ export class MeExportController {
     const document = await this.identity.exportFor({
       userId: user.id,
       ipAddress: request.clientIp ?? null,
+      sessionId: request.sessionId ?? null,
     });
 
     // Unreachable in practice — the guard resolved this account a moment ago —

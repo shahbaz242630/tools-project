@@ -472,7 +472,11 @@ describe('the audit trail', () => {
 });
 
 describe('requestDeletion', () => {
-  const ACTOR = (id: string) => ({ userId: id, ipAddress: '203.0.113.7' });
+  const ACTOR = (id: string) => ({
+    userId: id,
+    ipAddress: '203.0.113.7',
+    sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
+  });
 
   async function provision() {
     const audit = createAuditFakes();
@@ -614,7 +618,11 @@ describe('requestDeletion', () => {
 });
 
 describe('exportFor', () => {
-  const ACTOR = (id: string) => ({ userId: id, ipAddress: '203.0.113.7' });
+  const ACTOR = (id: string) => ({
+    userId: id,
+    ipAddress: '203.0.113.7',
+    sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
+  });
 
   async function provision() {
     const audit = createAuditFakes();
@@ -951,7 +959,11 @@ describe('correcting the email', () => {
     const { id, identity } = await provision();
     await identity.resolveSession(SESSION('new@example.com'));
 
-    const document = await identity.exportFor({ userId: id, ipAddress: null });
+    const document = await identity.exportFor({
+      userId: id,
+      ipAddress: null,
+      sessionId: null,
+    });
     expect(document?.activity.map((entry) => entry.action)).toContain(
       'account.email_changed',
     );
@@ -961,7 +973,7 @@ describe('correcting the email', () => {
     // A tombstoned address must not be overwritten by a provider event; that
     // would undo the erasure.
     const { id, directory, identity } = await provision();
-    await identity.requestDeletion({ userId: id, ipAddress: null });
+    await identity.requestDeletion({ userId: id, ipAddress: null, sessionId: null });
 
     await identity.applyEvent('msg_1', {
       type: 'user.upserted',
@@ -1090,7 +1102,7 @@ describe('authentication events', () => {
     // security enquiry wants to see, and the row holds no personal data once
     // erasure has nulled the activity columns.
     const { id, identity, events } = await withAccount();
-    await identity.requestDeletion({ userId: id, ipAddress: null });
+    await identity.requestDeletion({ userId: id, ipAddress: null, sessionId: null });
 
     await identity.applyEvent('msg_1', delivery('session.created', SESSION));
 
@@ -1117,7 +1129,7 @@ describe('authentication events', () => {
       const { id, identity, events } = await withAccount();
       await identity.applyEvent('msg_1', delivery('session.created', SESSION));
 
-      await identity.requestDeletion({ userId: id, ipAddress: null });
+      await identity.requestDeletion({ userId: id, ipAddress: null, sessionId: null });
 
       expect(events.all()).toEqual([
         expect.objectContaining({
@@ -1144,7 +1156,7 @@ describe('authentication events', () => {
 
       expect(events.all()[0]?.activity.deviceType).toBe('Windows');
 
-      await identity.requestDeletion({ userId: id, ipAddress: null });
+      await identity.requestDeletion({ userId: id, ipAddress: null, sessionId: null });
       expect(events.all()[0]?.activity.deviceType).toBeNull();
     });
   });
@@ -1250,6 +1262,7 @@ describe('deletion erases whichever path starts it', () => {
     await context.identity.requestDeletion({
       userId: context.id,
       ipAddress: '203.0.113.7',
+      sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
     });
 
     await assertFullyDeleted(context);
@@ -1292,7 +1305,11 @@ describe('deletion erases whichever path starts it', () => {
     // Clerk's webhook arrives afterwards. The second pass must be a no-op, or
     // the trail gains a second deletion nobody performed.
     const context = await populated();
-    await context.identity.requestDeletion({ userId: context.id, ipAddress: null });
+    await context.identity.requestDeletion({
+      userId: context.id,
+      ipAddress: null,
+      sessionId: null,
+    });
     await context.identity.applyEvent('msg_deleted', {
       type: 'user.deleted',
       clerkUserId: 'user_a',
