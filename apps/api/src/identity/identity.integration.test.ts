@@ -213,10 +213,15 @@ describe('POST the internal clerk events route', () => {
   });
 
   it('ignores an event type we do not act on', async () => {
+    // Was `session.created` until slice 1.11a, which made that one meaningful.
+    // The rule under test is unchanged — a subscription widened from Clerk's
+    // dashboard must not become a stream of failed deliveries — so the claim
+    // moved to an event we genuinely do not act on rather than the assertion
+    // being loosened.
     const response = await post({
       deliveryId: 'msg_2',
-      type: 'session.created',
-      data: { id: 'sess_x' },
+      type: 'organization.created',
+      data: { id: 'org_x' },
     });
 
     expect(response.json()).toEqual({ outcome: 'ignored' });

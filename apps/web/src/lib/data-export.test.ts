@@ -6,7 +6,7 @@ const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
 
 const DOCUMENT = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   exportedAt: '2026-07-31T09:00:00.000Z',
   account: {
     id: '11111111-1111-4111-8111-111111111111',
@@ -36,6 +36,21 @@ const DOCUMENT = {
       createdAt: '2026-07-15T09:00:00.000Z',
     },
   ],
+  signIns: [
+    {
+      event: 'started',
+      sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
+      occurredAt: '2026-07-30T10:53:19.422Z',
+      ipAddress: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
+      city: 'Dubai',
+      country: 'United Arab Emirates',
+      browserName: 'Edge',
+      browserVersion: '150.0.0.0',
+      deviceType: 'Windows',
+      isMobile: false,
+    },
+  ],
+  signInsTruncated: false,
 };
 
 function responds(status: number, body: string): FetchLike {

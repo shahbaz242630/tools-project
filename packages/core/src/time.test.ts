@@ -171,3 +171,37 @@ describe('fromIsoUtc', () => {
     },
   );
 });
+
+describe('fromEpochMs', () => {
+  it('parses Unix milliseconds as UTC', () => {
+    // Clerk's own `created_at` for the one real session on the dev instance.
+    expect(T.toIsoUtc(T.fromEpochMs(1785408799422))).toBe('2026-07-30T10:53:19.422Z');
+  });
+
+  it('round-trips with getTime', () => {
+    const ms = 1785408799422;
+    expect(T.fromEpochMs(ms).getTime()).toBe(ms);
+  });
+
+  it('accepts the epoch itself rather than treating 0 as absent', () => {
+    // `if (!ms)` would reject this, and a falsy check on a numeric timestamp is
+    // a bug waiting for the one value that is legitimately zero.
+    expect(T.toIsoUtc(T.fromEpochMs(0))).toBe('1970-01-01T00:00:00.000Z');
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 1.5, -Number.MAX_VALUE])(
+    'throws on %s rather than yielding an Invalid Date',
+    (value) => {
+      // NaN is what `Number(undefined)` gives when a provider omits a field it
+      // promised, and an Invalid Date surfaces as NaN somewhere unrelated.
+      expect(() => T.fromEpochMs(value)).toThrow(T.TimeError);
+    },
+  );
+
+  it('does not silently accept seconds', () => {
+    // 1_785_408_799 seconds and milliseconds are both plausible epochs, 24,000
+    // years apart, so this cannot be detected — it is pinned here so that the
+    // day somebody passes seconds, the wrong answer is a documented one.
+    expect(T.toIsoUtc(T.fromEpochMs(1785408799))).toBe('1970-01-21T15:56:48.799Z');
+  });
+});

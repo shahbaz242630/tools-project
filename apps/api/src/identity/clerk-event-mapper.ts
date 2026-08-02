@@ -1,4 +1,6 @@
+import { Time } from '@platform/core';
 import { z } from 'zod';
+import type { AuthenticationEventType } from './authentication-events.js';
 import type { IdentityEvent } from './identity.service.js';
 
 /**
@@ -23,6 +25,54 @@ const userPayloadSchema = z.object({
 });
 
 const deletedPayloadSchema = z.object({ id: z.string().min(1) });
+
+/**
+ * Clerk's four `session.*` events, in our vocabulary.
+ *
+ * `created` becomes `started` rather than being kept verbatim, because the
+ * provider's word for it is the provider's business — the same reason
+ * `user.created` and `user.updated` both become `user.upserted`.
+ */
+const SESSION_EVENTS: Readonly<Record<string, AuthenticationEventType>> = {
+  'session.created': 'started',
+  'session.ended': 'ended',
+  'session.removed': 'removed',
+  'session.revoked': 'revoked',
+};
+
+/**
+ * The session activity Clerk attaches, when it attaches any.
+ *
+ * **Every field is optional, and `latest_activity` itself is optional.** That
+ * is Clerk's own shape (`SessionActivityJSON` in `@clerk/backend`), not caution
+ * on our part: a correctly delivered event can carry none of it. `.nullish()`
+ * rather than `.optional()` because a provider that has no value for a field
+ * may send it as null rather than omit it, and both mean the same thing here.
+ */
+const sessionActivitySchema = z.object({
+  ip_address: z.string().nullish(),
+  city: z.string().nullish(),
+  country: z.string().nullish(),
+  browser_name: z.string().nullish(),
+  browser_version: z.string().nullish(),
+  device_type: z.string().nullish(),
+  is_mobile: z.boolean().nullish(),
+});
+
+/**
+ * Clerk's session payload.
+ *
+ * Timestamps are Unix **milliseconds**, which is why `Time.fromEpochMs` exists
+ * — the numbers are indistinguishable from seconds by inspection and getting it
+ * wrong lands the row in 1970 rather than failing.
+ */
+const sessionPayloadSchema = z.object({
+  id: z.string().min(1),
+  user_id: z.string().min(1),
+  created_at: z.number(),
+  updated_at: z.number(),
+  latest_activity: sessionActivitySchema.nullish(),
+});
 
 /** Raised when a payload we should understand does not parse. */
 export class ClerkEventMappingError extends Error {
@@ -89,6 +139,48 @@ export function mapClerkEvent(
     }
 
     return { type: 'user.deleted', clerkUserId: parsed.data.id };
+  }
+
+  const sessionEvent = SESSION_EVENTS[type];
+  if (sessionEvent !== undefined) {
+    const parsed = sessionPayloadSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new ClerkEventMappingError(
+        type,
+        parsed.error.issues.map((issue) => issue.message),
+      );
+    }
+
+    const activity = parsed.data.latest_activity;
+
+    return {
+      type: 'session.recorded',
+      clerkUserId: parsed.data.user_id,
+      clerkSessionId: parsed.data.id,
+      event: sessionEvent,
+
+      // `created_at` for a session that just started; `updated_at` for one that
+      // stopped, because Clerk carries no explicit ended-at and the update *is*
+      // the ending. Using `created_at` for all four would date every sign-out
+      // to the sign-in that preceded it, which reads as "you were never signed
+      // out" on a page whose whole job is showing that you were.
+      occurredAt: Time.fromEpochMs(
+        sessionEvent === 'started' ? parsed.data.created_at : parsed.data.updated_at,
+      ),
+
+      // Absent activity is normal and becomes nulls rather than an error. The
+      // event still matters — that a session started is worth recording even
+      // when we cannot say from where.
+      activity: {
+        ipAddress: activity?.ip_address ?? null,
+        city: activity?.city ?? null,
+        country: activity?.country ?? null,
+        browserName: activity?.browser_name ?? null,
+        browserVersion: activity?.browser_version ?? null,
+        deviceType: activity?.device_type ?? null,
+        isMobile: activity?.is_mobile ?? null,
+      },
+    };
   }
 
   return null;

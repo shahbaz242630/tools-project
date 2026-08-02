@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import type { Logger } from '@platform/observability';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import {
@@ -11,6 +12,12 @@ import type {
   AdminApprovalStore,
   ApprovableAction,
 } from './admin-approval.js';
+import type {
+  AuthenticationEventType,
+  AuthenticationEvents,
+  RecordedAuthenticationEvent,
+  SessionActivity,
+} from './authentication-events.js';
 import type { PersonalDataEraser } from './personal-data-eraser.js';
 import type { PersonalDataSource } from './personal-data-source.js';
 import type { ProfileSummarySource } from './profile-summary-source.js';
@@ -67,9 +74,58 @@ export type IdentityEvent =
       readonly clerkUserId: string;
       readonly email: string;
     }
-  | { readonly type: 'user.deleted'; readonly clerkUserId: string };
+  | { readonly type: 'user.deleted'; readonly clerkUserId: string }
+  | {
+      /**
+       * Something happened to a session — BRD §8.1's authentication events.
+       *
+       * One variant covering all four of Clerk's `session.*` events rather than
+       * four, because the mirror does exactly the same thing with each: resolve
+       * the account and append a row. What differs is the `event` field, which
+       * is data rather than control flow.
+       */
+      readonly type: 'session.recorded';
+      readonly clerkUserId: string;
+      readonly clerkSessionId: string;
+      readonly event: AuthenticationEventType;
+      readonly occurredAt: Date;
+      readonly activity: SessionActivity;
+    };
 
 export const CLERK_PROVIDER = 'clerk';
+
+/**
+ * How many sign-ins a data export carries.
+ *
+ * Higher than the activity page's fifty, because the two answer different
+ * questions: a page is something you scan, an export is the copy you keep and
+ * the one a subject-access request is answered with. Bounded all the same —
+ * nothing prunes `authentication_events`, so an account signing in daily for
+ * five years would otherwise assemble two thousand rows into a synchronous
+ * response, and the export is already the most expensive endpoint we serve.
+ *
+ * The cut is recorded in the document rather than left silent, so nobody reads
+ * a truncated file as a complete one.
+ */
+export const EXPORTED_SIGN_IN_LIMIT = 500;
+
+/** How many sign-ins the page shows. Matches the activity trail's fifty. */
+export const DEFAULT_SIGN_IN_LIMIT = 50;
+
+/**
+ * The largest page anyone may ask for.
+ *
+ * An engineering bound on one query's cost, mirroring `MAX_ACTIVITY_LIMIT`.
+ * There is no pagination yet and nothing prunes this table, so an unbounded
+ * caller would read a whole sign-in history into memory to render fifty rows.
+ */
+export const MAX_SIGN_IN_LIMIT = 200;
+
+/** Clamp a caller-supplied limit into range, rejecting nonsense quietly. */
+export function boundedSignInLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return DEFAULT_SIGN_IN_LIMIT;
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_SIGN_IN_LIMIT);
+}
 
 /**
  * The address a deleted account's row keeps.
@@ -121,6 +177,18 @@ export class IdentityService {
     private readonly profileSource: PersonalDataSource,
     private readonly profileSummaries: ProfileSummarySource,
     private readonly approvals: AdminApprovalStore,
+    private readonly authenticationEvents: AuthenticationEvents,
+
+    /**
+     * For the one thing this service does that has no other trace.
+     *
+     * A session event for an account we do not mirror is dropped, and a drop
+     * with no log is a silent failure. Deliberately not defaulted to a no-op:
+     * a default that quietly discards would make a test pass with the
+     * mechanism disconnected, which is the failure mode this codebase has
+     * hit often enough to write down.
+     */
+    private readonly logger: Logger,
   ) {}
 
   /**
@@ -248,10 +316,17 @@ export class IdentityService {
     const user = await this.users.findById(actor.userId);
     if (user === null) return null;
 
-    const [profile, activity] = await Promise.all([
+    const [profile, activity, signIns] = await Promise.all([
       this.profileSource.exportFor(user.id),
       this.audit.listForActor(user.id),
+      // One more than we will serve, so "there were more" is measured rather
+      // than inferred from the page being full — a count that equals the limit
+      // exactly is otherwise indistinguishable from a truncated one.
+      this.authenticationEvents.listFor(user.id, EXPORTED_SIGN_IN_LIMIT + 1),
     ]);
+
+    const signInsTruncated = signIns.length > EXPORTED_SIGN_IN_LIMIT;
+    const includedSignIns = signIns.slice(0, EXPORTED_SIGN_IN_LIMIT);
 
     const exportedAt = Time.toIsoUtc(Time.nowUtc());
 
@@ -290,7 +365,53 @@ export class IdentityService {
         ipAddress: entry.ipAddress,
         createdAt: Time.toIsoUtc(entry.createdAt),
       })),
+
+      // A separate section rather than folded into `activity`, because they are
+      // different kinds of record and flattening them would lose that. An
+      // activity entry is something somebody chose to do; a sign-in is
+      // something that happened to the account, and it carries a device and a
+      // place that no activity entry has.
+      //
+      // The Clerk session id is included on purpose: it is what lets somebody
+      // match a line here against a device in Clerk's own list, and Article 15
+      // is about the data we hold — which includes the reference we hold.
+      // Stated in the file, because a truncated export that does not say so is
+      // one somebody reads as the whole record. Only ever true for an account
+      // with more than five hundred sign-ins.
+      signInsTruncated,
+      signIns: includedSignIns.map((entry) => ({
+        event: entry.event,
+        sessionId: entry.clerkSessionId,
+        occurredAt: Time.toIsoUtc(entry.occurredAt),
+        ipAddress: entry.activity.ipAddress,
+        city: entry.activity.city,
+        country: entry.activity.country,
+        browserName: entry.activity.browserName,
+        browserVersion: entry.activity.browserVersion,
+        deviceType: entry.activity.deviceType,
+        isMobile: entry.activity.isMobile,
+      })),
     };
+  }
+
+  /**
+   * The caller's own sign-in history.
+   *
+   * **Not audited, and that is the deliberate difference from `exportFor`.**
+   * Reading your own security history is not a disclosure — nothing leaves the
+   * platform, and the reader is the subject. Recording it would put a row in
+   * the trail every time somebody checked the trail, which grows without bound
+   * and buries the entries that matter. The export is audited because it hands
+   * over a file; this renders a page.
+   *
+   * No id parameter, the same reasoning as `/me/profile`: the actor comes from
+   * the verified session, so there is no way to address anybody else's.
+   */
+  async signInsFor(
+    userId: string,
+    limit: number = DEFAULT_SIGN_IN_LIMIT,
+  ): Promise<readonly RecordedAuthenticationEvent[]> {
+    return this.authenticationEvents.listFor(userId, boundedSignInLimit(limit));
   }
 
   /**
@@ -696,6 +817,16 @@ export class IdentityService {
     // removed, so this produces the `profile.erased` line in the trail.
     await this.eraser.erase(actor);
 
+    // Identity's own personal data, erased directly rather than through the
+    // eraser port — that port is how *other* modules contribute, and this
+    // module reaching for it to erase its own table would be indirection with
+    // no boundary behind it.
+    //
+    // Redaction, not deletion: the rows stay and lose their activity columns.
+    // §10.1 retains security logs six years, and "a session started at 14:02"
+    // is what can honestly be retained once "from Edge in Dubai" is gone.
+    await this.authenticationEvents.eraseActivity(user.id);
+
     const at = Time.nowUtc();
     const deleted = await this.users.update(user.id, {
       deletedAt: at,
@@ -748,6 +879,11 @@ export class IdentityService {
   }
 
   private async apply(event: IdentityEvent): Promise<void> {
+    if (event.type === 'session.recorded') {
+      await this.recordAuthenticationEvent(event);
+      return;
+    }
+
     if (event.type === 'user.upserted') {
       const { user, created } = await this.users.upsert({
         clerkUserId: event.clerkUserId,
@@ -788,6 +924,63 @@ export class IdentityService {
     await this.users.update(user.id, {
       deletedAt: Time.nowUtc(),
       email: tombstoneEmail(user.id),
+    });
+  }
+
+  /**
+   * Store one authentication event against the account it belongs to.
+   *
+   * **A session event can arrive before the mirror row exists**, because Clerk
+   * delivers `user.created` and `session.created` independently and neither is
+   * ordered against the other. That is the whole reason just-in-time
+   * provisioning exists (ADR 0015).
+   *
+   * When it happens the event is **dropped, with a warning**, and the three
+   * alternatives are all worse:
+   *
+   * - *Throwing* looks right and is the worst of them. The delivery has already
+   *   been claimed in the ledger by this point, so the retry is refused as a
+   *   duplicate and the event is lost anyway — while leaving an unprocessed
+   *   ledger row that nothing is watching (the stuck-webhook gap).
+   * - *Provisioning from the session payload* would work — it carries the user
+   *   object — but the field is nullable, so it fixes only some cases, and it
+   *   adds a third path that can create an account. Two is already the number
+   *   ADR 0015 had to justify.
+   * - *Queueing it* needs a scheduler we do not have.
+   *
+   * The loss is bounded and small: it can only affect the very first session of
+   * a brand-new account, in the milliseconds before that account's first
+   * authenticated request provisions it — and that account's creation is
+   * recorded as `account.provisioned` in the audit trail regardless, so the
+   * activity page is not silent about the period.
+   */
+  private async recordAuthenticationEvent(event: {
+    readonly clerkUserId: string;
+    readonly clerkSessionId: string;
+    readonly event: AuthenticationEventType;
+    readonly occurredAt: Date;
+    readonly activity: SessionActivity;
+  }): Promise<void> {
+    const user = await this.users.findByClerkUserId(event.clerkUserId);
+
+    if (user === null) {
+      this.logger.warn('dropped a session event for an unmirrored account', {
+        clerkUserId: event.clerkUserId,
+        event: event.event,
+      });
+      return;
+    }
+
+    // Recorded for a deleted account too, deliberately. A sign-in to an account
+    // somebody asked us to delete is exactly the event a security enquiry wants
+    // to see, and the row holds no personal data once erasure has nulled the
+    // activity columns.
+    await this.authenticationEvents.record({
+      userId: user.id,
+      clerkSessionId: event.clerkSessionId,
+      event: event.event,
+      occurredAt: event.occurredAt,
+      activity: event.activity,
     });
   }
 }

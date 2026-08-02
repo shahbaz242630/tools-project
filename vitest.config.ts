@@ -195,6 +195,14 @@ export default defineConfig({
         // foreign key, the `inet` column rejecting a malformed address, and the
         // ordering — none of which a double can. Keep this exclusion narrow.
         '**/api/src/audit/prisma-audit-log.ts',
+        // And for authentication events:
+        // prisma-authentication-events.db.test.ts proves the `event_is_known`
+        // CHECK, the unique index that makes a redelivery a no-op, the RESTRICT
+        // foreign key and an IPv6 round trip through `inet`. None of those
+        // exist in a double. The one piece of pure logic that *was* in this
+        // file — the IP validation — was moved to `identity/ip-address.ts`
+        // precisely so it stays counted. Keep this exclusion narrow.
+        '**/api/src/identity/prisma-authentication-events.ts',
         // Declaration-only: a type union and three interfaces, so it emits no
         // executable JavaScript and v8 reports its source lines as uncovered
         // because there is nothing to run. The same case as webhook-ledger.ts.

@@ -72,6 +72,9 @@ async function pendingProposal(
 beforeEach(async () => {
   await client.adminApproval.deleteMany();
   await client.auditLog.deleteMany();
+  // authentication_events is ON DELETE RESTRICT, added in slice 1.11a.
+  // Children before parents, in every file — not only the new one.
+  await client.authenticationEvent.deleteMany();
   await client.user.deleteMany();
 });
 
