@@ -9,11 +9,11 @@
  * where somebody will find it. The audit trail stores keyed digests rather than
  * values so it can be retained for six years without holding personal data
  * (ADR 0017). A sign-in record is the exact opposite trade: it is useless
- * unless it holds the city, the browser and the address in plain form, because
- * nobody recognises an intruder from an HMAC. Two different retention and
- * disclosure positions want two tables, not one table with seven columns that
- * every other audited action leaves null — the optional-field trap ADR 0016
- * rejected for profiles. ADR 0025.
+ * unless it holds the browser and the address in plain form, because nobody
+ * recognises an intruder from an HMAC. Two different retention and disclosure
+ * positions want two tables, not one table with five columns that every other
+ * audited action leaves null — the optional-field trap ADR 0016 rejected for
+ * profiles. ADR 0025.
  *
  * There is no update and no delete, for the reason `AuditLog` has neither.
  * `eraseActivity` is not an exception to that: it nulls the personal columns of
@@ -46,34 +46,44 @@ export const AUTHENTICATION_EVENT_TYPES: readonly AuthenticationEventType[] = [
 ];
 
 /**
- * Where a session was used from, as Clerk's geo-location resolved it.
+ * Where a session was used from, as far as a webhook can tell us.
  *
- * **Every field is nullable, and that is the provider's shape rather than
- * defensiveness.** `latest_activity` is optional on Clerk's session payload and
- * each field inside it is optional again. A correctly delivered event can carry
- * none of this, and the honest record of that is null — inventing a value to
- * fill a column would put a guess into a security record somebody may rely on.
+ * **The address comes from Clerk; the browser and device are derived from a
+ * user agent by us.** A session webhook carries `event_attributes.http_request`
+ * — a client IP and a raw user-agent string — and nothing more. It does *not*
+ * carry the parsed browser, device, city and country that the same session
+ * shows on Clerk's Backend API, and slice 1.11a shipped believing it did
+ * (ADR 0025's correction).
  *
- * A single object rather than seven loose parameters so that "we know nothing
+ * **There is no city or country, and there cannot be.** Clerk resolves them,
+ * but only on the Backend API, which needs `CLERK_SECRET_KEY` — the key
+ * ADR 0015 deliberately withholds from this service. Adding them would mean
+ * either giving the API that key or buying an IP-geolocation provider, and
+ * neither is worth a line of text on a page that already shows the address.
+ *
+ * **Every field is nullable**, because a delivery can carry no attributes at
+ * all and a user agent can fail to parse. Null is the honest record of that;
+ * inventing a value would put a guess into a security record.
+ *
+ * A single object rather than five loose parameters so that "we know nothing
  * about this session" has one obvious representation, and so adding a field
  * later does not change every call site.
  */
 export interface SessionActivity {
   /**
-   * The address Clerk saw, which is **not** the address our own audit log
+   * The address Clerk observed, which is **not** the address our own audit log
    * records for a request.
    *
    * `audit_logs.ipAddress` is what the web app forwarded to us on `x-client-ip`
    * (ADR 0017); this is what the client presented to Clerk. They usually agree
    * and are allowed to differ — a person signing in through a VPN that they
-   * then turn off produces two truthful and different answers.
+   * then turn off produces two truthful and different answers — and a real
+   * capture on 2 August showed IPv4 here against IPv6 on the Backend API.
    *
-   * Frequently IPv6 in practice. It lands in an `inet` column, so a malformed
-   * value throws on insert; it is validated before it gets there.
+   * Either family in practice. It lands in an `inet` column, which holds both,
+   * so a malformed value throws on insert; it is validated before it gets there.
    */
   readonly ipAddress: string | null;
-  readonly city: string | null;
-  readonly country: string | null;
   readonly browserName: string | null;
   readonly browserVersion: string | null;
   readonly deviceType: string | null;
@@ -83,8 +93,6 @@ export interface SessionActivity {
 /** Nothing known about the session beyond that it existed. */
 export const NO_SESSION_ACTIVITY: SessionActivity = {
   ipAddress: null,
-  city: null,
-  country: null,
   browserName: null,
   browserVersion: null,
   deviceType: null,
@@ -149,8 +157,8 @@ export interface AuthenticationEvents {
    *
    * Called when an account is erased. §10.1 retains security logs for six
    * years, and "a session started at 14:02" is the part that can honestly be
-   * retained; "from Edge on Windows in Dubai" is the personal data that must
-   * go. Deleting the rows outright would also fight the `ON DELETE RESTRICT`
+   * retained; "from Edge on Windows at 2.49.99.113" is the personal data that
+   * must go. Deleting the rows outright would also fight the `ON DELETE RESTRICT`
    * foreign key for no gain.
    *
    * **Must be idempotent** — a retry after a partial failure has to be able to

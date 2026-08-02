@@ -13,8 +13,6 @@ const ENTRY: SignInEntry = {
   sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
   occurredAt: '2026-07-30T10:53:19.422Z',
   ipAddress: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
-  city: 'Dubai',
-  country: 'United Arab Emirates',
   browserName: 'Edge',
   browserVersion: '150.0.0.0',
   deviceType: 'Windows',
@@ -27,20 +25,18 @@ const loaded = (...entries: SignInEntry[]): SignInsOutcome => ({
 });
 
 describe('SignInList', () => {
-  it('shows the device, the place and the address', () => {
+  it('shows the device and the address', () => {
     render(<SignInList outcome={loaded(ENTRY)} />);
 
     expect(screen.getByText('Signed in')).toBeInTheDocument();
-    expect(
-      screen.getByText('Edge on Windows — Dubai, United Arab Emirates'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Edge on Windows')).toBeInTheDocument();
     expect(
       screen.getByText('2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e'),
     ).toBeInTheDocument();
   });
 
   it('renders an IPv6 address in full', () => {
-    // Real values from Clerk are frequently IPv6. Nothing truncates, and a
+    // Clerk sends either IP family. Nothing truncates, and a
     // table that quietly cut one would make two different addresses look alike.
     render(<SignInList outcome={loaded(ENTRY)} />);
 
@@ -75,13 +71,11 @@ describe('SignInList', () => {
     expect(screen.getByText('Session revoked')).toBeInTheDocument();
   });
 
-  it('says a missing device and place are not recorded', () => {
+  it('says a missing device is not recorded', () => {
     render(
       <SignInList
         outcome={loaded({
           ...ENTRY,
-          city: null,
-          country: null,
           browserName: null,
           deviceType: null,
           ipAddress: null,
@@ -89,7 +83,7 @@ describe('SignInList', () => {
       />,
     );
 
-    expect(screen.getByText('Device and location not recorded')).toBeInTheDocument();
+    expect(screen.getByText('Device not recorded')).toBeInTheDocument();
     expect(screen.getByText('Not recorded')).toBeInTheDocument();
   });
 

@@ -57,8 +57,6 @@ export const signInEntrySchema = z.object({
 
   occurredAt: z.iso.datetime(),
   ipAddress: z.string().nullable(),
-  city: z.string().nullable(),
-  country: z.string().nullable(),
   browserName: z.string().nullable(),
   browserVersion: z.string().nullable(),
   deviceType: z.string().nullable(),
@@ -76,19 +74,23 @@ export function parseSignInsResponse(raw: unknown): SignInsResponse {
 }
 
 /**
- * A device and place, as one line of prose.
+ * The device, as one line of prose.
  *
  * Here rather than in the page because the rules are fiddly and worth testing
- * on their own: any part may be missing, and the honest answer when everything
- * is missing is to say so rather than render an empty string that reads like a
- * loading state.
+ * on their own: either part may be missing, and the honest answer when both are
+ * is to say so rather than render an empty string that reads like a loading
+ * state.
+ *
+ * **There is no place, and that is a provider limit rather than a choice.** A
+ * webhook carries `event_attributes.http_request` — an IP and a user agent —
+ * and nothing else. The city and country Clerk resolves live only on its
+ * Backend API, which needs `CLERK_SECRET_KEY`, and ADR 0015 keeps that key out
+ * of our API on purpose. The address is served instead, and it is the field
+ * that answers "was that me" anyway.
  */
 export function describeSignInOrigin(entry: SignInEntry): string {
-  const device = [entry.browserName, entry.deviceType].filter(Boolean).join(' on ');
-  const place = [entry.city, entry.country].filter(Boolean).join(', ');
+  const parts = [entry.browserName, entry.deviceType].filter(Boolean);
+  if (parts.length === 0) return 'Device not recorded';
 
-  const parts = [device, place].filter((part) => part !== '');
-  if (parts.length === 0) return 'Device and location not recorded';
-
-  return parts.join(' — ');
+  return parts.join(' on ');
 }

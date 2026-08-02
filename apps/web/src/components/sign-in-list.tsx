@@ -42,7 +42,7 @@ export function SignInList({ outcome }: { outcome: SignInsOutcome }) {
               <tr>
                 <th scope="col">What happened</th>
                 <th scope="col">When</th>
-                <th scope="col">Device and place</th>
+                <th scope="col">Device</th>
                 <th scope="col">IP address</th>
               </tr>
             </thead>
@@ -56,16 +56,23 @@ export function SignInList({ outcome }: { outcome: SignInsOutcome }) {
                     </time>
                   </td>
                   <td>
-                    {/* Any part of this may be absent — Clerk's activity object
-                        is optional and so is every field in it — so the helper
-                        says "not recorded" rather than rendering an empty cell
-                        that reads like a loading state. */}
+                    {/* Either part may be absent — a delivery can carry no
+                        request attributes and a user agent can fail to parse —
+                        so the helper says "not recorded" rather than rendering
+                        an empty cell that reads like a loading state.
+
+                        There is no city here and there cannot be: a webhook
+                        carries an IP and a user agent, and Clerk resolves a
+                        place only on its Backend API, behind the secret key
+                        ADR 0015 withholds from us (ADR 0025). */}
                     {describeSignInOrigin(entry)}
                   </td>
                   <td>
                     {/* The reader's own address, unlike the activity table
                         where it belongs to an administrator and is withheld.
-                        Frequently IPv6, which is why nothing here truncates. */}
+                        Either IP family, which is why nothing here truncates —
+                        and with no city to show, this is the field that answers
+                        "was that me". */}
                     {entry.ipAddress ?? 'Not recorded'}
                   </td>
                 </tr>

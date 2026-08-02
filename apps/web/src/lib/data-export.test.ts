@@ -42,8 +42,6 @@ const DOCUMENT = {
       sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
       occurredAt: '2026-07-30T10:53:19.422Z',
       ipAddress: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
-      city: 'Dubai',
-      country: 'United Arab Emirates',
       browserName: 'Edge',
       browserVersion: '150.0.0.0',
       deviceType: 'Windows',

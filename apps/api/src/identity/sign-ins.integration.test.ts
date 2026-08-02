@@ -35,8 +35,6 @@ let profiles: ProfileFakes;
 
 const ACTIVITY = {
   ipAddress: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
-  city: 'Dubai',
-  country: 'United Arab Emirates',
   browserName: 'Edge',
   browserVersion: '150.0.0.0',
   deviceType: 'Windows',
@@ -123,8 +121,6 @@ describe('GET /me/sign-ins', () => {
         event: 'started',
         sessionId: 'sess_alice_1',
         occurredAt: '2026-07-30T10:53:19.422Z',
-        city: 'Dubai',
-        country: 'United Arab Emirates',
         browserName: 'Edge',
         deviceType: 'Windows',
         isMobile: false,

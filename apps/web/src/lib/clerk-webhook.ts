@@ -56,6 +56,17 @@ export interface IdentityEventForward {
   readonly deliveryId: string;
   readonly type: string;
   readonly data: Record<string, unknown>;
+
+  /**
+   * Clerk's `event_attributes`, a **sibling of `data`** in the envelope.
+   *
+   * Forwarded unexamined, like `data`. It holds `http_request.client_ip` and
+   * `user_agent`, which for session events is the only place the request
+   * context appears — the session object in a webhook has no `latest_activity`,
+   * unlike the same object from the Backend API. Forwarding `data` alone
+   * dropped it, and the sign-in history recorded nothing but timestamps.
+   */
+  readonly eventAttributes?: Record<string, unknown>;
 }
 
 function describe(error: unknown): string {

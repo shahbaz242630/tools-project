@@ -35,11 +35,15 @@ export class ClerkEventsController {
       throw new BadRequestException('malformed identity event');
     }
 
-    const { deliveryId, type, data } = parsed.data;
+    const { deliveryId, type, data, eventAttributes } = parsed.data;
 
     let event;
     try {
-      event = mapClerkEvent(type, data);
+      // `eventAttributes` is passed as well as `data`. It is a sibling of it in
+      // Clerk's envelope and the only place a session delivery says where the
+      // request came from; forwarding `data` alone recorded sign-ins with
+      // nothing but a timestamp (ADR 0025).
+      event = mapClerkEvent(type, data, eventAttributes);
     } catch (error) {
       if (error instanceof ClerkEventMappingError) {
         // 400 rather than 500: the payload is the problem, and answering with a

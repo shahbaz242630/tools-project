@@ -9,8 +9,6 @@ const ENTRY: SignInEntry = {
   sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
   occurredAt: '2026-07-30T10:53:19.422Z',
   ipAddress: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
-  city: 'Dubai',
-  country: 'United Arab Emirates',
   browserName: 'Edge',
   browserVersion: '150.0.0.0',
   deviceType: 'Windows',
@@ -23,13 +21,11 @@ describe('parseSignInsResponse', () => {
   });
 
   it('accepts an entry with nothing but the event and its time', () => {
-    // Clerk's `latest_activity` is optional and so is every field within it, so
-    // this is a normal delivery rather than a degraded one.
+    // A delivery can arrive with no request attributes and a user agent can
+    // fail to parse, so this is a normal outcome rather than a degraded one.
     const bare: SignInEntry = {
       ...ENTRY,
       ipAddress: null,
-      city: null,
-      country: null,
       browserName: null,
       browserVersion: null,
       deviceType: null,
@@ -74,46 +70,30 @@ describe('parseSignInsResponse', () => {
 });
 
 describe('describeSignInOrigin', () => {
-  it('reads as prose when everything is present', () => {
-    expect(describeSignInOrigin(ENTRY)).toBe(
-      'Edge on Windows — Dubai, United Arab Emirates',
-    );
+  it('reads as prose when the browser and device are known', () => {
+    expect(describeSignInOrigin(ENTRY)).toBe('Edge on Windows');
   });
 
-  it('drops the place when it is unknown', () => {
-    expect(describeSignInOrigin({ ...ENTRY, city: null, country: null })).toBe(
-      'Edge on Windows',
-    );
+  it('gives the browser alone when the device is unknown', () => {
+    expect(describeSignInOrigin({ ...ENTRY, deviceType: null })).toBe('Edge');
   });
 
-  it('drops the device when it is unknown', () => {
-    expect(
-      describeSignInOrigin({ ...ENTRY, browserName: null, deviceType: null }),
-    ).toBe('Dubai, United Arab Emirates');
-  });
-
-  it('copes with a country but no city', () => {
-    expect(
-      describeSignInOrigin({
-        ...ENTRY,
-        city: null,
-        browserName: null,
-        deviceType: null,
-      }),
-    ).toBe('United Arab Emirates');
+  it('gives the device alone when the browser is unknown', () => {
+    expect(describeSignInOrigin({ ...ENTRY, browserName: null })).toBe('Windows');
   });
 
   it('says so rather than returning an empty string', () => {
     // An empty cell reads like a loading state, which is the one thing a
     // security page must not look like.
     expect(
-      describeSignInOrigin({
-        ...ENTRY,
-        city: null,
-        country: null,
-        browserName: null,
-        deviceType: null,
-      }),
-    ).toBe('Device and location not recorded');
+      describeSignInOrigin({ ...ENTRY, browserName: null, deviceType: null }),
+    ).toBe('Device not recorded');
+  });
+
+  it('says nothing about a city, because a webhook carries none', () => {
+    // Clerk resolves a city only on its Backend API, behind the secret key
+    // ADR 0015 withholds from us. Pinned so nobody reintroduces a field the
+    // data cannot fill (ADR 0025).
+    expect(describeSignInOrigin(ENTRY)).not.toMatch(/Dubai|United Arab Emirates/);
   });
 });

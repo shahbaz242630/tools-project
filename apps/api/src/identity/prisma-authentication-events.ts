@@ -54,8 +54,6 @@ export class PrismaAuthenticationEvents implements AuthenticationEvents {
         // string too. Recording null is the honest answer to "we cannot tell".
         ipAddress: validIpOrNull(activity.ipAddress),
 
-        city: activity.city,
-        country: activity.country,
         browserName: activity.browserName,
         browserVersion: activity.browserVersion,
         deviceType: activity.deviceType,
@@ -83,8 +81,6 @@ export class PrismaAuthenticationEvents implements AuthenticationEvents {
         event: true,
         occurredAt: true,
         ipAddress: true,
-        city: true,
-        country: true,
         browserName: true,
         browserVersion: true,
         deviceType: true,
@@ -102,8 +98,6 @@ export class PrismaAuthenticationEvents implements AuthenticationEvents {
       occurredAt: row.occurredAt,
       activity: {
         ipAddress: row.ipAddress,
-        city: row.city,
-        country: row.country,
         browserName: row.browserName,
         browserVersion: row.browserVersion,
         deviceType: row.deviceType,
@@ -121,8 +115,6 @@ export class PrismaAuthenticationEvents implements AuthenticationEvents {
       where: { userId },
       data: {
         ipAddress: null,
-        city: null,
-        country: null,
         browserName: null,
         browserVersion: null,
         deviceType: null,

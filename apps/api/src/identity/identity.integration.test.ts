@@ -175,6 +175,88 @@ describe('POST the internal clerk events route', () => {
   const post = (payload: Record<string, unknown>) =>
     app.inject({ method: 'POST', url: CLERK_EVENTS_PATH, payload });
 
+  it('carries event_attributes all the way to the stored sign-in', async () => {
+    // **The test that was missing.** The mapper reads the device from
+    // `event_attributes`, a sibling of `data` — but the controller destructured
+    // only `data`, and because the mapper's parameter was optional at the time,
+    // the whole thing typechecked, every unit test passed, and the sign-in
+    // history recorded nothing but timestamps.
+    //
+    // A unit test of the mapper cannot catch that: it passes the attributes in
+    // by hand. Only a test through the real route, asserting on what was
+    // actually stored, closes the gap.
+    await post({
+      deliveryId: 'msg_user',
+      type: 'user.created',
+      data: {
+        id: 'user_dave',
+        primary_email_address_id: 'idn_d',
+        email_addresses: [{ id: 'idn_d', email_address: 'dave@example.com' }],
+      },
+    });
+
+    const response = await post({
+      deliveryId: 'msg_session',
+      type: 'session.created',
+      data: {
+        id: 'sess_dave_1',
+        user_id: 'user_dave',
+        created_at: 1785661283293,
+        updated_at: 1785661283331,
+      },
+      eventAttributes: {
+        http_request: {
+          client_ip: '2.49.99.113',
+          user_agent:
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0',
+        },
+      },
+    });
+
+    expect(response.json()).toEqual({ outcome: 'applied' });
+    expect(fakes.authenticationEvents.all()).toEqual([
+      expect.objectContaining({
+        clerkSessionId: 'sess_dave_1',
+        event: 'started',
+        activity: {
+          ipAddress: '2.49.99.113',
+          browserName: 'Edge',
+          browserVersion: '150',
+          deviceType: 'Windows',
+          isMobile: false,
+        },
+      }),
+    ]);
+  });
+
+  it('records a session event that arrives with no attributes', async () => {
+    // Absent attributes are normal — every `user.*` delivery has none — and
+    // must not turn a storable sign-in into a rejected delivery.
+    await post({
+      deliveryId: 'msg_user_2',
+      type: 'user.created',
+      data: {
+        id: 'user_erin',
+        primary_email_address_id: 'idn_e',
+        email_addresses: [{ id: 'idn_e', email_address: 'erin@example.com' }],
+      },
+    });
+
+    const response = await post({
+      deliveryId: 'msg_session_2',
+      type: 'session.created',
+      data: {
+        id: 'sess_erin_1',
+        user_id: 'user_erin',
+        created_at: 1785661283293,
+        updated_at: 1785661283331,
+      },
+    });
+
+    expect(response.json()).toEqual({ outcome: 'applied' });
+    expect(fakes.authenticationEvents.all()).toHaveLength(1);
+  });
+
   it('applies a forwarded event', async () => {
     const response = await post({
       deliveryId: 'msg_1',

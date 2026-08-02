@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import { parseUserAgent } from './user-agent.js';
 import { z } from 'zod';
 import type { AuthenticationEventType } from './authentication-events.js';
 import type { IdentityEvent } from './identity.service.js';
@@ -41,22 +42,30 @@ const SESSION_EVENTS: Readonly<Record<string, AuthenticationEventType>> = {
 };
 
 /**
- * The session activity Clerk attaches, when it attaches any.
+ * Where a webhook says the request came from.
  *
- * **Every field is optional, and `latest_activity` itself is optional.** That
- * is Clerk's own shape (`SessionActivityJSON` in `@clerk/backend`), not caution
- * on our part: a correctly delivered event can carry none of it. `.nullish()`
- * rather than `.optional()` because a provider that has no value for a field
- * may send it as null rather than omit it, and both mean the same thing here.
+ * **`event_attributes` is a sibling of `data` in Clerk's envelope**, not a field
+ * inside it, and it is the only place a webhook carries the request context.
+ *
+ * This is where slice 1.11a was wrong. The Backend API's `Session` object has a
+ * `latest_activity` holding a parsed browser, device, city and country, and the
+ * mapper was written against that — verified with `clerk api /sessions`, which
+ * proved only what it exercised. A real delivery carries no `latest_activity`
+ * at all; it carries this, with a raw user agent and an IP. Confirmed against
+ * live `session.created` and `session.removed` deliveries on 2 August 2026.
+ *
+ * **City and country are simply not available to us.** They exist only on the
+ * Backend API's view, which needs `CLERK_SECRET_KEY` — the key ADR 0015 keeps
+ * out of the API on purpose. So the sign-in history says where from by address
+ * and device, not by city.
  */
-const sessionActivitySchema = z.object({
-  ip_address: z.string().nullish(),
-  city: z.string().nullish(),
-  country: z.string().nullish(),
-  browser_name: z.string().nullish(),
-  browser_version: z.string().nullish(),
-  device_type: z.string().nullish(),
-  is_mobile: z.boolean().nullish(),
+const eventAttributesSchema = z.object({
+  http_request: z
+    .object({
+      client_ip: z.string().nullish(),
+      user_agent: z.string().nullish(),
+    })
+    .nullish(),
 });
 
 /**
@@ -71,7 +80,6 @@ const sessionPayloadSchema = z.object({
   user_id: z.string().min(1),
   created_at: z.number(),
   updated_at: z.number(),
-  latest_activity: sessionActivitySchema.nullish(),
 });
 
 /** Raised when a payload we should understand does not parse. */
@@ -111,6 +119,22 @@ function primaryEmail(payload: z.infer<typeof userPayloadSchema>): string | null
 export function mapClerkEvent(
   type: string,
   data: Record<string, unknown>,
+  /**
+   * Clerk's `event_attributes`, from beside `data` rather than inside it.
+   *
+   * **Required in position, nullable in value, and that is deliberate.** It was
+   * optional for about ten minutes and the controller silently did not pass it
+   * — every test passed, the build was clean, and the sign-in history recorded
+   * nothing but timestamps. That is the exact failure this parameter exists to
+   * fix, reintroduced by the parameter itself. Required means forgetting is a
+   * compile error; `undefined` is still a legitimate value, because every
+   * `user.*` delivery genuinely has no attributes.
+   *
+   * A session event that arrives without it still maps — the sign-in is worth
+   * recording even when we cannot say where from — so this is never a reason to
+   * reject a delivery.
+   */
+  eventAttributes: Record<string, unknown> | undefined,
 ): IdentityEvent | null {
   if (type === 'user.created' || type === 'user.updated') {
     const parsed = userPayloadSchema.safeParse(data);
@@ -151,7 +175,13 @@ export function mapClerkEvent(
       );
     }
 
-    const activity = parsed.data.latest_activity;
+    // Parsed leniently and never fatally: a shape change here costs us the
+    // device, not the event. The sign-in itself is the part that must not be
+    // lost, because "somebody signed in and we cannot say from where" is still
+    // the answer to the question this record exists for.
+    const attributes = eventAttributesSchema.safeParse(eventAttributes ?? {});
+    const request = attributes.success ? attributes.data.http_request : null;
+    const agent = parseUserAgent(request?.user_agent);
 
     return {
       type: 'session.recorded',
@@ -168,17 +198,13 @@ export function mapClerkEvent(
         sessionEvent === 'started' ? parsed.data.created_at : parsed.data.updated_at,
       ),
 
-      // Absent activity is normal and becomes nulls rather than an error. The
-      // event still matters — that a session started is worth recording even
-      // when we cannot say from where.
+      // Absent attributes are normal and become nulls rather than an error.
       activity: {
-        ipAddress: activity?.ip_address ?? null,
-        city: activity?.city ?? null,
-        country: activity?.country ?? null,
-        browserName: activity?.browser_name ?? null,
-        browserVersion: activity?.browser_version ?? null,
-        deviceType: activity?.device_type ?? null,
-        isMobile: activity?.is_mobile ?? null,
+        ipAddress: request?.client_ip ?? null,
+        browserName: agent.browserName,
+        browserVersion: agent.browserVersion,
+        deviceType: agent.deviceType,
+        isMobile: agent.isMobile,
       },
     };
   }

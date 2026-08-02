@@ -46,8 +46,6 @@ export class MeSignInsController {
         // ISO on the wire; the page renders it in the reader's locale.
         occurredAt: entry.occurredAt.toISOString(),
         ipAddress: entry.activity.ipAddress,
-        city: entry.activity.city,
-        country: entry.activity.country,
         browserName: entry.activity.browserName,
         browserVersion: entry.activity.browserVersion,
         deviceType: entry.activity.deviceType,

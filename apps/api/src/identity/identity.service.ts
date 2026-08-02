@@ -384,8 +384,6 @@ export class IdentityService {
         sessionId: entry.clerkSessionId,
         occurredAt: Time.toIsoUtc(entry.occurredAt),
         ipAddress: entry.activity.ipAddress,
-        city: entry.activity.city,
-        country: entry.activity.country,
         browserName: entry.activity.browserName,
         browserVersion: entry.activity.browserVersion,
         deviceType: entry.activity.deviceType,

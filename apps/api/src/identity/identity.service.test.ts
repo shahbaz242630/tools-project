@@ -979,14 +979,14 @@ describe('authentication events', () => {
     user_id: 'user_a',
     created_at: 1785408799422,
     updated_at: 1785495199422,
-    latest_activity: {
-      device_type: 'Windows',
-      is_mobile: false,
-      browser_name: 'Edge',
-      browser_version: '150.0.0.0',
-      ip_address: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
-      city: 'Dubai',
-      country: 'United Arab Emirates',
+  };
+
+  /** Beside `data` in Clerk's envelope, not inside it — see ADR 0025. */
+  const ATTRIBUTES = {
+    http_request: {
+      client_ip: '2.49.99.113',
+      user_agent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0',
     },
   };
 
@@ -1018,7 +1018,7 @@ describe('authentication events', () => {
   }
 
   function delivery(type: string, data: Record<string, unknown>) {
-    const mapped = mapClerkEvent(type, data);
+    const mapped = mapClerkEvent(type, data, ATTRIBUTES);
     if (mapped === null) throw new Error(`expected ${type} to map`);
     return mapped;
   }
@@ -1033,7 +1033,7 @@ describe('authentication events', () => {
         userId: id,
         clerkSessionId: 'sess_1',
         event: 'started',
-        activity: expect.objectContaining({ city: 'Dubai', isMobile: false }),
+        activity: expect.objectContaining({ deviceType: 'Windows', isMobile: false }),
       }),
     ]);
   });
@@ -1111,7 +1111,7 @@ describe('authentication events', () => {
   describe('erasure', () => {
     it('redacts the device and place but keeps the row', async () => {
       // §10.1 retains security logs six years. "A session started at 14:02" is
-      // the part that can honestly be retained once "from Edge in Dubai" is
+      // the part that can honestly be retained once "from Edge on Windows" is
       // gone — and keeping the row is also what stops the ON DELETE RESTRICT
       // foreign key turning an erasure into a failure.
       const { id, identity, events } = await withAccount();
@@ -1125,8 +1125,6 @@ describe('authentication events', () => {
           event: 'started',
           activity: {
             ipAddress: null,
-            city: null,
-            country: null,
             browserName: null,
             browserVersion: null,
             deviceType: null,
@@ -1136,7 +1134,7 @@ describe('authentication events', () => {
       ]);
     });
 
-    it('can fail: without erasure the city would survive a deletion', async () => {
+    it('can fail: without erasure the device would survive a deletion', async () => {
       // The mirror of the test above. If `eraseActivity` were ever dropped from
       // requestDeletion, the assertion above is the only thing that notices —
       // so this pins that the data really was there to erase, rather than the
@@ -1144,10 +1142,10 @@ describe('authentication events', () => {
       const { id, identity, events } = await withAccount();
       await identity.applyEvent('msg_1', delivery('session.created', SESSION));
 
-      expect(events.all()[0]?.activity.city).toBe('Dubai');
+      expect(events.all()[0]?.activity.deviceType).toBe('Windows');
 
       await identity.requestDeletion({ userId: id, ipAddress: null });
-      expect(events.all()[0]?.activity.city).toBeNull();
+      expect(events.all()[0]?.activity.deviceType).toBeNull();
     });
   });
 });

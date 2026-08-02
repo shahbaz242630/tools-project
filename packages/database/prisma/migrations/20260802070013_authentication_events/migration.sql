@@ -9,10 +9,24 @@
 -- `audit_logs` deliberately stores keyed digests rather than values, which is
 -- what lets it be retained for six years without holding personal data
 -- (ADR 0017). An authentication event is worthless under that rule — nobody
--- recognises an intruder from an HMAC. It needs the city, the browser and the
--- address in plain form, which is a different retention and disclosure
--- position, so it gets a different table rather than seven columns that every
--- other audited action leaves null.
+-- recognises an intruder from an HMAC. It needs the browser and the address in
+-- plain form, which is a different retention and disclosure position, so it
+-- gets a different table rather than five columns that every other audited
+-- action leaves null.
+--
+-- What a webhook actually carries
+-- ------------------------------
+-- The address comes from `event_attributes.http_request.client_ip`, and the
+-- browser and device are parsed by us from the user agent beside it. There is
+-- **no city or country**, because a session webhook carries none: Clerk
+-- resolves those only on its Backend API, which needs `CLERK_SECRET_KEY` — the
+-- key ADR 0015 deliberately withholds from this service.
+--
+-- Columns for them existed in the first draft of this migration and were folded
+-- out before it was ever deployed, once real deliveries proved the shape. The
+-- Backend API's session object *does* carry a `latest_activity` with all of it,
+-- and building against that rather than against a real webhook is the mistake
+-- ADR 0025 records.
 --
 -- Data impact
 -- -----------
@@ -31,8 +45,8 @@
 --
 -- Erasure nulls the activity columns and keeps the row. §10.1 retains security
 -- logs six years, and "a sign-in happened at 14:02" is the retainable skeleton;
--- "from Edge on Windows in Dubai" is the personal data that goes. Keeping the
--- row is also what stops the RESTRICT key turning an erasure into a failure.
+-- "from Edge on Windows at 2.49.99.113" is the personal data that goes. Keeping
+-- the row is also what stops the RESTRICT key turning an erasure into a failure.
 --
 -- Rollback
 -- --------
@@ -74,8 +88,6 @@ CREATE TABLE "authentication_events" (
     "event" TEXT NOT NULL,
     "occurredAt" TIMESTAMPTZ(3) NOT NULL,
     "ipAddress" INET,
-    "city" TEXT,
-    "country" TEXT,
     "browserName" TEXT,
     "browserVersion" TEXT,
     "deviceType" TEXT,

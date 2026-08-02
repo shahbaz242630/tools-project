@@ -93,7 +93,7 @@ export const exportedActivitySchema = z.array(
  * A section of its own rather than more `activity` rows, because the two are
  * different kinds of record: an activity entry is something the person chose to
  * do, a sign-in is something that happened to their account, and only the
- * latter carries a device and a place. Flattening them would lose that
+ * latter carries a device and an address. Flattening them would lose that
  * distinction in the one document a person is most likely to read years later.
  *
  * Unlike the audit trail's digests, **these are real values and that is the
@@ -101,8 +101,10 @@ export const exportedActivitySchema = z.array(
  * second bulk disclosure the export performs, after the decrypted address, and
  * the reason the whole endpoint is audited (ADR 0019, ADR 0025).
  *
- * Every field but `event`, `sessionId` and `occurredAt` is nullable, because
- * Clerk's `latest_activity` is optional and so is each field within it.
+ * Every field but `event`, `sessionId` and `occurredAt` is nullable: a webhook
+ * can arrive with no request attributes, and a user agent can fail to parse.
+ * There is no city or country — Clerk resolves those only on its Backend API,
+ * behind the secret key ADR 0015 withholds from us (ADR 0025).
  */
 export const exportedSignInsSchema = z.array(
   z.object({
@@ -112,8 +114,6 @@ export const exportedSignInsSchema = z.array(
     sessionId: z.string(),
     occurredAt: z.iso.datetime(),
     ipAddress: z.string().nullable(),
-    city: z.string().nullable(),
-    country: z.string().nullable(),
     browserName: z.string().nullable(),
     browserVersion: z.string().nullable(),
     deviceType: z.string().nullable(),

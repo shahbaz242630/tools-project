@@ -558,8 +558,6 @@ model AuthenticationEvent {
   /// storing it — and note real values here are frequently IPv6, which `inet`
   /// holds and a `varchar(15)` would have silently truncated.
   ipAddress      String?  @db.Inet
-  city           String?  @db.Text
-  country        String?  @db.Text
   browserName    String?  @db.Text
   browserVersion String?  @db.Text
   deviceType     String?  @db.Text

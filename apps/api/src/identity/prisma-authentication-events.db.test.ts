@@ -38,8 +38,6 @@ const uniqueSessionId = () => `sess_${randomUUID()}`;
 /** The activity from a real Clerk delivery, IPv6 and all. */
 const ACTIVITY = {
   ipAddress: '2001:8f8:1761:2d72:c5e0:8d1a:4d4f:568e',
-  city: 'Dubai',
-  country: 'United Arab Emirates',
   browserName: 'Edge',
   browserVersion: '150.0.0.0',
   deviceType: 'Windows',
@@ -138,7 +136,7 @@ describe('PrismaAuthenticationEvents', () => {
     const [row] = await store.listFor(userId, 10);
     expect(row?.activity.ipAddress).toBeNull();
     // The rest of the row survived — a bad address must not lose the event.
-    expect(row?.activity.city).toBe('Dubai');
+    expect(row?.activity.deviceType).toBe('Windows');
   });
 
   it('is idempotent for the same session and event', async () => {
@@ -177,11 +175,11 @@ describe('PrismaAuthenticationEvents', () => {
       clerkSessionId,
       event: 'started',
       occurredAt: Time.nowUtc(),
-      activity: { ...ACTIVITY, city: 'Bristol' },
+      activity: { ...ACTIVITY, deviceType: 'Android' },
     });
 
     const [row] = await store.listFor(userId, 10);
-    expect(row?.activity.city).toBe('Dubai');
+    expect(row?.activity.deviceType).toBe('Windows');
   });
 
   it('keeps a sign-in and a sign-out for the same session', async () => {
@@ -301,7 +299,7 @@ describe('PrismaAuthenticationEvents', () => {
       const raw = await client.authenticationEvent.findFirst({ where: { userId } });
       expect(raw).not.toBeNull();
       expect(raw?.ipAddress).toBeNull();
-      expect(raw?.city).toBeNull();
+      expect(raw?.browserName).toBeNull();
       expect(raw?.deviceType).toBeNull();
     });
 
