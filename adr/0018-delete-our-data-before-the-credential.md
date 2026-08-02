@@ -1,6 +1,6 @@
 # 0018. Erase our data before deleting the credential, and say what survives
 
-- **Status:** Accepted
+- **Status:** Accepted, corrected 2026-08-02
 - **Date:** 2026-07-31
 - **Relates to:** BRD §8.1, §10.1, §14 Phase 1; ADR 0015, ADR 0016, ADR 0017
 
@@ -52,6 +52,46 @@ One of those is recoverable and one is not.
 **Erase the audit trail too.** Consistent-looking. Rejected: §10.1 retains security logs for six years, and "when did they ask, and did you act" is exactly what an enquiry asks. The entries survive because ADR 0017 made them hold keyed digests rather than values — the retention is of the _event_, not of the person's data.
 
 **Let the API delete the Clerk user.** Would put the whole operation in one service. Rejected because it requires giving the API `CLERK_SECRET_KEY`, undoing ADR 0015's central decision — a key that can mint sessions and read the entire directory, handed to a service to perform one call.
+
+## Correction, 2 August 2026 — the decision held, one path did not implement it
+
+**The ordering below was only ever applied to one of the two ways a deletion can
+start.** Our own `/account/delete` route erased, redacted and audited. The
+`user.deleted` webhook branch set `deletedAt` and tombstoned the email, and did
+nothing else — no eraser call, no activity redaction, no `deletionRequestedAt`,
+no audit entry.
+
+It was written believing that webhook could only ever _follow_ our own route:
+we erase, the web app deletes the credential, Clerk's delivery arrives against
+an already-deleted row and is a no-op. That was true when this ADR was written.
+**Slice 1.7 made it false** by mounting Clerk's `<UserProfile />` at
+`/account/email` for email changes — and inheriting its Security tab, which
+carries Clerk's own "Delete account" button. From that point a person could
+delete their account through a control we shipped, be told their data was gone,
+and keep their profile row, their encrypted street lines and their sign-in
+history. A UK GDPR Article 17 gap with a live button in front of it.
+
+Found on 2 August while scoping slice 1.11b, by opening the page rather than
+reading the code — the same way the session-payload error in ADR 0025 was found.
+
+**Fixed in slice 1.5c** by giving both paths one shared `eraseAndTombstone`,
+which is the answer slice 1.7 already reached for `account.email_changed`: two
+copies of a rule drift on exactly the thing missing from one of them. There is
+now no second copy to forget, and a test asserts the identical post-conditions
+against both callers so a step added to one and not the other fails there.
+
+On the webhook path the actor recorded is the account itself, with a null
+address. They did ask — at Clerk — and we neither served the request nor saw the
+client, so an invented IP would be false evidence while a null actor would claim
+the system deleted somebody on nobody's behalf.
+
+**A second gap this exposes is not code.** BRD §10.1 requires the deletion
+workflow to distinguish erasable personal data from retained records _and
+explain the distinction_. Our page does; Clerk's confirmation dialog cannot. So
+even with erasure fixed, deleting through Clerk's button skips a requirement.
+`delete_self_enabled` is a Clerk **instance setting**, so turning it off is
+provisioning configuration alongside the `email` and `fva` claims in ADR 0015 —
+recorded there, and in the product owner's list.
 
 ## Consequences
 

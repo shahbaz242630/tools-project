@@ -2,6 +2,7 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
+  CLERK_EVENTS_PATH,
   CLIENT_IP_HEADER,
   ME_ACTIVITY_PATH,
   ME_DELETION_PATH,
@@ -167,6 +168,20 @@ const requestDeletion = (token?: string, ip?: string) =>
       ...(token === undefined ? {} : auth(token)),
       ...(ip === undefined ? {} : { [CLIENT_IP_HEADER]: ip }),
     },
+  });
+
+/**
+ * A deletion that started at Clerk rather than with us.
+ *
+ * Driven through the real internal route the web app forwards to, not through
+ * the service — the point of slice 1.5c is that this path does the same work,
+ * and a test that called the service directly would skip the wiring.
+ */
+const deleteAtClerk = (clerkUserId: string, deliveryId = 'msg_deleted') =>
+  app.inject({
+    method: 'POST',
+    url: CLERK_EVENTS_PATH,
+    payload: { deliveryId, type: 'user.deleted', data: { id: clerkUserId } },
   });
 
 /** Provision the account behind a token, then make it an administrator. */
@@ -340,6 +355,101 @@ describe('what survives a deletion', () => {
 
     expect(user.email).toBe('alice@example.com');
     expect(user.deletedAt).toBeNull();
+  });
+});
+
+describe('a deletion that starts at Clerk erases the same data', () => {
+  /**
+   * Slice 1.5c.
+   *
+   * Clerk's account screen has been mounted at `/account/email` since slice 1.7
+   * and carries its own "Delete account" button. Until this slice the
+   * `user.deleted` webhook tombstoned the email and nothing else, so a person
+   * deleting there was told their data was gone while the profile row, the
+   * encrypted street lines and the sign-in history all survived.
+   *
+   * These run against the real application and an in-memory profile store, so
+   * they prove the routing and the ordering. That the street line is genuinely
+   * gone from an `addresses` row is the profiles store's own database test —
+   * both paths call the identical eraser, so it is the same proof.
+   */
+  it('removes the profile and the address rows', async () => {
+    await saveProfile('alice-token');
+    const aliceId = await idOf('alice-token');
+
+    // Present first, so an empty result afterwards is a change rather than an
+    // empty fixture.
+    expect(profileStore.all().map((row) => row.userId)).toEqual([aliceId]);
+
+    const response = await deleteAtClerk('user_alice');
+    expect(response.json()).toEqual({ outcome: 'applied' });
+
+    expect(profileStore.all()).toEqual([]);
+  });
+
+  it('leaves no profile row behind for anyone', async () => {
+    // `all()` rather than a lookup by id: a lookup proves this person's row is
+    // gone, and the store holding somebody's orphaned row is the failure that
+    // would not show up that way.
+    await saveProfile('alice-token');
+    await deleteAtClerk('user_alice');
+
+    expect(profileStore.all()).toEqual([]);
+  });
+
+  it('tombstones the account and records when it was asked for', async () => {
+    const aliceId = await idOf('alice-token');
+    await deleteAtClerk('user_alice');
+
+    const user = users.all().find((row) => row.id === aliceId);
+    expect(user?.email).toBe(`deleted+${aliceId}@deleted.invalid`);
+    expect(user?.deletedAt).toBeInstanceOf(Date);
+    // Was null before this slice. A data-protection enquiry asks when they
+    // asked, and a deletion that began at Clerk was still asked for.
+    expect(user?.deletionRequestedAt).toBeInstanceOf(Date);
+  });
+
+  it('writes the same trail our own route writes', async () => {
+    await saveProfile('alice-token');
+    await deleteAtClerk('user_alice');
+
+    const actions = audit.log.entries().map((entry) => entry.action);
+    expect(actions).toContain('profile.erased');
+    expect(actions).toContain('account.deletion_requested');
+
+    const serialised = JSON.stringify(audit.log.entries());
+    expect(serialised).not.toContain('Alice A.');
+    expect(serialised).not.toContain('Acacia');
+    expect(serialised).not.toContain('900123');
+  });
+
+  it('refuses the deleted account a session afterwards', async () => {
+    // Provisioned first. Without it the webhook finds no mirror row, correctly
+    // does nothing, and the `/me` below creates a fresh account and answers
+    // 200 — which is right, and would have made this test pass for the wrong
+    // reason had it been asserting the other way.
+    await idOf('alice-token');
+
+    await deleteAtClerk('user_alice');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: ME_PATH,
+      headers: auth('alice-token'),
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('is idempotent across a redelivery', async () => {
+    await saveProfile('alice-token');
+    await deleteAtClerk('user_alice', 'msg_first');
+    const after = audit.log.entries().length;
+
+    // A different delivery id, so the webhook ledger does not dedupe it — the
+    // guard that matters is the already-deleted check inside the service.
+    await deleteAtClerk('user_alice', 'msg_second');
+
+    expect(audit.log.entries()).toHaveLength(after);
   });
 });
 
