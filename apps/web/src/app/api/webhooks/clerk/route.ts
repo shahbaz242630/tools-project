@@ -36,7 +36,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     return new Response('missing svix-id', { status: 400 });
   }
 
-  let event: { type: string; data: unknown };
+  // `event_attributes` is read as well as `data`, and it is a **sibling** of it
+  // rather than a field inside it. Clerk puts the request context there for
+  // session events — the client IP and user agent — and nowhere else in the
+  // webhook. Forwarding `data` alone silently produced a sign-in history with
+  // nothing in it but timestamps, which is the shape of bug this route is most
+  // likely to hide: everything answers 200 and the record is simply empty.
+  let event: { type: string; data: unknown; event_attributes?: unknown };
   try {
     event = await verifyWebhook(request, {
       signingSecret: webEnv().CLERK_WEBHOOK_SIGNING_SECRET,
@@ -52,6 +58,12 @@ export async function POST(request: NextRequest): Promise<Response> {
     deliveryId,
     type: event.type,
     data: (event.data ?? {}) as Record<string, unknown>,
+    // Spread rather than assigned, because `exactOptionalPropertyTypes` draws a
+    // distinction between "absent" and "present and undefined" — and here the
+    // distinction is real: `user.*` deliveries carry no attributes at all.
+    ...(event.event_attributes === undefined
+      ? {}
+      : { eventAttributes: event.event_attributes as Record<string, unknown> }),
   });
 
   switch (outcome.kind) {

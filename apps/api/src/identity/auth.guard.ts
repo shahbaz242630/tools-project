@@ -2,10 +2,10 @@ import { Inject, Injectable, SetMetadata, UnauthorizedException } from '@nestjs/
 import { ForbiddenException } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { isIP } from 'node:net';
 import { CLIENT_IP_HEADER } from '@platform/contracts';
 import type { Logger } from '@platform/observability';
 import { AccountDeletedError } from './identity.service.js';
+import { validIpOrNull } from './ip-address.js';
 import type { IdentityService } from './identity.service.js';
 import { SessionVerificationError } from './session-verifier.js';
 import type { SessionVerifier, VerifiedSession } from './session-verifier.js';
@@ -100,11 +100,10 @@ export interface AuthenticatedRequest {
 export function clientIpFrom(
   headers: Record<string, string | string[] | undefined>,
 ): string | null {
-  const value = headers[CLIENT_IP_HEADER];
-  if (typeof value !== 'string') return null;
-
-  const trimmed = value.trim();
-  return isIP(trimmed) === 0 ? null : trimmed;
+  // The validation itself lives in `ip-address.ts`, shared with the
+  // authentication event store. Two copies of this rule would drift on exactly
+  // the case that matters — see the note there.
+  return validIpOrNull(headers[CLIENT_IP_HEADER]);
 }
 
 /**

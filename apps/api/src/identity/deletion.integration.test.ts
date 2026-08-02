@@ -34,6 +34,7 @@ import {
   InMemoryUserDirectory,
   InMemoryWebhookLedger,
 } from './testing/fakes.js';
+import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 
 /**
  * Account deletion against the real application, with identity and profiles
@@ -111,6 +112,8 @@ beforeEach(async () => {
     { exportFor: (userId) => profiles.exportFor(userId) },
     { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
     approvals,
+    new InMemoryAuthenticationEvents(),
+    createRecordingLogger().logger,
   );
 
   // Stands in for the transaction the real store performs, so approving a

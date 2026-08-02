@@ -144,6 +144,11 @@ model User {
   grantedApprovals   AdminApproval[] @relation("GrantedApprovals")
   cancelledApprovals AdminApproval[] @relation("CancelledApprovals")
 
+  /// Sign-ins and sign-outs on this account. Declared because Prisma requires
+  /// both ends of a relation; nothing reads authentication events through a
+  /// user, and the identity module reaches them through its own port.
+  authenticationEvents AuthenticationEvent[]
+
   @@map("users")
 }
 
@@ -478,4 +483,102 @@ model AdminApproval {
   /// Serves the one query: the pending queue, newest first.
   @@index([proposedAt(sort: Desc)])
   @@map("admin_approvals")
+}
+
+/// A sign-in, or the end of one.
+///
+/// BRD §8.1 asks for "authentication events, device/session management and
+/// suspicious-login alerts". This is the first of the three: the record a
+/// person reads to answer "has anybody else been in my account".
+///
+/// **A separate table rather than more `audit_logs` rows, and the reason is the
+/// shape.** Every other audited action is something somebody chose to do, and
+/// `audit_logs` stores digests rather than values precisely so it can be
+/// retained for six years without holding personal data (ADR 0017). An
+/// authentication event is the opposite on both counts: it is not a deliberate
+/// act, and it is worthless unless it holds the very values a digest would
+/// destroy — a person cannot recognise an intruder from an HMAC. Widening
+/// `AuditEntry` with seven columns that twenty-five other actions leave null is
+/// the optional-field anti-pattern ADR 0016 rejected for profiles.
+///
+/// Volume differs too. One row per sign-in against one per deliberate action,
+/// and nothing prunes either — see the retention note on `occurredAt`.
+///
+/// The person still reads one merged history: their activity page joins this
+/// with both directions of the audit trail.
+model AuthenticationEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Whose account. Required, unlike the audit log's actor — an authentication
+  /// event with no account is not a degraded record, it is meaningless.
+  ///
+  /// `ON DELETE RESTRICT`, Prisma's default for a required relation, and it is
+  /// the right one: accounts are soft-deleted (see `User.deletedAt`) so this
+  /// never fires in production. It fires in tests, where clearing `users`
+  /// without clearing this first now fails — children before parents.
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// Clerk's `sess_…`, the session this event is about.
+  ///
+  /// A reference to the provider's record, never an identity of ours — the same
+  /// rule `clerkUserId` follows. Kept because it is what lets a person match a
+  /// row here against a device in Clerk's own session list, and what a support
+  /// enquiry cites.
+  clerkSessionId String @db.Text
+
+  /// `started`, `ended`, `removed` or `revoked`.
+  ///
+  /// Our vocabulary, not Clerk's four `session.*` event names, because the
+  /// mapper's job is to stop provider shape at the boundary. Text rather than a
+  /// Postgres enum for the reason `AuditLog.action` gives: an enum puts every
+  /// new value behind a schema migration.
+  event String @db.Text
+
+  /// When it happened **at Clerk**, not when we stored it.
+  ///
+  /// Webhooks are asynchronous and can be redelivered hours later, so the two
+  /// genuinely differ and only this one answers "when was I signed in". Stored
+  /// UTC and rendered in the viewer's zone, per BRD §6.1.
+  ///
+  /// **Nothing prunes this table.** §10.1 retains security logs six years and
+  /// no scheduler exists yet, so rows accumulate per sign-in indefinitely. That
+  /// is a known limitation recorded in the handoff rather than a design intent.
+  occurredAt DateTime @db.Timestamptz(3)
+
+  /// Where the sign-in came from, as Clerk's geo-location resolved it.
+  ///
+  /// **Every one of these is nullable, and that is Clerk's shape rather than
+  /// caution.** `latest_activity` is optional on the session payload, and each
+  /// field within it is optional again apart from `is_mobile`. A correctly
+  /// delivered event can carry none of them, and inventing a value to fill a
+  /// column would put a guess in a security record.
+  ///
+  /// `inet` rather than text so Postgres rejects a malformed address instead of
+  /// storing it — and note real values here are frequently IPv6, which `inet`
+  /// holds and a `varchar(15)` would have silently truncated.
+  ipAddress      String?  @db.Inet
+  browserName    String?  @db.Text
+  browserVersion String?  @db.Text
+  deviceType     String?  @db.Text
+  isMobile       Boolean?
+
+  /// Stored UTC. No `updatedAt`: like the audit log, nothing updates a row
+  /// here. Erasure is the one exception and it nulls columns rather than
+  /// rewriting history — see the eraser.
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// One row per event per session.
+  ///
+  /// Idempotency already comes from the `webhook_events` ledger, which refuses
+  /// a redelivered *delivery*. This guards the case that ledger cannot see: the
+  /// same logical event arriving under two delivery ids. The recorder treats a
+  /// conflict as already-done rather than an error, because a webhook handler
+  /// that 500s on a duplicate is one Clerk retries forever.
+  @@unique([clerkSessionId, event])
+
+  /// Serves the only query: this account's sign-ins, newest first, for the
+  /// activity page and the data export.
+  @@index([userId, occurredAt(sort: Desc)])
+  @@map("authentication_events")
 }

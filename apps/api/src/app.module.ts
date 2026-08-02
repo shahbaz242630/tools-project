@@ -28,6 +28,7 @@ import { ClerkEventsController } from './identity/clerk-events.controller.js';
 import { MeController } from './identity/me.controller.js';
 import { MeDeletionController } from './identity/me-deletion.controller.js';
 import { MeExportController } from './identity/me-export.controller.js';
+import { MeSignInsController } from './identity/me-sign-ins.controller.js';
 import type { IdentityService } from './identity/identity.service.js';
 import type { SessionVerifier } from './identity/session-verifier.js';
 import { MeProfileController } from './profiles/me-profile.controller.js';
@@ -86,6 +87,7 @@ export class AppModule implements NestModule {
         ClerkEventsController,
         MeDeletionController,
         MeExportController,
+        MeSignInsController,
         MeProfileController,
         MeActivityController,
         AdminActivityController,

@@ -115,6 +115,21 @@ export const clerkEventForwardSchema = z.object({
   deliveryId: z.string().min(1),
   type: z.string().min(1),
   data: z.record(z.string(), z.unknown()),
+
+  /**
+   * Clerk's `event_attributes`, forwarded unexamined alongside `data`.
+   *
+   * **A sibling of `data` in Clerk's envelope, not a field inside it**, which is
+   * exactly why it was missed: slice 1.11a was built against the Backend API's
+   * session shape, where the request context appears as `latest_activity` on the
+   * session itself. The webhook has no such field. It carries
+   * `event_attributes.http_request` — the client IP and user agent — one level
+   * up, and a forwarder that passed only `data` dropped it silently.
+   *
+   * Optional because only some event types carry it: `user.*` deliveries have
+   * none, and a missing object must not make a delivery unparseable.
+   */
+  eventAttributes: z.record(z.string(), z.unknown()).optional(),
 });
 export type ClerkEventForward = z.infer<typeof clerkEventForwardSchema>;
 

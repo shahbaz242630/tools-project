@@ -12,7 +12,19 @@
  * behaviour worth testing is what happens when one of them fires.
  */
 
+import { randomUUID } from 'node:crypto';
 import { Time } from '@platform/core';
+import { createRecordingLogger } from '@platform/observability/testing';
+import type { RecordingLogger } from '@platform/observability/testing';
+import {
+  AUTHENTICATION_EVENT_TYPES,
+  NO_SESSION_ACTIVITY,
+} from '../authentication-events.js';
+import type {
+  AuthenticationEventRecord,
+  AuthenticationEvents,
+  RecordedAuthenticationEvent,
+} from '../authentication-events.js';
 import { createAuditFakes } from '../../audit/testing/fakes.js';
 import type { AuditFakes } from '../../audit/testing/fakes.js';
 import { IdentityService } from '../identity.service.js';
@@ -457,6 +469,77 @@ export class InMemoryAdminApprovalStore implements AdminApprovalStore {
   }
 }
 
+/**
+ * In-memory authentication events.
+ *
+ * **Mirrors both database constraints, and that is not optional.** Three
+ * consecutive slices shipped a double that enforced a rule on one method and
+ * not another, and each time a test passed for a situation that could not occur
+ * in the double. Here the two rules are the unique `(clerkSessionId, event)`
+ * index — which is what makes a redelivery a no-op rather than a duplicate row
+ * — and the `event_is_known` CHECK, which the real table would refuse.
+ *
+ * A behavioural double, not a recording spy: it answers `listFor` from what it
+ * actually stored, so a test that asserts on a read is testing the write too.
+ */
+export class InMemoryAuthenticationEvents implements AuthenticationEvents {
+  private readonly rows = new Map<
+    string,
+    RecordedAuthenticationEvent & { userId: string }
+  >();
+
+  async record(event: AuthenticationEventRecord): Promise<void> {
+    // The CHECK constraint, mirrored. The real table refuses an unknown value,
+    // so a double that accepted one would let a mapper bug pass unnoticed.
+    if (!AUTHENTICATION_EVENT_TYPES.includes(event.event)) {
+      throw new Error(`event_is_known violated: ${String(event.event)}`);
+    }
+
+    const key = `${event.clerkSessionId}::${event.event}`;
+
+    // The unique index, mirrored — and the store's own semantics with it. A
+    // second delivery of the same logical event stores nothing and does *not*
+    // overwrite: the first record is the one that was true at the time.
+    if (this.rows.has(key)) return;
+
+    this.rows.set(key, {
+      // A real UUID, because the column is `@db.Uuid` and the wire contract
+      // parses it as one. A counter here would let every test pass while the
+      // API served an id the web app refuses — which is exactly the defect
+      // `InMemoryAuditLog` shipped with in slice 1.8b-i.
+      id: randomUUID(),
+      userId: event.userId,
+      clerkSessionId: event.clerkSessionId,
+      event: event.event,
+      occurredAt: event.occurredAt,
+      activity: event.activity,
+    });
+  }
+
+  async listFor(
+    userId: string,
+    limit: number,
+  ): Promise<readonly RecordedAuthenticationEvent[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.userId === userId)
+      .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+      .slice(0, limit)
+      .map(({ userId: _userId, ...rest }) => rest);
+  }
+
+  async eraseActivity(userId: string): Promise<void> {
+    for (const [key, row] of this.rows) {
+      if (row.userId !== userId) continue;
+      this.rows.set(key, { ...row, activity: { ...NO_SESSION_ACTIVITY } });
+    }
+  }
+
+  /** Everything stored, for assertions that do not go through `listFor`. */
+  all(): readonly (RecordedAuthenticationEvent & { userId: string })[] {
+    return [...this.rows.values()];
+  }
+}
+
 export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
@@ -468,6 +551,9 @@ export interface IdentityFakes {
   readonly source: StubDataSource;
   readonly summaries: StubProfileSummarySource;
   readonly approvals: InMemoryAdminApprovalStore;
+  readonly authenticationEvents: InMemoryAuthenticationEvents;
+  /** Exposed so a test can assert on a drop that has no other trace. */
+  readonly logger: RecordingLogger;
 }
 
 /**
@@ -483,6 +569,8 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const source = new StubDataSource();
   const summaries = new StubProfileSummarySource();
   const approvals = new InMemoryAdminApprovalStore();
+  const authenticationEvents = new InMemoryAuthenticationEvents();
+  const logger = createRecordingLogger();
 
   // Stands in for the transaction the real store performs. Wired here so the
   // fake's `approveAndApply` really does change the role, and a test asserting
@@ -503,6 +591,8 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     source,
     summaries,
     approvals,
+    authenticationEvents,
+    logger,
     service: new IdentityService(
       users,
       ledger,
@@ -511,6 +601,8 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
       source,
       summaries,
       approvals,
+      authenticationEvents,
+      logger.logger,
     ),
   };
 }

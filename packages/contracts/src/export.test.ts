@@ -15,6 +15,8 @@ const DOCUMENT = {
   },
   profile: null,
   activity: [],
+  signIns: [],
+  signInsTruncated: false,
 };
 
 describe('parseDataExport', () => {

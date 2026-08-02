@@ -24,8 +24,15 @@ export const ME_EXPORT_PATH = '/me/export';
  * moved on; without this, an old file is indistinguishable from a malformed
  * one. Bumped when a field is removed or its meaning changes — adding a field
  * does not need it, because a reader that ignores unknown keys still works.
+ *
+ * **That rule is about old readers meeting new files.** The reverse direction
+ * is what this constant is actually for, and it does need a bump: a *required*
+ * field added here means yesterday's file no longer parses, and the useful
+ * failure is "this is a version 1 document" rather than "signIns is missing",
+ * which reads like corruption. Version 2 added `signIns` and
+ * `signInsTruncated` in slice 1.11a.
  */
-export const EXPORT_SCHEMA_VERSION = 1;
+export const EXPORT_SCHEMA_VERSION = 2;
 
 /** The account itself, as Identity & Access holds it. */
 export const exportedAccountSchema = z.object({
@@ -81,6 +88,41 @@ export const exportedActivitySchema = z.array(
 );
 
 /**
+ * Sign-ins and sign-outs — BRD §8.1's authentication events.
+ *
+ * A section of its own rather than more `activity` rows, because the two are
+ * different kinds of record: an activity entry is something the person chose to
+ * do, a sign-in is something that happened to their account, and only the
+ * latter carries a device and an address. Flattening them would lose that
+ * distinction in the one document a person is most likely to read years later.
+ *
+ * Unlike the audit trail's digests, **these are real values and that is the
+ * point** — nobody recognises an intruder from an HMAC. It also makes this the
+ * second bulk disclosure the export performs, after the decrypted address, and
+ * the reason the whole endpoint is audited (ADR 0019, ADR 0025).
+ *
+ * Every field but `event`, `sessionId` and `occurredAt` is nullable: a webhook
+ * can arrive with no request attributes, and a user agent can fail to parse.
+ * There is no city or country — Clerk resolves those only on its Backend API,
+ * behind the secret key ADR 0015 withholds from us (ADR 0025).
+ */
+export const exportedSignInsSchema = z.array(
+  z.object({
+    /** `started`, `ended`, `removed` or `revoked`. */
+    event: z.string(),
+    /** Clerk's `sess_…`, so a line here can be matched to a device at Clerk. */
+    sessionId: z.string(),
+    occurredAt: z.iso.datetime(),
+    ipAddress: z.string().nullable(),
+    browserName: z.string().nullable(),
+    browserVersion: z.string().nullable(),
+    deviceType: z.string().nullable(),
+    isMobile: z.boolean().nullable(),
+  }),
+);
+export type ExportedSignIns = z.infer<typeof exportedSignInsSchema>;
+
+/**
  * Everything the platform holds about one person.
  *
  * `retained` is not decoration: BRD §10.1 requires the deletion workflow to
@@ -94,6 +136,17 @@ export const dataExportSchema = z.object({
   account: exportedAccountSchema,
   profile: exportedProfileSchema,
   activity: exportedActivitySchema,
+  signIns: exportedSignInsSchema,
+
+  /**
+   * Whether `signIns` was cut short.
+   *
+   * A truncated export that does not say so is one somebody reads as the whole
+   * record — and the person most likely to hit the limit is the one with most
+   * to review. Stating it is cheaper than pagination and honest about what
+   * pagination would fix.
+   */
+  signInsTruncated: z.boolean(),
 });
 export type DataExport = z.infer<typeof dataExportSchema>;
 

@@ -24,6 +24,7 @@ import {
   InMemoryUserDirectory,
   InMemoryWebhookLedger,
 } from './testing/fakes.js';
+import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 
 /**
  * A suspended account against the real application.
@@ -91,6 +92,8 @@ beforeEach(async () => {
     { exportFor: (userId) => profiles.exportFor(userId) },
     { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
     approvals,
+    new InMemoryAuthenticationEvents(),
+    createRecordingLogger().logger,
   );
 
   const moduleRef = await Test.createTestingModule({

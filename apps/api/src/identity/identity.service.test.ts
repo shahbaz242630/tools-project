@@ -14,6 +14,9 @@ import {
   StubProfileSummarySource,
   InMemoryAdminApprovalStore,
 } from './testing/fakes.js';
+import { InMemoryAuthenticationEvents } from './testing/fakes.js';
+import { createRecordingLogger } from '@platform/observability/testing';
+import { mapClerkEvent } from './clerk-event-mapper.js';
 
 const SESSION: VerifiedSession = {
   clerkUserId: 'user_1',
@@ -37,6 +40,8 @@ beforeEach(() => {
     new StubDataSource(),
     new StubProfileSummarySource(),
     new InMemoryAdminApprovalStore(),
+    new InMemoryAuthenticationEvents(),
+    createRecordingLogger().logger,
   );
 });
 
@@ -331,6 +336,8 @@ describe('the audit trail', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     const user = await identity.resolveSession(
@@ -366,6 +373,8 @@ describe('the audit trail', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
     const session = {
       clerkUserId: 'user_a',
@@ -391,6 +400,8 @@ describe('the audit trail', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     await identity.resolveSession({
@@ -415,6 +426,8 @@ describe('the audit trail', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     await identity.applyEvent('msg_1', {
@@ -440,6 +453,8 @@ describe('the audit trail', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
     const event = {
       type: 'user.upserted',
@@ -471,6 +486,8 @@ describe('requestDeletion', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     const user = await identity.resolveSession({
@@ -611,6 +628,8 @@ describe('exportFor', () => {
       source,
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     const user = await identity.resolveSession({
@@ -642,7 +661,10 @@ describe('exportFor', () => {
     const { id, identity } = await provision();
     const document = await identity.exportFor(ACTOR(id));
 
-    expect(document?.schemaVersion).toBe(1);
+    // Literal rather than the constant: importing EXPORT_SCHEMA_VERSION here
+    // would make this assert that a number equals itself, and pass through any
+    // bump. Version 2 added `signIns` in slice 1.11a.
+    expect(document?.schemaVersion).toBe(2);
     expect(document?.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
@@ -777,6 +799,8 @@ describe('correcting the email', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     const user = await identity.resolveSession(SESSION(email));
@@ -874,6 +898,8 @@ describe('correcting the email', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     await identity.resolveSession({
@@ -903,6 +929,8 @@ describe('correcting the email', () => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     );
 
     await identity.resolveSession({
@@ -942,5 +970,182 @@ describe('correcting the email', () => {
     });
 
     expect((await directory.findById(id))?.email).toBe(`deleted+${id}@deleted.invalid`);
+  });
+});
+
+describe('authentication events', () => {
+  const SESSION = {
+    id: 'sess_1',
+    user_id: 'user_a',
+    created_at: 1785408799422,
+    updated_at: 1785495199422,
+  };
+
+  /** Beside `data` in Clerk's envelope, not inside it — see ADR 0025. */
+  const ATTRIBUTES = {
+    http_request: {
+      client_ip: '2.49.99.113',
+      user_agent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0',
+    },
+  };
+
+  async function withAccount() {
+    const events = new InMemoryAuthenticationEvents();
+    const logger = createRecordingLogger();
+    const directory = new InMemoryUserDirectory();
+    const audit = createAuditFakes();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      new RecordingEraser(),
+      new StubDataSource(),
+      new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
+      events,
+      logger.logger,
+    );
+
+    const user = await identity.resolveSession({
+      clerkUserId: 'user_a',
+      sessionId: 'sess_a',
+      email: 'alice@example.com',
+      secondFactorAgeMinutes: null,
+    });
+
+    return { id: user.id, identity, events, logger, directory };
+  }
+
+  function delivery(type: string, data: Record<string, unknown>) {
+    const mapped = mapClerkEvent(type, data, ATTRIBUTES);
+    if (mapped === null) throw new Error(`expected ${type} to map`);
+    return mapped;
+  }
+
+  it('records a sign-in against the account it belongs to', async () => {
+    const { id, identity, events } = await withAccount();
+
+    await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+
+    expect(events.all()).toEqual([
+      expect.objectContaining({
+        userId: id,
+        clerkSessionId: 'sess_1',
+        event: 'started',
+        activity: expect.objectContaining({ deviceType: 'Windows', isMobile: false }),
+      }),
+    ]);
+  });
+
+  it('drops a session event for an account we do not mirror, and says so', async () => {
+    // Clerk delivers user.created and session.created independently and neither
+    // is ordered against the other, so this race is real. Throwing would be
+    // worse than dropping: the delivery is already claimed in the ledger, so the
+    // retry is refused as a duplicate and the event is lost anyway — while
+    // leaving an unprocessed ledger row nothing is watching.
+    const { identity, events, logger } = await withAccount();
+
+    await identity.applyEvent(
+      'msg_1',
+      delivery('session.created', { ...SESSION, user_id: 'user_nobody' }),
+    );
+
+    expect(events.all()).toEqual([]);
+    expect(logger.at('warn')).toEqual([
+      expect.objectContaining({
+        message: 'dropped a session event for an unmirrored account',
+        fields: expect.objectContaining({ clerkUserId: 'user_nobody' }),
+      }),
+    ]);
+  });
+
+  it('is idempotent across two delivery ids for one logical event', async () => {
+    // The webhook_events ledger refuses a redelivered *delivery*; it cannot see
+    // the same event arriving under a new id, which a provider replay produces.
+    const { identity, events } = await withAccount();
+
+    await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+    await identity.applyEvent('msg_2', delivery('session.created', SESSION));
+
+    expect(events.all()).toHaveLength(1);
+  });
+
+  it('keeps both a sign-in and a sign-out for one session', async () => {
+    const { identity, events } = await withAccount();
+
+    await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+    await identity.applyEvent('msg_2', delivery('session.ended', SESSION));
+
+    expect(
+      events
+        .all()
+        .map((row) => row.event)
+        .sort(),
+    ).toEqual(['ended', 'started']);
+  });
+
+  it('records against a deleted account rather than skipping it', async () => {
+    // A sign-in to an account somebody asked us to delete is exactly what a
+    // security enquiry wants to see, and the row holds no personal data once
+    // erasure has nulled the activity columns.
+    const { id, identity, events } = await withAccount();
+    await identity.requestDeletion({ userId: id, ipAddress: null });
+
+    await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+
+    expect(events.all()).toHaveLength(1);
+  });
+
+  it('serves the account holder their own sign-ins, newest first', async () => {
+    const { id, identity } = await withAccount();
+
+    await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+    await identity.applyEvent('msg_2', delivery('session.ended', SESSION));
+
+    const entries = await identity.signInsFor(id);
+
+    expect(entries.map((entry) => entry.event)).toEqual(['ended', 'started']);
+  });
+
+  describe('erasure', () => {
+    it('redacts the device and place but keeps the row', async () => {
+      // §10.1 retains security logs six years. "A session started at 14:02" is
+      // the part that can honestly be retained once "from Edge on Windows" is
+      // gone — and keeping the row is also what stops the ON DELETE RESTRICT
+      // foreign key turning an erasure into a failure.
+      const { id, identity, events } = await withAccount();
+      await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+
+      await identity.requestDeletion({ userId: id, ipAddress: null });
+
+      expect(events.all()).toEqual([
+        expect.objectContaining({
+          clerkSessionId: 'sess_1',
+          event: 'started',
+          activity: {
+            ipAddress: null,
+            browserName: null,
+            browserVersion: null,
+            deviceType: null,
+            isMobile: null,
+          },
+        }),
+      ]);
+    });
+
+    it('can fail: without erasure the device would survive a deletion', async () => {
+      // The mirror of the test above. If `eraseActivity` were ever dropped from
+      // requestDeletion, the assertion above is the only thing that notices —
+      // so this pins that the data really was there to erase, rather than the
+      // test passing because nothing was ever recorded.
+      const { id, identity, events } = await withAccount();
+      await identity.applyEvent('msg_1', delivery('session.created', SESSION));
+
+      expect(events.all()[0]?.activity.deviceType).toBe('Windows');
+
+      await identity.requestDeletion({ userId: id, ipAddress: null });
+      expect(events.all()[0]?.activity.deviceType).toBeNull();
+    });
   });
 });

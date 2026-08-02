@@ -61,6 +61,35 @@ export function fromIsoUtc(iso: string): Date {
 }
 
 /**
+ * Parse Unix milliseconds into an instant.
+ *
+ * Exists because providers speak epochs where our own contracts speak ISO 8601:
+ * Clerk timestamps every session field this way, so without this each caller
+ * would reach for `new Date(ms)` — which the lint rule bans, correctly, since
+ * that is also how `new Date(seconds)` slips in and lands a timestamp in 1970.
+ *
+ * **Rejects a value that is not a finite integer**, including `NaN`, which is
+ * what `Number(undefined)` produces when a field a provider promised is absent.
+ * The alternative is an Invalid Date that propagates silently and surfaces as
+ * `NaN` somewhere unrelated — the same failure `fromIsoUtc` throws to prevent.
+ *
+ * Seconds are not accepted and cannot be detected reliably: 1_700_000_000 is a
+ * plausible epoch in either unit, twenty-four thousand years apart. Callers
+ * convert, and say which unit they were handed where they do it.
+ */
+export function fromEpochMs(milliseconds: number): Date {
+  if (!Number.isFinite(milliseconds) || !Number.isInteger(milliseconds)) {
+    throw new TimeError(`Not a valid epoch in milliseconds: ${milliseconds}`);
+  }
+
+  const parsed = DateTime.fromMillis(milliseconds, { zone: 'utc' });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid epoch in milliseconds: ${milliseconds}`);
+  }
+  return parsed.toJSDate();
+}
+
+/**
  * Add elapsed hours to an instant.
  *
  * **Deliberately not calendar arithmetic**, and that is the whole distinction

@@ -24,6 +24,7 @@ import { IdentityService } from './identity.service.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { FakeSessionVerifier } from './testing/fakes.js';
 import type { MirroredUser, UserRole } from './user-directory.js';
+import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 
 describe('bearerToken', () => {
   it('extracts the token', () => {
@@ -104,6 +105,8 @@ beforeEach(() => {
       new StubDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
+      new InMemoryAuthenticationEvents(),
+      createRecordingLogger().logger,
     ),
     createRecordingLogger().logger,
   );
@@ -169,6 +172,8 @@ describe('AuthGuard', () => {
         new StubDataSource(),
         new StubProfileSummarySource(),
         new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
     );
@@ -231,6 +236,8 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         new StubDataSource(),
         new StubProfileSummarySource(),
         new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
     );
@@ -260,6 +267,8 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         new StubDataSource(),
         new StubProfileSummarySource(),
         new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
     );
@@ -361,6 +370,8 @@ describe('the second factor an admin route requires', () => {
         new StubDataSource(),
         new StubProfileSummarySource(),
         new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
     );

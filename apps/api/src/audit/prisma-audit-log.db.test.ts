@@ -51,6 +51,9 @@ async function newUser(): Promise<string> {
 beforeEach(async () => {
   await client.auditLog.deleteMany();
   await client.adminApproval.deleteMany();
+  // authentication_events is ON DELETE RESTRICT, added in slice 1.11a.
+  // Children before parents, in every file — not only the new one.
+  await client.authenticationEvent.deleteMany();
   await client.user.deleteMany();
 });
 
