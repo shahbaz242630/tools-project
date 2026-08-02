@@ -801,6 +801,9 @@ export class IdentityService {
    *
    * **Idempotent.** A second request is a success and records nothing new: the
    * state asked for is already the state.
+   *
+   * The work itself is in `eraseAndTombstone`, shared with the webhook path —
+   * see there for why that sharing is not optional.
    */
   async requestDeletion(actor: Actor): Promise<void> {
     const user = await this.users.findById(actor.userId);
@@ -811,8 +814,35 @@ export class IdentityService {
     if (user === null) return;
     if (user.deletedAt !== null) return;
 
-    // Erase before tombstoning. Each module writes its own entry for what it
-    // removed, so this produces the `profile.erased` line in the trail.
+    await this.eraseAndTombstone(user, actor);
+  }
+
+  /**
+   * Everything a deletion does, in the order ADR 0018 requires.
+   *
+   * **Shared between the two paths that can start one, and that sharing is the
+   * whole point of this method existing.** Until slice 1.5c the webhook branch
+   * had its own two-line version that tombstoned the email and stopped: no
+   * erasure, no redaction, no `deletionRequestedAt`, no audit entry. It was
+   * written on the assumption that `user.deleted` only ever *follows* our own
+   * route, and Clerk's account screen — mounted for email changes in 1.7 —
+   * makes that false. Somebody deleting through it was told their data was
+   * gone while the profile, the address ciphertext and the sign-in history all
+   * survived.
+   *
+   * That is exactly the failure slice 1.7 fixed for `account.email_changed`,
+   * where two copies of a rule drifted on the one thing missing from both. The
+   * answer is the same: one method, two callers, no second copy to forget.
+   *
+   * **Erase before tombstoning.** The reverse leaves somebody locked out of an
+   * account that still holds their address, with no way to authenticate and ask
+   * again. This way a failure leaves the account usable and the request
+   * repeatable — which matters more on the webhook path, where nobody is
+   * watching a page for an error.
+   */
+  private async eraseAndTombstone(user: MirroredUser, actor: Actor): Promise<void> {
+    // Each module writes its own entry for what it removed, so this produces
+    // the `profile.erased` line in the trail.
     await this.eraser.erase(actor);
 
     // Identity's own personal data, erased directly rather than through the
@@ -822,12 +852,16 @@ export class IdentityService {
     //
     // Redaction, not deletion: the rows stay and lose their activity columns.
     // §10.1 retains security logs six years, and "a session started at 14:02"
-    // is what can honestly be retained once "from Edge in Dubai" is gone.
+    // is what can honestly be retained once the device and address are gone.
     await this.authenticationEvents.eraseActivity(user.id);
 
     const at = Time.nowUtc();
     const deleted = await this.users.update(user.id, {
       deletedAt: at,
+
+      // Set on both paths. It answers "when did they ask", which is the
+      // question a data-protection enquiry actually puts — and a deletion that
+      // started at Clerk was still asked for, just not here.
       deletionRequestedAt: at,
       email: tombstoneEmail(user.id),
     });
@@ -916,13 +950,20 @@ export class IdentityService {
 
     // Nothing to delete, or already deleted. Both are successes: the mirror
     // already reflects the requested state, which is the only thing that
-    // matters to a caller that may be retrying.
+    // matters to a caller that may be retrying. This is also what makes the
+    // ordinary case cheap — our own route erases first and then deletes the
+    // credential, so the webhook that follows finds the work already done.
     if (user === null || user.deletedAt !== null) return;
 
-    await this.users.update(user.id, {
-      deletedAt: Time.nowUtc(),
-      email: tombstoneEmail(user.id),
-    });
+    // Reaching here means the deletion started at Clerk rather than with us —
+    // its account screen, or somebody removing the user from Clerk's dashboard.
+    // The same work has to happen, and it did not until slice 1.5c.
+    //
+    // The actor is the account itself, with no address. They did ask for this;
+    // we simply did not serve the request and never saw the client, so claiming
+    // an IP would be inventing evidence. Recording no actor at all would be
+    // worse — a deletion is not something the system did on nobody's behalf.
+    await this.eraseAndTombstone(user, { userId: user.id, ipAddress: null });
   }
 
   /**

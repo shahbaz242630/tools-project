@@ -1149,3 +1149,188 @@ describe('authentication events', () => {
     });
   });
 });
+
+describe('deletion erases whichever path starts it', () => {
+  /**
+   * Slice 1.5c. Two paths can begin a deletion — our own `/account/delete`
+   * route, and Clerk's `user.deleted` webhook when somebody deletes from
+   * Clerk's own account screen, which has been mounted at `/account/email`
+   * since slice 1.7. Until this slice the webhook path tombstoned the email and
+   * stopped: no erasure, no redaction, no `deletionRequestedAt`, no audit
+   * entry. A person was told their data was gone while all of it survived.
+   */
+  const SESSION_EVENT = {
+    id: 'sess_1',
+    user_id: 'user_a',
+    created_at: 1785661283293,
+    updated_at: 1785661283331,
+  };
+  const ATTRIBUTES = {
+    http_request: {
+      client_ip: '2.49.99.113',
+      user_agent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0',
+    },
+  };
+
+  /** An account with a profile, an address and a recorded sign-in. */
+  async function populated() {
+    const events = new InMemoryAuthenticationEvents();
+    const directory = new InMemoryUserDirectory();
+    const eraser = new RecordingEraser();
+    const audit = createAuditFakes();
+    const identity = new IdentityService(
+      directory,
+      new InMemoryWebhookLedger(),
+      audit.service,
+      eraser,
+      new StubDataSource(),
+      new StubProfileSummarySource(),
+      new InMemoryAdminApprovalStore(),
+      events,
+      createRecordingLogger().logger,
+    );
+
+    const user = await identity.resolveSession({
+      clerkUserId: 'user_a',
+      sessionId: 'sess_a',
+      email: 'alice@example.com',
+      secondFactorAgeMinutes: null,
+    });
+
+    const mapped = mapClerkEvent('session.created', SESSION_EVENT, ATTRIBUTES);
+    if (mapped === null) throw new Error('expected the session event to map');
+    await identity.applyEvent('msg_session', mapped);
+
+    return { id: user.id, identity, events, eraser, audit, directory };
+  }
+
+  /**
+   * Everything a completed deletion must be true of, in one place.
+   *
+   * **This is the test that stops the two paths drifting apart again.** Both
+   * call it, so a step added to one and not the other fails here rather than
+   * being discovered by a person who trusted us to delete their data.
+   */
+  async function assertFullyDeleted(
+    context: Awaited<ReturnType<typeof populated>>,
+  ): Promise<void> {
+    const { id, events, eraser, audit, directory } = context;
+
+    // The other modules' personal data was asked for by name.
+    expect(eraser.erased).toEqual([id]);
+
+    // Our own: the rows survive as the retainable security log, stripped.
+    expect(events.all()).toHaveLength(1);
+    expect(events.all()[0]?.activity).toEqual({
+      ipAddress: null,
+      browserName: null,
+      browserVersion: null,
+      deviceType: null,
+      isMobile: null,
+    });
+
+    const row = await directory.findById(id);
+    expect(row?.deletedAt).toBeInstanceOf(Date);
+    // Answers "when did they ask", which is what an enquiry puts.
+    expect(row?.deletionRequestedAt).toBeInstanceOf(Date);
+    expect(row?.email).toBe(tombstoneEmail(id));
+
+    // Recorded, with differing digests, and holding no address either side.
+    const entry = audit.log
+      .entries()
+      .find((candidate) => candidate.action === 'account.deletion_requested');
+    expect(entry).toBeDefined();
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+    expect(JSON.stringify(audit.log.entries())).not.toContain('alice@example.com');
+  }
+
+  it('erases when the person uses our own route', async () => {
+    const context = await populated();
+    await context.identity.requestDeletion({
+      userId: context.id,
+      ipAddress: '203.0.113.7',
+    });
+
+    await assertFullyDeleted(context);
+  });
+
+  it('erases when the deletion arrives as a webhook from Clerk', async () => {
+    // The path that did nothing. Clerk's own account screen deletes the user
+    // directly, so this is the delivery that arrives with no prior request of
+    // ours — and it must do the identical work.
+    const context = await populated();
+    await context.identity.applyEvent('msg_deleted', {
+      type: 'user.deleted',
+      clerkUserId: 'user_a',
+    });
+
+    await assertFullyDeleted(context);
+  });
+
+  it('can fail: without the shared call the webhook path erases nothing', async () => {
+    // Guards the assertion above against passing for the wrong reason. The
+    // profile and the sign-in activity are demonstrably present *before* the
+    // webhook lands, so an empty erasure afterwards would be a real change
+    // rather than an empty fixture.
+    const context = await populated();
+
+    expect(context.eraser.erased).toEqual([]);
+    expect(context.events.all()[0]?.activity.deviceType).toBe('Windows');
+
+    await context.identity.applyEvent('msg_deleted', {
+      type: 'user.deleted',
+      clerkUserId: 'user_a',
+    });
+
+    expect(context.eraser.erased).toEqual([context.id]);
+    expect(context.events.all()[0]?.activity.deviceType).toBeNull();
+  });
+
+  it('does not erase twice when our route runs and the webhook follows', async () => {
+    // The ordinary sequence: we erase, the web app deletes the credential,
+    // Clerk's webhook arrives afterwards. The second pass must be a no-op, or
+    // the trail gains a second deletion nobody performed.
+    const context = await populated();
+    await context.identity.requestDeletion({ userId: context.id, ipAddress: null });
+    await context.identity.applyEvent('msg_deleted', {
+      type: 'user.deleted',
+      clerkUserId: 'user_a',
+    });
+
+    expect(context.eraser.erased).toEqual([context.id]);
+    expect(
+      context.audit.log
+        .entries()
+        .filter((entry) => entry.action === 'account.deletion_requested'),
+    ).toHaveLength(1);
+  });
+
+  it('records the account as its own actor when Clerk starts it', async () => {
+    // They did ask — just not here. Recording no actor would say the system
+    // deleted somebody on nobody's behalf, which is a different and wronger
+    // claim. The address is null because we never saw the client.
+    const context = await populated();
+    await context.identity.applyEvent('msg_deleted', {
+      type: 'user.deleted',
+      clerkUserId: 'user_a',
+    });
+
+    const entry = context.audit.log
+      .entries()
+      .find((candidate) => candidate.action === 'account.deletion_requested');
+
+    expect(entry?.actorId).toBe(context.id);
+    expect(entry?.ipAddress).toBeNull();
+  });
+
+  it('is a success for an account we never mirrored', async () => {
+    const context = await populated();
+    await expect(
+      context.identity.applyEvent('msg_unknown', {
+        type: 'user.deleted',
+        clerkUserId: 'user_nobody',
+      }),
+    ).resolves.toBe(true);
+  });
+});
