@@ -68,19 +68,26 @@ describe('mapClerkEvent', () => {
     });
   });
 
-  it.each([['organization.created'], ['email.created'], ['sms.created']])(
-    'ignores %s rather than failing',
-    (type) => {
-      // Clerk delivers whatever the endpoint is subscribed to, and subscriptions
-      // are widened from a dashboard. Treating an unknown type as an error turns
-      // a settings change into an endless retry loop.
-      //
-      // `session.created` was in this list until slice 1.11a and is now mapped,
-      // so the claim was rewritten rather than the assertion — the surviving
-      // rule is about types we genuinely do not act on, not about this one.
-      expect(mapClerkEvent(type, { id: 'x' })).toBeNull();
-    },
-  );
+  it.each([
+    ['organization.created'],
+    ['email.created'],
+    ['sms.created'],
+    // A real Clerk event, in its catalogue but absent from the SDK's
+    // `SessionWebhookEvent` union. We deliberately do not subscribe to it, and
+    // this pins that a delivery arriving anyway is an ordinary no-op rather
+    // than a mapping failure — Clerk's pending-session state is for
+    // post-sign-in tasks this domain does not have (ADR 0025).
+    ['session.pending'],
+  ])('ignores %s rather than failing', (type) => {
+    // Clerk delivers whatever the endpoint is subscribed to, and subscriptions
+    // are widened from a dashboard. Treating an unknown type as an error turns
+    // a settings change into an endless retry loop.
+    //
+    // `session.created` was in this list until slice 1.11a and is now mapped,
+    // so the claim was rewritten rather than the assertion — the surviving
+    // rule is about types we genuinely do not act on, not about this one.
+    expect(mapClerkEvent(type, { id: 'x' })).toBeNull();
+  });
 
   it.each([
     ['no id', { email_addresses: [ADDRESS], primary_email_address_id: ADDRESS.id }],

@@ -14,9 +14,16 @@ Two facts about the provider shaped it, both established against the real SDK
 and the live development instance rather than from documentation, which does not
 cover session payloads.
 
-**Clerk sends exactly four session webhooks** — `session.created`,
-`session.ended`, `session.removed` and `session.revoked` (`SessionWebhookEvent`
-in `@clerk/backend`). The set is bounded by the provider, not by us.
+**`SessionWebhookEvent` in `@clerk/backend` types four session webhooks** —
+`session.created`, `session.ended`, `session.removed` and `session.revoked`.
+
+**Clerk's event catalogue contains a fifth, `session.pending`**, which that union
+omits. It was found in the Svix portal while subscribing the endpoint, _after_
+this ADR was first written asserting the four were everything — a reminder that
+an SDK's typed union is what the SDK supports, not necessarily what the provider
+emits. We do not subscribe to it and do not map it. Clerk's pending-session
+state exists for post-sign-in tasks such as choosing an organisation, which this
+domain does not have (ADR 0015 declined Clerk Organizations).
 
 **Their payload carries the device and the place.** `latest_activity` holds
 `ip_address`, `city`, `country`, `browser_name`, `browser_version`,
@@ -101,8 +108,15 @@ account's creation is recorded as `account.provisioned` regardless.
 must subscribe to the four `session.*` events. An instance without it produces no
 sign-in history at all and no error — the page simply stays empty, which is the
 one failure mode this feature must not have silently. It joins the `email` claim
-and the `fva` claim in ADR 0015's list, and there is no Backend API for it, so it
-is a dashboard action.
+and the `fva` claim in ADR 0015's list.
+
+There is **no Backend API for the subscription** — `clerk api ls webhook` offers
+only create/delete the Svix app. The route that does work without a browser
+login is `POST /v1/webhooks/svix_url`, which mints a **pre-authenticated Svix
+portal URL**; the endpoint's subscribed events are edited there. Applied to the
+development instance on 2 August 2026. Note for anyone running the CLI from Git
+Bash on Windows: `MSYS_NO_PATHCONV=1` is required, or the leading `/` of the
+path is rewritten into a Windows path and every call answers 404.
 
 ## Alternatives considered
 
@@ -128,7 +142,13 @@ create an account. Two already needed justifying.
 
 **A Postgres enum for the event.** Rejected for `AuditLog.action`'s reason: an
 enum puts every new value behind a schema migration. Text plus a CHECK gives the
-same guarantee here because the set is bounded by the provider.
+same guarantee here because the set is small and closed by us.
+
+**Subscribing to `session.pending` as well.** Rejected. The mapper would return
+null for it and the delivery would be a no-op, so it buys nothing but traffic
+and a row in the webhook ledger for an event we have no meaning for. Pending
+sessions exist for post-sign-in tasks this domain does not have. Worth revisiting
+only if one is ever introduced.
 
 **Overwriting on a replayed delivery** (`upsert` with a populated `update`).
 Rejected: the first record is the one that was true at the time, and letting a

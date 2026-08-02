@@ -56,9 +56,15 @@
 --
 -- Text plus a CHECK rather than a Postgres enum, because an enum puts every
 -- future value behind a schema migration — the same trade `audit_logs.action`
--- makes, except that column is open by design and this one is not: these four
--- are all Clerk emits (`SessionWebhookEvent` in @clerk/backend), so the set is
--- bounded by the provider rather than by us.
+-- makes, except that column is open by design and this one is not.
+--
+-- These four are what `SessionWebhookEvent` in @clerk/backend types, and what
+-- we subscribe to. **Clerk's event catalogue also lists `session.pending`**,
+-- which that union omits — found in the Svix portal while subscribing, not in
+-- the SDK. We neither subscribe to it nor map it, so it cannot reach this
+-- column; the mapper returns null for it, which is the ordinary no-op path for
+-- any event type we do not act on. If pending sessions ever matter, this
+-- constraint is what has to change first.
 
 -- CreateTable
 CREATE TABLE "authentication_events" (
