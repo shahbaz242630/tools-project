@@ -2,27 +2,44 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ActivityList } from './activity-list';
 import type { ActivityOutcome } from '../lib/activity';
+import type { ActivityEntry } from '@platform/contracts';
 
-const ENTRY = {
+// Typed as the contract rather than `as const`. `as const` freezes every field
+// to a literal type, so each override below becomes a type error — and vitest
+// transpiles without checking, so the suite stays green while `pnpm typecheck`
+// goes red. That cost a while in slice 1.11a and was still here.
+const ENTRY: ActivityEntry = {
   id: '11111111-1111-4111-8111-111111111111',
   action: 'profile.updated',
   targetType: 'profile',
   by: 'subject',
   reason: null,
   ipAddress: '203.0.113.7',
+  sessionId: 'sess_alice',
   createdAt: '2026-07-31T09:00:00.000Z',
-} as const;
+};
 
-/** An administrator reading this account. The address is withheld by the API. */
-const DISCLOSURE = {
+const ADMIN_REASON = 'support ticket 4821, account access query';
+
+/**
+ * An administrator reading this account.
+ *
+ * The address *and* the session are withheld by the API — both belong to the
+ * administrator, and neither is the subject's to see.
+ */
+const DISCLOSURE: ActivityEntry = {
   ...ENTRY,
   id: '22222222-2222-4222-8222-222222222222',
   action: 'admin.activity_viewed',
   targetType: 'user',
   by: 'administrator',
-  reason: 'support ticket 4821, account access query',
+  reason: ADMIN_REASON,
   ipAddress: null,
-} as const;
+  sessionId: null,
+};
+
+/** What the page passes: the sign-in history, indexed by session. */
+const DEVICES = new Map([['sess_alice', 'Edge on Windows']]);
 
 describe('ActivityList', () => {
   it('lists an entry in words rather than in machine vocabulary', () => {
@@ -40,7 +57,46 @@ describe('ActivityList', () => {
 
     expect(screen.getByText('Account activity viewed')).toBeInTheDocument();
     expect(screen.getByText('An administrator')).toBeInTheDocument();
-    expect(screen.getByText(DISCLOSURE.reason)).toBeInTheDocument();
+    expect(screen.getByText(ADMIN_REASON)).toBeInTheDocument();
+  });
+
+  it('names the device an action was taken from', () => {
+    // The sentence slice 1.11c exists to produce: the audit entry and the
+    // sign-in are joined by session, so "something happened at 09:00" becomes
+    // "something happened from the device you signed in on".
+    render(
+      <ActivityList outcome={{ kind: 'loaded', entries: [ENTRY] }} devices={DEVICES} />,
+    );
+
+    expect(screen.getByText('Edge on Windows · 203.0.113.7')).toBeInTheDocument();
+  });
+
+  it('shows the address alone when no sign-in matches the session', () => {
+    // A session.created we never received — bounded and expected (ADR 0025).
+    // It must degrade to what this page showed before the join existed.
+    render(
+      <ActivityList
+        outcome={{ kind: 'loaded', entries: [ENTRY] }}
+        devices={new Map()}
+      />,
+    );
+
+    expect(screen.getByText('203.0.113.7')).toBeInTheDocument();
+  });
+
+  it('never names a device for somebody else’s action', () => {
+    // The disclosure carries no session precisely so this cannot happen, but
+    // the assertion is at the rendered output because that is where a future
+    // change would show up — a component that resolved from a different field
+    // would pass every test above and fail this one.
+    render(
+      <ActivityList
+        outcome={{ kind: 'loaded', entries: [DISCLOSURE] }}
+        devices={DEVICES}
+      />,
+    );
+
+    expect(screen.queryByText(/Edge on Windows/)).toBeNull();
   });
 
   it('names no administrator', () => {

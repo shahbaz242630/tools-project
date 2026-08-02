@@ -33,6 +33,7 @@ export class PrismaAuditLog implements AuditLog {
         beforeHash: entry.beforeHash,
         afterHash: entry.afterHash,
         ipAddress: entry.ipAddress,
+        clerkSessionId: entry.sessionId,
         reason: entry.reason,
       },
     });
@@ -58,6 +59,7 @@ export class PrismaAuditLog implements AuditLog {
         targetType: true,
         reason: true,
         ipAddress: true,
+        clerkSessionId: true,
         createdAt: true,
       },
     });
@@ -71,6 +73,7 @@ export class PrismaAuditLog implements AuditLog {
       targetType: row.targetType,
       reason: row.reason,
       ipAddress: row.ipAddress,
+      sessionId: row.clerkSessionId,
       createdAt: row.createdAt,
     }));
   }
@@ -94,9 +97,10 @@ export class PrismaAuditLog implements AuditLog {
       take: limit,
 
       // `actorId` is selected but never served — it decides `byAnotherUser` and
-      // is dropped in the same expression. `ipAddress` is not selected at all:
-      // on these rows it is the administrator's address, and a column that is
-      // never read cannot be leaked by a later change to the mapping below.
+      // is dropped in the same expression. `ipAddress` and `clerkSessionId` are
+      // not selected at all: on these rows both belong to the administrator, and
+      // a column that is never read cannot be leaked by a later change to the
+      // mapping below.
       select: {
         id: true,
         action: true,

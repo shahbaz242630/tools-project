@@ -64,6 +64,15 @@ export interface ActivityRecord {
    * the administrator who acted, and it is not the subject's to see.
    */
   readonly ipAddress: string | null;
+
+  /**
+   * Which sign-in it happened in, or null — **and always null unless `by` is
+   * `subject`**, exactly like `ipAddress` above.
+   *
+   * On somebody else's action the session is the administrator's, and the
+   * reader has no more business with it than with their address.
+   */
+  readonly sessionId: string | null;
   readonly createdAt: Date;
   readonly by: ActivityActor;
 }
@@ -110,6 +119,12 @@ export class AuditService {
       afterHash: change.after === undefined ? null : this.digest.of(change.after),
 
       ipAddress: change.actor?.ipAddress ?? null,
+
+      // Comes off the `Actor` rather than being a parameter of its own, because
+      // "who did it, and from where" is one fact and splitting it across two
+      // arguments is how one of them gets forgotten at a call site.
+      sessionId: change.actor?.sessionId ?? null,
+
       reason: change.reason ?? null,
     });
   }
@@ -174,6 +189,10 @@ function asDisclosure(entry: DisclosedEntry): ActivityRecord {
     ...rest,
     // Null, not absent, and not the actor's. See `ActivityRecord.ipAddress`.
     ipAddress: null,
+    // Same rule, same reason. `DisclosedEntry` carries no session to leak, so
+    // this is stating the guarantee rather than enforcing it — the type already
+    // did that. Written out so the two withheld fields read alike.
+    sessionId: null,
     by: byAnotherUser ? 'administrator' : 'system',
   };
 }

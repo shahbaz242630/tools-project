@@ -7,6 +7,9 @@ const TOKEN = 'session-token';
 const USER = '11111111-1111-4111-8111-111111111111';
 const REASON = 'support ticket 4821, account access query';
 
+// No `sessionId`, and that is what the API actually sends here: the admin route
+// withholds it deliberately, because a session id groups an account's actions
+// into sittings and that is the usage history ADR 0025 refused support.
 const ENTRY = {
   id: '22222222-2222-4222-8222-222222222222',
   action: 'profile.updated',
@@ -14,6 +17,7 @@ const ENTRY = {
   by: 'subject',
   reason: null,
   ipAddress: '203.0.113.7',
+  sessionId: null,
   createdAt: '2026-07-31T09:00:00.000Z',
 };
 

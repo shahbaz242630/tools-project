@@ -110,6 +110,21 @@ describe('GET /me/activity', () => {
     });
   });
 
+  it('records the session the action happened in', async () => {
+    // End to end through the real guard and the real route: the `sid` claim
+    // reaches the audit row and comes back on the wire, which is what lets the
+    // page name the device an action was taken from. Tested here rather than
+    // only at the service, because a controller that forgot to build the actor
+    // with it would pass every unit test — the exact failure ADR 0025 records
+    // one layer down.
+    await activity('alice-token', '203.0.113.7');
+
+    const { entries } = activityResponseSchema.parse(
+      (await activity('alice-token')).json(),
+    );
+    expect(entries[0]?.sessionId).toBe('sess_a');
+  });
+
   it('records the address the web app forwarded', async () => {
     // The API cannot see a browser, so this value only exists because it was
     // forwarded. If the header stops being sent, the column silently becomes

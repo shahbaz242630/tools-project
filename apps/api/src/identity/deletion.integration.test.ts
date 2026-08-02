@@ -661,6 +661,30 @@ describe('GET /admin/users/:userId/activity', () => {
     });
   });
 
+  it('never serves the account holder’s session ids to an administrator', async () => {
+    // The one place this route deliberately shows less than the person's own
+    // page. A session id groups an account's actions into sittings, so a trail
+    // full of them describes when and how often somebody uses the platform —
+    // the location-and-device history ADR 0025 refused support, and outside the
+    // narrowest-thing-that-helps projection of ADR 0022.
+    //
+    // Asserted against the **raw body**, not the parsed object. The schema
+    // permits the field, so parsing first would carry a leak straight through
+    // and this test would pass for the wrong reason.
+    const bobId = await idOf('bob-token');
+    await promote('admin-token');
+
+    const response = await asAdmin('admin-token', bobId);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).not.toMatch(/sess_/);
+
+    // Withheld, not merely absent. Without this the assertion above passes just
+    // as well when no session was ever recorded on Bob's own entries.
+    const own = audit.log.entries().find((e) => e.actorId === bobId);
+    expect(own?.sessionId).toMatch(/^sess_/);
+  });
+
   it('records nothing when the reason was refused', async () => {
     // The read did not happen, so the trail must not claim it did.
     const bobId = await idOf('bob-token');

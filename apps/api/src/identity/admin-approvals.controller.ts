@@ -80,7 +80,11 @@ export class AdminApprovalsController {
     return this.translate(async () =>
       toView(
         await this.identity.proposeRoleChange(
-          { userId: admin.id, ipAddress: request.clientIp ?? null },
+          {
+            userId: admin.id,
+            ipAddress: request.clientIp ?? null,
+            sessionId: request.sessionId ?? null,
+          },
           proposal.userId,
           proposal.role,
           proposal.reason,
@@ -104,7 +108,11 @@ export class AdminApprovalsController {
     return this.translate(async () =>
       toView(
         await this.identity.approve(
-          { userId: admin.id, ipAddress: request.clientIp ?? null },
+          {
+            userId: admin.id,
+            ipAddress: request.clientIp ?? null,
+            sessionId: request.sessionId ?? null,
+          },
           id,
           reason,
         ),
@@ -127,7 +135,11 @@ export class AdminApprovalsController {
     return this.translate(async () =>
       toView(
         await this.identity.cancelApproval(
-          { userId: admin.id, ipAddress: request.clientIp ?? null },
+          {
+            userId: admin.id,
+            ipAddress: request.clientIp ?? null,
+            sessionId: request.sessionId ?? null,
+          },
           id,
           reason,
         ),

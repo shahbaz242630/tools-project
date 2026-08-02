@@ -73,7 +73,11 @@ export class AdminUserController {
     }
 
     const view = await this.identity.adminViewFor(
-      { userId: admin.id, ipAddress: request.clientIp ?? null },
+      {
+        userId: admin.id,
+        ipAddress: request.clientIp ?? null,
+        sessionId: request.sessionId ?? null,
+      },
       userId,
       reason,
     );

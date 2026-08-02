@@ -1,5 +1,9 @@
 import { Time } from '@platform/core';
-import { describeAction, describeActor } from '../lib/activity-display';
+import {
+  describeAction,
+  describeActivityOrigin,
+  describeActor,
+} from '../lib/activity-display';
 import type { ActivityOutcome } from '../lib/activity';
 
 /**
@@ -13,7 +17,20 @@ import type { ActivityOutcome } from '../lib/activity';
  * security claim; rendering it because the API timed out would be a false
  * reassurance, which is worse than an error message.
  */
-export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
+export function ActivityList({
+  outcome,
+  devices = new Map<string, string>(),
+}: {
+  outcome: ActivityOutcome;
+  /**
+   * Device descriptions by session, from the sign-in history beside this table.
+   *
+   * Defaulted to empty so the administrative view — which has no access to
+   * somebody else's sign-ins, deliberately (ADR 0022, ADR 0025) — renders
+   * addresses alone without needing to know this parameter exists.
+   */
+  devices?: ReadonlyMap<string, string>;
+}) {
   switch (outcome.kind) {
     case 'loaded':
       if (outcome.entries.length === 0) {
@@ -58,14 +75,21 @@ export function ActivityList({ outcome }: { outcome: ActivityOutcome }) {
                     </time>
                   </td>
                   <td>
-                    {/* Genuinely unknown rather than missing: the API never sees
-                        a browser directly, so there is no address to record
-                        unless a proxy forwarded one. Saying "not recorded" is
-                        honest; a blank cell reads as a bug.
+                    {/* The device comes from the sign-in this action shares a
+                        session with — the whole point of recording the session
+                        on the entry, and what turns "something happened at
+                        03:15" into "something happened in that sign-in from a
+                        device you did not recognise".
 
-                        Always empty on somebody else's action — that address is
-                        the administrator's, and the API withholds it. */}
-                    {entry.ipAddress ?? 'Not recorded'}
+                        Genuinely unknown rather than missing when neither is
+                        available: the API never sees a browser directly, so
+                        there is no address unless a proxy forwarded one. Saying
+                        "not recorded" is honest; a blank cell reads as a bug.
+
+                        Always bare on somebody else's action — both the address
+                        and the session are the administrator's, and the API
+                        withholds them. */}
+                    {describeActivityOrigin(entry, devices)}
                   </td>
                   <td>
                     {/* Present when somebody was accountable for the action —

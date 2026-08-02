@@ -34,6 +34,7 @@ const entry = (actorId: string | null, over: Partial<AuditEntry> = {}): AuditEnt
   beforeHash: 'a'.repeat(64),
   afterHash: 'b'.repeat(64),
   ipAddress: '203.0.113.7',
+  sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
   reason: null,
   ...over,
 });
@@ -90,6 +91,40 @@ describe('record', () => {
       actorId: null,
       ipAddress: null,
     });
+  });
+
+  it('stores the session the action happened in', async () => {
+    // The join key to `authentication_events`. Asserted against the column
+    // rather than through `listForActor`, so a mapping that dropped it on the
+    // way in would still fail here.
+    const actorId = await newUser();
+    await log.record(entry(actorId, { sessionId: 'sess_2mXqL9zPqR4tVn' }));
+
+    expect(await client.auditLog.findFirst()).toMatchObject({
+      clerkSessionId: 'sess_2mXqL9zPqR4tVn',
+    });
+  });
+
+  it('stores a null session for an action nothing was signed in for', async () => {
+    // A provider webhook applying a change with nobody holding a session. The
+    // honest value, and the one every row predating this column carries.
+    const actorId = await newUser();
+    await log.record(entry(actorId, { sessionId: null }));
+
+    expect(await client.auditLog.findFirst()).toMatchObject({
+      clerkSessionId: null,
+    });
+  });
+
+  it('accepts a session id that is not a uuid', async () => {
+    // Clerk mints prefixed strings, not UUIDs, which is why the column is text.
+    // Pinned because `actorId` and `targetId` beside it *are* uuid columns, and
+    // a well-meaning migration that "tidied" this one would break every write.
+    const actorId = await newUser();
+
+    await expect(
+      log.record(entry(actorId, { sessionId: 'sess_not_a_uuid_at_all' })),
+    ).resolves.toBeUndefined();
   });
 
   it('rejects an entry naming an actor that does not exist', async () => {
@@ -172,12 +207,23 @@ describe('listForSubject', () => {
     await expect(log.listForSubject(alice, 10)).resolves.toEqual([]);
   });
 
-  it('never selects the address or the digests', async () => {
-    // Asserted against the real query, not the mapping. The address on these
-    // rows is the *administrator's*, and a `select` widened later would put it
-    // in front of the person they looked at.
+  it('never selects the address, the session or the digests', async () => {
+    // Asserted against the real query, not the mapping, and as an exhaustive
+    // key set rather than a list of absences — so a column added to this
+    // `select` later fails here whether or not anybody thought about it.
+    //
+    // The address and the session on these rows are the *administrator's*.
+    // Either one in front of the person they looked at is a disclosure, and the
+    // session is the subtler of the two: several disclosures sharing one id tell
+    // the subject when a particular support worker was at their desk.
     const [alice, admin] = [await newUser(), await newUser()];
-    await log.record(entry(admin, { targetType: 'user', targetId: alice }));
+    await log.record(
+      entry(admin, {
+        targetType: 'user',
+        targetId: alice,
+        sessionId: 'sess_admin_should_not_leak',
+      }),
+    );
 
     const [read] = await log.listForSubject(alice, 10);
     expect(Object.keys(read!).sort()).toEqual([
@@ -268,6 +314,10 @@ describe('listForActor', () => {
       // at your account is most of the point of recording it. The digests are
       // still absent, which is what this test is really guarding.
       'reason',
+      // Also deliberate, and only on *this* query. These are the reader's own
+      // actions, so it is their own session — `listForSubject` omits it,
+      // because there it would be the administrator's.
+      'sessionId',
       'targetType',
     ]);
   });

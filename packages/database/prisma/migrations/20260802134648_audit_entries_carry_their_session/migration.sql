@@ -1,0 +1,91 @@
+-- Migration: audit_entries_carry_their_session
+--
+-- Slice 1.11c. Records which sign-in an audited action happened in, so a
+-- person's activity page can say "this happened in the session that started at
+-- 03:14 from Chrome on Android" rather than leaving them to align two lists by
+-- timestamp.
+--
+-- Why this is worth a column
+-- --------------------------
+-- BRD §8.1 asks for authentication events, device management and
+-- suspicious-login alerts. Slices 1.11a and 1.11b built the first two. The
+-- sentence that makes them useful together — "signed in from an unrecognised
+-- device, and then changed the account email" — is one neither table can form
+-- alone: `authentication_events` knows the device and knows nothing about what
+-- was done, and `audit_logs` knows what was done and nothing about where from.
+-- This is the join between them.
+--
+-- It also makes an old claim true. `VerifiedSession.sessionId` has been
+-- documented as "Recorded on audit events" since slice 1.2 and was read by
+-- nothing; the guard attached it to the request and no consumer existed. Slice
+-- 1.11b corrected the comment to say so, and this is the slice that earns it
+-- back.
+--
+-- Why text, and why not a foreign key
+-- -----------------------------------
+-- `TEXT` rather than `uuid` because Clerk's session ids are prefixed strings
+-- (`sess_…`), not UUIDs — the same reason `authentication_events.clerkSessionId`
+-- is text. The two columns are named identically on purpose: it is the same
+-- value, and a reader should not have to work out that they join.
+--
+-- **Deliberately not a foreign key to `authentication_events`.** A session
+-- webhook can legitimately be missed — it races the account's first
+-- authenticated request, which ADR 0025 documents as a bounded and accepted
+-- loss — and audit writes are fail-closed, so a referential constraint would
+-- turn a dropped provider delivery into a failed user action. The reference is
+-- advisory. An id with no matching sign-in row shows no device, which is
+-- exactly what the page already does for a sign-in it never saw.
+--
+-- Why no index
+-- ------------
+-- Nothing queries by this column. The activity page fetches the audit trail and
+-- the sign-in history independently — for reasons that predate this slice, and
+-- to keep the two modules acyclic (ADR 0025) — and correlates them in memory
+-- over at most fifty rows each. An index would be write cost on every audited
+-- action in service of a query nobody runs. Add one when a query exists.
+--
+-- Data impact
+-- -----------
+-- One nullable column added to `audit_logs`. No table is created or dropped, no
+-- column changes type, nothing is backfilled, and no existing row is read or
+-- rewritten. `ADD COLUMN ... NULL` with no default is metadata-only in every
+-- supported Postgres version: it does not rewrite the table, and the ACCESS
+-- EXCLUSIVE lock is held only for the catalogue update.
+--
+-- Every row written before this migration keeps NULL, which is the honest
+-- value: those actions happened in sessions we were not recording. The page
+-- renders a NULL exactly as it renders an unmatched id — no device shown — so
+-- historical rows need no special case anywhere above this.
+--
+-- The column stays NULL for actions no session is behind: a provider webhook
+-- applying a change with nobody holding a session, and anything system
+-- initiated. That is the same nullability, and the same reason, as `actorId`
+-- and `reason` on this table.
+--
+-- Retention and erasure
+-- ---------------------
+-- The value survives account erasure, exactly as `ipAddress` on this table
+-- already does. §10.1 retains these rows for six years; a session identifier is
+-- less revealing than the address stored beside it, and the
+-- `authentication_events` row it points at is redacted on erasure anyway, so
+-- the device and the place are gone by that route regardless (ADR 0025).
+-- Nulling it here would remove the ability to say "these six actions were all
+-- one session" from a security log whose whole purpose is answering that after
+-- the fact.
+--
+-- Rollback
+-- --------
+-- `ALTER TABLE "audit_logs" DROP COLUMN "clerkSessionId";`
+--
+-- Lossless in the sense that matters: the column holds no value that exists
+-- nowhere else. It is a copy of an identifier Clerk minted and
+-- `authentication_events` also stores. Dropping it loses the *link* between the
+-- two records, not either record.
+--
+-- Roll-forward is preferred regardless, because the store selects this column:
+-- rolling the database back without also rolling the API back would fail every
+-- activity read. Expand-and-contract order applies — the column is nullable
+-- precisely so it can be applied before the code that writes it.
+
+-- AlterTable
+ALTER TABLE "audit_logs" ADD COLUMN     "clerkSessionId" TEXT;

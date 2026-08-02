@@ -78,7 +78,11 @@ export class MeProfileController {
     // name its own actor could forge an audit trail, which is worse than having
     // none.
     return this.profiles.saveMine(
-      { userId: user.id, ipAddress: request.clientIp ?? null },
+      {
+        userId: user.id,
+        ipAddress: request.clientIp ?? null,
+        sessionId: request.sessionId ?? null,
+      },
       input,
     );
   }

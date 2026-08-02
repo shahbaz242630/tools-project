@@ -20,6 +20,7 @@ import {
 } from '@platform/contracts';
 import type { AdminAccount } from '@platform/contracts';
 import { Time } from '@platform/core';
+import type { Actor } from '../audit/audit-log.js';
 import { AuthGuard, IDENTITY_SERVICE, Roles } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
@@ -92,11 +93,11 @@ export class AdminSuspensionController {
     body: unknown,
     admin: MirroredUser,
     request: AuthenticatedRequest,
-    act: (
-      actor: { userId: string; ipAddress: string | null },
-      id: string,
-      reason: string,
-    ) => Promise<MirroredUser>,
+    // `Actor` itself, not a structural copy of it. The copy that used to be
+    // here silently stopped matching the moment the type gained a field, and a
+    // hand-written duplicate of a security type is one that drifts on exactly
+    // the field somebody added for a reason.
+    act: (actor: Actor, id: string, reason: string) => Promise<MirroredUser>,
   ): Promise<AdminAccount> {
     // Before anything is written. `audit_logs.targetId` is a `uuid` column and
     // the entry is written inside the service, so an unvalidated path parameter
@@ -119,7 +120,11 @@ export class AdminSuspensionController {
 
     try {
       const user = await act(
-        { userId: admin.id, ipAddress: request.clientIp ?? null },
+        {
+          userId: admin.id,
+          ipAddress: request.clientIp ?? null,
+          sessionId: request.sessionId ?? null,
+        },
         userId,
         reason,
       );

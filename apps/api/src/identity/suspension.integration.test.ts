@@ -178,7 +178,7 @@ describe('what a suspended account keeps', () => {
     // Where somebody actually finds out what happened and why.
     const { alice, bob } = await suspendBob();
     await audit.service.record({
-      actor: { userId: alice, ipAddress: null },
+      actor: { userId: alice, ipAddress: null, sessionId: null },
       action: 'account.suspended',
       targetType: 'user',
       targetId: bob,

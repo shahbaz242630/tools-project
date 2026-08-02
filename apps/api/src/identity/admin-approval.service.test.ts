@@ -23,7 +23,11 @@ let bob: string;
 let carol: string;
 
 /** An actor, as a controller assembles one from a verified session. */
-const actor = (userId: string) => ({ userId, ipAddress: '203.0.113.7' });
+const actor = (userId: string) => ({
+  userId,
+  ipAddress: '203.0.113.7',
+  sessionId: `sess_${userId}`,
+});
 
 async function provision(clerkUserId: string, email: string): Promise<string> {
   const user = await fakes.service.resolveSession({
