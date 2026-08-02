@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import Link from 'next/link';
+import { AccountLinks } from '../../components/account-links';
 import { AccountReport } from '../../components/account-report';
 import { SuspensionNotice } from '../../components/suspension-notice';
 import { fetchAccount } from '../../lib/account';
@@ -48,40 +49,9 @@ export default async function AccountPage() {
 
       <AccountReport outcome={outcome} />
 
-      {outcome.kind === 'signed-in' ? (
-        <ul>
-          {/* The three the API refuses while suspended are dropped rather than
-              shown and then rejected — a link that answers 403 reads as a fault
-              in the site. Data rights stay, because they still work. */}
-          {outcome.account.suspendedAt === null ? (
-            <>
-              <li>
-                <Link href="/account/profile">Edit your profile</Link>
-              </li>
-              <li>
-                <Link href="/account/email">Email and sign-in</Link>
-              </li>
-              <li>
-                {/* What everybody else sees. Linked from here on purpose: a
-                    person being asked for a home address should be one click
-                    from the page that proves how little of it is published. */}
-                <Link href={`/users/${outcome.account.id}`}>
-                  View your public profile
-                </Link>
-              </li>
-            </>
-          ) : null}
-          <li>
-            <Link href="/account/activity">Account activity</Link>
-          </li>
-          <li>
-            <Link href="/account/data">Download your data</Link>
-          </li>
-          <li>
-            <Link href="/account/delete">Delete your account</Link>
-          </li>
-        </ul>
-      ) : null}
+      {/* Which links a suspended account keeps is a rule rather than a layout
+          choice, so it lives in the component where a test can reach it. */}
+      {outcome.kind === 'signed-in' ? <AccountLinks account={outcome.account} /> : null}
 
       <p>
         <Link href="/">Back</Link>

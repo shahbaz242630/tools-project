@@ -119,11 +119,31 @@ describe('SignInList', () => {
     expect(screen.getByText(/Sign in to see the sign-in history/)).toBeInTheDocument();
   });
 
-  it('tells somebody what to do about an unrecognised sign-in', () => {
-    // A security page that shows a problem and no action is one somebody reads
-    // and then does nothing about.
+  it('takes somebody to the devices, rather than telling them to go there', () => {
+    // This test used to be named for an action and assert only that a sentence
+    // existed. It passed for five slices over copy that named a destination and
+    // linked to nothing — the §10 lesson that a test's name is documentation
+    // and only its assertion is evidence. The assertion is now the `href`.
     render(<SignInList outcome={loaded(ENTRY)} />);
+
     expect(screen.getByText(/Do not recognise one of these/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /devices signed in to your account/i }),
+    ).toHaveAttribute('href', '/account/email/security');
+  });
+
+  it('lands on the devices themselves, not the tab in front of them', () => {
+    // `/account/email` opens Clerk's Profile tab, which is a list of email
+    // addresses. A link that promises devices and delivers an email form has
+    // simply moved the problem along by one page — found by opening it, which
+    // no assertion about the bare path would have caught.
+    render(<SignInList outcome={loaded(ENTRY)} />);
+
+    const href = screen
+      .getByRole('link', { name: /devices signed in to your account/i })
+      .getAttribute('href');
+
+    expect(href?.endsWith('/security')).toBe(true);
   });
 
   it('keeps the machine-readable timestamp in the markup', () => {

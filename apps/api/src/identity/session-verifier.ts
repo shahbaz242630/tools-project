@@ -14,7 +14,22 @@ export interface VerifiedSession {
   /** Clerk's `user_…`, the `sub` claim. A reference, never our identity. */
   readonly clerkUserId: string;
 
-  /** Clerk's `sess_…`, the `sid` claim. Recorded on audit events. */
+  /**
+   * Clerk's `sess_…`, the `sid` claim.
+   *
+   * **Nothing reads it yet.** It said "Recorded on audit events" from slice 1.2
+   * until 1.11b, which was never true: the guard attaches it to the request and
+   * `AuditEntry` has no such field. A comment that disagrees with the code is a
+   * bug report you write yourself, so it is stated plainly here instead.
+   *
+   * It is kept rather than removed because slice 1.11c records it alongside
+   * audit entries, which is what finally makes the original claim true — the
+   * same id `authentication_events` already stores, so a person's activity trail
+   * can say which sign-in an action happened in rather than leaving them to
+   * match timestamps by eye. Until that lands this is the one claim on this
+   * interface the header's "claims we do not use are not surfaced" does not
+   * hold for, and it is deliberate and temporary.
+   */
   readonly sessionId: string;
 
   /**
