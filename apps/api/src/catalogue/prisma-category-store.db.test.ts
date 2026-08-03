@@ -64,7 +64,12 @@ describe('create', () => {
   it('writes the category and its first version together', async () => {
     const author = await newUser();
     const created = await store.create(
-      { slug: 'outdoor-gardening', name: 'Outdoor and gardening', riskLevel: 'low' },
+      {
+        slug: 'outdoor-gardening',
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        attributes: [],
+      },
       author,
     );
 
@@ -80,21 +85,33 @@ describe('create', () => {
   it('refuses a duplicate slug as a named error, not a Prisma code', async () => {
     const author = await newUser();
     const taken = slug();
-    await store.create({ slug: taken, name: 'First', riskLevel: 'low' }, author);
+    await store.create(
+      { slug: taken, name: 'First', riskLevel: 'low', attributes: [] },
+      author,
+    );
 
     // The adapter's job: P2002 is a provider detail and must not reach a route,
     // which would otherwise have to know Prisma error codes to answer 409.
     await expect(
-      store.create({ slug: taken, name: 'Second', riskLevel: 'low' }, author),
+      store.create(
+        { slug: taken, name: 'Second', riskLevel: 'low', attributes: [] },
+        author,
+      ),
     ).rejects.toBeInstanceOf(CategorySlugTakenError);
   });
 
   it('leaves no category behind when the slug is taken', async () => {
     const author = await newUser();
     const taken = slug();
-    await store.create({ slug: taken, name: 'First', riskLevel: 'low' }, author);
+    await store.create(
+      { slug: taken, name: 'First', riskLevel: 'low', attributes: [] },
+      author,
+    );
     await expect(
-      store.create({ slug: taken, name: 'Second', riskLevel: 'low' }, author),
+      store.create(
+        { slug: taken, name: 'Second', riskLevel: 'low', attributes: [] },
+        author,
+      ),
     ).rejects.toThrow();
 
     expect(await client.category.count({ where: { slug: taken } })).toBe(1);
@@ -105,7 +122,7 @@ describe('the immutability trigger', () => {
   it('refuses an UPDATE of a version', async () => {
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low' },
+      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
       author,
     );
 
@@ -124,7 +141,7 @@ describe('the immutability trigger', () => {
   it('leaves the row exactly as it was after a refused UPDATE', async () => {
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low' },
+      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
       author,
     );
 
@@ -147,7 +164,7 @@ describe('the immutability trigger', () => {
     // is a booking's foreign key, which expresses a real dependency.
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low' },
+      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
       author,
     );
 
@@ -162,11 +179,14 @@ describe('addVersion', () => {
   it('appends and leaves the previous version untouched', async () => {
     const author = await newUser();
     const identity = slug();
-    await store.create({ slug: identity, name: 'Original', riskLevel: 'low' }, author);
+    await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
 
     const updated = await store.addVersion(
       identity,
-      { name: 'Renamed', riskLevel: 'high' },
+      { name: 'Renamed', riskLevel: 'high', attributes: [] },
       author,
     );
 
@@ -188,7 +208,7 @@ describe('addVersion', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low' },
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
       author,
     );
 
@@ -210,7 +230,7 @@ describe('addVersion', () => {
     expect(
       await store.addVersion(
         'no-such-category',
-        { name: 'X', riskLevel: 'low' },
+        { name: 'X', riskLevel: 'low', attributes: [] },
         author,
       ),
     ).toBeNull();
@@ -220,7 +240,10 @@ describe('addVersion', () => {
 describe('the author foreign key', () => {
   it('refuses to remove a user who authored a configuration', async () => {
     const author = await newUser();
-    await store.create({ slug: slug(), name: 'Original', riskLevel: 'low' }, author);
+    await store.create(
+      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
 
     // ON DELETE RESTRICT. Accounts are soft-deleted rather than removed, so this
     // constrains nothing in practice — but it is why every db test in the
@@ -233,9 +256,20 @@ describe('reads', () => {
   it('returns the newest version as the current configuration', async () => {
     const author = await newUser();
     const identity = slug();
-    await store.create({ slug: identity, name: 'Original', riskLevel: 'low' }, author);
-    await store.addVersion(identity, { name: 'Second', riskLevel: 'medium' }, author);
-    await store.addVersion(identity, { name: 'Third', riskLevel: 'high' }, author);
+    await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
+    await store.addVersion(
+      identity,
+      { name: 'Second', riskLevel: 'medium', attributes: [] },
+      author,
+    );
+    await store.addVersion(
+      identity,
+      { name: 'Third', riskLevel: 'high', attributes: [] },
+      author,
+    );
 
     const found = await store.findBySlug(identity);
     expect(found?.name).toBe('Third');
@@ -247,8 +281,14 @@ describe('reads', () => {
     const author = await newUser();
     const first = slug();
     const second = slug();
-    await store.create({ slug: first, name: 'First', riskLevel: 'low' }, author);
-    await store.create({ slug: second, name: 'Second', riskLevel: 'low' }, author);
+    await store.create(
+      { slug: first, name: 'First', riskLevel: 'low', attributes: [] },
+      author,
+    );
+    await store.create(
+      { slug: second, name: 'Second', riskLevel: 'low', attributes: [] },
+      author,
+    );
 
     const listed = await store.list();
     expect(listed.map((category) => category.slug)).toEqual([first, second]);
@@ -270,7 +310,7 @@ describe('reads', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low' },
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
       author,
     );
 
@@ -285,5 +325,174 @@ describe('reads', () => {
     });
 
     await expect(store.findBySlug(identity)).rejects.toThrow(/risk level/i);
+  });
+});
+
+describe('the attribute schema', () => {
+  const SCHEMA = [
+    {
+      key: 'power_source',
+      label: 'Power source',
+      required: true,
+      type: 'choice' as const,
+      options: [
+        { value: 'petrol', label: 'Petrol' },
+        { value: 'cordless', label: 'Cordless' },
+      ],
+    },
+    {
+      key: 'weight_kg',
+      label: 'Weight',
+      required: true,
+      type: 'number' as const,
+      unit: 'kg',
+      decimalPlaces: 1,
+    },
+  ];
+
+  it('round-trips through JSONB unchanged, order included', async () => {
+    // Order is the render order (ADR 0027). Postgres preserves array order in
+    // `jsonb` — it reorders *object keys*, which is why nothing here depends on
+    // key order and everything depends on array order.
+    const author = await newUser();
+    const identity = slug();
+    await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: SCHEMA },
+      author,
+    );
+
+    const found = await store.findBySlug(identity);
+    expect(found?.attributes).toEqual(SCHEMA);
+    expect(found?.attributes.map((attribute) => attribute.key)).toEqual([
+      'power_source',
+      'weight_kg',
+    ]);
+  });
+
+  it('reads a version written without the column as an empty schema', async () => {
+    // This is the migration's claim, tested rather than asserted: a version that
+    // predates slice 2.2 has no attributes and says so. The insert deliberately
+    // omits the column so Postgres applies the DEFAULT, which is the only way to
+    // reproduce a pre-existing row — writing `[]` by hand would prove nothing
+    // about the default and everything about the test.
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'As if written before the migration',
+        riskLevel: 'low',
+        createdById: author,
+      },
+    });
+
+    const row = await client.categoryVersion.findFirst({
+      where: { categoryId: created.id, versionNumber: 2 },
+    });
+    expect(row?.attributes).toEqual([]);
+
+    // And it survives the adapter's parse, which is the half that matters —
+    // a default the store then rejects would be worse than no default.
+    expect((await store.findBySlug(identity))?.attributes).toEqual([]);
+  });
+
+  it('keeps the old schema when a new version replaces it', async () => {
+    const author = await newUser();
+    const identity = slug();
+    await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: SCHEMA },
+      author,
+    );
+    await store.addVersion(
+      identity,
+      { name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
+
+    const versions = await client.categoryVersion.findMany({
+      where: { category: { slug: identity } },
+      orderBy: { versionNumber: 'asc' },
+    });
+    // The guarantee §8.2 rests on: a listing filled in under version 1 still has
+    // a schema to be read against, whatever version 2 says.
+    expect(versions[0]?.attributes).toEqual(SCHEMA);
+    expect(versions[1]?.attributes).toEqual([]);
+  });
+
+  it('still refuses an UPDATE after the column was added', async () => {
+    // The migration is `ALTER TABLE ... ADD COLUMN`, which is DDL and does not
+    // fire row-level triggers — so the immutability trigger neither had to be
+    // dropped nor recreated. Asserted rather than reasoned about, because a
+    // migration that silently disarmed it would look exactly like this one.
+    const author = await newUser();
+    const created = await store.create(
+      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: SCHEMA },
+      author,
+    );
+
+    await expect(
+      client.categoryVersion.updateMany({
+        where: { categoryId: created.id },
+        data: { attributes: [] },
+      }),
+    ).rejects.toThrow(/immutable/i);
+  });
+
+  it('refuses to read a schema this build cannot render', async () => {
+    // `jsonb` guarantees the value is JSON and nothing more. A row written by a
+    // newer build — a fifth attribute type, say — must not be read as though the
+    // field were absent, because a listing form that silently drops a required
+    // field produces listings missing data nobody asked for.
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'From the future',
+        riskLevel: 'low',
+        attributes: [
+          { key: 'available_from', label: 'From', required: false, type: 'date' },
+        ],
+        createdById: author,
+      },
+    });
+
+    await expect(store.findBySlug(identity)).rejects.toThrow(/attribute schema/i);
+  });
+
+  it('names the category when it cannot read one', async () => {
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      author,
+    );
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'Malformed',
+        riskLevel: 'low',
+        // Not even the right shape. The failure has to survive anything, not
+        // only a plausible schema from a newer build.
+        attributes: { power_source: 'petrol' },
+        createdById: author,
+      },
+    });
+
+    await expect(store.findBySlug(identity)).rejects.toThrow(identity);
   });
 });

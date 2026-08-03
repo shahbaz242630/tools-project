@@ -685,6 +685,25 @@ model CategoryVersion {
   /// configuration, which is the distinction CLAUDE.md's rule is drawing.
   riskLevel String @db.Text
 
+  /// The category's attribute schema, in render order (ADR 0027, BRD §8.2).
+  ///
+  /// A closed vocabulary of four types — `text`, `number`, `choice` and
+  /// `choice-many` — validated by `categoryAttributesSchema` in
+  /// @platform/contracts, which is the only thing that may write here. Postgres
+  /// checks that the value is JSON; it does not and cannot check that it is a
+  /// schema this build can render, so the adapter parses on the way out.
+  ///
+  /// **JSON rather than a child table, deliberately.** This row is immutable by
+  /// the trigger below, and a JSON column inherits that guarantee; rows in a
+  /// child table would not, and one appended against last month's version would
+  /// silently change the terms of every booking pinned to it. The schema is also
+  /// always read whole, never queried attribute by attribute, and its order is
+  /// meaningful — which a relational table would need a position column to keep.
+  ///
+  /// Defaults to an empty schema, which is exactly what a category configured
+  /// before slice 2.2 has. No backfill invents a schema nobody chose.
+  attributes Json @default("[]") @db.JsonB
+
   /// Who made this configuration what it is. BRD §6.2 puts an author on the
   /// entity; the corresponding audit entry carries the reason and the digests.
   createdById String @db.Uuid

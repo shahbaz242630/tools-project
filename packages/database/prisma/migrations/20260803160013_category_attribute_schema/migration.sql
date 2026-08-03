@@ -1,0 +1,65 @@
+-- Migration: category_attribute_schema
+--
+-- Slice 2.2. A category version gains the attribute schema BRD §8.2 requires and
+-- BRD §14's Phase 2 exit gate depends on: "a listing renders its
+-- category-specific fields without frontend code changes for every field".
+--
+-- Why one JSON column and not a child table
+-- ----------------------------------------
+-- `category_versions` is immutable — the trigger from the previous migration
+-- refuses UPDATE — and a column on that row inherits the guarantee for nothing.
+-- A `category_attributes` child table would not: nothing stops a row being
+-- appended against a version written last month, and that row would silently
+-- change the terms of every booking already pinned to it. Rebuilding the
+-- guarantee would mean a second trigger enforcing a rule the first already
+-- expresses.
+--
+-- The schema is also always read whole. Nothing queries one attribute of one
+-- category; the whole list is fetched to render a form or a listing page. And
+-- its order is meaningful — it is the order fields appear in — which an array
+-- keeps for free and a table would need a position column to preserve.
+--
+-- ADR 0027 has the rest, including why the vocabulary is closed rather than
+-- JSON Schema.
+--
+-- What Postgres checks and what it does not
+-- ----------------------------------------
+-- JSONB validates that the value is JSON. It does not validate that the value is
+-- an attribute schema, and a CHECK constraint that tried would be a second copy
+-- of a vocabulary that lives in @platform/contracts and changes with a deploy.
+-- The adapter parses on the way out and throws on anything it cannot render,
+-- which is the same treatment `riskLevel` already gets.
+--
+-- Data impact
+-- -----------
+-- One column, defaulted to an empty schema. In PostgreSQL 11 and later,
+-- ADD COLUMN with a non-volatile DEFAULT is a catalogue-only change: existing
+-- rows are not rewritten and the default is materialised on read. At our size it
+-- would be instant either way.
+--
+-- **Existing versions are left saying, truthfully, that they have no
+-- attributes.** No backfill invents a schema nobody configured. A category
+-- created before this migration renders no category-specific fields, which is
+-- what it did yesterday.
+--
+-- **The immutability trigger is unaffected.** It is `BEFORE UPDATE ... FOR EACH
+-- ROW`, and DDL does not fire row-level triggers — so this migration does not
+-- need exempting from it, and the trigger still refuses an UPDATE the moment
+-- this finishes. The db test asserts both halves rather than trusting the
+-- reasoning.
+--
+-- The table takes a brief ACCESS EXCLUSIVE lock. Nothing reads categories yet
+-- outside the admin surface.
+--
+-- Rollback
+-- --------
+--   ALTER TABLE "category_versions" DROP COLUMN "attributes";
+--
+-- Lossless for anything configured before this migration, and lossy for anything
+-- configured after it — dropping the column discards the attribute schemas
+-- themselves. Until slice 2.4 nothing depends on them, so a roll back is
+-- recoverable by reconfiguring. From 2.4 a listing's values are keyed by these
+-- definitions and the answer becomes roll forward, not back.
+
+-- AlterTable
+ALTER TABLE "category_versions" ADD COLUMN     "attributes" JSONB NOT NULL DEFAULT '[]';

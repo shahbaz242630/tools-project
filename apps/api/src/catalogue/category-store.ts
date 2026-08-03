@@ -1,4 +1,4 @@
-import type { CategoryRiskLevel } from '@platform/contracts';
+import type { CategoryAttribute, CategoryRiskLevel } from '@platform/contracts';
 
 /**
  * Categories and their configuration, as the rest of the application sees them.
@@ -24,15 +24,24 @@ export interface CategoryRecord {
   readonly slug: string;
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
+  readonly attributes: readonly CategoryAttribute[];
   readonly versionNumber: number;
   readonly versionCreatedAt: Date;
   readonly createdAt: Date;
 }
 
-/** The configurable half — everything a new version can change. */
+/**
+ * The configurable half — everything a new version can change.
+ *
+ * `attributes` is required, not optional. An optional field would let a caller
+ * that forgot it silently clear a category's whole schema, which is the failure
+ * ADR 0025 describes: an optional parameter is a silent default, and the silent
+ * default here would rewrite the terms every later listing is filled in under.
+ */
 export interface CategoryConfiguration {
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
+  readonly attributes: readonly CategoryAttribute[];
 }
 
 /**

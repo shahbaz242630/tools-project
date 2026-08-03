@@ -54,6 +54,7 @@ const DRAFT = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  attributes: [],
 } as const;
 
 let app: NestFastifyApplication;
@@ -270,7 +271,7 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('outdoor-gardening', 'renamed after the taxonomy review'),
       headers: auth('admin-token'),
-      payload: { name: 'Garden and outdoor', riskLevel: 'medium' },
+      payload: { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
     });
 
     expect(response.statusCode).toBe(200);
@@ -286,7 +287,7 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('no-such-category', 'should not be possible'),
       headers: auth('admin-token'),
-      payload: { name: 'Nothing', riskLevel: 'low' },
+      payload: { name: 'Nothing', riskLevel: 'low', attributes: [] },
     });
     expect(response.statusCode).toBe(404);
   });
@@ -296,7 +297,7 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('outdoor-gardening', 'should not be possible'),
       headers: auth('bob-token'),
-      payload: { name: 'Hijacked', riskLevel: 'high' },
+      payload: { name: 'Hijacked', riskLevel: 'high', attributes: [] },
     });
 
     expect(response.statusCode).toBe(403);
@@ -311,7 +312,12 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('outdoor-gardening', 'attempting to move the slug'),
       headers: auth('admin-token'),
-      payload: { name: 'Renamed', riskLevel: 'low', slug: 'something-else' },
+      payload: {
+        name: 'Renamed',
+        riskLevel: 'low',
+        attributes: [],
+        slug: 'something-else',
+      },
     });
 
     expect(response.statusCode).toBe(200);
@@ -368,5 +374,128 @@ describe('reading categories', () => {
       headers: auth('admin-token'),
     });
     expect(response.statusCode).toBe(200);
+  });
+});
+
+describe('the attribute schema, through the routes', () => {
+  const SCHEMA = [
+    {
+      key: 'power_source',
+      label: 'Power source',
+      required: true,
+      type: 'choice',
+      options: [
+        { value: 'petrol', label: 'Petrol' },
+        { value: 'cordless', label: 'Cordless' },
+      ],
+    },
+    {
+      key: 'weight_kg',
+      label: 'Weight',
+      required: true,
+      type: 'number',
+      unit: 'kg',
+      decimalPlaces: 1,
+    },
+  ];
+
+  beforeEach(async () => {
+    await promoteAdmin();
+  });
+
+  it('accepts a schema on create and returns it', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      attributes: SCHEMA,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseAdminCategory(response.json()).attributes).toEqual(SCHEMA);
+  });
+
+  it('reads the schema back on a later request', async () => {
+    await createCategory('admin-token', { ...DRAFT, attributes: SCHEMA });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: adminCategoryPath('outdoor-gardening'),
+      headers: auth('admin-token'),
+    });
+
+    expect(parseAdminCategory(response.json()).attributes).toEqual(SCHEMA);
+  });
+
+  it('replaces the schema rather than merging it', async () => {
+    // `PUT` carries the whole configuration for the reason slice 2.1 chose it:
+    // a partial update would merge against whatever version happens to be
+    // current when the request lands, producing a schema neither administrator
+    // wrote.
+    await createCategory('admin-token', { ...DRAFT, attributes: SCHEMA });
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `${adminCategoryPath('outdoor-gardening')}?reason=${encodeURIComponent(
+        'dropping the weight attribute',
+      )}`,
+      headers: auth('admin-token'),
+      payload: {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        attributes: [SCHEMA[0]],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(parseAdminCategory(response.json()).attributes).toHaveLength(1);
+    // Version 1 still has both. A listing filled in under it is still readable.
+    expect(store.versionsOf('outdoor-gardening')[0]?.attributes).toHaveLength(2);
+  });
+
+  it('rejects a missing schema rather than defaulting it to empty', async () => {
+    // ADR 0025's lesson: an optional field is a silent default, and this silent
+    // default would clear the schema every listing in the category is filled in
+    // against — while answering 200.
+    const response = await createCategory('admin-token', {
+      slug: DRAFT.slug,
+      name: DRAFT.name,
+      riskLevel: DRAFT.riskLevel,
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects a type outside the vocabulary, naming the field', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      attributes: [
+        { key: 'available_from', label: 'From', required: false, type: 'date' },
+      ],
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    expect(body.issues?.join(' ')).toMatch(/attributes|type/i);
+  });
+
+  it('rejects two attributes sharing a key', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      attributes: [SCHEMA[0], { ...SCHEMA[0], label: 'Fuel' }],
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('writes nothing when the schema is refused', async () => {
+    await createCategory('admin-token', {
+      ...DRAFT,
+      slug: 'bad-schema',
+      attributes: [{ key: 'x', label: 'X', required: false, type: 'text' }],
+    });
+
+    // `maxLength` is missing, so the whole request fails — and a rejected
+    // request must not leave a category behind, or a retry hits 409 on a
+    // category nobody successfully created.
+    expect(await store.findBySlug('bad-schema')).toBeNull();
   });
 });

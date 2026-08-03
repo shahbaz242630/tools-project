@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { CategoryAttribute } from '@platform/contracts';
 import { CategorySlugTakenError } from './category-store.js';
 import { createCatalogueFakes } from './testing/fakes.js';
 import type { CatalogueFakes } from './testing/fakes.js';
@@ -22,7 +23,33 @@ const draft = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  attributes: [],
 } as const;
+
+/**
+ * A schema with one of each shape that has a cross-field rule, so the digest
+ * tests are exercising something with structure rather than a flat object.
+ */
+const SCHEMA: readonly CategoryAttribute[] = [
+  {
+    key: 'power_source',
+    label: 'Power source',
+    required: true,
+    type: 'choice',
+    options: [
+      { value: 'petrol', label: 'Petrol' },
+      { value: 'cordless', label: 'Cordless' },
+    ],
+  },
+  {
+    key: 'weight_kg',
+    label: 'Weight',
+    required: true,
+    type: 'number',
+    unit: 'kg',
+    decimalPlaces: 1,
+  },
+];
 
 describe('creating a category', () => {
   it('starts at version 1 and returns the configuration in force', async () => {
@@ -94,7 +121,7 @@ describe('reconfiguring a category', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium' },
+      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
       'Renamed after the taxonomy review',
     );
 
@@ -112,7 +139,7 @@ describe('reconfiguring a category', () => {
     const updated = await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium' },
+      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
       'Renamed after the taxonomy review',
     );
 
@@ -127,7 +154,7 @@ describe('reconfiguring a category', () => {
     const updated = await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Something completely different', riskLevel: 'high' },
+      { name: 'Something completely different', riskLevel: 'high', attributes: [] },
       'Testing that the slug is stable',
     );
 
@@ -140,7 +167,7 @@ describe('reconfiguring a category', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium' },
+      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
       'Renamed after the taxonomy review',
     );
 
@@ -162,7 +189,7 @@ describe('reconfiguring a category', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Outdoor and gardening', riskLevel: 'low' },
+      { name: 'Outdoor and gardening', riskLevel: 'low', attributes: [] },
       'Saving the identical configuration again',
     );
 
@@ -174,7 +201,7 @@ describe('reconfiguring a category', () => {
     const missing = await fakes.service.reconfigure(
       ADMIN,
       'no-such-category',
-      { name: 'Nothing', riskLevel: 'low' },
+      { name: 'Nothing', riskLevel: 'low', attributes: [] },
       'Should not be possible',
     );
 
@@ -189,13 +216,18 @@ describe('reading categories', () => {
     await fakes.service.create(ADMIN, draft, REASON);
     await fakes.service.create(
       ADMIN,
-      { slug: 'cleaning-floorcare', name: 'Cleaning', riskLevel: 'low' },
+      {
+        slug: 'cleaning-floorcare',
+        name: 'Cleaning',
+        riskLevel: 'low',
+        attributes: [],
+      },
       REASON,
     );
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium' },
+      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
       'Renamed after the taxonomy review',
     );
 
@@ -220,5 +252,81 @@ describe('reading categories', () => {
 
   it('answers null for an unknown slug', async () => {
     expect(await fakes.service.findBySlug('no-such-category')).toBeNull();
+  });
+});
+
+describe('the attribute schema', () => {
+  it('is returned with the configuration in force', async () => {
+    const created = await fakes.service.create(
+      ADMIN,
+      { ...draft, attributes: SCHEMA },
+      REASON,
+    );
+
+    expect(created.attributes).toEqual(SCHEMA);
+  });
+
+  it('leaves the previous version saying exactly what it said', async () => {
+    // The property a listing created under version 1 depends on. Without it,
+    // adding a required attribute would retroactively make old listings invalid.
+    await fakes.service.create(ADMIN, { ...draft, attributes: SCHEMA }, REASON);
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      { name: 'Outdoor and gardening', riskLevel: 'low', attributes: [] },
+      'Clearing the schema',
+    );
+
+    const versions = fakes.store.versionsOf('outdoor-gardening');
+    expect(versions[0]?.attributes).toEqual(SCHEMA);
+    expect(versions[1]?.attributes).toEqual([]);
+  });
+
+  it('registers as a change in the audit digest', async () => {
+    await fakes.service.create(ADMIN, draft, REASON);
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      { name: draft.name, riskLevel: draft.riskLevel, attributes: SCHEMA },
+      'Adding the attribute schema',
+    );
+
+    const entry = fakes.audit.log.entries()[1];
+    // Name and risk level are untouched, so if the schema were left out of
+    // `auditable` these two would match and the trail would record nothing.
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('registers a reorder as a change', async () => {
+    // ADR 0027: order is the render order, and `canonicalise` preserves array
+    // order deliberately (ADR 0017). A reorder that left no trace would be the
+    // one configuration change nobody could account for afterwards.
+    await fakes.service.create(ADMIN, { ...draft, attributes: SCHEMA }, REASON);
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        attributes: [...SCHEMA].reverse(),
+      },
+      'Putting weight first',
+    );
+
+    const entry = fakes.audit.log.entries()[1];
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('digests an unchanged schema identically', async () => {
+    await fakes.service.create(ADMIN, { ...draft, attributes: SCHEMA }, REASON);
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      { name: draft.name, riskLevel: draft.riskLevel, attributes: SCHEMA },
+      'Saving the identical configuration again',
+    );
+
+    const entry = fakes.audit.log.entries()[1];
+    expect(entry?.beforeHash).toBe(entry?.afterHash);
   });
 });

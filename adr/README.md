@@ -55,3 +55,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0024](0024-suspension-keeps-data-rights-and-takes-one-administrator.md)  | Suspension takes one administrator and keeps data rights              | Accepted                       |
 | [0025](0025-authentication-events-are-their-own-table.md)                 | Keep authentication events in their own table, not in the audit log   | Accepted                       |
 | [0026](0026-suspicious-login-alerting-stays-with-the-provider.md)         | Leave suspicious-login alerting with the provider until we can send   | Accepted                       |
+| [0027](0027-category-attributes-are-a-closed-typed-vocabulary.md)         | Make category attributes a closed typed vocabulary, not JSON Schema   | Accepted                       |
