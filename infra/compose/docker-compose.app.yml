@@ -135,6 +135,12 @@ services:
     restart: unless-stopped
     logging: *logging
 
+    # Longer than the API's own SHUTDOWN_TIMEOUT_MS (10s), so the process
+    # decides its own exit code rather than being SIGKILLed mid-teardown.
+    # Docker's default is 10s, which is a dead heat with the timeout rather than
+    # a margin. Asserted by scripts/lib/shutdown-budget.test.mjs.
+    stop_grace_period: 15s
+
     environment:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -222,6 +228,14 @@ services:
     container_name: rental-${APP_ENV}-worker
     restart: unless-stopped
     logging: *logging
+
+    # A worker mid-job has to finish it — an interrupted job is re-delivered,
+    # which for anything non-idempotent is worse than waiting — so its
+    # SHUTDOWN_TIMEOUT_MS is 30s and this must exceed it. Under Docker's unset,
+    # therefore 10s, default the worker was SIGKILLed at 10s every single time
+    # and its force-exit had never once fired. Asserted by
+    # scripts/lib/shutdown-budget.test.mjs.
+    stop_grace_period: 45s
 
     environment:
       NODE_ENV: production
