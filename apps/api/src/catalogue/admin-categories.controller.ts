@@ -163,6 +163,7 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     slug: category.slug,
     name: category.name,
     riskLevel: category.riskLevel,
+    attributes: category.attributes,
     versionNumber: category.versionNumber,
     versionCreatedAt: Time.toIsoUtc(category.versionCreatedAt),
     createdAt: Time.toIsoUtc(category.createdAt),

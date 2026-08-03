@@ -15,6 +15,7 @@ const CATEGORY = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  attributes: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-03T09:00:00.000Z',
   createdAt: '2026-08-03T09:00:00.000Z',
@@ -24,6 +25,7 @@ const DRAFT = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  attributes: [],
 } as const;
 
 function responds(status: number, body = ''): FetchLike {
@@ -154,7 +156,7 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium' },
+      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
       'renamed after the taxonomy review',
       fetchImpl,
     );
@@ -170,7 +172,7 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium' },
+      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
       'renamed after the taxonomy review',
       fetchImpl,
     );
@@ -184,7 +186,7 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'no-such-category',
-      { name: 'Nothing', riskLevel: 'low' },
+      { name: 'Nothing', riskLevel: 'low', attributes: [] },
       REASON,
       responds(404),
     );
@@ -197,7 +199,7 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'a/b',
-      { name: 'Nothing', riskLevel: 'low' },
+      { name: 'Nothing', riskLevel: 'low', attributes: [] },
       REASON,
       fetchImpl,
     );

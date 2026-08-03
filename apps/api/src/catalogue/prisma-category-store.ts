@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@platform/database';
-import type { CategoryRiskLevel } from '@platform/contracts';
-import { CATEGORY_RISK_LEVELS } from '@platform/contracts';
+import type { CategoryAttribute, CategoryRiskLevel } from '@platform/contracts';
+import { CATEGORY_RISK_LEVELS, parseCategoryAttributes } from '@platform/contracts';
 import { CategorySlugTakenError } from './category-store.js';
 import type {
   CategoryConfiguration,
@@ -39,6 +39,10 @@ export class PrismaCategoryStore implements CategoryStore {
               versionNumber: FIRST_VERSION,
               name: input.name,
               riskLevel: input.riskLevel,
+              // Prisma's Json input type does not accept a readonly array, and
+              // the spread is the cheapest honest way to hand it a mutable copy
+              // rather than widening the port's type to suit the ORM.
+              attributes: [...input.attributes],
               createdById: authorId,
             },
           },
@@ -84,6 +88,7 @@ export class PrismaCategoryStore implements CategoryStore {
         versionNumber: current.versionNumber + 1,
         name: configuration.name,
         riskLevel: configuration.riskLevel,
+        attributes: [...configuration.attributes],
         createdById: authorId,
       },
     });
@@ -93,6 +98,7 @@ export class PrismaCategoryStore implements CategoryStore {
       slug: existing.slug,
       name: version.name,
       riskLevel: asRiskLevel(version.riskLevel),
+      attributes: asAttributes(version.attributes, existing.slug),
       versionNumber: version.versionNumber,
       versionCreatedAt: version.createdAt,
       createdAt: existing.createdAt,
@@ -130,6 +136,7 @@ interface CategoryRow {
   versions: readonly {
     name: string;
     riskLevel: string;
+    attributes: unknown;
     versionNumber: number;
     createdAt: Date;
   }[];
@@ -149,10 +156,40 @@ function toRecord(category: CategoryRow): CategoryRecord {
     slug: category.slug,
     name: current.name,
     riskLevel: asRiskLevel(current.riskLevel),
+    attributes: asAttributes(current.attributes, category.slug),
     versionNumber: current.versionNumber,
     versionCreatedAt: current.createdAt,
     createdAt: category.createdAt,
   };
+}
+
+/**
+ * The column is `jsonb`, so this is where JSON becomes a schema.
+ *
+ * Postgres guarantees the value is JSON and nothing more — a CHECK constraint
+ * that tried to validate the vocabulary would be a second copy of something that
+ * lives in `@platform/contracts` and changes with a deploy (ADR 0027).
+ *
+ * Throws rather than falling back to an empty schema, for `asRiskLevel`'s
+ * reason. A schema this build cannot parse means the row was written by a newer
+ * version of the application, and quietly reading it as "no attributes" would
+ * hand a listing form a category whose required fields have silently vanished —
+ * and a listing saved through that form would be missing data nobody asked for.
+ * Failing names the category, because that is the only useful question.
+ */
+function asAttributes(value: unknown, slug: string): readonly CategoryAttribute[] {
+  try {
+    return parseCategoryAttributes(value);
+  } catch (error) {
+    throw new Error(
+      `Category ${slug} has an attribute schema this build cannot read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      // The contract violation carries the field-level issues. Losing it would
+      // leave a log line saying a schema is unreadable and not which part.
+      { cause: error },
+    );
+  }
 }
 
 /**

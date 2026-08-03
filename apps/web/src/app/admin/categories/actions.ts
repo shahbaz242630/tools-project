@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { MIN_ADMIN_REASON_LENGTH, categoryDraftSchema } from '@platform/contracts';
 import type { CategoryRiskLevel } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
+import { readAttributeSchema } from '../../../lib/attribute-schema';
 import { createCategory, reconfigureCategory } from '../../../lib/admin-categories';
 import type { AdminCategoryOutcome } from '../../../lib/admin-categories';
 import { webEnv } from '../../../lib/env';
@@ -108,10 +109,25 @@ export async function createCategoryAction(
     };
   }
 
+  const schema = readAttributeSchema(form.get('attributes'));
+  if (schema.kind === 'unreadable') {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: schema.message,
+    };
+  }
+
   // The contract's own schema, not a second opinion about what a slug is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
-  const parsed = categoryDraftSchema.safeParse({ slug, name, riskLevel });
+  const parsed = categoryDraftSchema.safeParse({
+    slug,
+    name,
+    riskLevel,
+    attributes: schema.attributes,
+  });
   if (!parsed.success) {
     return {
       ...INITIAL_CATEGORY_STATE,
@@ -162,12 +178,22 @@ export async function reconfigureCategoryAction(
     };
   }
 
+  const schema = readAttributeSchema(form.get('attributes'));
+  if (schema.kind === 'unreadable') {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: schema.message,
+    };
+  }
+
   const { api, token, clientIp } = await context();
   const outcome = await reconfigureCategory(
     api,
     token,
     slug,
-    { name, riskLevel },
+    { name, riskLevel, attributes: schema.attributes },
     reason,
     undefined,
     clientIp,

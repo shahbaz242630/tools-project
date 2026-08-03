@@ -8,6 +8,7 @@ import {
   createCategoryAction,
   reconfigureCategoryAction,
 } from '../app/admin/categories/actions';
+import { AttributeSchemaEditor } from './attribute-schema-editor';
 
 /** Human wording for the vocabulary. The values themselves are the contract's. */
 const RISK_LABELS: Record<CategoryRiskLevel, string> = {
@@ -99,6 +100,8 @@ export function CreateCategoryForm() {
 
       <RiskLevelField id="create-risk" defaultValue="low" />
 
+      <AttributeSchemaEditor name="attributes" idPrefix="create" />
+
       <p>
         <label htmlFor="create-reason">Why</label>
         <input
@@ -162,6 +165,17 @@ export function ReconfigureCategoryForm({
       </p>
 
       <RiskLevelField id={id('risk')} defaultValue={category.riskLevel} />
+
+      {/*
+        Seeded with what the category has now, because `PUT` replaces the whole
+        configuration. An editor that started empty would look like "add some
+        attributes" and mean "delete the ones that exist".
+      */}
+      <AttributeSchemaEditor
+        name="attributes"
+        idPrefix={category.slug}
+        initial={category.attributes}
+      />
 
       <p>
         <label htmlFor={id('reason')}>Why</label>

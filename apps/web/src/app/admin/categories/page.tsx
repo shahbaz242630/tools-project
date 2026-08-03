@@ -55,8 +55,9 @@ export default async function CategoriesPage() {
       </p>
 
       <p>
-        Today a category carries only a name and a risk level. Attributes, fees and the
-        rest arrive in later slices, and each will be one more field on the version
+        Today a category carries a name, a risk level and its attribute schema — the
+        fields an owner fills in when listing something in it. Fees, deposit bands and
+        the rest arrive in later slices, and each will be one more field on the version
         rather than a new place to look.
       </p>
 
@@ -91,6 +92,15 @@ export default async function CategoriesPage() {
       </p>
     </main>
   );
+}
+
+/**
+ * Countable, because "1 attributes" is the kind of detail that makes an
+ * administrator distrust everything else on the page.
+ */
+function attributeSummary(count: number): string {
+  if (count === 0) return 'no attributes';
+  return count === 1 ? '1 attribute' : `${String(count)} attributes`;
 }
 
 /**
@@ -153,6 +163,7 @@ function CategoryList({
           <h3>{category.name}</h3>
           <p>
             <code>{category.slug}</code> · risk {category.riskLevel} ·{' '}
+            {attributeSummary(category.attributes.length)} ·{' '}
             <strong>version {category.versionNumber}</strong>
           </p>
           <ReconfigureCategoryForm category={category} />

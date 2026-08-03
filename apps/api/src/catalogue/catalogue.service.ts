@@ -118,11 +118,18 @@ export class CatalogueService {
  * every write by definition, so including them would make every entry's digest
  * differ from the last regardless of whether anything meaningful changed —
  * which destroys the only thing comparing digests is for (ADR 0017).
+ *
+ * **The attribute schema is in, and its order is part of what is digested.**
+ * `canonicalise` sorts object keys but deliberately preserves array order, so
+ * moving an attribute up the form registers as a change — which it is. The order
+ * is what an owner filling in a listing sees, and a reorder that left no trace
+ * would be the one configuration change nobody could account for afterwards.
  */
 function auditable(record: CategoryRecord): Record<string, unknown> {
   return {
     slug: record.slug,
     name: record.name,
     riskLevel: record.riskLevel,
+    attributes: record.attributes,
   };
 }
