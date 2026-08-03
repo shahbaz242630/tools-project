@@ -48,6 +48,10 @@ beforeEach(async () => {
   // authentication_events is ON DELETE RESTRICT, added in slice 1.11a.
   // Children before parents, in every file — not only the new one.
   await client.authenticationEvent.deleteMany();
+  // category_versions is ON DELETE RESTRICT against users, added in slice 2.1.
+  // Children before parents, in every file -- not only the new one.
+  await client.categoryVersion.deleteMany();
+  await client.category.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });

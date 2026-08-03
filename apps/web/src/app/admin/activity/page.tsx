@@ -42,6 +42,7 @@ export default function AdminActivityPage() {
       <p>
         <Link href="/admin/users">Look up an account</Link> ·{' '}
         <Link href="/admin/approvals">Role changes</Link> ·{' '}
+        <Link href="/admin/categories">Categories</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>
     </main>

@@ -91,7 +91,26 @@ export type AuditAction =
    * one identity fact that can change without anything else about the account
    * changing. Recorded whichever path corrected it (ADR 0020).
    */
-  | 'account.email_changed';
+  | 'account.email_changed'
+  /**
+   * A rental category was created, or its configuration was changed.
+   *
+   * The first audited actions whose target is **configuration rather than a
+   * person**, which is why `targetType` earns its keep here — every action above
+   * targets a `user`, and these target a `category`.
+   *
+   * Both are administrative and both carry a reason. §8.2 requires
+   * configuration changes to be "versioned and audited", and the versioning
+   * alone does not say *why* somebody changed it — `category_versions` records
+   * what the configuration became and who wrote it, and this records the
+   * intent. The two are written in the same operation.
+   *
+   * `category.reconfigured` rather than `category.updated`, because nothing is
+   * updated: a new immutable version is appended and the old one stays. The
+   * vocabulary should not describe the write as something the database refuses.
+   */
+  | 'category.created'
+  | 'category.reconfigured';
 
 /**
  * Who did it, and from where.

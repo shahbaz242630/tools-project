@@ -149,6 +149,12 @@ model User {
   /// user, and the identity module reaches them through its own port.
   authenticationEvents AuthenticationEvent[]
 
+  /// Category configurations this account authored. BRD §6.2 puts an author on
+  /// every category version, and this is that reference. Declared because
+  /// Prisma requires both ends; the Catalogue module reaches versions through
+  /// its own port and never through a user.
+  authoredCategoryVersions CategoryVersion[]
+
   @@map("users")
 }
 
@@ -611,4 +617,83 @@ model AuthenticationEvent {
   /// activity page and the data export.
   @@index([userId, occurredAt(sort: Desc)])
   @@map("authentication_events")
+}
+
+/// A rental category — the unit of configuration the whole engine turns on.
+///
+/// BRD §1.2 makes the platform category-agnostic: categories, fees, attributes,
+/// radii, deposits and policies are versioned configuration and never code. This
+/// table is the identity half of that. It holds only what never changes about a
+/// category — which is, deliberately, almost nothing.
+///
+/// **Everything configurable lives on `CategoryVersion`, not here.** A column
+/// here would be a fact with no version attached, and §8.2 requires that
+/// "existing bookings retain the configuration version under which they were
+/// created". A booking cannot pin a value that is stored where it can be
+/// overwritten.
+model Category {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Stable public identity: the URL segment, and the SEO slug §8.17 needs to
+  /// keep canonical. Immutable by convention rather than by constraint — the
+  /// display name is what an administrator renames, and renaming that mints a
+  /// version while the slug stays put so links do not rot.
+  slug String @unique @db.Text
+
+  versions CategoryVersion[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("categories")
+}
+
+/// One immutable snapshot of a category's configuration.
+///
+/// **The current configuration is the highest `versionNumber` for the category.**
+/// There is deliberately no `currentVersionId` pointer on `Category`: that would
+/// be a cycle between two required foreign keys, which Postgres will only insert
+/// into with deferred constraints and which Prisma models badly — and it would
+/// introduce a second source of truth that can disagree with the rows. The
+/// unique constraint below makes "highest" unambiguous, and a btree scans
+/// backwards, so finding it costs an index seek.
+///
+/// **Rows are never updated.** A trigger enforces it rather than trusting the
+/// port, because the port is the thing somebody edits when they need to
+/// "correct" a value. `UPDATE` is refused; `DELETE` is not, so test teardown and
+/// a future category removal both remain possible — and from Phase 4 a booking's
+/// foreign key is what will actually hold a referenced version in place.
+model CategoryVersion {
+  id String @id @default(uuid()) @db.Uuid
+
+  categoryId String   @db.Uuid
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  /// Monotonic per category, starting at 1. The unique constraint below is what
+  /// makes concurrent edits safe: two administrators saving at once produce the
+  /// same next number, and the second insert fails rather than silently winning.
+  versionNumber Int
+
+  /// What an administrator sees and renames. Not the slug — see `Category.slug`.
+  name String @db.Text
+
+  /// How much care this category's items demand, which later drives deposit
+  /// bands, verification and prohibited items (§8.2).
+  ///
+  /// Text with a closed union in code, exactly as `AuditLog.action` and
+  /// `AdminApproval.action` are, so adding a level is not a schema migration.
+  /// The *set* of levels is domain vocabulary; the *assignment* to a category is
+  /// configuration, which is the distinction CLAUDE.md's rule is drawing.
+  riskLevel String @db.Text
+
+  /// Who made this configuration what it is. BRD §6.2 puts an author on the
+  /// entity; the corresponding audit entry carries the reason and the digests.
+  createdById String @db.Uuid
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// Both the "no two versions share a number" rule and the index that answers
+  /// "what is current". One constraint, two jobs, no second index to maintain.
+  @@unique([categoryId, versionNumber])
+  @@map("category_versions")
 }
