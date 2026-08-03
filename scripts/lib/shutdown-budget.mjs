@@ -75,6 +75,27 @@ export function readGracePeriods(composeYaml) {
 }
 
 /**
+ * The `--stop-timeout` CI gives each container, in milliseconds, keyed by
+ * service.
+ *
+ * CI runs `docker run` directly rather than through compose, so it does not
+ * inherit `stop_grace_period` — without this flag it asserts the shutdown
+ * contract against Docker's 10s default, which is a grace period we do not
+ * deploy with. A check that passes under a configuration that exists nowhere is
+ * worse than no check.
+ */
+export function readCiStopTimeouts(workflowYaml) {
+  /** @type {Record<string, number>} */
+  const found = {};
+  for (const [, service, seconds] of workflowYaml.matchAll(
+    /--name\s+([A-Za-z0-9_-]+)-ci\b.*?--stop-timeout\s+(\d+)/g,
+  )) {
+    found[service] = Number(seconds) * 1000;
+  }
+  return found;
+}
+
+/**
  * The `SHUTDOWN_TIMEOUT_MS` a composition root declares, in milliseconds.
  * Numeric separators are allowed because the source uses them (`30_000`).
  */

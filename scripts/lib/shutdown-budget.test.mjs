@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ShutdownBudgetError,
   parseDuration,
+  readCiStopTimeouts,
   readGracePeriods,
   readShutdownTimeout,
 } from './shutdown-budget.mjs';
@@ -70,6 +71,21 @@ describe('readGracePeriods', () => {
   });
 });
 
+describe('readCiStopTimeouts', () => {
+  it('reads the flag against the container it belongs to', () => {
+    const yaml = [
+      'docker run -d --name api-ci -p 3000:3000 --stop-timeout 15 \\',
+      'docker run -d --name worker-ci --stop-timeout 45 \\',
+    ].join('\n');
+
+    expect(readCiStopTimeouts(yaml)).toEqual({ api: 15_000, worker: 45_000 });
+  });
+
+  it('omits a container that sets none', () => {
+    expect(readCiStopTimeouts('docker run -d --name api-ci rental-api:ci')).toEqual({});
+  });
+});
+
 describe('readShutdownTimeout', () => {
   it('reads a numeric separator', () => {
     expect(readShutdownTimeout('const SHUTDOWN_TIMEOUT_MS = 30_000;')).toBe(30_000);
@@ -105,6 +121,19 @@ describe('the deployed stack', () => {
       // turns an ordinary deploy into an apparent crash loop.
       const timeout = readShutdownTimeout(fromRoot(main));
       expect(grace[name]).toBeGreaterThan(timeout);
+    },
+  );
+
+  it.each(SERVICES)(
+    'CI stops $name with the same grace period it is deployed with',
+    ({ name }) => {
+      // CI runs `docker run`, not compose, so it does not inherit
+      // stop_grace_period. Left to Docker's 10s default it would assert the
+      // shutdown contract against a configuration that exists nowhere — which
+      // is how the worker's 30s force-exit stayed unreachable while a job
+      // named "Check the worker starts and drains without Redis" passed.
+      const ci = readCiStopTimeouts(fromRoot('.github/workflows/ci.yml'));
+      expect(ci[name]).toBe(grace[name]);
     },
   );
 });
