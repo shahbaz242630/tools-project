@@ -48,8 +48,20 @@ import { createShutdown } from '@platform/runtime';
  * test boots the real application instead.
  */
 
-/** How long shutdown may take before we stop being polite about it. */
+/**
+ * How long shutdown may take before we stop being polite about it. Must stay
+ * below the API container's `stop_grace_period`, or this never fires and the
+ * orchestrator's SIGKILL decides the exit code instead.
+ */
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+/**
+ * Per-resource bound. Three closables at 3s each fit inside the backstop with
+ * room to spare, and none of them has a legitimate reason to take longer:
+ * draining in-flight HTTP requests is fast, and both clients are being dropped
+ * rather than drained.
+ */
+const CLOSE_TIMEOUT_MS = 3_000;
 
 async function bootstrap(): Promise<void> {
   // Before the logger exists, because the logger's level comes from here. A
@@ -181,6 +193,7 @@ function installShutdownHandlers(
   const shutdown = createShutdown({
     logger,
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    closeTimeoutMs: CLOSE_TIMEOUT_MS,
     exit: (code) => process.exit(code),
     // Stop accepting work first, then release what in-flight requests needed.
     closables: [

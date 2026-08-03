@@ -20,13 +20,14 @@ const hanging = (name: string): Closable => ({
   close: () => new Promise<void>(() => {}),
 });
 
-function build(closables: readonly Closable[], timeoutMs = 50) {
+function build(closables: readonly Closable[], timeoutMs = 50, closeTimeoutMs = 20) {
   const recording = createRecordingLogger();
   const exits: number[] = [];
   const shutdown = createShutdown({
     closables,
     logger: recording.logger,
     timeoutMs,
+    closeTimeoutMs,
     exit: (code) => void exits.push(code),
   });
   return { shutdown, exits, recording };
@@ -96,14 +97,100 @@ describe('createShutdown', () => {
     expect((warnings[0]?.fields?.['error'] as Error).message).toBe('never connected');
   });
 
-  it('exits 1 when shutdown cannot finish', async () => {
-    // The one case that genuinely is not a clean stop.
-    const { shutdown, exits } = build([hanging('http')], 20);
+  it('gives up on a resource that never closes, and still stops cleanly', async () => {
+    // Regression, bullmq 6: `Worker.close()` never settles when Redis was never
+    // reachable. Before this was bounded, the wait ran past the container's
+    // stop_grace_period every time and Docker SIGKILLed the process, so an
+    // ordinary deploy during a Redis outage produced exit 137 — a crash, as far
+    // as the orchestrator is concerned. A hang is the same failure as a throw.
+    //
+    // This test previously asserted the opposite (`exits 1 when shutdown cannot
+    // finish`), which was the honest reading of the old design: nothing bounded
+    // an individual close, so the only possible outcome was the outer timeout.
+    const { shutdown, exits, recording } = build([hanging('worker')], 200, 20);
 
     shutdown('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 60));
 
-    expect(exits).toEqual([1]);
+    expect(exits).toEqual([0]);
+    const warnings = recording.at('warn');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.fields?.['resource']).toBe('worker');
+    expect(warnings[0]?.fields?.['timeoutMs']).toBe(20);
+  });
+
+  it('keeps closing the rest after one hangs', async () => {
+    // The point of bounding each wait rather than only the sequence: one wedged
+    // resource must not consume the window every later one was going to share.
+    const order: string[] = [];
+    const { shutdown, exits } = build(
+      [hanging('worker'), closable('postgres', order), closable('redis', order)],
+      500,
+      20,
+    );
+
+    shutdown('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(order).toEqual(['postgres', 'redis']);
+    expect(exits).toEqual([0]);
+  });
+
+  it('honours a per-resource bound over the default', async () => {
+    // A worker draining a real job needs longer than a socket being dropped.
+    const { shutdown, exits, recording } = build(
+      [{ ...hanging('worker'), timeoutMs: 15 }],
+      200,
+      5_000,
+    );
+
+    shutdown('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(exits).toEqual([0]);
+    expect(recording.at('warn')[0]?.fields?.['timeoutMs']).toBe(15);
+  });
+
+  it('exits 1 when the whole sequence outruns its backstop', async () => {
+    // Still reachable, and now reachable *before* the orchestrator gives up —
+    // which is the entire point. Three bounded hangs outlast the backstop.
+    const { shutdown, exits } = build(
+      [hanging('a'), hanging('b'), hanging('c')],
+      40,
+      30,
+    );
+
+    shutdown('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(exits[0]).toBe(1);
+  });
+
+  it('does not let a late rejection escape after it stopped waiting', async () => {
+    // Abandoning a promise without a handler turns a slow failure into an
+    // unhandled rejection during exit — a second bad exit code chasing the first.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const slowFailure: Closable = {
+        name: 'redis',
+        close: () =>
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error('too late')), 30),
+          ),
+      };
+      const { shutdown, exits } = build([slowFailure], 200, 10);
+
+      shutdown('SIGTERM');
+      await new Promise((resolve) => setTimeout(resolve, 90));
+
+      expect(exits).toEqual([0]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('ignores a repeated signal', async () => {

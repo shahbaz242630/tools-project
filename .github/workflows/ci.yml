@@ -214,7 +214,11 @@ jobs:
           # the behaviour this step exists to prove works. The public key has to
           # be PEM-shaped because the schema checks that; it is written on one
           # line with no `\n` escapes because nothing here needs to parse it.
-          docker run -d --name api-ci -p 3000:3000 \
+          # --stop-timeout mirrors stop_grace_period in
+          # infra/compose/docker-compose.app.yml, so this asserts against the
+          # grace period the API actually gets when deployed rather than
+          # Docker's 10s default, which is a dead heat with SHUTDOWN_TIMEOUT_MS.
+          docker run -d --name api-ci -p 3000:3000 --stop-timeout 15 \
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             -e 'CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----ci-only-not-a-real-key-----END PUBLIC KEY-----' \
             -e CLERK_AUTHORIZED_PARTIES=http://localhost:3000 \
@@ -271,7 +275,12 @@ jobs:
           # its broker is reachable would hang during exactly the incident that
           # makes someone want to redeploy -- the failure the API shipped with
           # and CI caught.
-          docker run -d --name worker-ci \
+          # --stop-timeout mirrors stop_grace_period in
+          # infra/compose/docker-compose.app.yml. Without it `docker stop` uses
+          # Docker's 10s default, so this step would assert against a grace
+          # period we do not deploy with -- the same mismatch that let the
+          # worker's 30s force-exit sit unreachable for four sessions.
+          docker run -d --name worker-ci --stop-timeout 45 \
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             rental-worker:ci
 
@@ -290,12 +299,18 @@ jobs:
           echo "stopped in ${elapsed}s with exit code ${code}"
           docker logs worker-ci 2>&1 | tail -n 3
 
+          # Two distinct failures, deliberately reported differently. A non-zero
+          # code means the grace period ran out and Docker SIGKILLed it. A clean
+          # exit that took most of the window means the process decided its own
+          # exit but something it waited on is wedged -- bullmq 6's close(),
+          # which never settles without Redis, drains in 25s where 5 takes about
+          # one. Both are worth failing on; conflating them hides which happened.
           if [ "$code" != "0" ]; then
-            echo "::error::expected a clean exit, got ${code}"
+            echo "::error::expected a clean exit, got ${code} — killed rather than draining"
             exit 1
           fi
           if [ "$elapsed" -ge 10 ]; then
-            echo "::error::took ${elapsed}s, so it was killed rather than draining"
+            echo "::error::drained cleanly but took ${elapsed}s; a healthy worker stops in about a second"
             exit 1
           fi
 
