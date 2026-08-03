@@ -8,6 +8,7 @@ import {
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createIdentityFakes } from './identity/testing/fakes.js';
 import { createAuditFakes } from './audit/testing/fakes.js';
+import { createCatalogueFakes } from './catalogue/testing/fakes.js';
 import { createProfileFakes } from './profiles/testing/fakes.js';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
@@ -21,6 +22,7 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
         identity: { sessionVerifier, service },
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,
+        catalogue: createCatalogueFakes().service,
         ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
       }),
     ],

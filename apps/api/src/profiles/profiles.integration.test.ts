@@ -15,6 +15,7 @@ import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { ProfilesService } from './profiles.service.js';
 import { InMemoryAccountLookup, InMemoryProfileStore } from './testing/fakes.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import { createCatalogueFakes } from '../catalogue/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 
 /**
@@ -83,6 +84,7 @@ beforeEach(async () => {
         },
         profiles: new ProfilesService(profiles, accounts, audit.service),
         audit: audit.service,
+        catalogue: createCatalogueFakes().service,
       }),
     ],
   }).compile();

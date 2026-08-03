@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import { createIdentityFakes } from './testing/fakes.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import { createCatalogueFakes } from '../catalogue/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import type { IdentityFakes } from './testing/fakes.js';
 
@@ -45,6 +46,7 @@ beforeEach(async () => {
         identity: { sessionVerifier: fakes.sessionVerifier, service: fakes.service },
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,
+        catalogue: createCatalogueFakes().service,
       }),
     ],
   }).compile();

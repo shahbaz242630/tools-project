@@ -35,6 +35,9 @@ import { MeProfileController } from './profiles/me-profile.controller.js';
 import { PROFILES_SERVICE } from './profiles/profiles.tokens.js';
 import { PublicProfileController } from './profiles/public-profile.controller.js';
 import type { ProfilesService } from './profiles/profiles.service.js';
+import { AdminCategoriesController } from './catalogue/admin-categories.controller.js';
+import { CATALOGUE_SERVICE } from './catalogue/catalogue.tokens.js';
+import type { CatalogueService } from './catalogue/catalogue.service.js';
 
 export interface AppModuleOptions {
   /** Built in the composition root, so no provider SDK is imported here. */
@@ -67,6 +70,14 @@ export interface AppModuleOptions {
    * would put that secret in reach of every test that boots the module.
    */
   readonly audit: AuditService;
+
+  /**
+   * Categories and their versioned configuration. Assembled outside like
+   * everything else, so a test can boot the real application against a fake
+   * store with no database — which is what `categories.integration.test.ts`
+   * does to prove the guard rather than to prove Prisma.
+   */
+  readonly catalogue: CatalogueService;
 }
 
 /**
@@ -94,6 +105,7 @@ export class AppModule implements NestModule {
         AdminUserController,
         AdminApprovalsController,
         AdminSuspensionController,
+        AdminCategoriesController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
         // like a missing decorator. See PublicProfileController.
@@ -119,6 +131,7 @@ export class AppModule implements NestModule {
 
         { provide: PROFILES_SERVICE, useValue: options.profiles },
         { provide: AUDIT_SERVICE, useValue: options.audit },
+        { provide: CATALOGUE_SERVICE, useValue: options.catalogue },
       ],
     };
   }

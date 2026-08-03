@@ -34,6 +34,8 @@ import { NestLoggerAdapter } from './observability/nest-logger.js';
 import { createFieldEncryptor } from './profiles/field-encryption.js';
 import { PrismaProfileStore } from './profiles/prisma-profile-store.js';
 import { ProfilesService } from './profiles/profiles.service.js';
+import { CatalogueService } from './catalogue/catalogue.service.js';
+import { PrismaCategoryStore } from './catalogue/prisma-category-store.js';
 import { createShutdown } from '@platform/runtime';
 
 /**
@@ -154,6 +156,11 @@ async function bootstrap(): Promise<void> {
     audit,
   );
 
+  // Catalogue depends on nothing but the audit trail. It holds no personal data
+  // and answers no question about a person, which is why it needs neither the
+  // encryptor nor a lookup into identity (BRD §5.1).
+  const catalogue = new CatalogueService(new PrismaCategoryStore(database), audit);
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       checks: [
@@ -166,6 +173,7 @@ async function bootstrap(): Promise<void> {
       identity: { sessionVerifier, service: identity },
       profiles,
       audit,
+      catalogue,
     }),
     new FastifyAdapter(),
     { logger: new NestLoggerAdapter(logger) },
