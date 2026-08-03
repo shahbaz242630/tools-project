@@ -4,6 +4,8 @@ UK peer-to-peer rental marketplace. Launch category is DIY tools and garden equi
 
 **The specification is `docs/Category_Agnostic_Peer_to_Peer_Rental_Marketplace_BRD_v1.2.md`.** It is normative. v1.1 is superseded and kept only for audit. When this file and the BRD disagree, the BRD wins — and tell me, because one of them needs fixing.
 
+**Read `docs/HANDOFF.md` before doing anything else.** It is the master handoff — current state, what to do next, external account status, product-owner tasks and open questions. `docs/` is **gitignored**, so nothing in version control points at it and a session that reads only the tracked files misses all of that. Per-phase detail lives in `docs/phase-NN-*/HANDOFF.md`, one folder per BRD §14 phase, each holding that phase's scope checklist, exit gate, slices, gaps, tech debt and session log. Cross-cutting engineering lessons are in `docs/LESSONS.md`. Keep the master short and put phase detail in the phase folder.
+
 **Before changing anything that looks odd, check `adr/`.** Several decisions here look like overengineering until you know the constraint behind them — why money splits use `allocate` rather than `multiply`, why a rental "day" is not 24 hours, why the brand name lives in one file. The ADRs record what was rejected and why. If you still disagree after reading, supersede the ADR rather than quietly changing the code.
 
 Team is two people: one product owner (non-coder) and Claude as the engineer. There is no other dev team, no QA team and no budget. Optimise for correctness and low operating cost, not for scale we don't have.
@@ -51,24 +53,13 @@ These were chosen deliberately after research. Deviating silently is a defect.
 
 **Phase 0 — Foundations and guardrails. Complete except the exit gate.** Every Phase 0 slice that does not need a machine is merged.
 
-**Phase 1 — Identity and basic profiles. Started, on the product owner's decision, with the Phase 0 exit gate not yet met.** BRD §14 says not to, and §14 also makes progression the product owner's call; they made it on 28 July 2026 rather than sit idle waiting for a VPS. Phase 1 has its own staging requirement in its exit gate, so this defers the blocker rather than removing it. **Nothing goes to a real environment, and no real data is created, until the gate is met and backups exist.**
+**Phase 1 — Identity and basic profiles. Build list complete, exit gate unmet.** Started on the product owner's decision with the Phase 0 gate not yet met: BRD §14 says not to, and §14 also makes progression their call; they made it on 28 July 2026 rather than sit idle waiting for a VPS. Phase 1 has its own staging requirement, so this defers the blocker rather than removing it. **Nothing goes to a real environment, and no real data is created, until the gate is met and backups exist.**
 
-| Slice | What landed                                                             | PR  |
-| ----- | ----------------------------------------------------------------------- | --- |
-| 0.1   | Money and time primitives, pnpm workspace scaffold                      | #1  |
-| 0.2   | Local Postgres/PostGIS and Redis stack with a verification script       | #2  |
-| 0.3   | CI pipeline, CodeQL, CODEOWNERS, PR template, branch protection         | #3  |
-| 0.4   | Environment validation, connection strings composed from parts          | #12 |
-| 0.5   | Structured logging, correlation IDs, error-tracking seam                | #16 |
-| 0.6   | Architecture decision records 0001 to 0009                              | #17 |
-| 0.7   | Invariant checker, git hooks, project skills                            | #18 |
-| 0.8a  | Made workspace packages loadable by a real Node process                 | #22 |
-| 0.8   | `apps/api` — NestJS on Fastify, health and readiness, container         | #23 |
-| 0.11a | `apps/worker` — BullMQ, correlation across the queue, container         | #24 |
-| 0.9a  | GHCR image publishing, deployment stack, deploy/rollback/logs           | #25 |
-| 0.11b | `apps/web` on Next.js, `packages/contracts`, both deployed              | #26 |
-| 1.1   | `packages/database` — Prisma 7, the `users` table, migrations on deploy | #28 |
-| 1.2   | Registration and login on Clerk, the identity mirror, server-side RBAC  | —   |
+**Phases 2–12 have not been started.** No categories, listings, search, bookings, payments, messaging, handover protocol, reviews, disputes or admin dashboards. What exists is a platform that knows who somebody is, protects what it knows about them, and can be administered safely — it is not yet a marketplace.
+
+**The per-slice table lives in the phase handoffs**, not here — `docs/phase-00-foundations/HANDOFF.md` and `docs/phase-01-identity-and-profiles/HANDOFF.md`. In summary: Phase 0 delivered the monorepo, primitives, local stack, CI, environment validation, logging, ADRs, the invariant checker, all three applications and the deployment foundation. Phase 1 delivered identity on Clerk with a mirrored `users` table, profiles with a public/private split, an append-only audit log, deletion with real erasure, data export, email correction, and the whole administrative surface — role with MFA at the guard, read-only account and activity views, dual approval on role changes, suspension, and sign-in history.
+
+**One BRD Phase 1 line item was never built:** the `Seller tax profile` entity, required by §14 to be present but inactive per §8.14.2. It was missed because §8.14.1 concluded the platform is not a Reporting Platform Operator for the launch category — true, and it does not remove the requirement for the empty entity. Recommended for Phase 2, beside the category reportable-activity flag it exists for.
 
 Still outstanding against the BRD §14 Phase 0 list:
 
@@ -80,7 +71,20 @@ Still outstanding against the BRD §14 Phase 0 list:
 
 **Hosting.** BRD §4 and §14 originally named AWS, Azure or GCP provisioned with Terraform. Both were amended on 27 July 2026 to require reproducible infrastructure as code without naming a tool, deferring to ADR 0009: a self-hosted KVM VPS running Docker Compose, staging and production sharing one box at first, and database durability held off the box. ADR 0009 named Hostinger, but chose self-hosting for cost predictability rather than the vendor — any KVM provider satisfies it. Appendix A.1 still lists Terraform as a validated 2026 choice; that is a research record and does not bind the build.
 
-**The BRD is not in version control.** `docs/` is gitignored on purpose — this repository is public and the BRD carries unit economics and strategy. It therefore has no history, no review trail and no off-machine backup. Amendments to it, including the one above, exist only on the product owner's machine.
+**The BRD is not in version control.** `docs/` is gitignored on purpose — this repository is public and the BRD carries unit economics and strategy. It therefore has no history, no review trail and no off-machine backup. Amendments to it, including the one above, exist only on the product owner's machine. The same is true of everything beside it:
+
+```
+docs/                              gitignored in full — .gitignore:4
+  HANDOFF.md                       master handoff. Read first, keep short
+  LESSONS.md                       cross-cutting engineering lessons
+  Category_Agnostic…BRD_v1.2.md    the normative specification
+  reference-category-taxonomy.md   category research for Phase 2
+  phase-00-foundations/            one folder per BRD §14 phase, 00 through 12
+  phase-01-identity-and-profiles/    each: scope checklist, exit gate, slices,
+  …                                  gaps, tech debt, session log
+```
+
+**When you finish a slice, update the phase folder with the detail and the master with only the status line, branch state and session-index row.** That split is what stops the master growing back into something nobody reads — it was 1239 lines before session 20 split it.
 
 ## Branch protection
 
@@ -127,7 +131,15 @@ Defined but never run for real: everything in `infra/compose`. It is rehearsed i
 
 `apps/web/src/app/api/webhooks/clerk` is the **one such route that exists**, added deliberately in slice 1.2: Clerk cannot reach the API directly, so the web app verifies the delivery's signature — it is where the raw unparsed body exists — and forwards the event inward. The API owns what the event means and is the only service that writes.
 
-**Clerk instance configuration is load-bearing and lives outside version control.** A custom `email` session claim, a webhook endpoint, and the JWT public key all have to exist per instance, and staging and production must use **separate Clerk instances**. The provisioning list is in ADR 0015; an instance missing the claim produces correctly-signed tokens that the API rejects.
+**Clerk instance configuration is load-bearing and lives outside version control.** Staging and production must use **separate Clerk instances** — a shared one means a staging sign-up creates a production account. The provisioning list is in ADR 0015, and **every item on it fails silently if missed**, which is why it is repeated here:
+
+- a custom **`email` session claim** — without it the API rejects every authenticated request;
+- the **`fva` factor-verification claim** (ADR 0021) — without it, correctly-signed tokens carry no proof of a second factor and every admin page refuses everyone;
+- a **webhook endpoint** and its signing secret, subscribed to `user.created`, `user.updated`, `user.deleted` **and the four `session.*` events** (ADR 0025) — without the session events the sign-in history stays empty and nothing errors;
+- **`delete_self_enabled` off** (ADR 0018) — otherwise Clerk's own delete button bypasses the page BRD §10.1 requires, which explains what survives;
+- **new-device alert emails left on** (ADR 0026) — they are the only suspicious-login alerting that exists until an email channel does.
+
+The API is given only the JWT public key, never `CLERK_SECRET_KEY`.
 
 ## Commands
 
