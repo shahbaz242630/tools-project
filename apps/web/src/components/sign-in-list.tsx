@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import Link from 'next/link';
 import { describeSignInOrigin } from '@platform/contracts';
 import type { SignInEntry } from '@platform/contracts';
 import type { SignInsOutcome } from '../lib/sign-ins';
@@ -80,8 +81,30 @@ export function SignInList({ outcome }: { outcome: SignInsOutcome }) {
             </tbody>
           </table>
           <p>
-            Do not recognise one of these? Change your password at your account provider
-            and sign out of every other device.
+            {/* This sentence used to name an action and offer no way to take
+                it — the reader was told to go somewhere and not taken there.
+                A security page that shows a problem and no route out of it is
+                one somebody reads and then does nothing about, which is the
+                failure this whole table exists to prevent.
+
+                Deep-linked to Clerk's `security` sub-path rather than to
+                `/account/email` itself, because that lands on the *Profile*
+                tab — a list of email addresses. Somebody who followed a link
+                promising devices and arrived at an email form has been told to
+                go somewhere and taken somewhere else, which is the same defect
+                one step along.
+
+                That sub-path is Clerk's routing, not ours, so it is a vendor
+                path we depend on. Checked rather than assumed: an unrecognised
+                sub-path renders the component shell with an empty panel and a
+                working sidebar — degraded and recoverable, not a 404 and not a
+                blank page. Acceptable for the benefit; if it ever regresses,
+                drop the suffix and the link still reaches the right screen. */}
+            Do not recognise one of these?{' '}
+            <Link href="/account/email/security">
+              Review the devices signed in to your account
+            </Link>{' '}
+            and change your password.
           </p>
         </section>
       );
