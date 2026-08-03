@@ -395,6 +395,36 @@ model AuditLog {
   /// rather than stored and believed.
   ipAddress String? @db.Inet
 
+  /// Which sign-in this happened in — Clerk's `sess_…`, from the `sid` claim.
+  ///
+  /// The join key to `AuthenticationEvent.clerkSessionId`, and named identically
+  /// because it is the same value: a person's activity page can then say which
+  /// sign-in an action belongs to instead of leaving them to match timestamps by
+  /// eye. That is what BRD §8.1 wants the two records for — "signed in from an
+  /// unrecognised device, and then changed the account email" is a sentence
+  /// neither table can form alone.
+  ///
+  /// **Not a foreign key**, deliberately. A session event can be missed — the
+  /// webhook races the account's first request (ADR 0025) — and an audit write
+  /// is fail-closed, so a constraint here would turn a dropped delivery into a
+  /// failed user action. The reference is advisory; an unmatched id simply shows
+  /// no device, which is what the page already does for a sign-in it never saw.
+  ///
+  /// **Not indexed.** Nothing queries by it: the activity page fetches both
+  /// lists for its own reasons and correlates them in memory. An index for a
+  /// query nobody runs is write cost with no read.
+  ///
+  /// Nullable for actions no session is behind — a provider webhook, a
+  /// system-initiated change — and for every row written before this column
+  /// existed. Text rather than uuid: Clerk's ids are prefixed strings, not
+  /// UUIDs, which is why `AuthenticationEvent` stores them the same way.
+  ///
+  /// Survives erasure, exactly as `ipAddress` above does. §10.1 retains these
+  /// rows for six years and the identifier is less revealing than the address
+  /// beside it; the sign-in row it points at is redacted, so the device and
+  /// place are gone either way (ADR 0025).
+  clerkSessionId String? @db.Text
+
   /// Stored UTC. No `updatedAt`, because nothing updates.
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 

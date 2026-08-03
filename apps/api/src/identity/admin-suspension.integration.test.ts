@@ -264,7 +264,11 @@ describe('suspending', () => {
 
     await expect(
       identity.service.suspend(
-        { userId: '00000000-0000-4000-8000-0000000000ff', ipAddress: null },
+        {
+          userId: '00000000-0000-4000-8000-0000000000ff',
+          ipAddress: null,
+          sessionId: null,
+        },
         admin,
         REASON,
       ),
@@ -276,7 +280,11 @@ describe('suspending', () => {
   it('refuses a deleted account', async () => {
     await promote('admin-token');
     const bob = await idOf('bob-token');
-    await identity.service.requestDeletion({ userId: bob, ipAddress: null });
+    await identity.service.requestDeletion({
+      userId: bob,
+      ipAddress: null,
+      sessionId: null,
+    });
 
     expect((await decide('admin-token', bob, 'suspend')).statusCode).toBe(409);
   });

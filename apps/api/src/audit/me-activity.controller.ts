@@ -53,6 +53,11 @@ export class MeActivityController {
         // Already null on anything the reader did not do — the service
         // withholds the actor's address rather than this route remembering to.
         ipAddress: entry.ipAddress,
+        // Same: null on anything the reader did not do, decided in the service.
+        // Served raw rather than resolved to a device, because resolving it
+        // would mean Audit reading Identity and closing a module cycle. The page
+        // has both lists and matches them there (ADR 0025).
+        sessionId: entry.sessionId,
         // ISO on the wire; the page renders it in the reader's locale. The
         // digests are absent because the service never returns them.
         createdAt: entry.createdAt.toISOString(),

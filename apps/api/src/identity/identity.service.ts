@@ -214,7 +214,10 @@ export class IdentityService {
       // The account is the actor in its own creation: nobody else caused it,
       // and attributing it to the system would lose the address it came from.
       await this.audit.record({
-        actor: { userId: user.id, ipAddress },
+        // The session is real and to hand — this path runs inside an
+        // authenticated request — so provisioning names the sign-in it happened
+        // in rather than passing null for convenience.
+        actor: { userId: user.id, ipAddress, sessionId: session.sessionId },
         action: 'account.provisioned',
         targetType: 'user',
         targetId: user.id,
@@ -228,7 +231,11 @@ export class IdentityService {
     // `user.updated` was missed or is still in flight. Correcting it here means
     // an address change converges on the next request instead of waiting for a
     // redelivery that may never come.
-    return this.correctEmail(user, session.email, { userId: user.id, ipAddress });
+    return this.correctEmail(user, session.email, {
+      userId: user.id,
+      ipAddress,
+      sessionId: session.sessionId,
+    });
   }
 
   /**
@@ -959,11 +966,16 @@ export class IdentityService {
     // its account screen, or somebody removing the user from Clerk's dashboard.
     // The same work has to happen, and it did not until slice 1.5c.
     //
-    // The actor is the account itself, with no address. They did ask for this;
-    // we simply did not serve the request and never saw the client, so claiming
-    // an IP would be inventing evidence. Recording no actor at all would be
-    // worse — a deletion is not something the system did on nobody's behalf.
-    await this.eraseAndTombstone(user, { userId: user.id, ipAddress: null });
+    // The actor is the account itself, with no address and no session. They did
+    // ask for this; we simply did not serve the request and never saw the
+    // client, so claiming either would be inventing evidence. Recording no actor
+    // at all would be worse — a deletion is not something the system did on
+    // nobody's behalf.
+    await this.eraseAndTombstone(user, {
+      userId: user.id,
+      ipAddress: null,
+      sessionId: null,
+    });
   }
 
   /**

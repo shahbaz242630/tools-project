@@ -114,6 +114,25 @@ export interface Actor {
    * hop that forwarded it. See ADR 0017 for what that is worth.
    */
   readonly ipAddress: string | null;
+
+  /**
+   * Which sign-in this action happened in — Clerk's `sess_…`, or null.
+   *
+   * The join key to `authentication_events`, which is what lets a person's
+   * activity page name the device an action was taken from instead of showing
+   * two lists and leaving them to align by timestamp.
+   *
+   * **Required, with `null` a legitimate value, rather than optional.** An
+   * optional field here would be a silent default: a caller that forgot it
+   * would compile, every test would pass, and the security record would be
+   * quietly empty — which is precisely the bug slice 1.11a shipped and then
+   * shipped again in its own fix (ADR 0025). Making it required turns forgetting
+   * into a compile error at every construction site at once.
+   *
+   * Null is honest for actions no session is behind: a provider webhook nobody
+   * held a session for, and anything system initiated.
+   */
+  readonly sessionId: string | null;
 }
 
 /** One thing that happened, ready to store. Digests, never values. */
@@ -125,6 +144,9 @@ export interface AuditEntry {
   readonly beforeHash: string | null;
   readonly afterHash: string | null;
   readonly ipAddress: string | null;
+
+  /** Which sign-in it happened in, or null. See `Actor.sessionId`. */
+  readonly sessionId: string | null;
 
   /**
    * Why, for actions that owe an explanation.
@@ -144,6 +166,20 @@ export interface RecordedEntry {
   readonly targetType: string;
   readonly reason: string | null;
   readonly ipAddress: string | null;
+
+  /**
+   * Which of the reader's own sign-ins this action happened in, or null.
+   *
+   * Served only on this type — the entries the reader was the *actor* of. It is
+   * their session, on their own trail, and `/me/sign-ins` already hands them the
+   * same identifiers, so nothing new is disclosed by class.
+   *
+   * Null covers three ordinary cases the page must not distinguish: an action
+   * with no session behind it, an action recorded before this column existed,
+   * and a session whose `session.created` delivery we never received (ADR 0025).
+   * All three mean the same thing to a reader — we cannot say which sign-in.
+   */
+  readonly sessionId: string | null;
   readonly createdAt: Date;
 }
 
@@ -160,6 +196,12 @@ export interface RecordedEntry {
  * reading them. Handing a support worker's home address to the account they
  * were asked to investigate is a safety problem, and it is the kind that only
  * becomes visible after it has happened.
+ *
+ * **There is no `sessionId` either, for exactly the same reason.** It would
+ * identify the administrator's own sign-in, and correlating several disclosures
+ * to one session tells the subject when a particular support worker was at
+ * their desk. Same argument, same answer, enforced by the type rather than by a
+ * `select` somebody edits later.
  */
 export interface DisclosedEntry {
   readonly id: string;

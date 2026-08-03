@@ -76,6 +76,13 @@ export class InMemoryAuditLog implements AuditLog {
       return Promise.reject(new InvalidAuditIdError('targetId', entry.targetId));
     }
 
+    // `sessionId` is deliberately *not* validated, and that was checked rather
+    // than assumed. The column is plain nullable `text` — Clerk's ids are
+    // prefixed strings, not UUIDs — so Postgres rejects nothing this double
+    // would need to reject. The rule that produced the uuid checks above is
+    // "mirror the column type, not only the constraint" (slice 1.11a); here the
+    // column type constrains nothing, so neither does this.
+
     this.rows.push({
       ...entry,
       id: `00000000-0000-4000-8000-${String(this.nextId++).padStart(12, '0')}`,
@@ -102,6 +109,7 @@ export class InMemoryAuditLog implements AuditLog {
           targetType: row.targetType,
           reason: row.reason,
           ipAddress: row.ipAddress,
+          sessionId: row.sessionId,
           createdAt: row.createdAt,
         })),
     );

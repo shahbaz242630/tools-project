@@ -10,8 +10,15 @@ const ALICE_ID = '00000000-0000-4000-8000-000000000001';
 const BOB_ID = '00000000-0000-4000-8000-000000000002';
 
 /** Actors, as the controller assembles them from a verified session. */
-const ALICE = { userId: ALICE_ID, ipAddress: '203.0.113.7' };
-const BOB = { userId: BOB_ID, ipAddress: null };
+// Alice acts inside a session and Bob does not, so the pair covers both halves
+// of `Actor.sessionId` without a third fixture. Clerk-shaped rather than a bare
+// word, because the column takes the provider's id verbatim.
+const ALICE = {
+  userId: ALICE_ID,
+  ipAddress: '203.0.113.7',
+  sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
+};
+const BOB = { userId: BOB_ID, ipAddress: null, sessionId: null };
 
 const input: ProfileInput = {
   displayName: 'Sarah M.',

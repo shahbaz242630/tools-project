@@ -82,7 +82,11 @@ export class AdminActivityController {
     // record of it — the same ordering as the export (ADR 0019). The actor is
     // the administrator; the target is the account they looked at.
     await this.audit.record({
-      actor: { userId: admin.id, ipAddress: request.clientIp ?? null },
+      actor: {
+        userId: admin.id,
+        ipAddress: request.clientIp ?? null,
+        sessionId: request.sessionId ?? null,
+      },
       action: 'admin.activity_viewed',
       targetType: 'user',
       targetId: userId,
@@ -105,6 +109,21 @@ export class AdminActivityController {
         by: entry.by,
         reason: entry.reason,
         ipAddress: entry.ipAddress,
+        // **Withheld here, unlike on the person's own page**, and this is the
+        // one place this route serves less than the account holder sees.
+        //
+        // ADR 0022 made the administrative projection the narrowest thing that
+        // helps support, and ADR 0025 refused an administrative view of
+        // somebody's sign-ins outright — a location and device history is not
+        // in the category of thing support needs. A raw session id is a
+        // correlation handle over exactly that: it groups an account's actions
+        // into sittings, and repeated across a trail it describes when and how
+        // often somebody uses the platform.
+        //
+        // It would also buy support nothing. Resolving one to a device needs the
+        // sign-in list, which an administrator has no route to, so the column
+        // would render as an opaque `sess_…` on every row.
+        sessionId: null,
         createdAt: entry.createdAt.toISOString(),
       })),
     };

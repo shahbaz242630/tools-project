@@ -11,8 +11,13 @@ import { createStateDigest } from './state-digest.js';
 const ALICE: Actor = {
   userId: '00000000-0000-4000-8000-000000000001',
   ipAddress: '203.0.113.7',
+  sessionId: 'sess_3HDhyL6953Z755UaiBQzqU9maQA',
 };
-const BOB: Actor = { userId: '00000000-0000-4000-8000-000000000002', ipAddress: null };
+const BOB: Actor = {
+  userId: '00000000-0000-4000-8000-000000000002',
+  ipAddress: null,
+  sessionId: null,
+};
 const TARGET = '00000000-0000-4000-8000-0000000000aa';
 
 let log: InMemoryAuditLog;
@@ -131,7 +136,26 @@ describe('record', () => {
       after: { id: TARGET },
     });
 
-    expect(log.entries()[0]).toMatchObject({ actorId: null, ipAddress: null });
+    expect(log.entries()[0]).toMatchObject({
+      actorId: null,
+      ipAddress: null,
+      sessionId: null,
+    });
+  });
+
+  it('carries the actor’s session onto the entry', async () => {
+    // The service is the only place this is copied off the `Actor`, so a
+    // passthrough that silently dropped it would leave every entry null and no
+    // other test would notice — the exact shape of the bug ADR 0025 records.
+    await service.record({
+      actor: ALICE,
+      action: 'profile.updated',
+      targetType: 'profile',
+      targetId: TARGET,
+      after: { displayName: 'Alice' },
+    });
+
+    expect(log.entries()[0]?.sessionId).toBe(ALICE.sessionId);
   });
 
   it('records a null address when the actor has none', async () => {
@@ -262,10 +286,15 @@ describe('listActivityFor', () => {
   /**
    * Bob, an administrator, reads Alice's account.
    *
-   * With an address of his own — `BOB` has none, and asserting that the
-   * subject sees null would then pass whether or not anything was withheld.
+   * With an address *and a session* of his own — `BOB` has neither, and
+   * asserting that the subject sees null would then pass whether or not
+   * anything was actually withheld.
    */
-  const ADMIN: Actor = { userId: BOB.userId, ipAddress: '198.51.100.9' };
+  const ADMIN: Actor = {
+    userId: BOB.userId,
+    ipAddress: '198.51.100.9',
+    sessionId: 'sess_admin',
+  };
 
   const disclosure = (reason = 'ticket 4821, access query') =>
     service.record({
@@ -330,6 +359,28 @@ describe('listActivityFor', () => {
 
     const [entry] = await service.listActivityFor(ALICE.userId);
     expect(entry!.ipAddress).toBe(ALICE.ipAddress);
+  });
+
+  it('withholds the actor’s session on somebody else’s action', async () => {
+    await disclosure();
+
+    const [entry] = await service.listActivityFor(ALICE.userId);
+    expect(entry!.sessionId).toBeNull();
+
+    // Withheld, not absent — the same distinction the address test draws. The
+    // administrator's session *was* recorded; the subject simply does not get
+    // it. Several disclosures sharing one id would tell them when a particular
+    // support worker was working.
+    expect(log.entries()[0]?.sessionId).toBe('sess_admin');
+  });
+
+  it('keeps the reader’s own session on their own action', async () => {
+    // The half that makes the feature work: the page needs this to name the
+    // sign-in an action belongs to.
+    await ownAction();
+
+    const [entry] = await service.listActivityFor(ALICE.userId);
+    expect(entry!.sessionId).toBe(ALICE.sessionId);
   });
 
   it('carries the reason through to the subject', async () => {
