@@ -80,6 +80,17 @@ function Categories({
     case 'invalid':
       return <p role="alert">That is not available.</p>;
 
+    // A read cannot conflict with anything — only the create can. Handled
+    // rather than lumped in with the failures above because the compiler is
+    // right to insist: the day this page does something other than read, a
+    // silent fall-through would be the bug.
+    case 'stale-category':
+      return (
+        <p role="alert">
+          The categories have just changed. Reload the page to see the current list.
+        </p>
+      );
+
     case 'unreachable':
     case 'malformed':
       return (

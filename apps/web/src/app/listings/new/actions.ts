@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import { listingDraftSchema, listingPath } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { readReplacementValue } from '../../../lib/replacement-value';
+import { readSubmittedAttributes } from '../../../lib/submitted-attributes';
 import { createListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { INITIAL_LISTING_STATE } from './state';
@@ -36,6 +37,31 @@ export async function createListingAction(
   const replacementValue = String(form.get('replacementValue') ?? '');
   const typed = { categorySlug, title, description, replacementValue };
 
+  // The category's own fields arrive as one JSON value rather than as indexed
+  // field names — see the hidden input in `ListingForm`. Parsed here and
+  // checked no further: which keys are legal and what shape each takes is
+  // category configuration, so the only place that can decide is the API,
+  // reading the schema on the version it is about to pin.
+  const attributes = readSubmittedAttributes(form.get('attributes'));
+  if (!attributes.ok) {
+    return {
+      ...INITIAL_LISTING_STATE,
+      ...typed,
+      status: 'error',
+      message: attributes.message,
+    };
+  }
+
+  const categoryVersionNumber = Number(form.get('categoryVersionNumber') ?? '');
+  if (!Number.isInteger(categoryVersionNumber) || categoryVersionNumber < 1) {
+    return {
+      ...INITIAL_LISTING_STATE,
+      ...typed,
+      status: 'error',
+      message: 'Choose a category before saving.',
+    };
+  }
+
   // Pounds on the form, pence in the contract — and a string the whole way, so
   // no float ever exists (ADR 0002). See `readReplacementValue`.
   const value = readReplacementValue(replacementValue);
@@ -56,6 +82,8 @@ export async function createListingAction(
     title,
     description,
     replacementValue: value.value,
+    categoryVersionNumber,
+    attributes: attributes.value,
   });
   if (!parsed.success) {
     return {
@@ -118,6 +146,22 @@ export async function createListingAction(
         ...typed,
         status: 'error',
         message: 'Your session has expired. Sign in again.',
+      };
+
+    case 'stale-category':
+      // Nothing they typed is wrong, so this does not read as a validation
+      // failure. The category was reconfigured while the page was open, which
+      // means the fields below may have changed — and accepting the answers
+      // anyway would have silently dropped any given to a field that has since
+      // been renamed.
+      return {
+        ...INITIAL_LISTING_STATE,
+        ...typed,
+        status: 'error',
+        message:
+          'This category was changed while you were filling this in, so the details ' +
+          'it asks for may be different now. Reload the page and check the ' +
+          'category-specific fields — everything else you typed is still here.',
       };
 
     case 'unreachable':

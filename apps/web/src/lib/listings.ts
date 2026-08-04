@@ -30,6 +30,16 @@ export type ListingOutcome<T> =
   | { readonly kind: 'forbidden' }
   | { readonly kind: 'not-found' }
   | { readonly kind: 'invalid'; readonly issues: readonly string[] }
+  /**
+   * The category was reconfigured while the form was open (slice 2.4b).
+   *
+   * Its own kind rather than another `invalid`, because the two need opposite
+   * things from the person reading them: `invalid` asks them to correct a field,
+   * and this asks them to look again at fields that may have changed shape
+   * underneath them. Collapsing it into `invalid` would produce "that is not a
+   * field of this category" about a field they were shown.
+   */
+  | { readonly kind: 'stale-category'; readonly reason: string }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
 
@@ -58,14 +68,17 @@ function describe(error: unknown): string {
   return String(error);
 }
 
-function readError(raw: string): { issues?: readonly string[] } {
+function readError(raw: string): { issues?: readonly string[]; message?: string } {
   try {
     const body: unknown = JSON.parse(raw);
     if (typeof body !== 'object' || body === null) return {};
-    const record = body as { issues?: unknown };
-    return Array.isArray(record.issues)
-      ? { issues: record.issues as readonly string[] }
-      : {};
+    const record = body as { issues?: unknown; message?: unknown };
+    return {
+      ...(Array.isArray(record.issues)
+        ? { issues: record.issues as readonly string[] }
+        : {}),
+      ...(typeof record.message === 'string' ? { message: record.message } : {}),
+    };
   } catch {
     return {};
   }
@@ -107,6 +120,14 @@ async function call<T>(
   if (response.status === 400) {
     const { issues } = readError(await response.text());
     return { kind: 'invalid', issues: issues ?? ['The request was rejected'] };
+  }
+
+  if (response.status === 409) {
+    const { message } = readError(await response.text());
+    return {
+      kind: 'stale-category',
+      reason: message ?? 'the category was changed while this page was open',
+    };
   }
 
   if (response.status < 200 || response.status >= 300) {

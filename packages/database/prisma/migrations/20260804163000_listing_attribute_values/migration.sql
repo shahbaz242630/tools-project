@@ -1,0 +1,66 @@
+-- Migration: listing_attribute_values
+--
+-- Slice 2.4b. A listing gains the answers to its category's attributes — the
+-- other half of the schema slice 2.2 put on `category_versions`, and the half
+-- BRD §14's Phase 2 exit gate is actually about: "a listing renders its
+-- category-specific fields without frontend code changes for every field".
+--
+-- Why an object where the definitions are an array
+-- -----------------------------------------------
+-- The definitions are ordered because order is what an owner sees on the form.
+-- The values are not: they are looked up by key, and the schema on the pinned
+-- version is the ordering authority. Storing an array here would be a second
+-- order that can disagree with the first.
+--
+-- Only answered attributes are present. An unanswered one is **absent**, never
+-- null, so there is one representation of "not answered" rather than two that
+-- every later reader has to remember to treat alike. Nothing enforces
+-- `required` at this point — §8.3 says owners create drafts and save progress,
+-- so completeness is a publication rule and belongs to slice 2.8.
+--
+-- Why no CHECK constraint
+-- -----------------------
+-- The only meaningful check is "these keys match the schema on the version this
+-- row pins", which is a rule about another table's JSON column and a vocabulary
+-- that lives in @platform/contracts and changes with a deploy. Postgres would
+-- need a trigger reading `category_versions` on every write to express it, and
+-- that trigger would be a second, diverging copy of `validateAttributeValues`.
+-- The adapter is where it holds, and the integration tests are what prove it.
+--
+-- Why this cannot be orphaned by a rename
+-- --------------------------------------
+-- The listing pins `categoryVersionId`, the schema lives on that row, and the
+-- row is immutable — a trigger refuses UPDATE (slice 2.1). So renaming an
+-- attribute key mints a *new* version while this listing still points at the old
+-- one, whose schema still contains the old key. The value and the definition it
+-- was written against stay together for as long as the listing exists.
+--
+-- The question that remains is what happens when a listing is *moved* to a newer
+-- version, which nothing does today. ADR 0029 records the rule: re-pinning must
+-- be an explicit, value-migrating operation, never a side effect of saving.
+--
+-- Data impact
+-- -----------
+-- One column, defaulted to an empty object. In PostgreSQL 11 and later,
+-- ADD COLUMN with a non-volatile DEFAULT is a catalogue-only change — existing
+-- rows are not rewritten and the default is materialised on read. There is one
+-- draft listing in local development and none anywhere else.
+--
+-- **Existing drafts are left saying, truthfully, that they answered nothing.**
+-- No backfill invents values nobody typed, and it could not: the category they
+-- pinned had an empty schema, so there is nothing they could have answered.
+--
+-- The table takes a brief ACCESS EXCLUSIVE lock. Only the owner's own routes
+-- read it.
+--
+-- Rollback
+-- --------
+--   ALTER TABLE "listings" DROP COLUMN "attributes";
+--
+-- Lossless for any listing created before this migration, and lossy after it —
+-- dropping the column discards answers an owner typed, which no other table
+-- holds. Roll forward is the honest answer once real listings exist; today the
+-- only row affected is local fixture data.
+
+-- AlterTable
+ALTER TABLE "listings" ADD COLUMN     "attributes" JSONB NOT NULL DEFAULT '{}';

@@ -24,7 +24,7 @@ import type {
   CategoryRiskLevel,
 } from '@platform/contracts';
 import { CategorySlugTakenError } from '../category-store.js';
-import { UnknownCategoryError } from '../listing-store.js';
+import { CategoryChangedError, UnknownCategoryError } from '../listing-store.js';
 import type {
   CategoryOptionRecord,
   CategoryOptionSource,
@@ -179,6 +179,16 @@ function toRecord(category: StoredCategory): CategoryRecord {
   };
 }
 
+/** The owner-facing projection of a category: what to pick, and what it asks for. */
+function toOption(category: CategoryRecord): CategoryOptionRecord {
+  return {
+    slug: category.slug,
+    name: category.name,
+    attributes: category.attributes,
+    versionNumber: category.versionNumber,
+  };
+}
+
 export interface CatalogueFakes {
   readonly store: InMemoryCategoryStore;
   readonly audit: AuditFakes;
@@ -211,6 +221,18 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     const category = await this.categories.findBySlug(draft.categorySlug);
     if (category === null) throw new UnknownCategoryError(draft.categorySlug);
 
+    // The version about to be pinned, checked against the one the values were
+    // validated against — the guarantee the real store makes inside its write.
+    // Mirrored here for the reason this whole file exists: a double that skipped
+    // it would let a test pass for a state Postgres and the adapter refuse.
+    if (category.versionNumber !== draft.categoryVersionNumber) {
+      throw new CategoryChangedError(
+        draft.categorySlug,
+        draft.categoryVersionNumber,
+        category.versionNumber,
+      );
+    }
+
     const now = Time.nowUtc();
     const listing: ListingRecord = {
       id: `00000000-0000-4000-9000-${String(this.nextId++).padStart(12, '0')}`,
@@ -220,9 +242,14 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       categorySlug: category.slug,
       categoryName: category.name,
       categoryVersionNumber: category.versionNumber,
+      categoryAttributes: category.attributes,
       title: draft.title,
       description: draft.description,
       replacementValue: draft.replacementValue,
+      // Copied for the same reason the category store copies its schema: the
+      // real store round-trips through JSONB, so a caller mutating its own
+      // object afterwards must not be able to rewrite what was stored.
+      attributes: { ...draft.attributes },
       status: 'DRAFT',
       createdAt: now,
       updatedAt: now,
@@ -241,7 +268,12 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
 
   async listOptions(): Promise<readonly CategoryOptionRecord[]> {
     const categories = await this.categories.list();
-    return categories.map((category) => ({ slug: category.slug, name: category.name }));
+    return categories.map(toOption);
+  }
+
+  async findOption(slug: string): Promise<CategoryOptionRecord | null> {
+    const category = await this.categories.findBySlug(slug);
+    return category === null ? null : toOption(category);
   }
 
   /** Everything stored, for asserting that a refused write left nothing behind. */

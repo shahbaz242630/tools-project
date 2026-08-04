@@ -13,7 +13,16 @@ const validDraft = {
   title: 'Petrol hedge trimmer',
   description: 'Serviced last spring. Blade recently sharpened.',
   replacementValue: { amount: 24_999, currency: 'GBP' },
+  categoryVersionNumber: 1,
+  attributes: { power_source: 'petrol', weight_kg: '5.2' },
 };
+
+/** The draft minus one field, for asserting that its absence is refused. */
+function without(field: keyof typeof validDraft): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...validDraft };
+  delete copy[field];
+  return copy;
+}
 
 function issuesOf(read: () => unknown): readonly string[] {
   try {
@@ -45,6 +54,41 @@ describe('the listing draft', () => {
     const parsed = parseListingDraft({ ...validDraft, status: 'PUBLISHED' });
 
     expect(parsed).not.toHaveProperty('status');
+  });
+
+  it('refuses a draft with no attributes field, rather than assuming none', () => {
+    // ADR 0025's rule: an optional field is a silent default, and a caller that
+    // forgot the category's answers should get a 400 rather than a listing that
+    // quietly has none.
+    expect(issuesOf(() => parseListingDraft(without('attributes'))).join(' ')).toMatch(
+      /attributes/,
+    );
+  });
+
+  it('accepts an empty set of answers, which is what an untouched draft has', () => {
+    expect(parseListingDraft({ ...validDraft, attributes: {} }).attributes).toEqual({});
+  });
+
+  it('does not judge the answers here, because only the category can', () => {
+    // Which keys are legal and what shape each takes is configuration the
+    // request does not carry. `validateAttributeValues` decides, against the
+    // schema on the version being pinned.
+    expect(
+      parseListingDraft({ ...validDraft, attributes: { anything: { at: 'all' } } })
+        .attributes,
+    ).toEqual({ anything: { at: 'all' } });
+  });
+
+  it('requires the version the form was built from', () => {
+    expect(
+      issuesOf(() => parseListingDraft(without('categoryVersionNumber'))).join(' '),
+    ).toMatch(/categoryVersionNumber/);
+  });
+
+  it('refuses a version number that could never have existed', () => {
+    expect(() =>
+      parseListingDraft({ ...validDraft, categoryVersionNumber: 0 }),
+    ).toThrow(ContractViolationError);
   });
 });
 

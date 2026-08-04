@@ -49,6 +49,69 @@ const DEVELOPMENT_DATABASE = 'rental_dev';
 const SEED_SLUG = 'seed-example-category';
 const SEED_NAME = 'EXAMPLE (seeded fixture — not a real category)';
 
+/**
+ * An attribute schema exercising **all four types** (ADR 0027).
+ *
+ * Deliberately not the launch category's four. This is fixture data whose job is
+ * to make every renderer and every validator reachable in a browser — the launch
+ * category has no `choice-many` at all, so seeding a copy of it would leave one
+ * of the four types unexercised by the only route anybody can actually use.
+ *
+ * The keys are close enough to real ones to read naturally and different enough
+ * that nobody could paste this into `outdoor-gardening` by accident.
+ */
+const SEED_ATTRIBUTES = [
+  {
+    key: 'power_source',
+    label: 'Power source',
+    required: true,
+    type: 'choice',
+    options: [
+      { value: 'petrol', label: 'Petrol' },
+      { value: 'mains', label: 'Mains electric' },
+      { value: 'cordless', label: 'Cordless battery' },
+      { value: 'manual', label: 'Manual' },
+    ],
+  },
+  {
+    key: 'weight_kg',
+    label: 'Weight',
+    required: true,
+    type: 'number',
+    unit: 'kg',
+    decimalPlaces: 1,
+  },
+  {
+    key: 'example_notes',
+    label: 'Example notes',
+    required: false,
+    type: 'text',
+    maxLength: 200,
+  },
+  {
+    key: 'example_accessories',
+    label: 'Accessories included',
+    required: false,
+    type: 'choice-many',
+    options: [
+      { value: 'case', label: 'Carry case' },
+      { value: 'blade', label: 'Spare blade' },
+      { value: 'charger', label: 'Charger' },
+    ],
+  },
+];
+
+/**
+ * Escaped for a psql string literal, which doubles single quotes.
+ *
+ * The JSON is generated here rather than typed as a literal so the two cannot
+ * drift, and the only character that needs handling is the quote — the labels
+ * above are ours, not user input.
+ */
+function jsonLiteral(value) {
+  return `'${JSON.stringify(value).replace(/'/g, "''")}'::jsonb`;
+}
+
 function refuseUnlessDevelopment() {
   const environment = process.env.NODE_ENV ?? 'development';
   if (environment !== 'development' && environment !== 'test') {
@@ -97,14 +160,47 @@ function sql(statement) {
   );
 }
 
-function main() {
-  refuseUnlessDevelopment();
+/**
+ * Bring an already-seeded fixture up to the current schema, by **adding a
+ * version** rather than editing one.
+ *
+ * `category_versions` refuses `UPDATE` — a trigger enforces it (slice 2.1) — and
+ * that is not an obstacle to work around here: appending a version is what a
+ * reconfiguration genuinely is, and it leaves the previous one in place for any
+ * listing already pinned to it. Which is precisely the behaviour slice 2.4b
+ * depends on, so it is worth the fixture data exercising it too.
+ */
+function reconfigureIfNeeded(categoryId, author) {
+  const current = sql(
+    `SELECT attributes::text FROM category_versions
+      WHERE "categoryId" = '${categoryId}'
+      ORDER BY "versionNumber" DESC LIMIT 1`,
+  );
 
-  const existing = sql(`SELECT id FROM categories WHERE slug = '${SEED_SLUG}'`);
-  if (existing !== '') {
-    console.log(`Already seeded: ${SEED_SLUG} (${existing}). Nothing to do.`);
+  if (current !== '' && JSON.parse(current).length > 0) {
+    console.log(`Already seeded: ${SEED_SLUG} (${categoryId}). Nothing to do.`);
     return;
   }
+
+  const version = sql(
+    `INSERT INTO category_versions
+       (id, "categoryId", "versionNumber", name, "riskLevel", "reportableActivity",
+        attributes, "createdById", "createdAt")
+     SELECT gen_random_uuid(), '${categoryId}',
+            COALESCE(MAX("versionNumber"), 0) + 1, '${SEED_NAME}', 'medium', 'none',
+            ${jsonLiteral(SEED_ATTRIBUTES)}, '${author}', now()
+     FROM category_versions WHERE "categoryId" = '${categoryId}'
+     RETURNING "versionNumber"`,
+  );
+
+  console.log(
+    `Reconfigured ${SEED_SLUG} as version ${version}, adding the example attribute ` +
+      'schema. Listings created before this keep the version they pinned.',
+  );
+}
+
+function main() {
+  refuseUnlessDevelopment();
 
   const author = sql('SELECT id FROM users ORDER BY "createdAt" ASC LIMIT 1');
   if (author === '') {
@@ -113,6 +209,12 @@ function main() {
         'is created, then run this again.',
     );
     process.exit(1);
+  }
+
+  const existing = sql(`SELECT id FROM categories WHERE slug = '${SEED_SLUG}'`);
+  if (existing !== '') {
+    reconfigureIfNeeded(existing, author);
+    return;
   }
 
   // **One statement, so the category and its version are written together.**
@@ -132,7 +234,7 @@ function main() {
        (id, "categoryId", "versionNumber", name, "riskLevel", "reportableActivity",
         attributes, "createdById", "createdAt")
      SELECT gen_random_uuid(), new_category.id, 1, '${SEED_NAME}', 'medium', 'none',
-            '[]'::jsonb, author.id, now()
+            ${jsonLiteral(SEED_ATTRIBUTES)}, author.id, now()
      FROM new_category, author
      RETURNING "categoryId"`,
   );

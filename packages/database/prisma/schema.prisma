@@ -798,6 +798,31 @@ model Listing {
   /// one — §8.3's "save progress". Publication requires prose (2.8).
   description String @db.Text
 
+  /// The answers to this category's attributes, keyed by attribute key
+  /// (ADR 0027, BRD §8.2, slice 2.4b).
+  ///
+  /// **An object, where the definitions are an array.** The definitions carry
+  /// render order and this does not need to: the schema on the pinned version is
+  /// the ordering authority, and a second one here could disagree with it.
+  ///
+  /// **Only the keys that were answered are present.** An unanswered attribute
+  /// is absent rather than null, so the platform has one representation of "not
+  /// answered" instead of two that every later reader must remember to treat
+  /// alike. `required` is not enforced on a draft — §8.3 says owners save
+  /// progress, and completeness is a publication rule (2.8).
+  ///
+  /// Validated by `validateAttributeValues` in @platform/contracts **against the
+  /// schema on the version this row pins**, never against the category's current
+  /// one. That is what stops a reconfiguration retroactively invalidating a
+  /// listing, and it is why renaming an attribute key cannot orphan a stored
+  /// value: the rename mints a new version, and this row still points at the old
+  /// one, whose schema still has the old key.
+  ///
+  /// Postgres checks only that the value is JSON. It cannot check that the keys
+  /// match a schema it would have to read from another row, so the adapter is
+  /// where that holds.
+  attributes  Json   @default("{}") @db.JsonB
+
   /// What replacing the item would cost, as integer minor units plus the
   /// currency, on the same record (ADR 0002, CLAUDE.md).
   ///
