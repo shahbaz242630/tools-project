@@ -18,7 +18,11 @@
  */
 
 import { Time } from '@platform/core';
-import type { CategoryAttribute, CategoryRiskLevel } from '@platform/contracts';
+import type {
+  CategoryAttribute,
+  CategoryReportableActivity,
+  CategoryRiskLevel,
+} from '@platform/contracts';
 import { CategorySlugTakenError } from '../category-store.js';
 import type {
   CategoryConfiguration,
@@ -33,6 +37,7 @@ interface StoredVersion {
   readonly versionNumber: number;
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
+  readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
   readonly createdById: string;
   readonly createdAt: Date;
@@ -81,6 +86,7 @@ export class InMemoryCategoryStore implements CategoryStore {
           versionNumber: 1,
           name: input.name,
           riskLevel: input.riskLevel,
+          reportableActivity: input.reportableActivity,
           // Copied, not referenced. The real store round-trips through JSONB, so
           // a caller that mutates its own array afterwards cannot reach back and
           // rewrite a stored version — and a double that shared the reference
@@ -113,6 +119,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       versionNumber: next,
       name: configuration.name,
       riskLevel: configuration.riskLevel,
+      reportableActivity: configuration.reportableActivity,
       attributes: [...configuration.attributes],
       createdById: authorId,
       createdAt: Time.nowUtc(),
@@ -155,6 +162,7 @@ function toRecord(category: StoredCategory): CategoryRecord {
     slug: category.slug,
     name: latest.name,
     riskLevel: latest.riskLevel,
+    reportableActivity: latest.reportableActivity,
     attributes: latest.attributes,
     versionNumber: latest.versionNumber,
     versionCreatedAt: latest.createdAt,

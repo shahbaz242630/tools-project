@@ -78,6 +78,12 @@ const RULES = [
     exempt: (p) => p.includes('search') || p.startsWith('scripts/'),
   },
   {
+    id: 'seller-tax-profile-is-inactive',
+    pattern: /\bsellerTaxProfile\b/,
+    message: 'application code reading or writing the seller tax profile',
+    why: 'BRD §8.14.2 requires this entity to exist but stay inactive while every category is flagged `none`, so activating reporting is a configuration switch rather than a rebuild. Nothing should reach it yet. When it does activate, it becomes the fourth table holding personal data — and nothing enumerates those, so it must arrive together with `PersonalDataEraser` and both `PersonalDataSource` projections, or it will be silently missing from account deletion and from the data export.',
+  },
+  {
     id: 'no-hardcoded-money',
     pattern: /\b(fee|price|amount|deposit|total|charge)\w*\s*[:=]\s*\d+\.\d+/i,
     message: 'decimal literal assigned to a money-shaped name',

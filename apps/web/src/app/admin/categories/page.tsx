@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import Link from 'next/link';
+import { activatesSellerReporting } from '@platform/contracts';
 import type { AdminCategory } from '@platform/contracts';
 import {
   CreateCategoryForm,
@@ -55,10 +56,19 @@ export default async function CategoriesPage() {
       </p>
 
       <p>
-        Today a category carries a name, a risk level and its attribute schema — the
-        fields an owner fills in when listing something in it. Fees, deposit bands and
-        the rest arrive in later slices, and each will be one more field on the version
-        rather than a new place to look.
+        Today a category carries a name, a risk level, its attribute schema — the fields
+        an owner fills in when listing something in it — and whether its activity is
+        reportable to HMRC. Fees, deposit bands and the rest arrive in later slices, and
+        each will be one more field on the version rather than a new place to look.
+      </p>
+
+      <p>
+        <strong>One setting here is not like the others.</strong> Reportable activity
+        decides whether the platform owes HMRC seller tax data, registration and an
+        annual return. Renting out tools and garden equipment does not; trailers, vans,
+        e-bikes, mobility scooters and anything labour-based do. Choosing anything other
+        than <em>none</em> needs counsel to confirm the scope first, and the form will
+        ask you to confirm it.
       </p>
 
       <section aria-labelledby="existing">
@@ -166,6 +176,19 @@ function CategoryList({
             {attributeSummary(category.attributes.length)} ·{' '}
             <strong>version {category.versionNumber}</strong>
           </p>
+          {/*
+            Shown only when it is not `none`. A line reading "not reportable" on
+            every category is one nobody reads, and the whole value of this
+            summary is that the exception stands out from a list where
+            everything else is ordinary.
+          */}
+          {activatesSellerReporting(category.reportableActivity) ? (
+            <p>
+              <strong>Reportable to HMRC</strong> — {category.reportableActivity}.
+              Seller tax data must be collected, verified and filed annually for this
+              category.
+            </p>
+          ) : null}
           <ReconfigureCategoryForm category={category} />
         </li>
       ))}

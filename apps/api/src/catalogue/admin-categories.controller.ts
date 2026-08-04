@@ -21,7 +21,7 @@ import {
   parseCategoryConfiguration,
   parseCategoryDraft,
 } from '@platform/contracts';
-import type { AdminCategory } from '@platform/contracts';
+import type { AdminCategory, CategoryConfigurationInput } from '@platform/contracts';
 import { Time } from '@platform/core';
 import { AuthGuard, Roles } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
@@ -30,7 +30,7 @@ import type { MirroredUser } from '../identity/user-directory.js';
 import type { Actor } from '../audit/audit-log.js';
 import { CATALOGUE_SERVICE } from './catalogue.tokens.js';
 import { CategorySlugTakenError } from './category-store.js';
-import type { CategoryRecord } from './category-store.js';
+import type { CategoryConfiguration, CategoryRecord } from './category-store.js';
 import type { CatalogueService } from './catalogue.service.js';
 
 /**
@@ -84,7 +84,11 @@ export class AdminCategoriesController {
     const why = parse(() => parseAdminReason(reason));
 
     try {
-      const created = await this.catalogue.create(actorOf(admin, request), draft, why);
+      const created = await this.catalogue.create(
+        actorOf(admin, request),
+        { ...configurationOf(draft), slug: draft.slug },
+        why,
+      );
       return toAdminCategory(created);
     } catch (error) {
       if (error instanceof CategorySlugTakenError) {
@@ -121,7 +125,7 @@ export class AdminCategoriesController {
     const updated = await this.catalogue.reconfigure(
       actorOf(admin, request),
       slug,
-      configuration,
+      configurationOf(configuration),
       why,
     );
     if (updated === null) throw new NotFoundException();
@@ -145,6 +149,30 @@ function actorOf(admin: MirroredUser, request: AuthenticatedRequest): Actor {
   };
 }
 
+/**
+ * What actually gets stored, with `reportingDutiesAcknowledged` dropped.
+ *
+ * Spelled out field by field rather than spread, because the whole point is that
+ * one field of a validated body does **not** travel any further. The
+ * acknowledgement is an assertion about this request — the contract has already
+ * refused the request if it was missing — and storing it would record a value
+ * that is true of every row by construction. What survives is the audit entry.
+ *
+ * Structural typing would have let the whole body through to the store without
+ * complaint, and the store would have ignored the extra field silently. That is
+ * precisely why this is explicit: a future field added to the request and not to
+ * the configuration should be a decision, not an accident of which object was
+ * nearest.
+ */
+function configurationOf(body: CategoryConfigurationInput): CategoryConfiguration {
+  return {
+    name: body.name,
+    riskLevel: body.riskLevel,
+    reportableActivity: body.reportableActivity,
+    attributes: body.attributes,
+  };
+}
+
 /** One place for the contract-violation translation, so no route can 500 on one. */
 function parse<T>(read: () => T): T {
   try {
@@ -163,6 +191,7 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     slug: category.slug,
     name: category.name,
     riskLevel: category.riskLevel,
+    reportableActivity: category.reportableActivity,
     attributes: category.attributes,
     versionNumber: category.versionNumber,
     versionCreatedAt: Time.toIsoUtc(category.versionCreatedAt),

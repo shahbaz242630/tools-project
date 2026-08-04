@@ -1,6 +1,14 @@
 import type { PrismaClient } from '@platform/database';
-import type { CategoryAttribute, CategoryRiskLevel } from '@platform/contracts';
-import { CATEGORY_RISK_LEVELS, parseCategoryAttributes } from '@platform/contracts';
+import type {
+  CategoryAttribute,
+  CategoryReportableActivity,
+  CategoryRiskLevel,
+} from '@platform/contracts';
+import {
+  CATEGORY_REPORTABLE_ACTIVITIES,
+  CATEGORY_RISK_LEVELS,
+  parseCategoryAttributes,
+} from '@platform/contracts';
 import { CategorySlugTakenError } from './category-store.js';
 import type {
   CategoryConfiguration,
@@ -39,6 +47,7 @@ export class PrismaCategoryStore implements CategoryStore {
               versionNumber: FIRST_VERSION,
               name: input.name,
               riskLevel: input.riskLevel,
+              reportableActivity: input.reportableActivity,
               // Prisma's Json input type does not accept a readonly array, and
               // the spread is the cheapest honest way to hand it a mutable copy
               // rather than widening the port's type to suit the ORM.
@@ -88,6 +97,7 @@ export class PrismaCategoryStore implements CategoryStore {
         versionNumber: current.versionNumber + 1,
         name: configuration.name,
         riskLevel: configuration.riskLevel,
+        reportableActivity: configuration.reportableActivity,
         attributes: [...configuration.attributes],
         createdById: authorId,
       },
@@ -98,6 +108,7 @@ export class PrismaCategoryStore implements CategoryStore {
       slug: existing.slug,
       name: version.name,
       riskLevel: asRiskLevel(version.riskLevel),
+      reportableActivity: asReportableActivity(version.reportableActivity),
       attributes: asAttributes(version.attributes, existing.slug),
       versionNumber: version.versionNumber,
       versionCreatedAt: version.createdAt,
@@ -136,6 +147,7 @@ interface CategoryRow {
   versions: readonly {
     name: string;
     riskLevel: string;
+    reportableActivity: string;
     attributes: unknown;
     versionNumber: number;
     createdAt: Date;
@@ -156,6 +168,7 @@ function toRecord(category: CategoryRow): CategoryRecord {
     slug: category.slug,
     name: current.name,
     riskLevel: asRiskLevel(current.riskLevel),
+    reportableActivity: asReportableActivity(current.reportableActivity),
     attributes: asAttributes(current.attributes, category.slug),
     versionNumber: current.versionNumber,
     versionCreatedAt: current.createdAt,
@@ -207,6 +220,23 @@ function asRiskLevel(value: string): CategoryRiskLevel {
     return value as CategoryRiskLevel;
   }
   throw new Error(`Unknown category risk level in the database: ${value}`);
+}
+
+/**
+ * The same treatment `riskLevel` gets, and here the argument is stronger.
+ *
+ * A row holding a head this build does not know means the database was written
+ * by a newer version of the application. Falling back to `none` would read an
+ * in-scope category as out of scope — silently answering "no statutory
+ * obligation" on the strength of not recognising a word — and the failure would
+ * surface as a missing annual return rather than as an error. Throwing is the
+ * only safe direction to be wrong in.
+ */
+function asReportableActivity(value: string): CategoryReportableActivity {
+  if ((CATEGORY_REPORTABLE_ACTIVITIES as readonly string[]).includes(value)) {
+    return value as CategoryReportableActivity;
+  }
+  throw new Error(`Unknown category reportable activity in the database: ${value}`);
 }
 
 function isUniqueViolation(error: unknown): boolean {

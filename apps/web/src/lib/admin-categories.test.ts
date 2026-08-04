@@ -15,6 +15,11 @@ const CATEGORY = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  // The flag is part of what a category *is*, so it comes back on the read.
+  // The acknowledgement is not, and its absence here is asserted by the parse:
+  // it is an assertion about a request, and a response carrying it would be
+  // claiming to have evidence of something it never held.
+  reportableActivity: 'none',
   attributes: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-03T09:00:00.000Z',
@@ -25,6 +30,8 @@ const DRAFT = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  reportableActivity: 'none',
+  reportingDutiesAcknowledged: false,
   attributes: [],
 } as const;
 
@@ -156,7 +163,13 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
       'renamed after the taxonomy review',
       fetchImpl,
     );
@@ -172,7 +185,13 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
       'renamed after the taxonomy review',
       fetchImpl,
     );
@@ -186,7 +205,13 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'no-such-category',
-      { name: 'Nothing', riskLevel: 'low', attributes: [] },
+      {
+        name: 'Nothing',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
       REASON,
       responds(404),
     );
@@ -199,7 +224,13 @@ describe('reconfigureCategory', () => {
       API,
       TOKEN,
       'a/b',
-      { name: 'Nothing', riskLevel: 'low', attributes: [] },
+      {
+        name: 'Nothing',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
       REASON,
       fetchImpl,
     );

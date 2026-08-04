@@ -23,6 +23,10 @@ const draft = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  // The launch category's real value. §8.14.1 concluded rental of general goods
+  // is not a Relevant Activity, and a fixture that said otherwise would make
+  // every test here describe a platform we are not.
+  reportableActivity: 'none',
   attributes: [],
 } as const;
 
@@ -121,7 +125,12 @@ describe('reconfiguring a category', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Renamed after the taxonomy review',
     );
 
@@ -139,7 +148,12 @@ describe('reconfiguring a category', () => {
     const updated = await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Renamed after the taxonomy review',
     );
 
@@ -154,7 +168,12 @@ describe('reconfiguring a category', () => {
     const updated = await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Something completely different', riskLevel: 'high', attributes: [] },
+      {
+        name: 'Something completely different',
+        riskLevel: 'high',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Testing that the slug is stable',
     );
 
@@ -167,7 +186,12 @@ describe('reconfiguring a category', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Renamed after the taxonomy review',
     );
 
@@ -189,7 +213,12 @@ describe('reconfiguring a category', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Outdoor and gardening', riskLevel: 'low', attributes: [] },
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Saving the identical configuration again',
     );
 
@@ -201,7 +230,7 @@ describe('reconfiguring a category', () => {
     const missing = await fakes.service.reconfigure(
       ADMIN,
       'no-such-category',
-      { name: 'Nothing', riskLevel: 'low', attributes: [] },
+      { name: 'Nothing', riskLevel: 'low', reportableActivity: 'none', attributes: [] },
       'Should not be possible',
     );
 
@@ -220,6 +249,7 @@ describe('reading categories', () => {
         slug: 'cleaning-floorcare',
         name: 'Cleaning',
         riskLevel: 'low',
+        reportableActivity: 'none',
         attributes: [],
       },
       REASON,
@@ -227,7 +257,12 @@ describe('reading categories', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Renamed after the taxonomy review',
     );
 
@@ -273,7 +308,12 @@ describe('the attribute schema', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: 'Outdoor and gardening', riskLevel: 'low', attributes: [] },
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       'Clearing the schema',
     );
 
@@ -287,7 +327,12 @@ describe('the attribute schema', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: draft.name, riskLevel: draft.riskLevel, attributes: SCHEMA },
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+      },
       'Adding the attribute schema',
     );
 
@@ -308,6 +353,7 @@ describe('the attribute schema', () => {
       {
         name: draft.name,
         riskLevel: draft.riskLevel,
+        reportableActivity: draft.reportableActivity,
         attributes: [...SCHEMA].reverse(),
       },
       'Putting weight first',
@@ -322,7 +368,12 @@ describe('the attribute schema', () => {
     await fakes.service.reconfigure(
       ADMIN,
       'outdoor-gardening',
-      { name: draft.name, riskLevel: draft.riskLevel, attributes: SCHEMA },
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+      },
       'Saving the identical configuration again',
     );
 

@@ -62,6 +62,8 @@ beforeEach(async () => {
   // Children before parents, in every file -- not only the new one.
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();
+  // seller_tax_profiles is ON DELETE RESTRICT against users too, added in 2.3.
+  await client.sellerTaxProfile.deleteMany();
   await client.user.deleteMany();
   await client.webhookEvent.deleteMany();
 });
@@ -461,5 +463,107 @@ describe('audit_logs', () => {
     const user = await client.user.create({ data: newUser() });
     const created = await client.auditLog.create({ data: entry(user.id) });
     expect(created).not.toHaveProperty('updatedAt');
+  });
+});
+
+/**
+ * The seller tax profile — a table with no application code (§8.14.2).
+ *
+ * It exists so that activating statutory reporting is a configuration switch
+ * rather than a rebuild, and while every category is flagged `none` nothing
+ * writes here. That makes these the only tests it has, and it makes them worth
+ * more than usual: **the constraints are the only thing that can refuse a bad
+ * value, because there is no adapter to do it.** Everywhere else in this
+ * codebase a closed vocabulary lives in TypeScript; here there is no TypeScript
+ * to put it in yet.
+ */
+describe('seller_tax_profiles', () => {
+  const newProfile = (userId: string) => ({
+    userId,
+    regime: 'uk_dprr',
+    verificationState: 'not_started',
+  });
+
+  it('stores and reads back a profile', async () => {
+    const user = await client.user.create({ data: newUser() });
+
+    const created = await client.sellerTaxProfile.create({
+      data: newProfile(user.id),
+    });
+
+    expect(created.userId).toBe(user.id);
+    expect(created.regime).toBe('uk_dprr');
+    expect(created.verificationState).toBe('not_started');
+  });
+
+  it('holds no personal data, deliberately', async () => {
+    const user = await client.user.create({ data: newUser() });
+    const created = await client.sellerTaxProfile.create({
+      data: newProfile(user.id),
+    });
+
+    // §6.2 lists "collected fields" on this entity — a name, an address, a date
+    // of birth, a taxpayer reference. They are absent on purpose: nothing
+    // enumerates the tables holding personal data, so a fourth one added before
+    // its eraser would be silently missing from deletion and from the export.
+    // If this test starts failing, the columns arrived — and `PersonalDataEraser`
+    // and both `PersonalDataSource` projections must arrive with them.
+    expect(Object.keys(created).sort()).toEqual([
+      'createdAt',
+      'id',
+      'regime',
+      'updatedAt',
+      'userId',
+      'verificationState',
+    ]);
+  });
+
+  it('allows only one profile per seller', async () => {
+    const user = await client.user.create({ data: newUser() });
+    await client.sellerTaxProfile.create({ data: newProfile(user.id) });
+
+    // Two profiles for one seller means two answers to what gets filed.
+    await expect(
+      client.sellerTaxProfile.create({ data: newProfile(user.id) }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a regime it does not know', async () => {
+    const user = await client.user.create({ data: newUser() });
+
+    await expect(
+      client.sellerTaxProfile.create({
+        data: { ...newProfile(user.id), regime: 'eu_dac7' },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a verification state it does not know', async () => {
+    const user = await client.user.create({ data: newUser() });
+
+    await expect(
+      client.sellerTaxProfile.create({
+        data: { ...newProfile(user.id), verificationState: 'probably_fine' },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a profile for a seller who does not exist', async () => {
+    await expect(
+      client.sellerTaxProfile.create({
+        data: newProfile('00000000-0000-4000-8000-000000000000'),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('will not let a seller be deleted out from under it', async () => {
+    // ON DELETE RESTRICT. It never fires in production — accounts are
+    // soft-deleted — but a statutory record that a hard delete could take with
+    // it would be the wrong shape for something retained against a filing
+    // deadline.
+    const user = await client.user.create({ data: newUser() });
+    await client.sellerTaxProfile.create({ data: newProfile(user.id) });
+
+    await expect(client.user.delete({ where: { id: user.id } })).rejects.toThrow();
   });
 });

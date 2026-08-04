@@ -3,8 +3,15 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { MIN_ADMIN_REASON_LENGTH, categoryDraftSchema } from '@platform/contracts';
-import type { CategoryRiskLevel } from '@platform/contracts';
+import {
+  MIN_ADMIN_REASON_LENGTH,
+  categoryConfigurationSchema,
+  categoryDraftSchema,
+} from '@platform/contracts';
+import type {
+  CategoryReportableActivity,
+  CategoryRiskLevel,
+} from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { readAttributeSchema } from '../../../lib/attribute-schema';
 import { createCategory, reconfigureCategory } from '../../../lib/admin-categories';
@@ -27,6 +34,16 @@ export interface CategoryActionState {
   readonly slug: string;
   readonly name: string;
   readonly reason: string;
+  /**
+   * Kept for the opposite reason to the others.
+   *
+   * The rest are here so a rejected submit does not make somebody retype. This
+   * one is here so a rejected submit does not silently *reset* — a form that
+   * bounced back showing `none` when the administrator chose
+   * `means_of_transport` would be telling them the safe thing about a decision
+   * they did not make.
+   */
+  readonly reportableActivity: CategoryReportableActivity;
 }
 
 export const INITIAL_CATEGORY_STATE: CategoryActionState = {
@@ -35,7 +52,31 @@ export const INITIAL_CATEGORY_STATE: CategoryActionState = {
   slug: '',
   name: '',
   reason: '',
+  reportableActivity: 'none',
 };
+
+/**
+ * A checkbox is present or absent, never `false`.
+ *
+ * Read explicitly rather than with a truthiness test, so that the day the
+ * control changes shape this stops compiling instead of quietly reading every
+ * value as acknowledged.
+ */
+function readAcknowledgement(form: FormData): boolean {
+  return form.get('reportingDutiesAcknowledged') !== null;
+}
+
+/**
+ * Whatever was chosen, unvalidated.
+ *
+ * Cast rather than checked here because the contract schema below is what
+ * decides — a second opinion about the vocabulary in this file would drift from
+ * the one the API enforces, which is the failure the slug validation comment
+ * already describes.
+ */
+function readReportableActivity(form: FormData): CategoryReportableActivity {
+  return String(form.get('reportableActivity') ?? '') as CategoryReportableActivity;
+}
 
 function describe<T>(
   outcome: AdminCategoryOutcome<T>,
@@ -98,7 +139,8 @@ export async function createCategoryAction(
   const name = String(form.get('name') ?? '').trim();
   const riskLevel = String(form.get('riskLevel') ?? '') as CategoryRiskLevel;
   const reason = String(form.get('reason') ?? '').trim();
-  const typed = { slug, name, reason };
+  const reportableActivity = readReportableActivity(form);
+  const typed = { slug, name, reason, reportableActivity };
 
   if (tooShort(reason)) {
     return {
@@ -122,10 +164,15 @@ export async function createCategoryAction(
   // The contract's own schema, not a second opinion about what a slug is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
+  //
+  // It is also what enforces §8.14.2's confirmation before anything leaves the
+  // browser. The API enforces it again, and that is the one that counts.
   const parsed = categoryDraftSchema.safeParse({
     slug,
     name,
     riskLevel,
+    reportableActivity,
+    reportingDutiesAcknowledged: readAcknowledgement(form),
     attributes: schema.attributes,
   });
   if (!parsed.success) {
@@ -167,7 +214,8 @@ export async function reconfigureCategoryAction(
   const name = String(form.get('name') ?? '').trim();
   const riskLevel = String(form.get('riskLevel') ?? '') as CategoryRiskLevel;
   const reason = String(form.get('reason') ?? '').trim();
-  const typed = { slug, name, reason };
+  const reportableActivity = readReportableActivity(form);
+  const typed = { slug, name, reason, reportableActivity };
 
   if (tooShort(reason)) {
     return {
@@ -188,12 +236,34 @@ export async function reconfigureCategoryAction(
     };
   }
 
+  // Parsed here as well as on create, which it was not before this slice. The
+  // reason is §8.14.2's confirmation: a switch from `none` to a reportable head
+  // is the change §17 names as the undetected-breach risk, and the round trip
+  // that would otherwise deliver that refusal is a worse place to learn it.
+  const parsed = categoryConfigurationSchema.safeParse({
+    name,
+    riskLevel,
+    reportableActivity,
+    reportingDutiesAcknowledged: readAcknowledgement(form),
+    attributes: schema.attributes,
+  });
+  if (!parsed.success) {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    };
+  }
+
   const { api, token, clientIp } = await context();
   const outcome = await reconfigureCategory(
     api,
     token,
     slug,
-    { name, riskLevel, attributes: schema.attributes },
+    parsed.data,
     reason,
     undefined,
     clientIp,

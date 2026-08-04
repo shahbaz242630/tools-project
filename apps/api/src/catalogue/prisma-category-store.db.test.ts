@@ -53,6 +53,10 @@ beforeEach(async () => {
   await client.auditLog.deleteMany();
   await client.adminApproval.deleteMany();
   await client.authenticationEvent.deleteMany();
+  // seller_tax_profiles is ON DELETE RESTRICT against users (slice 2.3).
+  // Children before parents, in every file — a new foreign key means editing
+  // all of them, not only the one the slice was about.
+  await client.sellerTaxProfile.deleteMany();
   await client.user.deleteMany();
 });
 
@@ -68,6 +72,7 @@ describe('create', () => {
         slug: 'outdoor-gardening',
         name: 'Outdoor and gardening',
         riskLevel: 'low',
+        reportableActivity: 'none',
         attributes: [],
       },
       author,
@@ -86,7 +91,13 @@ describe('create', () => {
     const author = await newUser();
     const taken = slug();
     await store.create(
-      { slug: taken, name: 'First', riskLevel: 'low', attributes: [] },
+      {
+        slug: taken,
+        name: 'First',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -94,7 +105,13 @@ describe('create', () => {
     // which would otherwise have to know Prisma error codes to answer 409.
     await expect(
       store.create(
-        { slug: taken, name: 'Second', riskLevel: 'low', attributes: [] },
+        {
+          slug: taken,
+          name: 'Second',
+          riskLevel: 'low',
+          reportableActivity: 'none',
+          attributes: [],
+        },
         author,
       ),
     ).rejects.toBeInstanceOf(CategorySlugTakenError);
@@ -104,12 +121,24 @@ describe('create', () => {
     const author = await newUser();
     const taken = slug();
     await store.create(
-      { slug: taken, name: 'First', riskLevel: 'low', attributes: [] },
+      {
+        slug: taken,
+        name: 'First',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
     await expect(
       store.create(
-        { slug: taken, name: 'Second', riskLevel: 'low', attributes: [] },
+        {
+          slug: taken,
+          name: 'Second',
+          riskLevel: 'low',
+          reportableActivity: 'none',
+          attributes: [],
+        },
         author,
       ),
     ).rejects.toThrow();
@@ -122,7 +151,13 @@ describe('the immutability trigger', () => {
   it('refuses an UPDATE of a version', async () => {
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: slug(),
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -141,7 +176,13 @@ describe('the immutability trigger', () => {
   it('leaves the row exactly as it was after a refused UPDATE', async () => {
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: slug(),
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -164,7 +205,13 @@ describe('the immutability trigger', () => {
     // is a booking's foreign key, which expresses a real dependency.
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: slug(),
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -180,13 +227,24 @@ describe('addVersion', () => {
     const author = await newUser();
     const identity = slug();
     await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
     const updated = await store.addVersion(
       identity,
-      { name: 'Renamed', riskLevel: 'high', attributes: [] },
+      {
+        name: 'Renamed',
+        riskLevel: 'high',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -208,7 +266,13 @@ describe('addVersion', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -230,7 +294,7 @@ describe('addVersion', () => {
     expect(
       await store.addVersion(
         'no-such-category',
-        { name: 'X', riskLevel: 'low', attributes: [] },
+        { name: 'X', riskLevel: 'low', reportableActivity: 'none', attributes: [] },
         author,
       ),
     ).toBeNull();
@@ -241,7 +305,13 @@ describe('the author foreign key', () => {
   it('refuses to remove a user who authored a configuration', async () => {
     const author = await newUser();
     await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: slug(),
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -257,17 +327,28 @@ describe('reads', () => {
     const author = await newUser();
     const identity = slug();
     await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
     await store.addVersion(
       identity,
-      { name: 'Second', riskLevel: 'medium', attributes: [] },
+      {
+        name: 'Second',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
     await store.addVersion(
       identity,
-      { name: 'Third', riskLevel: 'high', attributes: [] },
+      { name: 'Third', riskLevel: 'high', reportableActivity: 'none', attributes: [] },
       author,
     );
 
@@ -282,11 +363,23 @@ describe('reads', () => {
     const first = slug();
     const second = slug();
     await store.create(
-      { slug: first, name: 'First', riskLevel: 'low', attributes: [] },
+      {
+        slug: first,
+        name: 'First',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
     await store.create(
-      { slug: second, name: 'Second', riskLevel: 'low', attributes: [] },
+      {
+        slug: second,
+        name: 'Second',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -310,7 +403,13 @@ describe('reads', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -357,7 +456,13 @@ describe('the attribute schema', () => {
     const author = await newUser();
     const identity = slug();
     await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: SCHEMA },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+      },
       author,
     );
 
@@ -378,7 +483,13 @@ describe('the attribute schema', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -406,12 +517,23 @@ describe('the attribute schema', () => {
     const author = await newUser();
     const identity = slug();
     await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: SCHEMA },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+      },
       author,
     );
     await store.addVersion(
       identity,
-      { name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -432,7 +554,13 @@ describe('the attribute schema', () => {
     // migration that silently disarmed it would look exactly like this one.
     const author = await newUser();
     const created = await store.create(
-      { slug: slug(), name: 'Original', riskLevel: 'low', attributes: SCHEMA },
+      {
+        slug: slug(),
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+      },
       author,
     );
 
@@ -452,7 +580,13 @@ describe('the attribute schema', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -462,6 +596,7 @@ describe('the attribute schema', () => {
         versionNumber: 2,
         name: 'From the future',
         riskLevel: 'low',
+        reportableActivity: 'none',
         attributes: [
           { key: 'available_from', label: 'From', required: false, type: 'date' },
         ],
@@ -476,7 +611,13 @@ describe('the attribute schema', () => {
     const author = await newUser();
     const identity = slug();
     const created = await store.create(
-      { slug: identity, name: 'Original', riskLevel: 'low', attributes: [] },
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
       author,
     );
 
@@ -494,5 +635,128 @@ describe('the attribute schema', () => {
     });
 
     await expect(store.findBySlug(identity)).rejects.toThrow(identity);
+  });
+});
+
+describe('the reportable-activity flag', () => {
+  it('round-trips the head it was configured with', async () => {
+    const author = await newUser();
+    const identity = slug();
+
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Trailers and towing',
+        riskLevel: 'medium',
+        reportableActivity: 'means_of_transport',
+        attributes: [],
+      },
+      author,
+    );
+
+    expect(created.reportableActivity).toBe('means_of_transport');
+    expect((await store.findBySlug(identity))?.reportableActivity).toBe(
+      'means_of_transport',
+    );
+  });
+
+  it('defaults a version written without one to none', async () => {
+    // What every version configured before this migration has. The column was
+    // added with DEFAULT 'none', and that is a statement of fact rather than a
+    // convenience: §8.14.1 determined that rental of general goods is not a
+    // Relevant Activity, so those categories were genuinely out of scope.
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Configured before 2.3',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
+      author,
+    );
+
+    // Written the way a pre-2.3 build wrote it: no such column in the INSERT.
+    await client.$executeRaw`
+      INSERT INTO "category_versions" ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById")
+      VALUES (gen_random_uuid(), ${created.id}::uuid, 2, 'Older shape', 'low', ${author}::uuid)
+    `;
+
+    const read = await store.findBySlug(identity);
+    expect(read?.versionNumber).toBe(2);
+    expect(read?.reportableActivity).toBe('none');
+  });
+
+  it('keeps each version saying what it said when it was written', async () => {
+    // The reason the flag is on the version and not on the category. A booking
+    // made under version 1 was made under a category that was not reportable,
+    // and no later configuration change may rewrite that.
+    const author = await newUser();
+    const identity = slug();
+    await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
+      author,
+    );
+
+    await store.addVersion(
+      identity,
+      {
+        name: 'Outdoor, gardening and trailers',
+        riskLevel: 'medium',
+        reportableActivity: 'means_of_transport',
+        attributes: [],
+      },
+      author,
+    );
+
+    const versions = await client.categoryVersion.findMany({
+      where: { category: { slug: identity } },
+      orderBy: { versionNumber: 'asc' },
+    });
+    expect(versions.map((version) => version.reportableActivity)).toEqual([
+      'none',
+      'means_of_transport',
+    ]);
+  });
+
+  it('refuses to read a head this build does not know', async () => {
+    // The same treatment `riskLevel` gets, and the stakes are higher. Falling
+    // back to `none` would answer "no statutory obligation" on the strength of
+    // not recognising a word, and the failure would surface as a missing annual
+    // return rather than as an error.
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+      },
+      author,
+    );
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'From a newer build',
+        riskLevel: 'low',
+        reportableActivity: 'crypto_asset_service',
+        attributes: [],
+        createdById: author,
+      },
+    });
+
+    await expect(store.findBySlug(identity)).rejects.toThrow(/reportable activity/i);
   });
 });
