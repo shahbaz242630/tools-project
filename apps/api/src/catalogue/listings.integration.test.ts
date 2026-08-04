@@ -9,6 +9,7 @@ import {
   parseCategoryOptions,
   parseOwnerListing,
 } from '@platform/contracts';
+import type { CategoryAttribute } from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
@@ -35,11 +36,52 @@ import type { ListingFakes } from './testing/fakes.js';
 const ALICE = { clerkUserId: 'user_alice', sessionId: 'sess_a', email: 'alice@x.com' };
 const BOB = { clerkUserId: 'user_bob', sessionId: 'sess_b', email: 'bob@x.com' };
 
+/** A schema exercising all four types (ADR 0027), so nothing is untested by luck. */
+const SCHEMA: readonly CategoryAttribute[] = [
+  {
+    key: 'power_source',
+    label: 'Power source',
+    required: true,
+    type: 'choice',
+    options: [
+      { value: 'petrol', label: 'Petrol' },
+      { value: 'cordless', label: 'Cordless battery' },
+    ],
+  },
+  {
+    key: 'weight_kg',
+    label: 'Weight',
+    required: true,
+    type: 'number',
+    unit: 'kg',
+    decimalPlaces: 1,
+  },
+  {
+    key: 'condition_notes',
+    label: 'Condition notes',
+    required: false,
+    type: 'text',
+    maxLength: 40,
+  },
+  {
+    key: 'accessories',
+    label: 'Accessories',
+    required: false,
+    type: 'choice-many',
+    options: [
+      { value: 'case', label: 'Carry case' },
+      { value: 'blade', label: 'Spare blade' },
+    ],
+  },
+];
+
 const DRAFT = {
   categorySlug: 'outdoor-gardening',
   title: 'Petrol hedge trimmer',
   description: 'Serviced last spring.',
   replacementValue: { amount: 24_999, currency: 'GBP' },
+  categoryVersionNumber: 1,
+  attributes: { power_source: 'petrol', weight_kg: '5.2' },
 };
 
 let app: NestFastifyApplication;
@@ -100,7 +142,10 @@ async function idOf(token: string): Promise<string> {
 }
 
 /** A category to list in. Created through the store, as an administrator would. */
-async function givenACategory(slug = 'outdoor-gardening'): Promise<void> {
+async function givenACategory(
+  slug = 'outdoor-gardening',
+  attributes: readonly CategoryAttribute[] = SCHEMA,
+): Promise<void> {
   const author = await idOf('alice-token');
   await listings.categories.create(
     {
@@ -108,7 +153,22 @@ async function givenACategory(slug = 'outdoor-gardening'): Promise<void> {
       name: 'Outdoor and gardening',
       riskLevel: 'medium',
       reportableActivity: 'none',
-      attributes: [],
+      attributes,
+    },
+    author,
+  );
+}
+
+/** Reconfigure it, which mints a version — the thing a stale form races with. */
+async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<void> {
+  const author = await idOf('alice-token');
+  await listings.categories.addVersion(
+    'outdoor-gardening',
+    {
+      name: 'Outdoor and gardening',
+      riskLevel: 'medium',
+      reportableActivity: 'none',
+      attributes,
     },
     author,
   );
@@ -235,6 +295,26 @@ describe('creating a draft', () => {
     expect(response.statusCode).toBe(201);
   });
 
+  it('refuses a body with no attributes field at all', async () => {
+    // ADR 0025's rule, third outing: an optional field is a silent default, and
+    // a caller that forgot the answers should get a 400 rather than a listing
+    // that quietly has none.
+    const withoutAttributes: Record<string, unknown> = { ...DRAFT };
+    delete withoutAttributes.attributes;
+    const response = await createListing('alice-token', withoutAttributes);
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('accepts an empty set of answers, because a draft holds progress', async () => {
+    // Both attributes above are `required`, and this still saves. Required
+    // means required to *publish* (§8.3, slice 2.8).
+    const response = await createListing('alice-token', { ...DRAFT, attributes: {} });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).attributes).toEqual({});
+  });
+
   it('writes no audit entry, because this is not an administrative action', async () => {
     // §8.13 audits an actor doing something to somebody else, with a reason
     // that person can read. An owner describing their own lawnmower is neither,
@@ -245,6 +325,136 @@ describe('creating a draft', () => {
     expect(
       audit.log.entries().filter((entry) => entry.targetType === 'listing'),
     ).toEqual([]);
+  });
+});
+
+describe('the answers a category asks for', () => {
+  beforeEach(() => givenACategory());
+
+  it('stores them, scaling a number against the category rather than the client', () => {
+    // 5.2 kg at one decimal place is 52. The scale comes from the pinned
+    // schema, so a client cannot send a value and the scale it means by it.
+    return createListing().then((response) => {
+      expect(parseOwnerListing(response.json()).attributes).toEqual({
+        power_source: 'petrol',
+        weight_kg: 52,
+      });
+    });
+  });
+
+  it('returns the schema they were given against, so a value can be read at all', async () => {
+    const listing = parseOwnerListing((await createListing()).json());
+
+    expect(listing.categoryAttributes.map((attribute) => attribute.key)).toEqual([
+      'power_source',
+      'weight_kg',
+      'condition_notes',
+      'accessories',
+    ]);
+  });
+
+  it('refuses an answer outside the configured options', async () => {
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      attributes: { power_source: 'diesel' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    expect(body.issues?.join(' ')).toMatch(/must be one of Petrol, Cordless battery/);
+  });
+
+  it('names the field by the label the owner saw, not by its stored key', async () => {
+    // `weight_kg` appears nowhere on the form. Prefixing the key — which is what
+    // every other contract error in this codebase does, because there the path
+    // is the field name — produced "weight_kg: Weight ... " when this was first
+    // opened in a browser: the field named twice, once unrecognisably.
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      attributes: { weight_kg: '5.25' },
+    });
+
+    const body = response.json() as { issues?: readonly string[] };
+    expect(body.issues?.[0]).toBe('Weight "5.25" has more than 1 decimal place');
+  });
+
+  it('refuses a key the category does not have, rather than dropping it', async () => {
+    // Dropping it would throw away something the owner typed with no error.
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      attributes: { ...DRAFT.attributes, power_supply: 'petrol' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(
+      (response.json() as { issues?: readonly string[] }).issues?.join(' '),
+    ).toMatch(/not a field of this category/);
+  });
+
+  it('writes nothing when the answers are refused', async () => {
+    await createListing('alice-token', {
+      ...DRAFT,
+      attributes: { power_source: 'diesel' },
+    });
+
+    expect(listings.listings.all()).toHaveLength(0);
+  });
+
+  it('refuses a bare number, which could not say what scale it meant', async () => {
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      attributes: { weight_kg: 52 },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+describe('when the category changes while the form is open', () => {
+  beforeEach(() => givenACategory());
+
+  it('answers 409, not 400 — nothing they typed is wrong', async () => {
+    await reconfigured([...SCHEMA].slice(1));
+
+    const response = await createListing();
+
+    expect(response.statusCode).toBe(409);
+    expect((response.json() as { message: string }).message).toMatch(/version 1/);
+  });
+
+  it('writes nothing, so the answers are not half-saved', async () => {
+    await reconfigured([]);
+    await createListing();
+
+    expect(listings.listings.all()).toHaveLength(0);
+  });
+
+  it('refuses even when the answers would still have been valid', async () => {
+    // The rename is invisible from here: the values happen to fit both schemas.
+    // Accepting anyway would mean the *next* rename, the one that does drop an
+    // answer, is the first time anybody finds out this check was needed.
+    await reconfigured(SCHEMA);
+
+    expect((await createListing()).statusCode).toBe(409);
+  });
+
+  it('accepts once the form states the new version', async () => {
+    await reconfigured(SCHEMA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      categoryVersionNumber: 2,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).categoryVersionNumber).toBe(2);
+  });
+
+  it('refuses a version that never existed, rather than trusting it', async () => {
+    expect(
+      (await createListing('alice-token', { ...DRAFT, categoryVersionNumber: 99 }))
+        .statusCode,
+    ).toBe(409);
   });
 });
 
@@ -311,15 +521,22 @@ describe('the categories an owner may list in', () => {
     });
 
     expect(parseCategoryOptions(response.json()).categories).toEqual([
-      { slug: 'outdoor-gardening', name: 'Outdoor and gardening' },
+      {
+        slug: 'outdoor-gardening',
+        name: 'Outdoor and gardening',
+        attributes: SCHEMA,
+        versionNumber: 1,
+      },
     ]);
   });
 
   it('discloses no administrative configuration', async () => {
-    // Not `AdminCategory`. The risk level, the reportable-activity flag and the
-    // attribute schema are configuration an owner picking from a dropdown has
-    // no business receiving — and the parse above would strip them silently, so
-    // this asserts against the raw body instead.
+    // Not `AdminCategory`. The risk level and the reportable-activity flag are
+    // how *we* administer a category and an owner picking from a dropdown has
+    // no business receiving them — while the attribute schema is exactly what
+    // they do need, because it is the form they are about to fill in. The parse
+    // above would strip an extra field silently, so this asserts against the
+    // raw body instead.
     await givenACategory();
 
     const response = await app.inject({
@@ -329,7 +546,12 @@ describe('the categories an owner may list in', () => {
     });
 
     const raw = response.json() as { categories: readonly Record<string, unknown>[] };
-    expect(Object.keys(raw.categories[0] ?? {}).sort()).toEqual(['name', 'slug']);
+    expect(Object.keys(raw.categories[0] ?? {}).sort()).toEqual([
+      'attributes',
+      'name',
+      'slug',
+      'versionNumber',
+    ]);
   });
 });
 

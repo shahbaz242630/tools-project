@@ -22,6 +22,13 @@ export interface ListingActionState {
   readonly title: string;
   readonly description: string;
   readonly replacementValue: string;
+  /**
+   * The category-specific answers are **not** here, and that is not an
+   * oversight. They live in the form component's own state, which survives an
+   * action round trip because the component is re-rendered rather than
+   * remounted — echoing them through here as well would be a second copy that
+   * can disagree with the inputs the person is looking at.
+   */
 }
 
 export const INITIAL_LISTING_STATE: ListingActionState = {

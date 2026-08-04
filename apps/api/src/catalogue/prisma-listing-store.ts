@@ -1,9 +1,13 @@
 import type { PrismaClient } from '@platform/database';
-import type { ListingStatus } from '@platform/contracts';
-import { LISTING_STATUSES } from '@platform/contracts';
+import type {
+  CategoryAttribute,
+  ListingAttributeValues,
+  ListingStatus,
+} from '@platform/contracts';
+import { LISTING_STATUSES, parseCategoryAttributes } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import { Money } from '@platform/core';
-import { UnknownCategoryError } from './listing-store.js';
+import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type {
   CategoryOptionRecord,
   CategoryOptionSource,
@@ -35,6 +39,19 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     // because the alternative is a crash reading `undefined.id`.
     if (current === undefined) throw new UnknownCategoryError(draft.categorySlug);
 
+    // The version about to be pinned, checked against the one the values were
+    // validated against. The service made the same comparison a moment ago and
+    // this is not redundant: between its read and this one, a reconfiguration
+    // could have landed, and writing then would store answers checked against a
+    // schema this row does not point at.
+    if (current.versionNumber !== draft.categoryVersionNumber) {
+      throw new CategoryChangedError(
+        draft.categorySlug,
+        draft.categoryVersionNumber,
+        current.versionNumber,
+      );
+    }
+
     const listing = await this.prisma.listing.create({
       data: {
         ownerId: draft.ownerId,
@@ -46,6 +63,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         description: draft.description,
         replacementValueAmount: draft.replacementValue.amount,
         replacementValueCurrency: draft.replacementValue.currency,
+        attributes: draft.attributes,
         status: DRAFT,
       },
       include: LISTING_CATEGORY,
@@ -77,8 +95,23 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       // A category with no version has no name to show. Skipped rather than
       // thrown: this list is a form control, and one malformed row should not
       // stop somebody listing an item in a different category.
-      return current === undefined ? [] : [{ slug: category.slug, name: current.name }];
+      return current === undefined ? [] : [toOption(category.slug, current)];
     });
+  }
+
+  async findOption(slug: string): Promise<CategoryOptionRecord | null> {
+    const category = await this.prisma.category.findUnique({
+      where: { slug },
+      include: LATEST_VERSION,
+    });
+    if (category === null) return null;
+
+    const current = category.versions[0];
+    // Null rather than the skip `listOptions` performs. There, one broken row
+    // must not break a list of nine good ones; here the caller asked for this
+    // category specifically, and "it has no configuration" and "it does not
+    // exist" lead to the same honest answer.
+    return current === undefined ? null : toOption(category.slug, current);
   }
 }
 
@@ -100,6 +133,21 @@ const LISTING_CATEGORY = {
   categoryVersion: { include: { category: true } },
 } as const;
 
+interface VersionRow {
+  name: string;
+  versionNumber: number;
+  attributes: unknown;
+}
+
+function toOption(slug: string, version: VersionRow): CategoryOptionRecord {
+  return {
+    slug,
+    name: version.name,
+    attributes: asAttributes(version.attributes, `category "${slug}"`),
+    versionNumber: version.versionNumber,
+  };
+}
+
 interface ListingRow {
   id: string;
   ownerId: string;
@@ -107,12 +155,11 @@ interface ListingRow {
   description: string;
   replacementValueAmount: number;
   replacementValueCurrency: string;
+  attributes: unknown;
   status: string;
   createdAt: Date;
   updatedAt: Date;
-  categoryVersion: {
-    name: string;
-    versionNumber: number;
+  categoryVersion: VersionRow & {
     category: { slug: string };
   };
 }
@@ -124,6 +171,10 @@ function toRecord(listing: ListingRow): ListingRecord {
     categorySlug: listing.categoryVersion.category.slug,
     categoryName: listing.categoryVersion.name,
     categoryVersionNumber: listing.categoryVersion.versionNumber,
+    categoryAttributes: asAttributes(
+      listing.categoryVersion.attributes,
+      `the category version pinned by listing ${listing.id}`,
+    ),
     title: listing.title,
     description: listing.description,
     replacementValue: asMoney(
@@ -131,6 +182,7 @@ function toRecord(listing: ListingRow): ListingRecord {
       listing.replacementValueCurrency,
       listing.id,
     ),
+    attributes: asValues(listing.attributes, listing.id),
     status: asStatus(listing.status),
     createdAt: listing.createdAt,
     updatedAt: listing.updatedAt,
@@ -157,6 +209,66 @@ function asMoney(amount: number, currency: string, listingId: string): MoneyValu
       { cause: error },
     );
   }
+}
+
+/**
+ * The stored schema, parsed on the way out.
+ *
+ * The same treatment the admin store gives it, and for the same reason: JSONB
+ * checks that a value is JSON and cannot check that it is a schema this build
+ * can render. A stored type this version does not know means a listing form that
+ * would silently omit a configured field, and failing loudly is the better of
+ * the two outcomes.
+ */
+function asAttributes(raw: unknown, what: string): readonly CategoryAttribute[] {
+  try {
+    return parseCategoryAttributes(raw);
+  } catch (error) {
+    throw new Error(
+      `The attribute schema on ${what} is not one this build can read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * The stored answers, shape-checked on the way out.
+ *
+ * **Shape only — not conformance to the schema.** Whether an answer was legal
+ * was settled against the pinned schema when it was written, and re-deciding it
+ * here would mean a category change could make an existing listing unreadable
+ * rather than merely outdated, which is the whole thing pinning exists to
+ * prevent.
+ *
+ * What is checked is that the JSON is a set of answers at all. Only our
+ * validated path writes here, so a failure means a hand-edited row or a
+ * migration bug — and reading that as "no answers" would present somebody's
+ * filled-in listing as empty.
+ */
+function asValues(raw: unknown, listingId: string): ListingAttributeValues {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`Listing ${listingId} has attribute values that are not an object`);
+  }
+
+  const values: Record<string, string | number | readonly string[]> = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'string' || typeof value === 'number') {
+      values[key] = value;
+      continue;
+    }
+    if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+      values[key] = value as readonly string[];
+      continue;
+    }
+    throw new Error(
+      `Listing ${listingId} has an attribute value for "${key}" that this build cannot read`,
+    );
+  }
+
+  return values;
 }
 
 /**

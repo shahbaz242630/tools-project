@@ -1,4 +1,5 @@
 export * from './admin.js';
+export * from './attribute-values.js';
 export * from './audit.js';
 export * from './catalogue.js';
 export * from './export.js';
@@ -9,3 +10,4 @@ export * from './money.js';
 export * from './parse.js';
 export * from './profiles.js';
 export * from './sessions.js';
+export * from './text.js';

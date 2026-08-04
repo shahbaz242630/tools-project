@@ -17,7 +17,10 @@
 
 import { z } from 'zod';
 import { boundedMoneySchema, moneySchema } from './money.js';
-import { categorySlugSchema } from './catalogue.js';
+import { categoryAttributesSchema, categorySlugSchema } from './catalogue.js';
+import type { CategoryAttribute } from './catalogue.js';
+import type { ListingAttributeValues } from './attribute-values.js';
+import { hasUnsafeCharacters, UNSAFE_CHARACTERS_MESSAGE } from './text.js';
 import { parseWith } from './parse.js';
 
 /** Where an owner creates listings and lists their own. */
@@ -64,10 +67,7 @@ export const listingTitleSchema = z
     LISTING_TITLE_MAX_LENGTH,
     `must be at most ${LISTING_TITLE_MAX_LENGTH} characters`,
   )
-  .refine(
-    (value) => !/[\p{Cc}\p{Cf}]/u.test(value),
-    'must not contain control or direction-changing characters',
-  );
+  .refine((value) => !hasUnsafeCharacters(value), UNSAFE_CHARACTERS_MESSAGE);
 
 /**
  * The description — **required to be present, allowed to be empty.**
@@ -80,7 +80,7 @@ export const listingTitleSchema = z
  *
  * Newlines are allowed — it is a paragraph field — so `\p{Cc}` cannot be
  * rejected wholesale the way it is on the title. Everything else in that class
- * still is.
+ * still is, which is what `allowLineBreaks` means in `text.ts`.
  */
 export const listingDescriptionSchema = z
   .string()
@@ -90,12 +90,8 @@ export const listingDescriptionSchema = z
     `must be at most ${String(LISTING_DESCRIPTION_MAX_LENGTH)} characters`,
   )
   .refine(
-    // The allowed whitespace controls are removed first, then the same test the
-    // title uses is applied to what is left. Expressing the exception inside the
-    // character class needs the `v` flag's set difference, which reads like a
-    // puzzle and depends on the compilation target — this does not.
-    (value) => !/[\p{Cc}\p{Cf}]/u.test(value.replace(/[\r\n\t]/g, '')),
-    'must not contain control or direction-changing characters',
+    (value) => !hasUnsafeCharacters(value, { allowLineBreaks: true }),
+    UNSAFE_CHARACTERS_MESSAGE,
   );
 
 /**
@@ -151,6 +147,34 @@ export const listingDraftSchema = z.object({
   title: listingTitleSchema,
   description: listingDescriptionSchema,
   replacementValue: replacementValueSchema,
+  /**
+   * The version of the category the form was built from — **stated, not chosen.**
+   *
+   * The server still pins whichever version is current when it writes, exactly
+   * as it did in 2.4a: a client-chosen pin is the stale pin the version exists
+   * to prevent. This is the opposite direction. It says which schema these
+   * answers were entered against, so that if the category was reconfigured while
+   * the form sat open, the mismatch is *noticed* rather than surfacing as an
+   * answer to a field that no longer exists.
+   *
+   * Required rather than optional. An absent version would have to be read as
+   * "whatever is current", which is precisely the assumption that makes the race
+   * invisible.
+   */
+  categoryVersionNumber: z.number().int().positive(),
+  /**
+   * The answers to that category's attributes, keyed by attribute key.
+   *
+   * **Unknown here, and validated elsewhere.** Which keys are legal and what
+   * shape each value takes is category configuration, so it cannot live in a
+   * static schema — `validateAttributeValues` does that work in the Catalogue
+   * service against the schema on the version actually being pinned.
+   *
+   * **Required, and `{}` is a legitimate value.** ADR 0025's rule, for the third
+   * time: an optional field is a silent default, and a caller that forgot the
+   * answers should get a 400 rather than a listing that quietly has none.
+   */
+  attributes: z.record(z.string(), z.unknown()),
 });
 
 export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
@@ -174,23 +198,48 @@ export interface OwnerListing {
   readonly categorySlug: string;
   readonly categoryName: string;
   readonly categoryVersionNumber: number;
+  /**
+   * The attribute schema **as pinned**, not as the category stands today.
+   *
+   * It travels with the listing because a value on its own is unreadable: `25`
+   * means nothing without knowing it is a weight in kilograms at one decimal
+   * place, and `cordless` means nothing without the label somebody chose it by.
+   * Sending the current schema instead would render last month's answers under
+   * this month's labels, which is the one thing pinning a version exists to
+   * prevent.
+   */
+  readonly categoryAttributes: readonly CategoryAttribute[];
   readonly title: string;
   readonly description: string;
   readonly replacementValue: z.infer<typeof moneySchema>;
+  /** Keyed by attribute key. An unanswered attribute is absent, never null. */
+  readonly attributes: ListingAttributeValues;
   readonly status: ListingStatus;
   /** ISO 8601 UTC. */
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
+/**
+ * The response check on a stored answer.
+ *
+ * Deliberately shape-only — that a value is a string, a number or a list of
+ * strings. Whether it is a *legal* answer was settled against the pinned schema
+ * when it was written, and re-deciding that on the way out would mean a schema
+ * change could make an existing listing unreadable rather than merely outdated.
+ */
+const attributeValueSchema = z.union([z.string(), z.number(), z.array(z.string())]);
+
 const ownerListingSchema = z.object({
   id: z.string().uuid(),
   categorySlug: z.string(),
   categoryName: z.string(),
   categoryVersionNumber: z.number().int().positive(),
+  categoryAttributes: categoryAttributesSchema,
   title: z.string(),
   description: z.string(),
   replacementValue: moneySchema,
+  attributes: z.record(z.string(), attributeValueSchema),
   status: listingStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -210,16 +259,37 @@ export function parseOwnerListing(raw: unknown): OwnerListing {
  * reason `profiles.ts` sets out: an optional field compiles whether or not the
  * API remembered to strip it.
  *
- * The attribute schema arrives here in slice 2.4b, when the form has fields to
- * render from it.
+ * The attribute schema is here from slice 2.4b, because the form has fields to
+ * render from it — that is the Phase 2 exit gate, and it is the whole reason
+ * this endpoint returns more than a name. The risk level and the
+ * reportable-activity flag stay out: they are how *we* administer a category,
+ * not what an owner needs to describe a lawnmower.
  */
 export interface CategoryOption {
   readonly slug: string;
   readonly name: string;
+  /**
+   * In render order, and it is the *current* schema — which is correct here and
+   * would be wrong on `OwnerListing`. A form being filled in now is filling in
+   * the configuration in force now; a listing saved last month is not.
+   */
+  readonly attributes: readonly CategoryAttribute[];
+  /**
+   * Which version the above came from, so the draft can say what it was built
+   * against and the server can notice if it has moved since.
+   */
+  readonly versionNumber: number;
 }
 
 const categoryOptionListSchema = z.object({
-  categories: z.array(z.object({ slug: z.string(), name: z.string() })),
+  categories: z.array(
+    z.object({
+      slug: z.string(),
+      name: z.string(),
+      attributes: categoryAttributesSchema,
+      versionNumber: z.number().int().positive(),
+    }),
+  ),
 });
 
 export function parseCategoryOptions(raw: unknown): {

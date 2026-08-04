@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   Inject,
@@ -14,6 +15,7 @@ import {
   ContractViolationError,
   LISTINGS_ROUTE,
   LISTING_ROUTE,
+  describeAttributeIssue,
   parseListingDraft,
 } from '@platform/contracts';
 import type { CategoryOption, OwnerListing } from '@platform/contracts';
@@ -22,8 +24,9 @@ import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
 import { LISTINGS_SERVICE } from './catalogue.tokens.js';
-import { UnknownCategoryError } from './listing-store.js';
+import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type { ListingRecord } from './listing-store.js';
+import { AttributeValuesInvalidError } from './listings.service.js';
 import type { ListingsService } from './listings.service.js';
 
 /**
@@ -76,6 +79,8 @@ export class OwnerListingsController {
         title: draft.title,
         description: draft.description,
         replacementValue: draft.replacementValue,
+        attributes: draft.attributes,
+        categoryVersionNumber: draft.categoryVersionNumber,
       });
       return toOwnerListing(created);
     } catch (error) {
@@ -84,6 +89,20 @@ export class OwnerListingsController {
         // real when the form was rendered. The fix is to choose again, not to
         // correct a field.
         throw new NotFoundException({ message: error.message });
+      }
+      if (error instanceof CategoryChangedError) {
+        // 409 rather than 400: nothing they typed is wrong and there is no
+        // field to correct. The configuration moved underneath them, which is a
+        // conflict about state rather than a fault in the request.
+        throw new ConflictException({ message: error.message });
+      }
+      if (error instanceof AttributeValuesInvalidError) {
+        // The same shape a contract violation produces, so the web app has one
+        // way of reading "the API rejected these fields" rather than two.
+        throw new BadRequestException({
+          message: 'Some of the details for this category were not accepted',
+          issues: error.issues.map(describeAttributeIssue),
+        });
       }
       throw error;
     }
@@ -133,9 +152,15 @@ function toOwnerListing(listing: ListingRecord): OwnerListing {
     categorySlug: listing.categorySlug,
     categoryName: listing.categoryName,
     categoryVersionNumber: listing.categoryVersionNumber,
+    // The schema **as pinned**, not as the category stands now. A stored `25`
+    // is unreadable without something saying it is kilograms at one decimal
+    // place, and sending today's schema would render last month's answers under
+    // labels they were never given.
+    categoryAttributes: listing.categoryAttributes,
     title: listing.title,
     description: listing.description,
     replacementValue: listing.replacementValue,
+    attributes: listing.attributes,
     status: listing.status,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),

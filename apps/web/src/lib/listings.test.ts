@@ -5,14 +5,27 @@ import type { FetchLike } from './listings';
 const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
 
+const SCHEMA = [
+  {
+    key: 'weight_kg',
+    label: 'Weight',
+    required: true,
+    type: 'number',
+    unit: 'kg',
+    decimalPlaces: 1,
+  },
+] as const;
+
 const LISTING = {
   id: '11111111-1111-4111-8111-111111111111',
   categorySlug: 'outdoor-gardening',
   categoryName: 'Outdoor and gardening',
   categoryVersionNumber: 1,
+  categoryAttributes: SCHEMA,
   title: 'Petrol hedge trimmer',
   description: 'Serviced last spring.',
   replacementValue: { amount: 24_999, currency: 'GBP' },
+  attributes: { weight_kg: 52 },
   status: 'DRAFT',
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
@@ -23,6 +36,8 @@ const DRAFT = {
   title: 'Petrol hedge trimmer',
   description: 'Serviced last spring.',
   replacementValue: { amount: 24_999, currency: 'GBP' },
+  categoryVersionNumber: 1,
+  attributes: { weight_kg: '5.2' },
 } as const;
 
 function responds(status: number, body = ''): FetchLike {
@@ -75,6 +90,34 @@ describe('createListing', () => {
   it('falls back to a usable message when the error body says nothing', async () => {
     const outcome = await createListing(API, TOKEN, DRAFT, responds(400, 'not json'));
     expect(outcome).toEqual({ kind: 'invalid', issues: ['The request was rejected'] });
+  });
+
+  it('reports a reconfigured category as its own outcome, not as invalid', async () => {
+    // The two need opposite things from the person reading them: `invalid` asks
+    // them to correct a field, this asks them to look again at fields that may
+    // have changed shape underneath them.
+    const outcome = await createListing(
+      API,
+      TOKEN,
+      DRAFT,
+      responds(
+        409,
+        JSON.stringify({ message: 'Category "x" was version 1 and is now 2' }),
+      ),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'stale-category',
+      reason: 'Category "x" was version 1 and is now 2',
+    });
+  });
+
+  it('still explains a conflict whose body says nothing', async () => {
+    const outcome = await createListing(API, TOKEN, DRAFT, responds(409, 'not json'));
+    expect(outcome).toEqual({
+      kind: 'stale-category',
+      reason: 'the category was changed while this page was open',
+    });
   });
 
   it('reports a suspended account as forbidden, not signed out', async () => {
@@ -154,15 +197,56 @@ describe('fetchCategoryOptions', () => {
       responds(
         200,
         JSON.stringify({
-          categories: [{ slug: 'outdoor-gardening', name: 'Outdoor and gardening' }],
+          categories: [
+            {
+              slug: 'outdoor-gardening',
+              name: 'Outdoor and gardening',
+              attributes: SCHEMA,
+              versionNumber: 1,
+            },
+          ],
         }),
       ),
     );
 
     expect(outcome).toEqual({
       kind: 'loaded',
-      value: [{ slug: 'outdoor-gardening', name: 'Outdoor and gardening' }],
+      value: [
+        {
+          slug: 'outdoor-gardening',
+          name: 'Outdoor and gardening',
+          attributes: SCHEMA,
+          versionNumber: 1,
+        },
+      ],
     });
+  });
+
+  it('refuses a category whose schema this build could not render', async () => {
+    // A configured type this version does not know means a form that would
+    // silently omit a field an administrator set up. Failing loudly is the
+    // better of the two outcomes — the same argument the API store makes.
+    const outcome = await fetchCategoryOptions(
+      API,
+      TOKEN,
+      responds(
+        200,
+        JSON.stringify({
+          categories: [
+            {
+              slug: 'outdoor-gardening',
+              name: 'Outdoor and gardening',
+              attributes: [
+                { key: 'when', label: 'When', required: false, type: 'date' },
+              ],
+              versionNumber: 1,
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(outcome.kind).toBe('malformed');
   });
 
   it('treats an empty list as a successful read', async () => {

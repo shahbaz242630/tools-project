@@ -57,3 +57,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0026](0026-suspicious-login-alerting-stays-with-the-provider.md)                   | Leave suspicious-login alerting with the provider until we can send   | Accepted                       |
 | [0027](0027-category-attributes-are-a-closed-typed-vocabulary.md)                   | Make category attributes a closed typed vocabulary, not JSON Schema   | Accepted                       |
 | [0028](0028-reporting-scope-is-confirmed-per-request-and-its-entity-stays-empty.md) | Confirm reporting scope per request, keep the tax profile empty       | Accepted                       |
+| [0029](0029-attribute-values-are-read-against-the-pinned-version.md)                | Read attribute values against the pinned version, refuse a stale form | Accepted                       |

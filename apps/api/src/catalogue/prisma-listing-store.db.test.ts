@@ -15,9 +15,10 @@ import { randomUUID } from 'node:crypto';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import type { CategoryAttribute, ListingAttributeValues } from '@platform/contracts';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { PrismaListingStore } from './prisma-listing-store.js';
-import { UnknownCategoryError } from './listing-store.js';
+import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 
 const env = loadEnv();
 
@@ -46,25 +47,79 @@ async function newUser(): Promise<string> {
 
 const slug = (): string => `cat-${randomUUID().slice(0, 8)}`;
 
-async function newCategory(authorId: string, identity = slug()) {
+/** One of each type, so a round trip through JSONB is exercised for all four. */
+const SCHEMA: readonly CategoryAttribute[] = [
+  {
+    key: 'power_source',
+    label: 'Power source',
+    required: true,
+    type: 'choice',
+    options: [
+      { value: 'petrol', label: 'Petrol' },
+      { value: 'cordless', label: 'Cordless battery' },
+    ],
+  },
+  {
+    key: 'weight_kg',
+    label: 'Weight',
+    required: true,
+    type: 'number',
+    unit: 'kg',
+    decimalPlaces: 1,
+  },
+  {
+    key: 'condition_notes',
+    label: 'Condition notes',
+    required: false,
+    type: 'text',
+    maxLength: 40,
+  },
+  {
+    key: 'accessories',
+    label: 'Accessories',
+    required: false,
+    type: 'choice-many',
+    options: [
+      { value: 'case', label: 'Carry case' },
+      { value: 'blade', label: 'Spare blade' },
+    ],
+  },
+];
+
+async function newCategory(
+  authorId: string,
+  identity = slug(),
+  attributes: readonly CategoryAttribute[] = SCHEMA,
+) {
   return categories.create(
     {
       slug: identity,
       name: 'Outdoor and gardening',
       riskLevel: 'medium',
       reportableActivity: 'none',
-      attributes: [],
+      attributes,
     },
     authorId,
   );
 }
 
-const draft = (ownerId: string, categorySlug: string) => ({
+const draft = (
+  ownerId: string,
+  categorySlug: string,
+  overrides: {
+    readonly attributes?: ListingAttributeValues;
+    readonly categoryVersionNumber?: number;
+  } = {},
+) => ({
   ownerId,
   categorySlug,
   title: 'Petrol hedge trimmer',
   description: 'Serviced last spring.',
   replacementValue: { amount: 24_999, currency: 'GBP' } as const,
+  // Already validated by the service by the time the store sees them — see
+  // `ListingDraft`. These are the stored shapes, so the number is scaled.
+  attributes: overrides.attributes ?? {},
+  categoryVersionNumber: overrides.categoryVersionNumber ?? 1,
 });
 
 beforeEach(async () => {
@@ -111,9 +166,44 @@ describe('creating a draft', () => {
       owner,
     );
 
-    const created = await store.createDraft(draft(owner, category.slug));
+    const created = await store.createDraft(
+      draft(owner, category.slug, { categoryVersionNumber: 2 }),
+    );
 
     expect(created.categoryVersionNumber).toBe(2);
+  });
+
+  it('refuses to write when the version it would pin is not the one stated', async () => {
+    // The window this closes is between the service reading the schema and the
+    // store writing the row. The service checks too; only this check is inside
+    // the write, and only this one can see what is actually being pinned.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
+      owner,
+    );
+
+    await expect(
+      store.createDraft(draft(owner, category.slug, { categoryVersionNumber: 1 })),
+    ).rejects.toBeInstanceOf(CategoryChangedError);
+  });
+
+  it('writes no row when it refuses', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    await store
+      .createDraft(draft(owner, category.slug, { categoryVersionNumber: 7 }))
+      .catch(() => undefined);
+
+    expect(await client.listing.count()).toBe(0);
   });
 
   it('leaves the pin alone when the category is reconfigured afterwards', async () => {
@@ -158,6 +248,156 @@ describe('creating a draft', () => {
     expect(row.replacementValueAmount).toBe(24_999);
     expect(Number.isInteger(row.replacementValueAmount)).toBe(true);
     expect(row.replacementValueCurrency).toBe('GBP');
+  });
+});
+
+describe('the attribute values', () => {
+  const ANSWERS: ListingAttributeValues = {
+    power_source: 'cordless',
+    weight_kg: 52,
+    condition_notes: 'Blade sharpened',
+    accessories: ['case', 'blade'],
+  };
+
+  it('round-trips every type through JSONB unchanged', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { attributes: ANSWERS }),
+    );
+
+    expect(created.attributes).toEqual(ANSWERS);
+    expect((await store.findOwnedBy(created.id, owner))?.attributes).toEqual(ANSWERS);
+  });
+
+  it('keeps a scaled number an integer, never a float', async () => {
+    // The whole reason ADR 0027 scales rather than storing decimals: JSON has
+    // one number type, and a value that arrives as a float is one Phase 3 will
+    // bucket into a search facet.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, { attributes: { weight_kg: 52 } }),
+    );
+
+    const row = await client.listing.findUniqueOrThrow({ where: { id: created.id } });
+    const stored = row.attributes as { weight_kg: number };
+    expect(Number.isInteger(stored.weight_kg)).toBe(true);
+    expect(stored.weight_kg).toBe(52);
+  });
+
+  it('defaults to an empty object, which is what an unanswered draft has', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    expect(created.attributes).toEqual({});
+    const row = await client.listing.findUniqueOrThrow({ where: { id: created.id } });
+    expect(row.attributes).toEqual({});
+  });
+
+  it('reads the pinned schema, not the category as it stands now', async () => {
+    // **The answer to the renamed-key question.** A rename mints a new version;
+    // this listing still points at the old one, whose schema still has the old
+    // key. The value and the definition it was written against stay together.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, { attributes: { weight_kg: 52 } }),
+    );
+
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        // `weight_kg` renamed. Nothing migrates the stored value, and nothing
+        // needs to.
+        attributes: [
+          {
+            key: 'mass_kg',
+            label: 'Mass',
+            required: true,
+            type: 'number',
+            unit: 'kg',
+            decimalPlaces: 1,
+          },
+        ],
+      },
+      owner,
+    );
+
+    const read = await store.findOwnedBy(created.id, owner);
+    expect(read?.attributes).toEqual({ weight_kg: 52 });
+    expect(read?.categoryAttributes.map((one) => one.key)).toContain('weight_kg');
+    expect(read?.categoryAttributes.map((one) => one.key)).not.toContain('mass_kg');
+  });
+
+  it('refuses to read values this build cannot make sense of', async () => {
+    // Only the validated path writes here, so this means a hand-edited row or a
+    // migration bug — and reading it as "no answers" would present somebody's
+    // filled-in listing as empty.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await client.$executeRaw`
+      UPDATE listings SET attributes = '{"weight_kg": {"nested": true}}'::jsonb
+      WHERE id = ${created.id}::uuid`;
+
+    await expect(store.findOwnedBy(created.id, owner)).rejects.toThrow(/cannot read/);
+  });
+
+  it('refuses to read values that are not an object at all', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await client.$executeRaw`
+      UPDATE listings SET attributes = '[]'::jsonb WHERE id = ${created.id}::uuid`;
+
+    await expect(store.findOwnedBy(created.id, owner)).rejects.toThrow(/not an object/);
+  });
+});
+
+describe('the categories an owner may choose', () => {
+  it('offers one category with its current schema and version', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    expect(await store.findOption(category.slug)).toEqual({
+      slug: category.slug,
+      name: 'Outdoor and gardening',
+      attributes: SCHEMA,
+      versionNumber: 1,
+    });
+  });
+
+  it('answers null for a slug that names nothing', async () => {
+    expect(await store.findOption('no-such-category')).toBeNull();
+  });
+
+  it('moves to the newest configuration when one is added', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+      },
+      owner,
+    );
+
+    expect(await store.findOption(category.slug)).toMatchObject({
+      name: 'Garden and outdoor',
+      attributes: [],
+      versionNumber: 2,
+    });
   });
 });
 
@@ -295,14 +535,31 @@ describe('the category options', () => {
     expect(options[1]?.name).toBe('Renamed');
   });
 
-  it('exposes only the slug and the name', async () => {
+  it('exposes what an owner needs to fill in the form, and nothing more', async () => {
+    // The risk level and the reportable-activity flag are administrative and
+    // stay on `CategoryStore`. The attribute schema is here because it *is* the
+    // form the owner is about to fill in.
     const author = await newUser();
     await newCategory(author);
 
     expect(Object.keys((await store.listOptions())[0] ?? {}).sort()).toEqual([
+      'attributes',
       'name',
       'slug',
+      'versionNumber',
     ]);
+  });
+
+  it('carries each category’s own schema', async () => {
+    const author = await newUser();
+    await newCategory(author, 'aaa-with-schema');
+    await newCategory(author, 'bbb-without', []);
+
+    const options = await store.listOptions();
+    expect(options.find((one) => one.slug === 'aaa-with-schema')?.attributes).toEqual(
+      SCHEMA,
+    );
+    expect(options.find((one) => one.slug === 'bbb-without')?.attributes).toEqual([]);
   });
 });
 
