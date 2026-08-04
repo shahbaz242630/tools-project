@@ -12,6 +12,7 @@ import {
 } from './health/readiness.service.js';
 import { CorrelationMiddleware } from './observability/correlation.middleware.js';
 import {
+  ADMIN_MFA_BYPASS,
   AUTH_LOGGER,
   AuthGuard,
   IDENTITY_SERVICE,
@@ -56,6 +57,19 @@ export interface AppModuleOptions {
   readonly identity: {
     readonly sessionVerifier: SessionVerifier;
     readonly service: IdentityService;
+
+    /**
+     * Admit an administrator with no verified second factor (ADR 0030).
+     *
+     * **Optional here, and defaulting to `false`, which is the one place in this
+     * options object where an optional field is the right shape.** Slice 2.1's
+     * rule — an optional dependency is one that ten boot sites forget — is about
+     * dependencies whose absence breaks something. This one's absence is the
+     * safe state, and the failure mode of forgetting it is that MFA is
+     * *enforced*. `main.ts` passes it from an environment variable that
+     * `loadIdentityEnv` refuses to accept in production at all.
+     */
+    readonly mfaBypassed?: boolean;
   };
 
   /**
@@ -140,6 +154,12 @@ export class AppModule implements NestModule {
         { provide: SESSION_VERIFIER, useValue: options.identity.sessionVerifier },
         { provide: IDENTITY_SERVICE, useValue: options.identity.service },
         { provide: AUTH_LOGGER, useValue: options.logger },
+        {
+          provide: ADMIN_MFA_BYPASS,
+          // `?? false` rather than the option being required: forgetting it
+          // enforces MFA, which is the direction a mistake should fail in.
+          useValue: options.identity.mfaBypassed ?? false,
+        },
 
         { provide: PROFILES_SERVICE, useValue: options.profiles },
         { provide: AUDIT_SERVICE, useValue: options.audit },

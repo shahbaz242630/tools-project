@@ -80,6 +80,25 @@ export const meResponseSchema = z.object({
    * you would be willing to say to their face, which is the right constraint.
    */
   suspensionReason: z.string().nullable().default(null),
+
+  /**
+   * Whether this API is admitting administrators with no verified second
+   * factor (ADR 0030).
+   *
+   * **Reported so the interface can say so, not so it can decide anything.**
+   * The decision belongs entirely to the API — it is the process that enforces
+   * the rule, and it refuses to start with the flag set in production. This
+   * field exists because an admin page that simply *works* is indistinguishable
+   * from one whose second-factor check was satisfied, and four sessions of
+   * handoff notes are not a reliable way to remember which.
+   *
+   * A second flag in the web app would have been two sources that can disagree,
+   * with the disagreement showing up as a page that quietly stops warning.
+   *
+   * **Defaulted to false**, so an API predating this stays parseable and reads
+   * as "not bypassed" — the safe interpretation of silence.
+   */
+  adminMfaBypassed: z.boolean().default(false),
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 

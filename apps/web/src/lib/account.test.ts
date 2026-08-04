@@ -10,6 +10,7 @@ const ACCOUNT = {
   role: 'USER',
   suspendedAt: null,
   suspensionReason: null,
+  adminMfaBypassed: false,
 };
 
 const answering = (status: number, body: unknown): FetchLike =>
@@ -35,6 +36,19 @@ describe('fetchAccount', () => {
     const older: Record<string, unknown> = { ...ACCOUNT };
     delete older['suspendedAt'];
     delete older['suspensionReason'];
+
+    const outcome = await fetchAccount(BASE, 'token', answering(200, older));
+    expect(outcome).toEqual({ kind: 'signed-in', account: ACCOUNT });
+  });
+
+  it('reads a silent API as enforcing the second factor, not bypassing it', async () => {
+    // The same deploy-skew argument, on a flag where the direction matters:
+    // an API that does not mention `adminMfaBypassed` is one that predates it
+    // and therefore is not bypassing anything. Defaulting the other way would
+    // put the warning banner on a perfectly enforced admin surface, which
+    // teaches people to ignore it (ADR 0030).
+    const older: Record<string, unknown> = { ...ACCOUNT };
+    delete older['adminMfaBypassed'];
 
     const outcome = await fetchAccount(BASE, 'token', answering(200, older));
     expect(outcome).toEqual({ kind: 'signed-in', account: ACCOUNT });

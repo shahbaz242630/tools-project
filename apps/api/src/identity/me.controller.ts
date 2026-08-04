@@ -1,7 +1,7 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, UseGuards } from '@nestjs/common';
 import { ME_PATH } from '@platform/contracts';
 import type { MeResponse } from '@platform/contracts';
-import { AllowsSuspended, AuthGuard } from './auth.guard.js';
+import { ADMIN_MFA_BYPASS, AllowsSuspended, AuthGuard } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { MirroredUser } from './user-directory.js';
 
@@ -18,6 +18,17 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class MeController {
+  /**
+   * The same value the guard was given, reported rather than re-derived.
+   *
+   * Injecting the token means the banner the web app renders and the check the
+   * guard performs are the *same* boolean. Reading the environment again here
+   * would be a second source that can disagree — and it would disagree exactly
+   * when it matters, because the two would then be answering different
+   * questions: what is configured, and what is being enforced.
+   */
+  constructor(@Inject(ADMIN_MFA_BYPASS) private readonly mfaBypassed: boolean) {}
+
   @Get(ME_PATH)
   @AllowsSuspended()
   me(@CurrentUser() user: MirroredUser): MeResponse {
@@ -31,6 +42,7 @@ export class MeController {
       // Only ever the caller's own, because this route answers for nobody else.
       suspendedAt: user.suspendedAt?.toISOString() ?? null,
       suspensionReason: user.suspensionReason,
+      adminMfaBypassed: this.mfaBypassed,
     };
   }
 }

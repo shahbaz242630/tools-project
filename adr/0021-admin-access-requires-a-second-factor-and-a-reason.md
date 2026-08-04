@@ -4,6 +4,14 @@
 - **Date:** 2026-07-31
 - **Relates to:** BRD §8.1, §8.13, §14 Phase 1, §17 risk table; ADR 0015, ADR 0017
 
+> **A development-only exception exists — [ADR 0030](0030-a-development-escape-hatch-for-the-admin-second-factor.md).**
+> Clerk gates every MFA strategy behind a paid plan, so on the free plan no
+> second factor can be enrolled and this rule refuses every administrator
+> everywhere. `DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA` opens the admin surface
+> locally; the API refuses to start with it set in production. **The rule below
+> is unchanged and still binding wherever it can be met** — read 0030 before
+> concluding that an admin page opening means a second factor was verified.
+
 ## Context
 
 BRD §14 Phase 1 asks for an "admin role with MFA requirement" and a read-only "view as user" with audit logging. §8.1 says "MFA required for administrators". §8.13 adds two things that are easy to skim past:

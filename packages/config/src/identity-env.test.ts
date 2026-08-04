@@ -15,6 +15,76 @@ const valid = {
   CLERK_AUTHORIZED_PARTIES: 'http://localhost:3000',
 };
 
+describe('the admin MFA escape hatch', () => {
+  it('is off when the variable is absent', () => {
+    expect(loadIdentityEnv(valid).DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA).toBe(false);
+  });
+
+  it.each(['false', 'FALSE', '0', 'no', ''])('is off for %j', (value) => {
+    // `z.coerce.boolean()` would read every one of these as **true**, including
+    // the literal string "false". For a flag that removes an authentication
+    // check, that is the worst possible default.
+    const env = { ...valid, DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: value };
+    const result = (() => {
+      try {
+        return loadIdentityEnv(env).DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA;
+      } catch {
+        return false;
+      }
+    })();
+    expect(result).toBe(false);
+  });
+
+  it('is on only for the exact string "true"', () => {
+    expect(
+      loadIdentityEnv({ ...valid, DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: 'true' })
+        .DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
+    ).toBe(true);
+  });
+
+  it('refuses to start in production rather than quietly ignoring it', () => {
+    // Both outcomes end with MFA enforced. Only this one tells somebody that
+    // what they configured is not what they got.
+    expect(() =>
+      loadIdentityEnv({
+        ...valid,
+        NODE_ENV: 'production',
+        DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: 'true',
+      }),
+    ).toThrow(EnvironmentError);
+  });
+
+  it('says why, naming the rule it would break', () => {
+    try {
+      loadIdentityEnv({
+        ...valid,
+        NODE_ENV: 'production',
+        DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: 'true',
+      });
+    } catch (error) {
+      expect((error as EnvironmentError).problems.join(' ')).toMatch(
+        /second-factor check/,
+      );
+      return;
+    }
+    throw new Error('expected the environment to be refused');
+  });
+
+  it('leaves production alone when it is not set', () => {
+    expect(() => loadIdentityEnv({ ...valid, NODE_ENV: 'production' })).not.toThrow();
+  });
+
+  it('allows it in test, so the guard can be exercised both ways', () => {
+    expect(
+      loadIdentityEnv({
+        ...valid,
+        NODE_ENV: 'test',
+        DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: 'true',
+      }).DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
+    ).toBe(true);
+  });
+});
+
 describe('loadIdentityEnv', () => {
   it('unescapes the PEM into real newlines', () => {
     // Stored on one line because dotenv has no multi-line syntax we can rely on
@@ -102,9 +172,16 @@ describe('loadIdentityEnv', () => {
     // A queue consumer has nothing to do with identity. Folding these fields
     // into the shared schema made the worker refuse to start without a JWT key
     // — and every later service would have inherited that.
+    //
+    // `NODE_ENV` appears in both loaders and that is not a second source of
+    // truth: this schema needs it to decide whether its own escape hatch is
+    // allowed, which is a judgement it cannot make without knowing where it is
+    // running.
     expect(Object.keys(loadIdentityEnv(valid))).toEqual([
+      'NODE_ENV',
       'CLERK_JWT_PUBLIC_KEY',
       'CLERK_AUTHORIZED_PARTIES',
+      'DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA',
     ]);
   });
 });

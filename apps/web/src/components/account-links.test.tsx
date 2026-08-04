@@ -12,6 +12,7 @@ const ACTIVE: MeResponse = {
   role: 'USER',
   suspendedAt: null,
   suspensionReason: null,
+  adminMfaBypassed: false,
 };
 
 const SUSPENDED: MeResponse = {

@@ -9,6 +9,7 @@ const ACCOUNT = {
   role: 'USER',
   suspendedAt: null,
   suspensionReason: null,
+  adminMfaBypassed: false,
 } as const;
 
 describe('AccountReport', () => {

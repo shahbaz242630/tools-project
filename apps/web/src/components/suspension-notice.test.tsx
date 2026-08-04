@@ -8,6 +8,7 @@ const ACTIVE = {
   role: 'USER' as const,
   suspendedAt: null,
   suspensionReason: null,
+  adminMfaBypassed: false,
 };
 
 const SUSPENDED = {
