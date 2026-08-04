@@ -59,6 +59,10 @@ beforeEach(async () => {
   // Children before parents, in every file -- not only the new one.
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();
+  // seller_tax_profiles is ON DELETE RESTRICT against users (slice 2.3).
+  // Children before parents, in every file — a new foreign key means editing
+  // all of them, not only the one the slice was about.
+  await client.sellerTaxProfile.deleteMany();
   await client.user.deleteMany();
 });
 

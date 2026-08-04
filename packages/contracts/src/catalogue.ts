@@ -36,6 +36,51 @@ export type CategoryRiskLevel = (typeof CATEGORY_RISK_LEVELS)[number];
 export const categoryRiskLevelSchema = z.enum(CATEGORY_RISK_LEVELS);
 
 /**
+ * Whether this category's activity is reportable to HMRC — the one piece of
+ * category configuration that can change the platform's regulatory status.
+ *
+ * BRD §8.14.1: under the UK digital platform reporting rules a Relevant Activity
+ * is only the sale of goods or a Relevant Service, and a Relevant Service is only
+ * rental of immovable property, a Personal Service, or rental of a **means of
+ * transport**. Rental of general goods is none of those, so the launch category
+ * is `none` and the platform is not a Reporting Platform Operator.
+ *
+ * §8.14.2 is why this is a field rather than a conclusion: because the engine is
+ * category-agnostic, that scope can change **by configuration rather than by a
+ * deploy**. A trailer, a van, an e-bike, a mobility scooter or anything
+ * labour-based drags us into seller tax-data collection, verification and an
+ * annual return, and nothing about adding a category would otherwise say so.
+ *
+ * The values name the *statutory head* rather than a yes/no, because the
+ * collected fields and the deadline differ between them, and a boolean would
+ * have to be widened later by a migration on rows that already matter.
+ */
+export const CATEGORY_REPORTABLE_ACTIVITIES = [
+  'none',
+  'means_of_transport',
+  'personal_service',
+  'sale_of_goods',
+] as const;
+export type CategoryReportableActivity =
+  (typeof CATEGORY_REPORTABLE_ACTIVITIES)[number];
+
+export const categoryReportableActivitySchema = z.enum(CATEGORY_REPORTABLE_ACTIVITIES);
+
+/**
+ * The single place that decides whether a flag value switches reporting on.
+ *
+ * One function rather than `!== 'none'` written in five places: the rule is
+ * "anything but `none`" today, and if a value is ever added that does not
+ * activate collection, every caller has to change at once or one of them
+ * silently keeps the old meaning.
+ */
+export function activatesSellerReporting(
+  activity: CategoryReportableActivity,
+): boolean {
+  return activity !== 'none';
+}
+
+/**
  * The URL segment, and the SEO identity §8.17 needs to keep canonical.
  *
  * Lowercase, digits and single hyphens. Deliberately strict: a slug is the one
@@ -322,6 +367,53 @@ export function parseCategoryAttributes(raw: unknown): readonly CategoryAttribut
 }
 
 /**
+ * The confirmation §8.14.2 requires — *"the admin interface must warn on
+ * category creation that a non-`none` flag triggers statutory reporting duties,
+ * registration and an annual deadline, and must require explicit
+ * confirmation"* — expressed where it cannot be walked around.
+ *
+ * **It is a field on the request, not a tick box on a page.** A confirmation
+ * that lives only in the form is a confirmation the API does not have: anything
+ * else holding an admin token could set the flag that changes our regulatory
+ * status without ever meeting it. Making it a required assertion means the
+ * server refuses, and the form is then merely the thing that explains why.
+ *
+ * **It is not stored.** It is true of a request, not of a category — every
+ * saved version with a non-`none` flag was necessarily acknowledged, so a
+ * column would record a constant. What survives is the audit entry: who set the
+ * flag, to what, and the reason they typed.
+ *
+ * The wording names counsel deliberately. §8.14.2 requires scope determination
+ * to be confirmed by counsel *before* a non-`none` category is enabled, and a
+ * confirmation that says only "I understand" is one somebody can honestly tick
+ * without that having happened.
+ */
+const reportingConfiguration = {
+  reportableActivity: categoryReportableActivitySchema,
+  reportingDutiesAcknowledged: z.boolean(),
+};
+
+function requireReportingAcknowledgement(
+  value: {
+    readonly reportableActivity: CategoryReportableActivity;
+    readonly reportingDutiesAcknowledged: boolean;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (!activatesSellerReporting(value.reportableActivity)) return;
+  if (value.reportingDutiesAcknowledged) return;
+
+  ctx.addIssue({
+    code: 'custom',
+    message:
+      `a category flagged "${value.reportableActivity}" activates seller ` +
+      'tax-data collection, verification and an annual return — confirm that ' +
+      'counsel has determined the scope before enabling it',
+    path: ['reportingDutiesAcknowledged'],
+  });
+}
+
+/**
  * A category as an administrator sees it: its identity, plus the configuration
  * currently in force.
  *
@@ -336,6 +428,11 @@ export interface AdminCategory {
   readonly slug: string;
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
+  /**
+   * Which statutory reporting head this category's activity falls under, if any
+   * (§8.14.2). `none` is what every category has until counsel says otherwise.
+   */
+  readonly reportableActivity: CategoryReportableActivity;
   /** In render order. Empty is a legitimate schema — it is what a pre-2.2 category has. */
   readonly attributes: readonly CategoryAttribute[];
   readonly versionNumber: number;
@@ -358,6 +455,7 @@ const adminCategorySchema = z.object({
   slug: z.string(),
   name: z.string(),
   riskLevel: categoryRiskLevelSchema,
+  reportableActivity: categoryReportableActivitySchema,
   attributes: categoryAttributesSchema,
   versionNumber: z.number().int().positive(),
   versionCreatedAt: z.string(),
@@ -388,12 +486,15 @@ export function parseAdminCategoryList(raw: unknown): {
  * both once makes the permanence of one of them visible at the moment it is
  * chosen.
  */
-export const categoryDraftSchema = z.object({
-  slug: categorySlugSchema,
-  name: categoryNameSchema,
-  riskLevel: categoryRiskLevelSchema,
-  attributes: categoryAttributesSchema,
-});
+export const categoryDraftSchema = z
+  .object({
+    slug: categorySlugSchema,
+    name: categoryNameSchema,
+    riskLevel: categoryRiskLevelSchema,
+    ...reportingConfiguration,
+    attributes: categoryAttributesSchema,
+  })
+  .superRefine(requireReportingAcknowledgement);
 
 /**
  * Readonly rather than the raw inference, so a caller holding a schema it has
@@ -424,12 +525,22 @@ export function parseCategoryDraft(raw: unknown): CategoryDraftInput {
  * lesson ADR 0025 paid for twice: an optional field is a silent default, and a
  * silent default on configuration every later booking is read under is the wrong
  * shape. A caller that forgets it gets a 400, not an empty schema.
+ *
+ * **`reportableActivity` is required here too, and the acknowledgement applies
+ * to a change as much as to a creation.** §8.14.2 words the warning as being
+ * "on category creation", but §17's risk register names the real danger as
+ * *"reporting scope changing with a category switch"* — an existing category
+ * flipped from `none` to `means_of_transport` is exactly the switch a
+ * creation-only rule would let through unremarked.
  */
-export const categoryConfigurationSchema = z.object({
-  name: categoryNameSchema,
-  riskLevel: categoryRiskLevelSchema,
-  attributes: categoryAttributesSchema,
-});
+export const categoryConfigurationSchema = z
+  .object({
+    name: categoryNameSchema,
+    riskLevel: categoryRiskLevelSchema,
+    ...reportingConfiguration,
+    attributes: categoryAttributesSchema,
+  })
+  .superRefine(requireReportingAcknowledgement);
 export type CategoryConfigurationInput = Omit<
   z.infer<typeof categoryConfigurationSchema>,
   'attributes'

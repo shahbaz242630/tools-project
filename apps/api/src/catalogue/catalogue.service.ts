@@ -119,6 +119,12 @@ export class CatalogueService {
  * differ from the last regardless of whether anything meaningful changed —
  * which destroys the only thing comparing digests is for (ADR 0017).
  *
+ * **`reportableActivity` is in, and it is the entry that most needs to be.**
+ * §17's risk register names an undetected change of reporting scope as its own
+ * risk, and this digest is what makes the change accountable afterwards: the
+ * before and after both name the head, so a flip from `none` is visible in the
+ * trail rather than inferable from a version number.
+ *
  * **The attribute schema is in, and its order is part of what is digested.**
  * `canonicalise` sorts object keys but deliberately preserves array order, so
  * moving an attribute up the form registers as a change — which it is. The order
@@ -130,6 +136,7 @@ function auditable(record: CategoryRecord): Record<string, unknown> {
     slug: record.slug,
     name: record.name,
     riskLevel: record.riskLevel,
+    reportableActivity: record.reportableActivity,
     attributes: record.attributes,
   };
 }

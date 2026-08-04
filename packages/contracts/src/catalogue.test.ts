@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ContractViolationError } from './parse.js';
 import {
+  CATEGORY_REPORTABLE_ACTIVITIES,
   MAX_ATTRIBUTE_DECIMAL_PLACES,
   MAX_ATTRIBUTE_OPTIONS,
   MAX_ATTRIBUTE_TEXT_LENGTH,
   MAX_CATEGORY_ATTRIBUTES,
+  activatesSellerReporting,
   parseCategoryAttributes,
   parseCategoryConfiguration,
   parseCategoryDraft,
@@ -321,41 +323,165 @@ describe('text attributes', () => {
   });
 });
 
+/**
+ * A body with nothing wrong with it, which each test then breaks in one way.
+ *
+ * Spelled out rather than built by a helper with optional overrides: the point
+ * of most of these tests is which single field is missing, and a fixture that
+ * fills fields in for you hides exactly that.
+ */
+const validDraft = {
+  slug: 'outdoor-gardening',
+  name: 'Garden and outdoor',
+  riskLevel: 'low',
+  reportableActivity: 'none',
+  reportingDutiesAcknowledged: false,
+  attributes: realisticSchema,
+};
+
+const validConfiguration = {
+  name: 'Garden and outdoor',
+  riskLevel: 'low',
+  reportableActivity: 'none',
+  reportingDutiesAcknowledged: false,
+  attributes: realisticSchema,
+};
+
+/**
+ * The same body with one field missing — the shape a caller that forgot sends.
+ *
+ * Built by filtering rather than by destructuring a discarded binding, which
+ * reads the same and does not depend on how the linter feels about an unused
+ * rest sibling.
+ */
+function without(
+  body: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(body).filter(([key]) => key !== field));
+}
+
 describe('the category body schemas', () => {
   it('requires attributes on a draft rather than defaulting them', () => {
     // ADR 0025's lesson, paid for twice: an optional field is a silent default,
     // and a silent default on configuration every booking is read under is the
     // wrong shape. A caller that forgets gets a 400, not an empty schema.
-    expect(() =>
-      parseCategoryDraft({
-        slug: 'outdoor-gardening',
-        name: 'Garden',
-        riskLevel: 'low',
-      }),
-    ).toThrow(ContractViolationError);
+    expect(() => parseCategoryDraft(without(validDraft, 'attributes'))).toThrow(
+      ContractViolationError,
+    );
   });
 
   it('requires attributes on a reconfiguration for the same reason', () => {
     expect(() =>
-      parseCategoryConfiguration({ name: 'Garden', riskLevel: 'low' }),
+      parseCategoryConfiguration(without(validConfiguration, 'attributes')),
     ).toThrow(ContractViolationError);
   });
 
   it('accepts a draft carrying a schema', () => {
-    expect(
-      parseCategoryDraft({
-        slug: 'outdoor-gardening',
-        name: 'Garden and outdoor',
-        riskLevel: 'low',
-        attributes: realisticSchema,
-      }).attributes,
-    ).toEqual(realisticSchema);
+    expect(parseCategoryDraft(validDraft).attributes).toEqual(realisticSchema);
   });
 
   it('accepts an explicitly empty schema', () => {
     expect(
-      parseCategoryConfiguration({ name: 'Garden', riskLevel: 'low', attributes: [] })
-        .attributes,
+      parseCategoryConfiguration({ ...validConfiguration, attributes: [] }).attributes,
     ).toEqual([]);
+  });
+});
+
+describe('the reportable-activity flag', () => {
+  it('requires the flag rather than assuming none', () => {
+    // The whole point of §8.14.2 is that scope changes by configuration. A
+    // default would mean the one decision that changes our regulatory status
+    // could be made by not thinking about it.
+    expect(() => parseCategoryDraft(without(validDraft, 'reportableActivity'))).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('requires the flag on a reconfiguration too', () => {
+    expect(() =>
+      parseCategoryConfiguration(without(validConfiguration, 'reportableActivity')),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('rejects a head it does not know', () => {
+    expect(() =>
+      parseCategoryDraft({ ...validDraft, reportableActivity: 'immovable_property' }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('accepts none without any acknowledgement', () => {
+    // The overwhelmingly common case, and it must not be made ceremonial:
+    // rental of general goods is not a Relevant Activity (§8.14.1), so a
+    // confirmation here would be a tick box that means nothing, which is how
+    // tick boxes that do mean something get ticked.
+    expect(parseCategoryDraft(validDraft).reportableActivity).toBe('none');
+  });
+
+  it('refuses a non-none head without the acknowledgement', () => {
+    expect(() =>
+      parseCategoryDraft({
+        ...validDraft,
+        reportableActivity: 'means_of_transport',
+        reportingDutiesAcknowledged: false,
+      }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('names the head and the duties when it refuses', () => {
+    // The message is read by an administrator in a form. "Invalid" would tell
+    // them nothing about what they are being asked to confirm, or why.
+    try {
+      parseCategoryDraft({
+        ...validDraft,
+        reportableActivity: 'personal_service',
+        reportingDutiesAcknowledged: false,
+      });
+      expect.unreachable('the acknowledgement rule should have refused this');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ContractViolationError);
+      const { issues } = error as ContractViolationError;
+      expect(issues.join(' ')).toContain('personal_service');
+      expect(issues.join(' ')).toContain('counsel');
+    }
+  });
+
+  it('accepts a non-none head once it is acknowledged', () => {
+    expect(
+      parseCategoryDraft({
+        ...validDraft,
+        reportableActivity: 'means_of_transport',
+        reportingDutiesAcknowledged: true,
+      }).reportableActivity,
+    ).toBe('means_of_transport');
+  });
+
+  it('applies the same rule to a reconfiguration', () => {
+    // §17's risk register calls this out by name: the undetected breach is
+    // "reporting scope changing with a category switch". A creation-only rule
+    // would let an existing category be flipped without confirming anything.
+    expect(() =>
+      parseCategoryConfiguration({
+        ...validConfiguration,
+        reportableActivity: 'sale_of_goods',
+        reportingDutiesAcknowledged: false,
+      }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('does not treat an acknowledgement as a reason to report', () => {
+    // Ticking the box on a `none` category must not quietly switch anything on.
+    // The flag is what decides; the acknowledgement only ever unblocks it.
+    expect(
+      parseCategoryDraft({ ...validDraft, reportingDutiesAcknowledged: true })
+        .reportableActivity,
+    ).toBe('none');
+  });
+
+  it('knows which heads activate seller reporting', () => {
+    expect(activatesSellerReporting('none')).toBe(false);
+    for (const activity of CATEGORY_REPORTABLE_ACTIVITIES.filter((a) => a !== 'none')) {
+      expect(activatesSellerReporting(activity)).toBe(true);
+    }
   });
 });

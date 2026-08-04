@@ -1,4 +1,8 @@
-import type { CategoryAttribute, CategoryRiskLevel } from '@platform/contracts';
+import type {
+  CategoryAttribute,
+  CategoryReportableActivity,
+  CategoryRiskLevel,
+} from '@platform/contracts';
 
 /**
  * Categories and their configuration, as the rest of the application sees them.
@@ -24,6 +28,7 @@ export interface CategoryRecord {
   readonly slug: string;
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
+  readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
   readonly versionNumber: number;
   readonly versionCreatedAt: Date;
@@ -41,6 +46,17 @@ export interface CategoryRecord {
 export interface CategoryConfiguration {
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
+  /**
+   * Which statutory reporting head applies (§8.14.2), or `none`.
+   *
+   * **The acknowledgement that lets a non-`none` value be saved is not here**,
+   * and its absence is deliberate. It is an assertion about a request, not a
+   * property of a category — every stored version carrying a reportable head was
+   * necessarily acknowledged, so a field here would record a constant. The
+   * contract enforces it at the edge; the audit entry records who made the
+   * change and why.
+   */
+  readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
 }
 

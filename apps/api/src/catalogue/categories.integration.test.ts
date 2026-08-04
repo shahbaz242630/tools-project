@@ -54,6 +54,8 @@ const DRAFT = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
   riskLevel: 'low',
+  reportableActivity: 'none',
+  reportingDutiesAcknowledged: false,
   attributes: [],
 } as const;
 
@@ -271,7 +273,13 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('outdoor-gardening', 'renamed after the taxonomy review'),
       headers: auth('admin-token'),
-      payload: { name: 'Garden and outdoor', riskLevel: 'medium', attributes: [] },
+      payload: {
+        name: 'Garden and outdoor',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
     });
 
     expect(response.statusCode).toBe(200);
@@ -287,7 +295,13 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('no-such-category', 'should not be possible'),
       headers: auth('admin-token'),
-      payload: { name: 'Nothing', riskLevel: 'low', attributes: [] },
+      payload: {
+        name: 'Nothing',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
     });
     expect(response.statusCode).toBe(404);
   });
@@ -297,7 +311,13 @@ describe('reconfiguring a category', () => {
       method: 'PUT',
       url: configurePath('outdoor-gardening', 'should not be possible'),
       headers: auth('bob-token'),
-      payload: { name: 'Hijacked', riskLevel: 'high', attributes: [] },
+      payload: {
+        name: 'Hijacked',
+        riskLevel: 'high',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
     });
 
     expect(response.statusCode).toBe(403);
@@ -315,6 +335,8 @@ describe('reconfiguring a category', () => {
       payload: {
         name: 'Renamed',
         riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
         attributes: [],
         slug: 'something-else',
       },
@@ -441,6 +463,8 @@ describe('the attribute schema, through the routes', () => {
       payload: {
         name: 'Outdoor and gardening',
         riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
         attributes: [SCHEMA[0]],
       },
     });
@@ -459,6 +483,8 @@ describe('the attribute schema, through the routes', () => {
       slug: DRAFT.slug,
       name: DRAFT.name,
       riskLevel: DRAFT.riskLevel,
+      reportableActivity: DRAFT.reportableActivity,
+      reportingDutiesAcknowledged: DRAFT.reportingDutiesAcknowledged,
     });
 
     expect(response.statusCode).toBe(400);
@@ -497,5 +523,184 @@ describe('the attribute schema, through the routes', () => {
     // request must not leave a category behind, or a retry hits 409 on a
     // category nobody successfully created.
     expect(await store.findBySlug('bad-schema')).toBeNull();
+  });
+});
+
+/**
+ * The reportable-activity flag, through the routes (§8.14.2).
+ *
+ * These are the tests that matter most in this file, because the thing being
+ * guarded is not a data-quality rule — it is the platform's regulatory status.
+ * Everything else here can be got wrong and fixed; this can be got wrong and
+ * discovered by HMRC.
+ */
+describe('the reportable-activity flag', () => {
+  beforeEach(async () => {
+    await promoteAdmin();
+  });
+
+  const configurePath = (slug: string, reason: string) =>
+    `${adminCategoryPath(slug)}?reason=${encodeURIComponent(reason)}`;
+
+  it('stores and returns none for an ordinary goods category', async () => {
+    const response = await createCategory();
+
+    expect(response.statusCode).toBe(201);
+    expect(parseAdminCategory(response.json()).reportableActivity).toBe('none');
+  });
+
+  it('refuses a reportable category that was not acknowledged', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      slug: 'trailers-towing',
+      reportableActivity: 'means_of_transport',
+      reportingDutiesAcknowledged: false,
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    expect(body.issues?.join(' ')).toMatch(/counsel/i);
+  });
+
+  it('creates nothing when the acknowledgement is missing', async () => {
+    await createCategory('admin-token', {
+      ...DRAFT,
+      slug: 'trailers-towing',
+      reportableActivity: 'means_of_transport',
+      reportingDutiesAcknowledged: false,
+    });
+
+    // The refusal must be complete. A category that exists but was never
+    // acknowledged is one whose reporting obligation nobody accepted.
+    expect(await store.findBySlug('trailers-towing')).toBeNull();
+  });
+
+  it('accepts a reportable category once it is acknowledged', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      slug: 'trailers-towing',
+      name: 'Trailers and towing',
+      reportableActivity: 'means_of_transport',
+      reportingDutiesAcknowledged: true,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseAdminCategory(response.json()).reportableActivity).toBe(
+      'means_of_transport',
+    );
+  });
+
+  it('refuses an unacknowledged switch on an existing category', async () => {
+    // The case §17's risk register actually names: not a new category, but a
+    // `none` one quietly becoming reportable. §8.14.2 words the warning as
+    // being "on category creation"; obeying only the letter would leave this
+    // route open.
+    await createCategory();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: configurePath('outdoor-gardening', 'adding trailers to this category'),
+      headers: auth('admin-token'),
+      payload: {
+        name: DRAFT.name,
+        riskLevel: DRAFT.riskLevel,
+        reportableActivity: 'means_of_transport',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    // And the version it would have written does not exist.
+    expect(store.versionsOf('outdoor-gardening')).toHaveLength(1);
+  });
+
+  it('allows the switch when it is acknowledged, and keeps the old version', async () => {
+    await createCategory();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: configurePath('outdoor-gardening', 'counsel confirmed the scope on 4 Aug'),
+      headers: auth('admin-token'),
+      payload: {
+        name: DRAFT.name,
+        riskLevel: DRAFT.riskLevel,
+        reportableActivity: 'means_of_transport',
+        reportingDutiesAcknowledged: true,
+        attributes: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const versions = store.versionsOf('outdoor-gardening');
+    expect(versions).toHaveLength(2);
+    // The whole reason the flag lives on the version: a booking made yesterday
+    // was made under a category that was not reportable, and it must stay that
+    // way no matter what the category becomes today.
+    expect(versions[0]?.reportableActivity).toBe('none');
+    expect(versions[1]?.reportableActivity).toBe('means_of_transport');
+  });
+
+  it('rejects a head outside the vocabulary', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      reportableActivity: 'immovable_property',
+      reportingDutiesAcknowledged: true,
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('demands the flag rather than assuming none', async () => {
+    const withoutFlag = Object.fromEntries(
+      Object.entries(DRAFT).filter(([key]) => key !== 'reportableActivity'),
+    );
+
+    const response = await createCategory('admin-token', withoutFlag);
+
+    // A default would mean the decision that changes our regulatory status
+    // could be made by omission.
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('records the change of scope on both sides of the audit entry', async () => {
+    await createCategory();
+    await app.inject({
+      method: 'PUT',
+      url: configurePath('outdoor-gardening', 'counsel confirmed the scope on 4 Aug'),
+      headers: auth('admin-token'),
+      payload: {
+        name: DRAFT.name,
+        riskLevel: DRAFT.riskLevel,
+        reportableActivity: 'means_of_transport',
+        reportingDutiesAcknowledged: true,
+        attributes: [],
+      },
+    });
+
+    const entries = audit.log.entries();
+    const entry = entries.at(-1);
+    expect(entry?.action).toBe('category.reconfigured');
+    expect(entry?.reason).toBe('counsel confirmed the scope on 4 Aug');
+    // Nothing else about the configuration changed, so if the flag were left
+    // out of the digest these two would match and the one change that carries
+    // statutory weight would leave no trace.
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('does not store the acknowledgement itself', async () => {
+    await createCategory('admin-token', {
+      ...DRAFT,
+      slug: 'trailers-towing',
+      reportableActivity: 'means_of_transport',
+      reportingDutiesAcknowledged: true,
+    });
+
+    // It is an assertion about a request, not a property of a category. Every
+    // stored version with a reportable head was acknowledged by construction,
+    // so a field carrying it would record a constant — and would eventually be
+    // read as evidence of something it never proved.
+    const stored = store.versionsOf('trailers-towing')[0];
+    expect(stored).not.toHaveProperty('reportingDutiesAcknowledged');
   });
 });

@@ -1,8 +1,17 @@
 'use client';
 
-import { useActionState } from 'react';
-import { CATEGORY_RISK_LEVELS, MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
-import type { AdminCategory, CategoryRiskLevel } from '@platform/contracts';
+import { useActionState, useState } from 'react';
+import {
+  CATEGORY_REPORTABLE_ACTIVITIES,
+  CATEGORY_RISK_LEVELS,
+  MIN_ADMIN_REASON_LENGTH,
+  activatesSellerReporting,
+} from '@platform/contracts';
+import type {
+  AdminCategory,
+  CategoryReportableActivity,
+  CategoryRiskLevel,
+} from '@platform/contracts';
 import {
   INITIAL_CATEGORY_STATE,
   createCategoryAction,
@@ -38,6 +47,115 @@ function RiskLevelField({
   );
 }
 
+/**
+ * Plain descriptions of the statutory heads, in the words of what a category
+ * would actually contain rather than the words of the legislation.
+ *
+ * An administrator choosing a category's configuration knows they are adding
+ * trailers; they do not necessarily know that a trailer is a "means of
+ * transport" under the digital platform reporting rules. Naming the examples is
+ * what makes the choice answerable by the person making it.
+ */
+const REPORTABLE_LABELS: Record<CategoryReportableActivity, string> = {
+  none: 'None — renting out ordinary goods, which is not a reportable activity',
+  means_of_transport:
+    'Rental of a means of transport — trailers, vans, e-bikes, mobility scooters',
+  personal_service:
+    'Personal service — time- or task-based work done by a person, such as labour',
+  sale_of_goods: 'Sale of goods — items sold rather than rented',
+};
+
+/**
+ * The flag §8.14.2 requires, and the warning and confirmation it requires with
+ * it.
+ *
+ * The confirmation appears **only when the choice needs one**, and that is the
+ * point rather than a nicety. A tick box shown on every category — almost all
+ * of which will be `none` forever — is one an administrator learns to tick
+ * without reading, and it is then worth nothing on the single occasion it
+ * matters.
+ *
+ * The checkbox is `required` so the browser refuses the submit, the server
+ * action parses the same contract schema, and the API enforces it again. Three
+ * layers, and only the third is a control: the other two exist so nobody
+ * discovers the rule from a round trip.
+ */
+function ReportableActivityField({
+  idPrefix,
+  onChange,
+  value,
+}: {
+  readonly idPrefix: string;
+  readonly value: CategoryReportableActivity;
+  readonly onChange: (next: CategoryReportableActivity) => void;
+}) {
+  const selectId = `${idPrefix}-reportable`;
+  const confirmId = `${idPrefix}-reportable-confirm`;
+
+  return (
+    <>
+      <p>
+        <label htmlFor={selectId}>Reportable activity</label>
+        {/*
+          Controlled rather than uncontrolled, unlike every other field on this
+          form. The warning below has to react to the choice as it is made — a
+          confirmation that appeared only after a failed submit would be
+          explaining a refusal instead of preventing one.
+        */}
+        <select
+          id={selectId}
+          name="reportableActivity"
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value as CategoryReportableActivity);
+          }}
+          aria-describedby={`${selectId}-help`}
+        >
+          {CATEGORY_REPORTABLE_ACTIVITIES.map((activity) => (
+            <option key={activity} value={activity}>
+              {REPORTABLE_LABELS[activity]}
+            </option>
+          ))}
+        </select>
+      </p>
+      <p id={`${selectId}-help`}>
+        Almost always <strong>none</strong>. Renting out tools, garden equipment and
+        household goods is not a reportable activity, and this is the only setting on
+        the page that can change what the platform owes HMRC.
+      </p>
+
+      {activatesSellerReporting(value) ? (
+        <div role="alert">
+          <p>
+            <strong>This makes the platform a reporting platform operator.</strong>{' '}
+            Enabling this category means we must collect and verify tax data from every
+            seller in it, register with HMRC, and file an annual return by its deadline.
+            Sellers who do not provide their details must eventually be blocked from
+            earning.
+          </p>
+          <p>
+            It is not reversible by unticking this later: activity that happened while
+            the category was flagged stays reportable.
+          </p>
+          <p>
+            <input
+              id={confirmId}
+              name="reportingDutiesAcknowledged"
+              type="checkbox"
+              required
+            />{' '}
+            <label htmlFor={confirmId}>
+              I confirm that <strong>counsel has determined the scope</strong> for this
+              category, and that we accept the registration, collection, verification
+              and annual filing duties that follow.
+            </label>
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function Feedback({
   status,
   message,
@@ -64,6 +182,10 @@ export function CreateCategoryForm() {
     createCategoryAction,
     INITIAL_CATEGORY_STATE,
   );
+  // `none` is where a new category starts, and the state survives a rejected
+  // submit because the form is not remounted — so what comes back still shows
+  // what was chosen rather than quietly resetting to the safe answer.
+  const [reportable, setReportable] = useState<CategoryReportableActivity>('none');
 
   return (
     <form action={action}>
@@ -99,6 +221,12 @@ export function CreateCategoryForm() {
       </p>
 
       <RiskLevelField id="create-risk" defaultValue="low" />
+
+      <ReportableActivityField
+        idPrefix="create"
+        value={reportable}
+        onChange={setReportable}
+      />
 
       <AttributeSchemaEditor name="attributes" idPrefix="create" />
 
@@ -144,6 +272,9 @@ export function ReconfigureCategoryForm({
     reconfigureCategoryAction,
     INITIAL_CATEGORY_STATE,
   );
+  // Seeded with what this category is now, because `PUT` replaces the whole
+  // configuration — the same reason the attribute editor is seeded below.
+  const [reportable, setReportable] = useState(category.reportableActivity);
 
   const id = (field: string) => `${category.slug}-${field}`;
 
@@ -165,6 +296,12 @@ export function ReconfigureCategoryForm({
       </p>
 
       <RiskLevelField id={id('risk')} defaultValue={category.riskLevel} />
+
+      <ReportableActivityField
+        idPrefix={category.slug}
+        value={reportable}
+        onChange={setReportable}
+      />
 
       {/*
         Seeded with what the category has now, because `PUT` replaces the whole

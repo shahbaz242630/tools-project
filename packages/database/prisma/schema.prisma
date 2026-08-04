@@ -155,6 +155,10 @@ model User {
   /// its own port and never through a user.
   authoredCategoryVersions CategoryVersion[]
 
+  /// Present and inactive — see `SellerTaxProfile`. Optional because no seller
+  /// has one and none can until a category is flagged reportable (§8.14.2).
+  sellerTaxProfile SellerTaxProfile?
+
   @@map("users")
 }
 
@@ -704,6 +708,23 @@ model CategoryVersion {
   /// before slice 2.2 has. No backfill invents a schema nobody chose.
   attributes Json @default("[]") @db.JsonB
 
+  /// Which statutory reporting head this category's activity falls under
+  /// (§8.14.2). `none`, `means_of_transport`, `personal_service` or
+  /// `sale_of_goods`, as a closed union in code exactly like `riskLevel`.
+  ///
+  /// **On the version rather than on `Category`, and that is not a detail.**
+  /// This is the one configuration value that can change the platform's
+  /// regulatory status, and §8.2 requires a booking to be interpreted under the
+  /// configuration in force when it was made. A flag stored on the category
+  /// would answer "is this reportable now"; a report has to answer "was this
+  /// reportable when it happened".
+  ///
+  /// Defaults to `none`, which is true rather than merely convenient: §8.14.1
+  /// determined that rental of general goods is not a Relevant Activity, so
+  /// every category configured before this migration was correctly outside
+  /// scope.
+  reportableActivity String @default("none") @db.Text
+
   /// Who made this configuration what it is. BRD §6.2 puts an author on the
   /// entity; the corresponding audit entry carries the reason and the digests.
   createdById String @db.Uuid
@@ -715,4 +736,74 @@ model CategoryVersion {
   /// "what is current". One constraint, two jobs, no second index to maintain.
   @@unique([categoryId, versionNumber])
   @@map("category_versions")
+}
+
+/// A seller's tax position for statutory reporting — **present and inactive**.
+///
+/// BRD §14 requires this entity from Phase 1 and §8.14.2 says why: *"the Seller
+/// tax profile entity and the reporting export exist in the data model from the
+/// outset but are inactive while all categories are flagged `none`. This keeps
+/// the obligation a configuration switch, not a rebuild."*
+///
+/// **Nothing writes here, and no application code reads it.** There is no port,
+/// no service and no route. That is the specified state, not an oversight: every
+/// category is `none` (§8.14.1 — rental of general goods is not a Relevant
+/// Activity), so there is no lawful basis to collect any of this and no
+/// obligation to.
+///
+/// **It deliberately has no personal-data columns yet**, though §6.2 lists
+/// "collected fields". Those fields are a name, an address, a date of birth and
+/// a taxpayer reference — personal data, which in this codebase means a table
+/// that `PersonalDataEraser` erases and the two `PersonalDataSource`
+/// projections expose. Nothing enumerates the tables that hold personal data, so
+/// a fourth one added now would silently be absent from erasure and from the
+/// export, and would stay absent until somebody noticed. The columns arrive with
+/// the collection flow that needs them, together with their erasure — expand and
+/// contract, and the expand step waits for a reader.
+///
+/// **No module owns it.** BRD §5.1 names no owner, and it has no behaviour to
+/// place. When it activates the likely home is Payments & Ledger, because what
+/// gets reported is the consideration paid to a seller — but that is a decision
+/// for the slice that builds collection, not one to guess at here.
+model SellerTaxProfile {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// One profile per seller. Keyed on the platform `users.id`, never on the
+  /// identity provider's subject — ADR 0015's rule, and the reason this survives
+  /// changing provider.
+  ///
+  /// `ON DELETE RESTRICT`, Prisma's default for a required relation, and the
+  /// right one twice over: accounts are soft-deleted so it never fires, and a
+  /// statutory record that a deletion could take with it would be the wrong
+  /// shape for something retained against a filing deadline.
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// Which reporting regime applies — `uk_dprr` today, and nothing else.
+  ///
+  /// A regime rather than the reportable-activity head, because a seller can be
+  /// active in two reportable categories at once and would then need two
+  /// profiles under one obligation. The head lives on the category version,
+  /// where it belongs; this says whose rules the resulting return is filed
+  /// under, which is what §6.2 means by "applicable reporting regime".
+  ///
+  /// **No default.** One value exists today, so a default would be free — and it
+  /// would mean the first code to write a row could do so without deciding
+  /// anything, which is the failure ADR 0025 describes. A `CHECK` pins the
+  /// vocabulary; see the migration.
+  regime String @db.Text
+
+  /// `not_started`, `pending`, `verified` or `failed` (§6.2, "verification
+  /// state"). Also `CHECK`ed rather than left to code, because there is no code:
+  /// until this activates, the constraint is the only thing that can refuse a
+  /// value nobody meant.
+  ///
+  /// Provisional by design. Nothing has been built against it, and no row
+  /// exists, so widening the vocabulary costs a migration on an empty table.
+  verificationState String @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("seller_tax_profiles")
 }
