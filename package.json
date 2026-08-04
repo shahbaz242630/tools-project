@@ -21,6 +21,7 @@
     "db:reset": "docker compose down -v && docker compose up -d --wait && node scripts/verify-stack.mjs",
     "db:logs": "docker compose logs -f",
     "db:verify": "node scripts/verify-stack.mjs",
+    "db:seed:dev": "node scripts/seed-dev.mjs",
     "db:psql": "docker exec -it rental-postgres psql -U rental -d rental_dev",
     "licences:check": "node scripts/check-licences.mjs",
     "verify:runtime": "node scripts/verify-runtime-imports.mjs",

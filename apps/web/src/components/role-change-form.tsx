@@ -2,10 +2,8 @@
 
 import { useActionState } from 'react';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
-import {
-  INITIAL_APPROVAL_STATE,
-  proposeRoleChangeAction,
-} from '../app/admin/approvals/actions';
+import { proposeRoleChangeAction } from '../app/admin/approvals/actions';
+import { INITIAL_APPROVAL_STATE } from '../app/admin/approvals/state';
 
 /**
  * Propose a role change.

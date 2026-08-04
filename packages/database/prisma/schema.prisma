@@ -159,6 +159,9 @@ model User {
   /// has one and none can until a category is flagged reportable (§8.14.2).
   sellerTaxProfile SellerTaxProfile?
 
+  /// What this person has put up for rent. `ON DELETE RESTRICT` — see `Listing`.
+  listings Listing[]
+
   @@map("users")
 }
 
@@ -732,10 +735,100 @@ model CategoryVersion {
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
+  listings Listing[]
+
   /// Both the "no two versions share a number" rule and the index that answers
   /// "what is current". One constraint, two jobs, no second index to maintain.
   @@unique([categoryId, versionNumber])
+
+  /// Redundant on its own — `id` is already unique — and it exists to be the
+  /// target of a composite foreign key from `listings`.
+  ///
+  /// A listing stores both the category and the pinned version (BRD §6.2 names
+  /// both). Storing them as two independent foreign keys would allow a row
+  /// claiming category A and a version belonging to category B, which is the
+  /// second-source-of-truth problem slice 2.1 refused for `currentVersionId` —
+  /// except here nothing would ever notice. Referencing this pair instead makes
+  /// the disagreement unrepresentable rather than merely unlikely.
+  @@unique([id, categoryId])
   @@map("category_versions")
+}
+
+/// A rentable item, as its owner describes it (BRD §8.3, §6.2).
+///
+/// **The first row a user creates rather than an administrator**, which is why
+/// ownership is a column here rather than an assumption anywhere else. Every
+/// read of this table is scoped by `ownerId` until slice 2.10 publishes a public
+/// projection.
+///
+/// A draft is deliberately allowed to be incomplete. §8.3 says owners "create
+/// draft listings and save progress", so most of what a listing eventually needs
+/// — location, prices, media, availability, rules — is absent here and arrives
+/// in 2.5 through 2.8. Completeness is a publication rule, not a storage rule.
+model Listing {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Whose item it is.
+  ///
+  /// `ON DELETE RESTRICT`, Prisma's default for a required relation. It never
+  /// fires in production because accounts are soft-deleted, and that is the
+  /// point: a listing must not vanish from a booking's history because its owner
+  /// closed their account.
+  ownerId String @db.Uuid
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  /// The category, and the exact configuration version this listing was written
+  /// against — BRD §6.2 puts both on the entity.
+  ///
+  /// **One composite foreign key, not two separate ones.** `(categoryVersionId,
+  /// categoryId)` references the matching unique pair on `category_versions`, so
+  /// a listing cannot claim one category while pinning a version belonging to
+  /// another. Two independent keys would each be individually valid in exactly
+  /// that broken state.
+  ///
+  /// The pin is what makes the attribute values in slice 2.4b mean something: it
+  /// records which schema they were entered and validated against, so
+  /// reconfiguring a category cannot retroactively invalidate a listing.
+  categoryId        String          @db.Uuid
+  categoryVersionId String          @db.Uuid
+  categoryVersion   CategoryVersion @relation(fields: [categoryVersionId, categoryId], references: [id, categoryId])
+
+  title       String @db.Text
+  /// May be empty on a draft, and that is a real value rather than a missing
+  /// one — §8.3's "save progress". Publication requires prose (2.8).
+  description String @db.Text
+
+  /// What replacing the item would cost, as integer minor units plus the
+  /// currency, on the same record (ADR 0002, CLAUDE.md).
+  ///
+  /// **The first money stored anywhere in this system.** §8.7.1 derives the
+  /// damage excess from it — "the greater of a fixed floor or a percentage of
+  /// replacement value" — so this number becomes an amount held on somebody's
+  /// card. `Int` rather than `Decimal` or `Float`: pence are whole, and a float
+  /// here would be a rounding error with a legal consequence.
+  ///
+  /// The currency is stored rather than assumed. Today there is one; the day
+  /// there are two, every bare number becomes ambiguous with nothing to
+  /// disambiguate it.
+  replacementValueAmount   Int    @db.Integer
+  replacementValueCurrency String @db.Text
+
+  /// `DRAFT`, and nothing else until slice 2.8 brings the rest of the lifecycle.
+  ///
+  /// Text with a closed union in code, exactly as `riskLevel` and
+  /// `reportableActivity` are. Present now rather than later because
+  /// retrofitting a status onto rows that bookings already reference is a
+  /// migration nobody wants, and because a listing with no status is
+  /// indistinguishable from one that is live.
+  status String @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// The only query this slice makes: this owner's listings, newest first. The
+  /// owner dashboard (2.9) wants the same order.
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@map("listings")
 }
 
 /// A seller's tax position for statutory reporting — **present and inactive**.

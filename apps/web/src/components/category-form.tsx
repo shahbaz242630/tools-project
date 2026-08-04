@@ -13,10 +13,10 @@ import type {
   CategoryRiskLevel,
 } from '@platform/contracts';
 import {
-  INITIAL_CATEGORY_STATE,
   createCategoryAction,
   reconfigureCategoryAction,
 } from '../app/admin/categories/actions';
+import { INITIAL_CATEGORY_STATE } from '../app/admin/categories/state';
 import { AttributeSchemaEditor } from './attribute-schema-editor';
 
 /** Human wording for the vocabulary. The values themselves are the contract's. */

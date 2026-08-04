@@ -2,10 +2,8 @@
 
 import { useActionState } from 'react';
 import Link from 'next/link';
-import {
-  INITIAL_DELETION_FORM_STATE,
-  deleteAccountAction,
-} from '../app/account/delete/actions';
+import { deleteAccountAction } from '../app/account/delete/actions';
+import { INITIAL_DELETION_FORM_STATE } from '../app/account/delete/state';
 
 /**
  * The confirmation, and what to say afterwards.

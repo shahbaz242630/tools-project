@@ -2,10 +2,8 @@
 
 import { useActionState } from 'react';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
-import {
-  INITIAL_SUSPENSION_STATE,
-  decideSuspensionAction,
-} from '../app/admin/users/actions';
+import { decideSuspensionAction } from '../app/admin/users/actions';
+import { INITIAL_SUSPENSION_STATE } from '../app/admin/users/state';
 
 /**
  * Suspending an account, or lifting a suspension.

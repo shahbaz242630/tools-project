@@ -8,10 +8,8 @@ import {
   TOWN_MAX_LENGTH,
 } from '@platform/contracts';
 import type { MyProfile } from '@platform/contracts';
-import {
-  INITIAL_PROFILE_FORM_STATE,
-  saveProfileAction,
-} from '../app/account/profile/actions';
+import { saveProfileAction } from '../app/account/profile/actions';
+import { INITIAL_PROFILE_FORM_STATE } from '../app/account/profile/state';
 import { ProfileFormStatus } from './profile-form-status';
 
 /**

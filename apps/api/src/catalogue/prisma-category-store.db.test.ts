@@ -48,6 +48,10 @@ beforeEach(async () => {
   // Children before parents, in every file. `category_versions` references both
   // `categories` (CASCADE) and `users` (RESTRICT), and the RESTRICT is what
   // makes the order load-bearing rather than tidy.
+  // listings reference both users and category_versions, ON DELETE RESTRICT
+  // (slice 2.4a) — so they clear before either. Children before parents, in
+  // every file.
+  await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();
   await client.auditLog.deleteMany();

@@ -78,6 +78,16 @@ const RULES = [
     exempt: (p) => p.includes('search') || p.startsWith('scripts/'),
   },
   {
+    id: 'use-server-exports-only-functions',
+    pattern: /^export (const|let|var) (?!\w+\s*(:[^=]+)?=\s*async)/,
+    message: 'a non-function export from a "use server" file',
+    why: "Next turns every export of a `'use server'` file into a server action, and an exported object makes the route's generated action loader throw \"A 'use server' file can only export async functions, found object\". **It throws when the action is invoked, not when the page renders**, so the form looks perfect until somebody presses the button — which is how this was found, after it had been merged in six files. Put the state type and its initial value in a sibling `state.ts`.",
+    // Only actions files under app/ declare `'use server'` in this codebase.
+    // Scoping by path keeps the rule line-based, which is what makes the whole
+    // checker fast enough to sit on a pre-commit hook.
+    exempt: (p) => !/app\/.*actions\.ts$/.test(p.replace(/\\/g, '/')),
+  },
+  {
     id: 'seller-tax-profile-is-inactive',
     pattern: /\bsellerTaxProfile\b/,
     message: 'application code reading or writing the seller tax profile',

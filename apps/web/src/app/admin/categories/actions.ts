@@ -17,43 +17,8 @@ import { readAttributeSchema } from '../../../lib/attribute-schema';
 import { createCategory, reconfigureCategory } from '../../../lib/admin-categories';
 import type { AdminCategoryOutcome } from '../../../lib/admin-categories';
 import { webEnv } from '../../../lib/env';
-
-/**
- * Creating a category, and changing one.
- *
- * Validated here *and* by the API, and the API's answer is the one that counts —
- * a check in a form is a convenience, never a control. The reason the checks
- * exist at all is that a round trip to be told "slug: must be lowercase" is a
- * worse experience than being told before sending it.
- */
-
-export interface CategoryActionState {
-  readonly status: 'idle' | 'done' | 'error';
-  readonly message: string | null;
-  /** Kept so a failure does not clear what was typed. */
-  readonly slug: string;
-  readonly name: string;
-  readonly reason: string;
-  /**
-   * Kept for the opposite reason to the others.
-   *
-   * The rest are here so a rejected submit does not make somebody retype. This
-   * one is here so a rejected submit does not silently *reset* — a form that
-   * bounced back showing `none` when the administrator chose
-   * `means_of_transport` would be telling them the safe thing about a decision
-   * they did not make.
-   */
-  readonly reportableActivity: CategoryReportableActivity;
-}
-
-export const INITIAL_CATEGORY_STATE: CategoryActionState = {
-  status: 'idle',
-  message: null,
-  slug: '',
-  name: '',
-  reason: '',
-  reportableActivity: 'none',
-};
+import { INITIAL_CATEGORY_STATE } from './state';
+import type { CategoryActionState } from './state';
 
 /**
  * A checkbox is present or absent, never `false`.

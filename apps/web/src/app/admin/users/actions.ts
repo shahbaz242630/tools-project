@@ -3,37 +3,13 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
-import type { AdminUserView } from '@platform/contracts';
+
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchAdminUser } from '../../../lib/admin-user';
 import { decideSuspension } from '../../../lib/admin-approvals';
 import { webEnv } from '../../../lib/env';
-
-/**
- * Looking up an account, as an administrator.
- *
- * The reason is validated here *and* by the API, and the API's answer is the
- * one that counts — a check in a form is a convenience, never a control. This
- * one exists so somebody does not wait for a round trip to be told their
- * reason was too short.
- */
-
-export interface AdminUserLookupState {
-  readonly status: 'idle' | 'loaded' | 'error';
-  readonly view: AdminUserView | null;
-  readonly message: string | null;
-  /** Kept so the form does not clear what was typed on a failure. */
-  readonly userId: string;
-  readonly reason: string;
-}
-
-export const INITIAL_ADMIN_USER_STATE: AdminUserLookupState = {
-  status: 'idle',
-  view: null,
-  message: null,
-  userId: '',
-  reason: '',
-};
+import { INITIAL_ADMIN_USER_STATE } from './state';
+import type { AdminUserLookupState, SuspensionActionState } from './state';
 
 export async function lookUpAccountAction(
   _previous: AdminUserLookupState,
@@ -134,25 +110,6 @@ export async function lookUpAccountAction(
       };
   }
 }
-
-/**
- * Suspending an account, or lifting a suspension.
- *
- * Separate from the lookup action even though both live on the same page: one
- * reads and one changes something, and a single action handling both would make
- * the write reachable by a stray form field.
- */
-export interface SuspensionActionState {
-  readonly status: 'idle' | 'done' | 'error';
-  readonly message: string | null;
-  readonly reason: string;
-}
-
-export const INITIAL_SUSPENSION_STATE: SuspensionActionState = {
-  status: 'idle',
-  message: null,
-  reason: '',
-};
 
 export async function decideSuspensionAction(
   _previous: SuspensionActionState,

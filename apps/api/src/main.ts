@@ -36,6 +36,8 @@ import { PrismaProfileStore } from './profiles/prisma-profile-store.js';
 import { ProfilesService } from './profiles/profiles.service.js';
 import { CatalogueService } from './catalogue/catalogue.service.js';
 import { PrismaCategoryStore } from './catalogue/prisma-category-store.js';
+import { ListingsService } from './catalogue/listings.service.js';
+import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { createShutdown } from '@platform/runtime';
 
 /**
@@ -160,6 +162,12 @@ async function bootstrap(): Promise<void> {
   // and answers no question about a person, which is why it needs neither the
   // encryptor nor a lookup into identity (BRD §5.1).
   const catalogue = new CatalogueService(new PrismaCategoryStore(database), audit);
+  // One store, both ports. `PrismaListingStore` implements `ListingStore` and
+  // `CategoryOptionSource` because both are reads of the same two tables through
+  // the same client; the ports stay separate so a caller cannot reach the admin
+  // projection of a category through the one that serves a form control.
+  const listingStore = new PrismaListingStore(database);
+  const listings = new ListingsService(listingStore, listingStore);
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
@@ -174,6 +182,7 @@ async function bootstrap(): Promise<void> {
       profiles,
       audit,
       catalogue,
+      listings,
     }),
     new FastifyAdapter(),
     { logger: new NestLoggerAdapter(logger) },

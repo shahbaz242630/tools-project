@@ -3,10 +3,8 @@
 import { useActionState } from 'react';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
 import { describeAction, describeActorForAdmin } from '../lib/activity-display';
-import {
-  INITIAL_ADMIN_LOOKUP_STATE,
-  lookUpActivityAction,
-} from '../app/admin/activity/actions';
+import { lookUpActivityAction } from '../app/admin/activity/actions';
+import { INITIAL_ADMIN_LOOKUP_STATE } from '../app/admin/activity/state';
 
 /**
  * The lookup form and its results.
