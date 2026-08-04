@@ -3,10 +3,8 @@
 import { useActionState } from 'react';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
 import type { AdminUserView } from '@platform/contracts';
-import {
-  INITIAL_ADMIN_USER_STATE,
-  lookUpAccountAction,
-} from '../app/admin/users/actions';
+import { lookUpAccountAction } from '../app/admin/users/actions';
+import { INITIAL_ADMIN_USER_STATE } from '../app/admin/users/state';
 import { SuspensionControls } from './suspension-controls';
 
 /**

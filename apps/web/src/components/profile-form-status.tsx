@@ -1,4 +1,4 @@
-import type { ProfileFormState } from '../app/account/profile/actions';
+import type { ProfileFormState } from '../app/account/profile/state';
 
 /**
  * What came back from the last save attempt.

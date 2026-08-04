@@ -8,28 +8,8 @@ import type { AdminApprovalView, UserRole } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { decideApproval, proposeRoleChange } from '../../../lib/admin-approvals';
 import { webEnv } from '../../../lib/env';
-
-/**
- * Proposing a role change, and deciding somebody else's proposal.
- *
- * Reasons are validated here *and* by the API, and the API's answer is the one
- * that counts — a check in a form is a convenience, never a control.
- */
-
-export interface ApprovalActionState {
-  readonly status: 'idle' | 'done' | 'error';
-  readonly message: string | null;
-  /** Kept so the form does not clear what was typed on a failure. */
-  readonly userId: string;
-  readonly reason: string;
-}
-
-export const INITIAL_APPROVAL_STATE: ApprovalActionState = {
-  status: 'idle',
-  message: null,
-  userId: '',
-  reason: '',
-};
+import { INITIAL_APPROVAL_STATE } from './state';
+import type { ApprovalActionState } from './state';
 
 /** Turn an outcome into something an administrator can act on. */
 function describe(

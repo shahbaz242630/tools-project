@@ -3,36 +3,12 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { MIN_ADMIN_REASON_LENGTH } from '@platform/contracts';
-import type { ActivityEntry } from '@platform/contracts';
+
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchAdminActivity } from '../../../lib/admin-activity';
 import { webEnv } from '../../../lib/env';
-
-/**
- * Looking up an account's activity, as an administrator.
- *
- * The reason is validated here *and* by the API, and the API's answer is the
- * one that counts — a check in a form is a convenience, never a control. This
- * one exists so somebody does not wait for a round trip to be told their
- * reason was too short.
- */
-
-export interface AdminLookupState {
-  readonly status: 'idle' | 'loaded' | 'error';
-  readonly entries: readonly ActivityEntry[];
-  readonly message: string | null;
-  /** Kept so the form does not clear what was typed on a failure. */
-  readonly userId: string;
-  readonly reason: string;
-}
-
-export const INITIAL_ADMIN_LOOKUP_STATE: AdminLookupState = {
-  status: 'idle',
-  entries: [],
-  message: null,
-  userId: '',
-  reason: '',
-};
+import { INITIAL_ADMIN_LOOKUP_STATE } from './state';
+import type { AdminLookupState } from './state';
 
 export async function lookUpActivityAction(
   _previous: AdminLookupState,

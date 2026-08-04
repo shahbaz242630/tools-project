@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ProfileFormStatus } from './profile-form-status';
-import type { ProfileFormState } from '../app/account/profile/actions';
+import type { ProfileFormState } from '../app/account/profile/state';
 
 const state = (overrides: Partial<ProfileFormState>): ProfileFormState => ({
   status: 'idle',

@@ -8,28 +8,7 @@ import { readProfileForm } from '../../../lib/profile-form';
 import { saveMyProfile } from '../../../lib/profile';
 import { webEnv } from '../../../lib/env';
 
-/**
- * Saving the profile, from the form to the API.
- *
- * A server action rather than a browser `fetch`, for the reason the whole
- * topology exists: the API is not reachable from the internet. Only the web app
- * is on the edge network, so the request has to be made server-side — and the
- * session token never has to be handed to client JavaScript to do it.
- */
-
-export interface ProfileFormState {
-  readonly status: 'idle' | 'saved' | 'invalid' | 'error';
-  /** Field-level problems, shown against the form. */
-  readonly issues: readonly string[];
-  /** A single sentence for the states that are nobody's fault. */
-  readonly message: string | null;
-}
-
-export const INITIAL_PROFILE_FORM_STATE: ProfileFormState = {
-  status: 'idle',
-  issues: [],
-  message: null,
-};
+import type { ProfileFormState } from './state';
 
 export async function saveProfileAction(
   _previous: ProfileFormState,
