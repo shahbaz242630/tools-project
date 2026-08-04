@@ -109,6 +109,10 @@ beforeEach(() => {
       createRecordingLogger().logger,
     ),
     createRecordingLogger().logger,
+    // MFA enforced, which is every test in this file except the two that say
+    // otherwise. The bypass is passed explicitly rather than defaulted, so a
+    // reader of any single test can see which regime it is under.
+    false,
   );
 });
 
@@ -176,6 +180,7 @@ describe('AuthGuard', () => {
         createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
+      false,
     );
 
     await expect(
@@ -240,6 +245,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
+      false,
     );
 
     await expect(broken.canActivate(contextFor(authorised('good')))).rejects.toBe(boom);
@@ -271,6 +277,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
         createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
+      false,
     );
 
     await expect(broken.canActivate(contextFor(authorised('good')))).rejects.toBe(boom);
@@ -345,7 +352,7 @@ describe('clientIpFrom', () => {
 });
 
 describe('the second factor an admin route requires', () => {
-  function adminGuardFor(session: SessionInput): AuthGuard {
+  function adminGuardFor(session: SessionInput, mfaBypassed = false): AuthGuard {
     const directory = new InMemoryUserDirectory();
     directory.seed({
       id: '00000000-0000-4000-8000-000000000001',
@@ -374,6 +381,7 @@ describe('the second factor an admin route requires', () => {
         createRecordingLogger().logger,
       ),
       createRecordingLogger().logger,
+      mfaBypassed,
     );
   }
 
@@ -434,5 +442,179 @@ describe('the second factor an admin route requires', () => {
     // role restriction must not start demanding a second factor.
     const guard = adminGuardFor(SESSION);
     await expect(guard.canActivate(contextFor(authorised('good')))).resolves.toBe(true);
+  });
+});
+
+/**
+ * The development escape hatch (ADR 0030).
+ *
+ * Clerk gates every MFA strategy behind a paid plan, so on the free plan no
+ * second factor can be enrolled at all and the guard above correctly refuses
+ * every administrator everywhere. `DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA` opens
+ * the admin surface locally; `loadIdentityEnv` refuses to load it in production.
+ */
+describe('when the second-factor check is switched off', () => {
+  function bypassedGuardFor(session: SessionInput): AuthGuard {
+    const directory = new InMemoryUserDirectory();
+    directory.seed({
+      id: '00000000-0000-4000-8000-000000000001',
+      clerkUserId: 'user_1',
+      email: 'alice@example.com',
+      role: 'ADMIN',
+      deletedAt: null,
+      deletionRequestedAt: null,
+      suspendedAt: null,
+      suspensionReason: null,
+      createdAt: new Date('2026-07-15T09:00:00.000Z'),
+    });
+
+    return new AuthGuard(
+      new Reflector(),
+      new FakeSessionVerifier().accept('good', session),
+      new IdentityService(
+        directory,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+        new RecordingEraser(),
+        new StubDataSource(),
+        new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
+      ),
+      createRecordingLogger().logger,
+      true,
+    );
+  }
+
+  const asAdmin = (guard: AuthGuard) =>
+    guard.canActivate(contextFor(authorised('good'), ['ADMIN']));
+
+  it('admits an admin whose session never verified one', async () => {
+    await expect(
+      asAdmin(bypassedGuardFor({ ...SESSION, secondFactorAgeMinutes: null })),
+    ).resolves.toBe(true);
+  });
+
+  it('admits one whose claim is absent entirely', async () => {
+    // The state Clerk actually produces on the free plan: `fva` emits -1, which
+    // the verifier reports as no factor at all.
+    await expect(asAdmin(bypassedGuardFor(SESSION))).resolves.toBe(true);
+  });
+
+  it('admits one whose verification is far too old', async () => {
+    await expect(
+      asAdmin(
+        bypassedGuardFor({
+          ...SESSION,
+          secondFactorAgeMinutes: MAX_SECOND_FACTOR_AGE_MINUTES * 100,
+        }),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it('still refuses somebody who is not an administrator', async () => {
+    // **The line the escape hatch must not cross.** It removes the second
+    // factor, never the role — an ordinary account reaching an admin route
+    // would be a different and much worse defect wearing the same flag.
+    const ordinary = new InMemoryUserDirectory();
+    const guard = new AuthGuard(
+      new Reflector(),
+      new FakeSessionVerifier().accept('good', SESSION),
+      new IdentityService(
+        ordinary,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+        new RecordingEraser(),
+        new StubDataSource(),
+        new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
+      ),
+      createRecordingLogger().logger,
+      true,
+    );
+
+    await expect(asAdmin(guard)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('still refuses a suspended administrator', async () => {
+    const suspended = new InMemoryUserDirectory();
+    suspended.seed({
+      id: '00000000-0000-4000-8000-000000000001',
+      clerkUserId: 'user_1',
+      email: 'alice@example.com',
+      role: 'ADMIN',
+      deletedAt: null,
+      deletionRequestedAt: null,
+      suspendedAt: new Date('2026-08-01T09:00:00.000Z'),
+      suspensionReason: 'under investigation',
+      createdAt: new Date('2026-07-15T09:00:00.000Z'),
+    });
+
+    const guard = new AuthGuard(
+      new Reflector(),
+      new FakeSessionVerifier().accept('good', SESSION),
+      new IdentityService(
+        suspended,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+        new RecordingEraser(),
+        new StubDataSource(),
+        new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
+      ),
+      createRecordingLogger().logger,
+      true,
+    );
+
+    await expect(asAdmin(guard)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('says so in the log, on every request it admits', async () => {
+    // A security check that is off should be visible in the place somebody
+    // debugging looks, not only in the file that configured it.
+    const recorder = createRecordingLogger();
+    const directory = new InMemoryUserDirectory();
+    directory.seed({
+      id: '00000000-0000-4000-8000-000000000001',
+      clerkUserId: 'user_1',
+      email: 'alice@example.com',
+      role: 'ADMIN',
+      deletedAt: null,
+      deletionRequestedAt: null,
+      suspendedAt: null,
+      suspensionReason: null,
+      createdAt: new Date('2026-07-15T09:00:00.000Z'),
+    });
+
+    const guard = new AuthGuard(
+      new Reflector(),
+      new FakeSessionVerifier().accept('good', SESSION),
+      new IdentityService(
+        directory,
+        new InMemoryWebhookLedger(),
+        createAuditFakes().service,
+        new RecordingEraser(),
+        new StubDataSource(),
+        new StubProfileSummarySource(),
+        new InMemoryAdminApprovalStore(),
+        new InMemoryAuthenticationEvents(),
+        createRecordingLogger().logger,
+      ),
+      recorder.logger,
+      true,
+    );
+
+    await asAdmin(guard);
+
+    const warned = recorder.records.filter(
+      (record) => record.level === 'warn' && record.message.includes('second factor'),
+    );
+    expect(warned).toHaveLength(1);
+    expect(JSON.stringify(warned[0])).toContain('DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA');
   });
 });

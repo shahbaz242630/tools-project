@@ -178,7 +178,11 @@ async function bootstrap(): Promise<void> {
         new RedisCheck(redis),
       ],
       logger,
-      identity: { sessionVerifier, service: identity },
+      identity: {
+        sessionVerifier,
+        service: identity,
+        mfaBypassed: identityEnv.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
+      },
       profiles,
       audit,
       catalogue,
@@ -199,6 +203,21 @@ async function bootstrap(): Promise<void> {
     port: env.API_PORT,
     ...describeEnv(env),
   });
+
+  // Announced every boot, at warn, immediately after the line somebody actually
+  // reads. `loadIdentityEnv` has already refused to start at all if this is set
+  // in production, so reaching here means development or test — but a security
+  // check that is off should still say so on every start rather than only in
+  // the file that configured it.
+  if (identityEnv.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA) {
+    logger.warn('ADMIN SECOND-FACTOR CHECK IS DISABLED', {
+      variable: 'DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA',
+      nodeEnv: env.NODE_ENV,
+      effect:
+        'every admin route admits an administrator with no verified second factor',
+      why: 'Clerk gates MFA behind a paid plan (ADR 0030). Never set this anywhere real.',
+    });
+  }
 }
 
 function installShutdownHandlers(

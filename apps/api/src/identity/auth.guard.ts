@@ -15,6 +15,17 @@ export const SESSION_VERIFIER = Symbol('SESSION_VERIFIER');
 export const IDENTITY_SERVICE = Symbol('IDENTITY_SERVICE');
 export const AUTH_LOGGER = Symbol('AUTH_LOGGER');
 
+/**
+ * Whether to admit an administrator with no verified second factor.
+ *
+ * **A development escape hatch — see `DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA` in
+ * `@platform/config`, which refuses to load it in production at all.** It is an
+ * injected value rather than a module-level read of the environment so that both
+ * states are reachable from a test, and so this file states no opinion about
+ * where it is running.
+ */
+export const ADMIN_MFA_BYPASS = Symbol('ADMIN_MFA_BYPASS');
+
 const REQUIRED_ROLES = Symbol('REQUIRED_ROLES');
 const ALLOWS_SUSPENDED = Symbol('ALLOWS_SUSPENDED');
 
@@ -140,6 +151,7 @@ export class AuthGuard implements CanActivate {
     @Inject(SESSION_VERIFIER) private readonly verifier: SessionVerifier,
     @Inject(IDENTITY_SERVICE) private readonly identity: IdentityService,
     @Inject(AUTH_LOGGER) private readonly logger: Logger,
+    @Inject(ADMIN_MFA_BYPASS) private readonly mfaBypassed: boolean,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -276,6 +288,23 @@ export class AuthGuard implements CanActivate {
     const age = session.secondFactorAgeMinutes;
 
     if (age === null || age > MAX_SECOND_FACTOR_AGE_MINUTES) {
+      // **The bypass is checked here, after the real check has already failed,
+      // and never before it.** Written this way round on purpose: a bypass
+      // consulted first would short-circuit the rule, and the day the flag is
+      // wrongly true nothing would ever have evaluated the thing it replaces.
+      // Here the ordinary path still runs, still logs, and the flag only
+      // changes what happens next.
+      if (this.mfaBypassed) {
+        this.logger.warn('admitted an admin request with no verified second factor', {
+          userId: user.id,
+          secondFactorAgeMinutes: age,
+          // Named in the log line so a search for the variable finds the
+          // requests it actually admitted, not just the startup banner.
+          reason: 'DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA',
+        });
+        return;
+      }
+
       this.logger.warn('rejected admin request without a recent second factor', {
         userId: user.id,
         // The age, not the reason for the decision — an administrator debugging
