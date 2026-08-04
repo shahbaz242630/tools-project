@@ -17,7 +17,7 @@ import { createProfileFakes } from '../profiles/testing/fakes.js';
 import { createIdentityFakes } from '../identity/testing/fakes.js';
 import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from './catalogue.service.js';
-import { InMemoryCategoryStore } from './testing/fakes.js';
+import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 
 /**
  * Categories through the real application: real routing, real guard, real
@@ -87,6 +87,10 @@ beforeEach(async () => {
         profiles: profiles.service,
         audit: audit.service,
         catalogue: new CatalogueService(store, audit.service),
+        // Sharing `store` so both surfaces talk about the same categories — a
+        // category created through the admin routes here is one an owner could
+        // then list in.
+        listings: createListingFakes(store).service,
       }),
     ],
   }).compile();

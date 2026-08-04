@@ -24,6 +24,15 @@ import type {
   CategoryRiskLevel,
 } from '@platform/contracts';
 import { CategorySlugTakenError } from '../category-store.js';
+import { UnknownCategoryError } from '../listing-store.js';
+import type {
+  CategoryOptionRecord,
+  CategoryOptionSource,
+  ListingDraft,
+  ListingRecord,
+  ListingStore,
+} from '../listing-store.js';
+import { ListingsService } from '../listings.service.js';
 import type {
   CategoryConfiguration,
   CategoryRecord,
@@ -180,4 +189,84 @@ export function createCatalogueFakes(): CatalogueFakes {
   const store = new InMemoryCategoryStore();
   const audit = createAuditFakes();
   return { store, audit, service: new CatalogueService(store, audit.service) };
+}
+
+/**
+ * Listings, in memory, backed by the same category store the test already has.
+ *
+ * Sharing the category store is not convenience — it is the constraint. In
+ * Postgres a listing's `(categoryVersionId, categoryId)` pair is a composite
+ * foreign key against `category_versions`, so a listing cannot exist for a
+ * category that does not, nor pin a version belonging to a different category. A
+ * double that invented its own categories could produce both of those states and
+ * let a test pass for a situation the database refuses.
+ */
+export class InMemoryListingStore implements ListingStore, CategoryOptionSource {
+  private readonly listings: ListingRecord[] = [];
+  private nextId = 1;
+
+  constructor(private readonly categories: InMemoryCategoryStore) {}
+
+  async createDraft(draft: ListingDraft): Promise<ListingRecord> {
+    const category = await this.categories.findBySlug(draft.categorySlug);
+    if (category === null) throw new UnknownCategoryError(draft.categorySlug);
+
+    const now = Time.nowUtc();
+    const listing: ListingRecord = {
+      id: `00000000-0000-4000-9000-${String(this.nextId++).padStart(12, '0')}`,
+      ownerId: draft.ownerId,
+      // Resolved together from one read, exactly as the real store does — the
+      // pair is consistent by construction rather than by a check.
+      categorySlug: category.slug,
+      categoryName: category.name,
+      categoryVersionNumber: category.versionNumber,
+      title: draft.title,
+      description: draft.description,
+      replacementValue: draft.replacementValue,
+      status: 'DRAFT',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.listings.push(listing);
+    return listing;
+  }
+
+  findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null> {
+    const listing = this.listings.find(
+      (candidate) => candidate.id === id && candidate.ownerId === ownerId,
+    );
+    return Promise.resolve(listing ?? null);
+  }
+
+  async listOptions(): Promise<readonly CategoryOptionRecord[]> {
+    const categories = await this.categories.list();
+    return categories.map((category) => ({ slug: category.slug, name: category.name }));
+  }
+
+  /** Everything stored, for asserting that a refused write left nothing behind. */
+  all(): readonly ListingRecord[] {
+    return [...this.listings];
+  }
+}
+
+export interface ListingFakes {
+  readonly categories: InMemoryCategoryStore;
+  readonly listings: InMemoryListingStore;
+  readonly service: ListingsService;
+}
+
+/**
+ * A listings service with its own category store.
+ *
+ * Takes an existing store when the test also needs the *admin* category surface,
+ * so both talk about the same categories — a test that created a category
+ * through `CatalogueService` and then could not list it as an option would be
+ * testing two disconnected worlds.
+ */
+export function createListingFakes(
+  categories: InMemoryCategoryStore = new InMemoryCategoryStore(),
+): ListingFakes {
+  const listings = new InMemoryListingStore(categories);
+  return { categories, listings, service: new ListingsService(listings, listings) };
 }

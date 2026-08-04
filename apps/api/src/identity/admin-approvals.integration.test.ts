@@ -14,7 +14,10 @@ import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import { createCatalogueFakes } from '../catalogue/testing/fakes.js';
+import {
+  createCatalogueFakes,
+  createListingFakes,
+} from '../catalogue/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import type { ProfileFakes } from '../profiles/testing/fakes.js';
@@ -86,6 +89,7 @@ beforeEach(async () => {
         profiles: profiles.service,
         audit: audit.service,
         catalogue: createCatalogueFakes().service,
+        listings: createListingFakes().service,
       }),
     ],
   }).compile();

@@ -36,8 +36,10 @@ import { PROFILES_SERVICE } from './profiles/profiles.tokens.js';
 import { PublicProfileController } from './profiles/public-profile.controller.js';
 import type { ProfilesService } from './profiles/profiles.service.js';
 import { AdminCategoriesController } from './catalogue/admin-categories.controller.js';
-import { CATALOGUE_SERVICE } from './catalogue/catalogue.tokens.js';
+import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
+import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import type { CatalogueService } from './catalogue/catalogue.service.js';
+import type { ListingsService } from './catalogue/listings.service.js';
 
 export interface AppModuleOptions {
   /** Built in the composition root, so no provider SDK is imported here. */
@@ -78,6 +80,15 @@ export interface AppModuleOptions {
    * does to prove the guard rather than to prove Prisma.
    */
   readonly catalogue: CatalogueService;
+
+  /**
+   * Listings, and the category options an owner picks from. Required rather than
+   * optional, for the reason slice 2.1 learned when it made `catalogue`
+   * required: an optional dependency is one that ten boot sites forget, and the
+   * failure arrives as an undefined injection at request time rather than as a
+   * compile error listing every place to fix.
+   */
+  readonly listings: ListingsService;
 }
 
 /**
@@ -106,6 +117,7 @@ export class AppModule implements NestModule {
         AdminApprovalsController,
         AdminSuspensionController,
         AdminCategoriesController,
+        OwnerListingsController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
         // like a missing decorator. See PublicProfileController.
@@ -132,6 +144,7 @@ export class AppModule implements NestModule {
         { provide: PROFILES_SERVICE, useValue: options.profiles },
         { provide: AUDIT_SERVICE, useValue: options.audit },
         { provide: CATALOGUE_SERVICE, useValue: options.catalogue },
+        { provide: LISTINGS_SERVICE, useValue: options.listings },
       ],
     };
   }

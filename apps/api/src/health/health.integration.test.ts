@@ -8,7 +8,10 @@ import { CORRELATION_HEADER } from '../observability/correlation.middleware.js';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createIdentityFakes } from '../identity/testing/fakes.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import { createCatalogueFakes } from '../catalogue/testing/fakes.js';
+import {
+  createCatalogueFakes,
+  createListingFakes,
+} from '../catalogue/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 
 /**
@@ -47,6 +50,7 @@ async function boot(
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,
         catalogue: createCatalogueFakes().service,
+        listings: createListingFakes().service,
       }),
     ],
   }).compile();

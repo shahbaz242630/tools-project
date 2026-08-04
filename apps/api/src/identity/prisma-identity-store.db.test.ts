@@ -50,6 +50,10 @@ beforeEach(async () => {
   await client.authenticationEvent.deleteMany();
   // category_versions is ON DELETE RESTRICT against users, added in slice 2.1.
   // Children before parents, in every file -- not only the new one.
+  // listings reference both users and category_versions, ON DELETE RESTRICT
+  // (slice 2.4a) — so they clear before either. Children before parents, in
+  // every file.
+  await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();
   // seller_tax_profiles is ON DELETE RESTRICT against users (slice 2.3).
