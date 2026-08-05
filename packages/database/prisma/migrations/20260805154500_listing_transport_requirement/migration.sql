@@ -1,0 +1,66 @@
+-- Migration: listing_transport_requirement
+--
+-- Slice 2.4c-ii. A listing says what is needed to collect and carry it, and
+-- whether it takes two people to lift (BRD §8.3, ADR 0031).
+--
+-- 2.4c-i put the *options* on `category_versions`; this is the answer. §8.3
+-- requires the requirement to be "captured at listing creation", which is the
+-- only moment it can be captured honestly — adding it after listings exist means
+-- either a backfill that invents answers or a population that can never be
+-- filtered.
+--
+-- Why two columns rather than one
+-- -------------------------------
+-- The BRD's example list reads "hand-carryable, car boot, estate or van
+-- required, two-person lift, or trailer", which looks like one vocabulary and is
+-- two axes. How much vehicle is needed and whether one person can lift it are
+-- independent: a chipper needs a van *and* two people. A single column would
+-- force an owner to state one and discard the other, and the discarded one would
+-- be whichever the interface happened to ask about.
+--
+-- ADR 0031 records the departure from the BRD's wording. The four bullets under
+-- that sentence are requirements; the list itself is illustrative.
+--
+-- Why nullable, and why the other one is not
+-- ------------------------------------------
+-- `transportRequirement` is nullable because a draft has legitimately not
+-- answered yet — §8.3's "save progress", the same reason the description may be
+-- empty. `requiresTwoPersonLift` is NOT NULL DEFAULT false because "nobody has
+-- thought about it" and "no" are the same answer for a checkbox, and two
+-- spellings of one state is what every later reader eventually gets wrong.
+--
+-- Why no CHECK constraint on the requirement
+-- ------------------------------------------
+-- The check that matters is "this listing's requirement is one the version it
+-- pins offers", which is a rule about another table's JSON column and a
+-- vocabulary that lives in @platform/contracts and changes with a deploy.
+-- Postgres would need a trigger reading `category_versions` on every write, and
+-- that trigger would be a second, diverging copy of the service's rule. Same
+-- argument the attribute values column made two migrations ago.
+--
+-- Data impact
+-- -----------
+-- Two columns. In PostgreSQL 11 and later, ADD COLUMN with a non-volatile
+-- DEFAULT is a catalogue-only change — existing rows are not rewritten. Locally
+-- that is two draft listings from 2.4a and 2.4b; there is no deployed
+-- environment.
+--
+-- **Existing drafts are left saying nothing, truthfully.** No backfill invents a
+-- requirement nobody chose, and it could not: the category they pinned offered
+-- no transport options, so there was nothing they could have picked.
+--
+-- The table takes a brief ACCESS EXCLUSIVE lock. Only the owner's own routes
+-- read it.
+--
+-- Rollback
+-- --------
+--   ALTER TABLE "listings" DROP COLUMN "transportRequirement";
+--   ALTER TABLE "listings" DROP COLUMN "requiresTwoPersonLift";
+--
+-- Lossless for any listing created before this migration, and lossy after it —
+-- dropping them discards something an owner stated about their own item, which
+-- no other table holds. Roll forward once real listings exist.
+
+-- AlterTable
+ALTER TABLE "listings" ADD COLUMN     "transportRequirement" TEXT,
+ADD COLUMN     "requiresTwoPersonLift" BOOLEAN NOT NULL DEFAULT false;

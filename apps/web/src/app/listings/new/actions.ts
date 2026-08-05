@@ -4,6 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { listingDraftSchema, listingPath } from '@platform/contracts';
+import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { readReplacementValue } from '../../../lib/replacement-value';
 import { readSubmittedAttributes } from '../../../lib/submitted-attributes';
@@ -26,6 +27,18 @@ import type { ListingActionState } from './state';
  * *invoked*, not when the page renders, so the form looks fine until somebody
  * presses the button.
  */
+
+/**
+ * Whatever was chosen, unvalidated, with "no answer yet" read as null.
+ *
+ * Cast rather than checked, for the reason the category form's own reader gives:
+ * the contract schema below is what decides, and a second opinion about the
+ * vocabulary in this file would drift from the one the API enforces.
+ */
+function readTransportRequirement(form: FormData): TransportRequirement | null {
+  const chosen = String(form.get('transportRequirement') ?? '').trim();
+  return chosen === '' ? null : (chosen as TransportRequirement);
+}
 
 export async function createListingAction(
   _previous: ListingActionState,
@@ -84,6 +97,16 @@ export async function createListingAction(
     replacementValue: value.value,
     categoryVersionNumber,
     attributes: attributes.value,
+    // **Empty means "not said", which is null rather than the empty string.**
+    // A select's "no answer yet" option posts `''`, and the contract's
+    // vocabulary has no member for that — so reading it as null here is what
+    // makes an unanswered draft legal (§8.3) instead of a 400 about a value
+    // nobody chose.
+    transportRequirement: readTransportRequirement(form),
+    // A checkbox is present or absent, never `false`. Read explicitly rather
+    // than by truthiness, so that the day the control changes shape this stops
+    // compiling instead of quietly reading every listing as one-person.
+    requiresTwoPersonLift: form.get('requiresTwoPersonLift') !== null,
   });
   if (!parsed.success) {
     return {

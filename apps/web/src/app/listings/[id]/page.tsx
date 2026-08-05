@@ -4,6 +4,10 @@ import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Money, Scaled, Time } from '@platform/core';
+import {
+  TRANSPORT_REQUIREMENT_HINTS,
+  TRANSPORT_REQUIREMENT_LABELS,
+} from '@platform/contracts';
 import type {
   AttributeOption,
   CategoryAttribute,
@@ -121,6 +125,42 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
             </dd>
           </Fragment>
         ))}
+
+        {/*
+          §8.3 requires the transport requirement to be "displayed on the listing
+          page and in the booking summary before the booking is submitted". This
+          is the first of those; the booking summary is Phase 4.
+
+          Shown even when unanswered, unlike the fields above, because a blank
+          here is the thing a renter most needs to know is blank — "we do not
+          know what this takes to collect" is information, and an omitted row
+          would read as though the question had never been asked.
+        */}
+        <dt>Getting it home</dt>
+        <dd>
+          {listing.transportRequirement === null ? (
+            <em>
+              Not said yet. It has to be answered before you can publish, because
+              whoever rents this has to know what to arrive in.
+            </em>
+          ) : (
+            <>
+              <strong>
+                {TRANSPORT_REQUIREMENT_LABELS[listing.transportRequirement]}
+              </strong>{' '}
+              — {TRANSPORT_REQUIREMENT_HINTS[listing.transportRequirement]}
+            </>
+          )}
+          {listing.requiresTwoPersonLift ? (
+            // Only when true. A line reading "one person can lift it" on every
+            // listing is one nobody reads, and the whole value of this is that
+            // the exception stands out.
+            <>
+              <br />
+              Takes <strong>two people</strong> to lift.
+            </>
+          ) : null}
+        </dd>
 
         <dt>Saved</dt>
         <dd>{Time.formatLocal(Time.fromIsoUtc(listing.createdAt))}</dd>

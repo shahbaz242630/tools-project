@@ -190,6 +190,7 @@ function toOption(category: CategoryRecord): CategoryOptionRecord {
     slug: category.slug,
     name: category.name,
     attributes: category.attributes,
+    transportOptions: category.transportOptions,
     versionNumber: category.versionNumber,
   };
 }
@@ -255,6 +256,8 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       // real store round-trips through JSONB, so a caller mutating its own
       // object afterwards must not be able to rewrite what was stored.
       attributes: { ...draft.attributes },
+      transportRequirement: draft.transportRequirement,
+      requiresTwoPersonLift: draft.requiresTwoPersonLift,
       status: 'DRAFT',
       createdAt: now,
       updatedAt: now,

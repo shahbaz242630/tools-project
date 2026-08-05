@@ -15,7 +15,11 @@ import { randomUUID } from 'node:crypto';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { CategoryAttribute, ListingAttributeValues } from '@platform/contracts';
+import type {
+  CategoryAttribute,
+  ListingAttributeValues,
+  TransportRequirement,
+} from '@platform/contracts';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { PrismaListingStore } from './prisma-listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
@@ -110,6 +114,8 @@ const draft = (
   overrides: {
     readonly attributes?: ListingAttributeValues;
     readonly categoryVersionNumber?: number;
+    readonly transportRequirement?: TransportRequirement | null;
+    readonly requiresTwoPersonLift?: boolean;
   } = {},
 ) => ({
   ownerId,
@@ -120,6 +126,11 @@ const draft = (
   // Already validated by the service by the time the store sees them — see
   // `ListingDraft`. These are the stored shapes, so the number is scaled.
   attributes: overrides.attributes ?? {},
+  // Null by default, which is what a draft that has not said looks like. The
+  // store does not check whether the category offers it — that is the service's
+  // decision, and these tests are about what Postgres does with the row.
+  transportRequirement: overrides.transportRequirement ?? null,
+  requiresTwoPersonLift: overrides.requiresTwoPersonLift ?? false,
   categoryVersionNumber: overrides.categoryVersionNumber ?? 1,
 });
 
@@ -376,6 +387,7 @@ describe('the categories an owner may choose', () => {
       slug: category.slug,
       name: 'Outdoor and gardening',
       attributes: SCHEMA,
+      transportOptions: [],
       versionNumber: 1,
     });
   });
@@ -553,6 +565,10 @@ describe('the category options', () => {
       'attributes',
       'name',
       'slug',
+      // Also the form the owner is about to fill in, from 2.4c-ii: which
+      // requirements the field offers, and the thresholds the browser computes
+      // the suggestion from. Still no risk level, still no reportable flag.
+      'transportOptions',
       'versionNumber',
     ]);
   });
@@ -574,3 +590,132 @@ async function pinnedVersionIdOf(listingId: string): Promise<string> {
   const row = await client.listing.findUniqueOrThrow({ where: { id: listingId } });
   return row.categoryVersionId;
 }
+
+describe('the transport requirement', () => {
+  it('round-trips a requirement and the lift flag', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        transportRequirement: 'van_required',
+        requiresTwoPersonLift: true,
+      }),
+    );
+
+    const read = await store.findOwnedBy(created.id, owner);
+    expect(read?.transportRequirement).toBe('van_required');
+    expect(read?.requiresTwoPersonLift).toBe(true);
+  });
+
+  it('stores null for a draft that has not said, and false for the lift', async () => {
+    // The defaults a real draft has, and the state every listing written before
+    // this migration is in.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    const read = await store.findOwnedBy(created.id, owner);
+    expect(read?.transportRequirement).toBeNull();
+    expect(read?.requiresTwoPersonLift).toBe(false);
+  });
+
+  it('does not check whether the category offers it, because that is not its job', async () => {
+    // The store's guarantee is narrower than the service's and deliberately so:
+    // it promises the version it pins is the one the values were checked
+    // against, and nothing about what those values mean (BRD §5.1). A CHECK
+    // constraint here would be a second copy of a rule that lives in TypeScript.
+    const owner = await newUser();
+    const category = await newCategory(owner, slug(), SCHEMA);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { transportRequirement: 'trailer_required' }),
+    );
+
+    expect(created.transportRequirement).toBe('trailer_required');
+  });
+
+  it('refuses to read a requirement this build does not know', async () => {
+    // Written by a newer build. Both lenient readings are wrong: null would
+    // present an owner's stated requirement as unanswered, and passing it
+    // through would put an unrenderable value in front of a renter deciding
+    // whether they can collect the thing.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await client.listing.update({
+      where: { id: created.id },
+      data: { transportRequirement: 'helicopter_required' },
+    });
+
+    await expect(store.findOwnedBy(created.id, owner)).rejects.toThrow(
+      /transport requirement/i,
+    );
+  });
+
+  it('offers a category’s transport options to somebody choosing one', async () => {
+    const author = await newUser();
+    const identity = slug();
+    await categories.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [
+          { requirement: 'car_boot', suggestedUpToKg: 25 },
+          { requirement: 'van_required', suggestedUpToKg: 150 },
+        ],
+      },
+      author,
+    );
+
+    expect((await store.findOption(identity))?.transportOptions).toEqual([
+      { requirement: 'car_boot', suggestedUpToKg: 25 },
+      { requirement: 'van_required', suggestedUpToKg: 150 },
+    ]);
+  });
+
+  it('keeps the options the listing pinned after the category withdraws them', async () => {
+    // The property that makes withdrawing an option safe, at the level that
+    // actually stores it.
+    const owner = await newUser();
+    const identity = slug();
+    const category = await categories.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [{ requirement: 'van_required', suggestedUpToKg: 150 }],
+      },
+      owner,
+    );
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { transportRequirement: 'van_required' }),
+    );
+
+    await categories.addVersion(
+      identity,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+      },
+      owner,
+    );
+
+    // Still readable, still says what the owner said. The listing points at
+    // version 1, whose options included the van.
+    expect((await store.findOwnedBy(created.id, owner))?.transportRequirement).toBe(
+      'van_required',
+    );
+  });
+});

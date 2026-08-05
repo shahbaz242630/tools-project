@@ -9,7 +9,7 @@ import {
   parseCategoryOptions,
   parseOwnerListing,
 } from '@platform/contracts';
-import type { CategoryAttribute } from '@platform/contracts';
+import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
@@ -82,7 +82,17 @@ const DRAFT = {
   replacementValue: { amount: 24_999, currency: 'GBP' },
   categoryVersionNumber: 1,
   attributes: { power_source: 'petrol', weight_kg: '5.2' },
+  // Null by default: a draft that has not said yet, which §8.3 allows. The
+  // transport tests below override it.
+  transportRequirement: null,
+  requiresTwoPersonLift: false,
 };
+
+/** What the launch category offers, for the tests that need a category to offer something. */
+const TRANSPORT: readonly CategoryTransportOption[] = [
+  { requirement: 'car_boot', suggestedUpToKg: 25 },
+  { requirement: 'van_required', suggestedUpToKg: 150 },
+];
 
 let app: NestFastifyApplication;
 let audit: AuditFakes;
@@ -145,6 +155,7 @@ async function idOf(token: string): Promise<string> {
 async function givenACategory(
   slug = 'outdoor-gardening',
   attributes: readonly CategoryAttribute[] = SCHEMA,
+  transportOptions: readonly CategoryTransportOption[] = [],
 ): Promise<void> {
   const author = await idOf('alice-token');
   await listings.categories.create(
@@ -154,10 +165,10 @@ async function givenACategory(
       riskLevel: 'medium',
       reportableActivity: 'none',
       attributes,
-      // 2.4c-i configures these; 2.4c-ii is where a listing carries one. A
-      // category with none asks nothing about transport, which is what every
-      // listing test here is unaffected by.
-      transportOptions: [],
+      // Empty by default, so every test that is not about transport describes a
+      // category that asks nothing about it — which is also what a category
+      // configured before slice 2.4c-i is.
+      transportOptions,
     },
     author,
   );
@@ -530,6 +541,7 @@ describe('the categories an owner may list in', () => {
         slug: 'outdoor-gardening',
         name: 'Outdoor and gardening',
         attributes: SCHEMA,
+        transportOptions: [],
         versionNumber: 1,
       },
     ]);
@@ -555,6 +567,11 @@ describe('the categories an owner may list in', () => {
       'attributes',
       'name',
       'slug',
+      // The thresholds are here deliberately: the suggestion is computed in the
+      // browser as the weight is typed, and they are a hint about how heavy a
+      // thing has to be before it needs a van — which is what the form is about
+      // to tell the owner anyway. Still no risk level, still no reportable flag.
+      'transportOptions',
       'versionNumber',
     ]);
   });
@@ -576,5 +593,154 @@ describe('the reason there is no audit trail here', () => {
     expect(
       audit.log.entries().filter((entry) => entry.targetType === 'listing'),
     ).toEqual([]);
+  });
+});
+
+describe('the transport requirement', () => {
+  it('stores what the owner chose from what the category offers', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      transportRequirement: 'car_boot',
+      requiresTwoPersonLift: true,
+    });
+
+    expect(response.statusCode).toBe(201);
+    const created = parseOwnerListing(response.json());
+    expect(created.transportRequirement).toBe('car_boot');
+    expect(created.requiresTwoPersonLift).toBe(true);
+  });
+
+  it('accepts a draft that has not said yet', async () => {
+    // §8.3's "save progress". Completeness is a publication rule (2.8), so null
+    // must not be refused even by a category that offers plenty.
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      transportRequirement: null,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).transportRequirement).toBeNull();
+  });
+
+  it('demands the field rather than assuming not answered', async () => {
+    // ADR 0025's rule, sixth application. A caller that forgot must hear so.
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    const withoutIt = Object.fromEntries(
+      Object.entries(DRAFT).filter(([key]) => key !== 'transportRequirement'),
+    );
+
+    expect((await createListing('alice-token', withoutIt)).statusCode).toBe(400);
+  });
+
+  it('demands the lift flag too', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    const withoutIt = Object.fromEntries(
+      Object.entries(DRAFT).filter(([key]) => key !== 'requiresTwoPersonLift'),
+    );
+
+    expect((await createListing('alice-token', withoutIt)).statusCode).toBe(400);
+  });
+
+  it('refuses a requirement outside the vocabulary', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+
+    expect(
+      (
+        await createListing('alice-token', {
+          ...DRAFT,
+          transportRequirement: 'roof_rack',
+        })
+      ).statusCode,
+    ).toBe(400);
+  });
+
+  it('refuses a requirement this category does not offer, and says what it does', async () => {
+    // In the vocabulary, so the wire schema is satisfied — and not something this
+    // category offers, which only the pinned version can decide.
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      transportRequirement: 'trailer_required',
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    // By label, because the stored values appear nowhere on screen.
+    expect(body.issues?.join(' ')).toContain('Car boot');
+    expect(body.issues?.join(' ')).toContain('Van or large vehicle');
+  });
+
+  it('refuses any requirement when the category asks nothing about collection', async () => {
+    // Every category configured before 2.4c-i is in this state, and a listing
+    // claiming a requirement its category never offered would be a value nothing
+    // downstream could interpret.
+    await givenACategory();
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      transportRequirement: 'car_boot',
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    expect(body.issues?.join(' ')).toMatch(/does not ask how an item is collected/i);
+  });
+
+  it('writes nothing when the requirement is refused', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+
+    await createListing('alice-token', {
+      ...DRAFT,
+      transportRequirement: 'trailer_required',
+    });
+
+    expect(listings.listings.all()).toHaveLength(0);
+  });
+
+  it('offers the category’s options to the form that has to render them', async () => {
+    // Without these the field is a dead control: a select with nothing in it.
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: CATEGORY_OPTIONS_PATH,
+      headers: auth('alice-token'),
+    });
+
+    const [category] = parseCategoryOptions(response.json()).categories;
+    expect(category?.transportOptions).toEqual(TRANSPORT);
+  });
+
+  it('keeps a listing readable after the category withdraws the option it chose', async () => {
+    // ADR 0029's rule, applied to transport: the listing pinned a version whose
+    // options included the van, and reconfiguring the category cannot reach back
+    // and invalidate that.
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    const created = parseOwnerListing(
+      (
+        await createListing('alice-token', {
+          ...DRAFT,
+          transportRequirement: 'van_required',
+        })
+      ).json(),
+    );
+
+    await reconfigured(SCHEMA);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingPath(created.id),
+      headers: auth('alice-token'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(parseOwnerListing(response.json()).transportRequirement).toBe(
+      'van_required',
+    );
   });
 });

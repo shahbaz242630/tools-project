@@ -247,3 +247,71 @@ export function offersTransportRequirement(
 ): boolean {
   return options.some((option) => option.requirement === requirement);
 }
+
+/**
+ * An item's weight, as an integer scaled by the category's own decimal places.
+ *
+ * **Not a number of kilograms**, and that is the point. 2.5 kg is `25` at one
+ * decimal place (ADR 0027), and carrying the scale alongside the value is what
+ * lets the comparison below happen entirely in integers. A `weightKg: 2.5`
+ * parameter would put a float on the one path §8.3 asks us to compute from —
+ * ADR 0002's rule applies here even though this is not money, because a float
+ * that is harmless in a form field is not harmless as a band boundary.
+ */
+export interface ItemWeight {
+  /** The value as an integer, scaled by `decimalPlaces`. */
+  readonly scaled: number;
+  readonly decimalPlaces: number;
+}
+
+/**
+ * Which option to suggest for an item of this weight (§8.3).
+ *
+ * *"Item weight, where captured as an attribute, should drive a suggested
+ * default for this field rather than being asked twice."* This is a
+ * **suggestion**: the owner can pick anything the category offers, and nothing
+ * refuses a listing for disagreeing with its own weight. Weight is not bulk — a
+ * 5 kg garden parasol and a 5 kg drill do not travel alike — which is why §8.3
+ * says "suggested" and why the field is asked at all rather than derived.
+ *
+ * Three ways it declines to guess, all returning null:
+ *
+ * - **no weight**, because the category has no such attribute or the owner has
+ *   not typed one yet;
+ * - **no thresholds configured**, which is a category that has not opted into
+ *   suggestions at all — a no-op rather than a wrong nudge (ADR 0031); and
+ * - nothing else. Above the heaviest threshold it suggests the **most demanding
+ *   option the category offers**, threshold or not, because an item heavier than
+ *   every configured band still has to go in something.
+ *
+ * The comparison is integer-only: a threshold in whole kilograms is scaled to
+ * the weight's own precision rather than the weight being divided down. Both
+ * sides stay whole, and `10 ** decimalPlaces` is exact for the 0–3 places
+ * `MAX_ATTRIBUTE_DECIMAL_PLACES` allows.
+ */
+export function suggestTransportRequirement(
+  options: readonly CategoryTransportOption[],
+  weight: ItemWeight | null,
+): TransportRequirement | null {
+  if (weight === null || options.length === 0) return null;
+
+  const scale = 10 ** weight.decimalPlaces;
+  let heaviestOffered: TransportRequirement | null = null;
+  let anyThreshold = false;
+
+  // The options are stored in display order (the contract normalises on the way
+  // in), so the first match walking forwards is the least demanding one that
+  // covers this weight.
+  for (const option of options) {
+    heaviestOffered = option.requirement;
+
+    if (option.suggestedUpToKg === undefined) continue;
+    anyThreshold = true;
+
+    if (weight.scaled <= option.suggestedUpToKg * scale) return option.requirement;
+  }
+
+  // Heavier than every configured band. A category with no bands at all has
+  // opted out of suggesting, and must not be given one by this fallback.
+  return anyThreshold ? heaviestOffered : null;
+}

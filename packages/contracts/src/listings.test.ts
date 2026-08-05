@@ -15,6 +15,11 @@ const validDraft = {
   replacementValue: { amount: 24_999, currency: 'GBP' },
   categoryVersionNumber: 1,
   attributes: { power_source: 'petrol', weight_kg: '5.2' },
+  // Present and null: a draft that has not said how it is collected. §8.3 lets
+  // owners save progress, and 2.4c-ii made "not said" explicit rather than
+  // something a caller could leave to chance.
+  transportRequirement: null,
+  requiresTwoPersonLift: false,
 };
 
 /** The draft minus one field, for asserting that its absence is refused. */
@@ -265,5 +270,64 @@ describe('the replacement value', () => {
         replacementValue: { amount: -24_999, currency: 'GBP' },
       }),
     ).toThrow(ContractViolationError);
+  });
+});
+
+describe('the transport requirement', () => {
+  it('accepts a value from the platform vocabulary', () => {
+    expect(
+      parseListingDraft({ ...validDraft, transportRequirement: 'van_required' })
+        .transportRequirement,
+    ).toBe('van_required');
+  });
+
+  it('accepts null, because a draft may not have said', () => {
+    // §8.3's "save progress". Completeness is publication's rule (2.8), and a
+    // draft refused for not answering is the form people abandon.
+    expect(parseListingDraft(validDraft).transportRequirement).toBeNull();
+  });
+
+  it('refuses a value outside the vocabulary', () => {
+    // Whether *this category* offers it is decided in the Catalogue service
+    // against the pinned version. This is the narrower check: is it a
+    // requirement at all.
+    expect(() =>
+      parseListingDraft({ ...validDraft, transportRequirement: 'roof_rack' }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('refuses an empty string rather than reading it as unanswered', () => {
+    // What a select's "no answer yet" option posts. The server action turns it
+    // into null before it gets here — deliberately, so that "not said" has one
+    // representation rather than two.
+    expect(() =>
+      parseListingDraft({ ...validDraft, transportRequirement: '' }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('demands the field rather than assuming not answered', () => {
+    // ADR 0025, sixth application. A caller that forgot must hear so.
+    expect(() => parseListingDraft(without('transportRequirement'))).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('demands the two-person lift flag too', () => {
+    expect(() => parseListingDraft(without('requiresTwoPersonLift'))).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('keeps the lift flag separate from the requirement', () => {
+    // ADR 0031's split: an item can need a van *and* two people, and a single
+    // field would force an owner to discard one of two true facts.
+    const draft = parseListingDraft({
+      ...validDraft,
+      transportRequirement: 'van_required',
+      requiresTwoPersonLift: true,
+    });
+
+    expect(draft.transportRequirement).toBe('van_required');
+    expect(draft.requiresTwoPersonLift).toBe(true);
   });
 });

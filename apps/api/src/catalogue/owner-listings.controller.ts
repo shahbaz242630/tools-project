@@ -26,7 +26,10 @@ import type { MirroredUser } from '../identity/user-directory.js';
 import { LISTINGS_SERVICE } from './catalogue.tokens.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type { ListingRecord } from './listing-store.js';
-import { AttributeValuesInvalidError } from './listings.service.js';
+import {
+  AttributeValuesInvalidError,
+  TransportRequirementNotOfferedError,
+} from './listings.service.js';
 import type { ListingsService } from './listings.service.js';
 
 /**
@@ -80,6 +83,8 @@ export class OwnerListingsController {
         description: draft.description,
         replacementValue: draft.replacementValue,
         attributes: draft.attributes,
+        transportRequirement: draft.transportRequirement,
+        requiresTwoPersonLift: draft.requiresTwoPersonLift,
         categoryVersionNumber: draft.categoryVersionNumber,
       });
       return toOwnerListing(created);
@@ -95,6 +100,15 @@ export class OwnerListingsController {
         // field to correct. The configuration moved underneath them, which is a
         // conflict about state rather than a fault in the request.
         throw new ConflictException({ message: error.message });
+      }
+      if (error instanceof TransportRequirementNotOfferedError) {
+        // 400, not 409. The category has not moved — the version check above
+        // would have caught that — so this is a value the form should never have
+        // offered, and the message names what it does offer.
+        throw new BadRequestException({
+          message: 'That is not how items in this category are collected',
+          issues: [error.message],
+        });
       }
       if (error instanceof AttributeValuesInvalidError) {
         // The same shape a contract violation produces, so the web app has one
@@ -161,6 +175,8 @@ function toOwnerListing(listing: ListingRecord): OwnerListing {
     description: listing.description,
     replacementValue: listing.replacementValue,
     attributes: listing.attributes,
+    transportRequirement: listing.transportRequirement,
+    requiresTwoPersonLift: listing.requiresTwoPersonLift,
     status: listing.status,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),

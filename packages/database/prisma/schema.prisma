@@ -866,6 +866,37 @@ model Listing {
   replacementValueAmount   Int    @db.Integer
   replacementValueCurrency String @db.Text
 
+  /// What is needed to collect and carry this item (BRD §8.3, ADR 0031,
+  /// slice 2.4c-ii).
+  ///
+  /// One of the platform's closed vocabulary — `hand_carryable`, `car_boot`,
+  /// `estate_or_hatchback`, `van_required`, `trailer_required` — as text with
+  /// the union in code, exactly like `status` and `riskLevel`. **Which of them
+  /// are legal for this listing is category configuration**, held on the version
+  /// this row pins, so no CHECK constraint here could express it without reading
+  /// another table's JSON. The service validates against the pinned options and
+  /// the adapter refuses a value this build does not know.
+  ///
+  /// **Nullable, because a draft has not necessarily said yet.** §8.3 lets
+  /// owners save progress, so completeness is a publication rule (2.8) — which
+  /// inherits the question of what publishing means for a category that offers
+  /// no options at all.
+  transportRequirement String? @db.Text
+
+  /// Whether it takes two people to lift.
+  ///
+  /// **A separate column, not a value in the vocabulary above** (ADR 0031). The
+  /// BRD's example list puts "two-person lift" beside the vehicle sizes, but an
+  /// item can need a van *and* two people, and one column would force an owner
+  /// to discard one of two true facts.
+  ///
+  /// Not nullable and defaulted false: unlike the requirement, this has a
+  /// meaningful answer for an item nobody has thought about yet, and "we do not
+  /// know" and "no" would be two states every later reader has to treat alike.
+  /// It feeds §8.9's handover checklist regardless of what the category
+  /// configured, which is why it is asked of every listing.
+  requiresTwoPersonLift Boolean @default(false)
+
   /// `DRAFT`, and nothing else until slice 2.8 brings the rest of the lifecycle.
   ///
   /// Text with a closed union in code, exactly as `riskLevel` and
