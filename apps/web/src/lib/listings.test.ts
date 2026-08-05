@@ -26,6 +26,8 @@ const LISTING = {
   description: 'Serviced last spring.',
   replacementValue: { amount: 24_999, currency: 'GBP' },
   attributes: { weight_kg: 52 },
+  transportRequirement: 'car_boot',
+  requiresTwoPersonLift: false,
   status: 'DRAFT',
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
@@ -38,6 +40,10 @@ const DRAFT = {
   replacementValue: { amount: 24_999, currency: 'GBP' },
   categoryVersionNumber: 1,
   attributes: { weight_kg: '5.2' },
+  // Null and false: a draft that has not said how it is collected, which §8.3
+  // allows and 2.4c-ii made explicit rather than assumed.
+  transportRequirement: null,
+  requiresTwoPersonLift: false,
 } as const;
 
 function responds(status: number, body = ''): FetchLike {
@@ -202,6 +208,7 @@ describe('fetchCategoryOptions', () => {
               slug: 'outdoor-gardening',
               name: 'Outdoor and gardening',
               attributes: SCHEMA,
+              transportOptions: [],
               versionNumber: 1,
             },
           ],
@@ -216,6 +223,7 @@ describe('fetchCategoryOptions', () => {
           slug: 'outdoor-gardening',
           name: 'Outdoor and gardening',
           attributes: SCHEMA,
+          transportOptions: [],
           versionNumber: 1,
         },
       ],
@@ -239,6 +247,7 @@ describe('fetchCategoryOptions', () => {
               attributes: [
                 { key: 'when', label: 'When', required: false, type: 'date' },
               ],
+              transportOptions: [],
               versionNumber: 1,
             },
           ],

@@ -1,7 +1,9 @@
 import type {
   CategoryAttribute,
+  CategoryTransportOption,
   ListingAttributeValues,
   ListingStatus,
+  TransportRequirement,
 } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 
@@ -40,6 +42,9 @@ export interface ListingRecord {
   readonly replacementValue: MoneyValue;
   /** Answers keyed by attribute key. An unanswered attribute is absent. */
   readonly attributes: ListingAttributeValues;
+  /** What it takes to collect it, or null on a draft that has not said (§8.3). */
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
   readonly status: ListingStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -70,6 +75,15 @@ export interface ListingDraft {
    * against.
    */
   readonly attributes: ListingAttributeValues;
+  /**
+   * Already checked against the options on version `categoryVersionNumber`.
+   *
+   * Same division of labour as the attributes: the service decides whether the
+   * category offers this requirement, because that is domain meaning, and the
+   * store only guarantees the version it pins is the one that was checked.
+   */
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
   /**
    * The version the values above were validated against.
    *
@@ -164,6 +178,13 @@ export interface CategoryOptionRecord {
   readonly name: string;
   /** The current schema, in render order. Empty is legitimate. */
   readonly attributes: readonly CategoryAttribute[];
+  /**
+   * Which transport requirements this category offers, and their weight
+   * thresholds (§8.3, ADR 0031). Empty means the listing form asks nothing about
+   * how the item is collected, which is what a category configured before slice
+   * 2.4c-i has.
+   */
+  readonly transportOptions: readonly CategoryTransportOption[];
   /** Which version the schema above came from. */
   readonly versionNumber: number;
 }

@@ -19,6 +19,11 @@ import { z } from 'zod';
 import { boundedMoneySchema, moneySchema } from './money.js';
 import { categoryAttributesSchema, categorySlugSchema } from './catalogue.js';
 import type { CategoryAttribute } from './catalogue.js';
+import {
+  categoryTransportOptionsSchema,
+  transportRequirementSchema,
+} from './transport.js';
+import type { CategoryTransportOption, TransportRequirement } from './transport.js';
 import type { ListingAttributeValues } from './attribute-values.js';
 import { hasUnsafeCharacters, UNSAFE_CHARACTERS_MESSAGE } from './text.js';
 import { parseWith } from './parse.js';
@@ -175,6 +180,35 @@ export const listingDraftSchema = z.object({
    * answers should get a 400 rather than a listing that quietly has none.
    */
   attributes: z.record(z.string(), z.unknown()),
+  /**
+   * What is needed to collect and carry the item (§8.3, ADR 0031).
+   *
+   * **Required to be present, allowed to be null** — the same distinction the
+   * description draws, and for the same reason. A draft legitimately has not
+   * answered this yet; a caller that omitted the field entirely has forgotten
+   * it, and should hear so rather than have "not answered" assumed for them.
+   *
+   * Which values are legal is *category* configuration, so it cannot be decided
+   * here: this checks only that the value is in the platform's vocabulary at
+   * all. Whether this category offers it is checked in the Catalogue service
+   * against the options on the version being pinned, exactly as attribute
+   * values are.
+   */
+  transportRequirement: transportRequirementSchema.nullable(),
+  /**
+   * Whether it takes two people to lift.
+   *
+   * **A separate field from the requirement above, deliberately** (ADR 0031).
+   * The BRD's example list has "two-person lift" beside the vehicle sizes, but
+   * they are different axes: an item can need a van *and* two people, and one
+   * choice would force an owner to discard one of two true facts.
+   *
+   * **Not category configuration.** Whether a category should offer a trailer
+   * varies; whether a given object takes two people to pick up does not. It is
+   * asked of every listing, and it feeds §8.9's handover checklist regardless of
+   * what the category configured.
+   */
+  requiresTwoPersonLift: z.boolean(),
 });
 
 export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
@@ -214,6 +248,15 @@ export interface OwnerListing {
   readonly replacementValue: z.infer<typeof moneySchema>;
   /** Keyed by attribute key. An unanswered attribute is absent, never null. */
   readonly attributes: ListingAttributeValues;
+  /**
+   * What it takes to collect the item, or null on a draft that has not said.
+   *
+   * Read against the options on the **pinned** version, like everything else
+   * here: a category that has since withdrawn an option does not make an
+   * existing listing unreadable, it just means nobody new can choose it.
+   */
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
   readonly status: ListingStatus;
   /** ISO 8601 UTC. */
   readonly createdAt: string;
@@ -240,6 +283,8 @@ const ownerListingSchema = z.object({
   description: z.string(),
   replacementValue: moneySchema,
   attributes: z.record(z.string(), attributeValueSchema),
+  transportRequirement: transportRequirementSchema.nullable(),
+  requiresTwoPersonLift: z.boolean(),
   status: listingStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -275,6 +320,18 @@ export interface CategoryOption {
    */
   readonly attributes: readonly CategoryAttribute[];
   /**
+   * Which transport requirements this category offers, with their weight
+   * thresholds — the current selection, for the same reason the attributes are
+   * current: a form being filled in now is filling in the configuration in
+   * force now.
+   *
+   * The thresholds travel because the suggestion is computed in the browser, as
+   * the weight is typed. They are not secret — they are a hint about how heavy a
+   * thing has to be before it needs a van, which is what the form is about to
+   * tell the owner anyway.
+   */
+  readonly transportOptions: readonly CategoryTransportOption[];
+  /**
    * Which version the above came from, so the draft can say what it was built
    * against and the server can notice if it has moved since.
    */
@@ -287,6 +344,7 @@ const categoryOptionListSchema = z.object({
       slug: z.string(),
       name: z.string(),
       attributes: categoryAttributesSchema,
+      transportOptions: categoryTransportOptionsSchema,
       versionNumber: z.number().int().positive(),
     }),
   ),

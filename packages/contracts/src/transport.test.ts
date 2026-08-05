@@ -7,6 +7,7 @@ import {
   TRANSPORT_REQUIREMENT_LABELS,
   WEIGHT_ATTRIBUTE_KEY,
   offersTransportRequirement,
+  suggestTransportRequirement,
   parseCategoryTransportOptions,
 } from './transport.js';
 
@@ -257,5 +258,106 @@ describe('offersTransportRequirement', () => {
     // Takes a string rather than a `TransportRequirement`, because the caller
     // that most needs it is checking something that arrived over the wire.
     expect(offersTransportRequirement(options, 'roof_rack')).toBe(false);
+  });
+});
+
+describe('suggesting a requirement from the weight', () => {
+  /**
+   * §8.3: *"Item weight, where captured as an attribute, should drive a
+   * suggested default for this field rather than being asked twice."*
+   *
+   * The launch category's real bands, so a change that makes the real form
+   * suggest something silly breaks a test rather than a listing.
+   */
+  const OPTIONS = [
+    { requirement: 'hand_carryable' as const, suggestedUpToKg: 8 },
+    { requirement: 'car_boot' as const, suggestedUpToKg: 25 },
+    { requirement: 'estate_or_hatchback' as const, suggestedUpToKg: 60 },
+    { requirement: 'van_required' as const, suggestedUpToKg: 150 },
+  ];
+
+  /** 12.5 kg at one decimal place is 125 — ADR 0027's scaled integer. */
+  const kg = (value: number, decimalPlaces = 1) => ({
+    scaled: value,
+    decimalPlaces,
+  });
+
+  it('suggests the lightest band that covers the weight', () => {
+    expect(suggestTransportRequirement(OPTIONS, kg(125))).toBe('car_boot');
+  });
+
+  it('treats a threshold as inclusive', () => {
+    // Exactly 25.0 kg is "up to 25 kg". An exclusive boundary would push every
+    // round number into the next band up, which is where owners' numbers cluster.
+    expect(suggestTransportRequirement(OPTIONS, kg(250))).toBe('car_boot');
+  });
+
+  it('moves up a band one tenth of a kilogram later', () => {
+    // The boundary is exact because both sides are integers. A float comparison
+    // is where 25.1 would quietly become 25.099999999999998.
+    expect(suggestTransportRequirement(OPTIONS, kg(251))).toBe('estate_or_hatchback');
+  });
+
+  it('suggests the lightest option for a very light item', () => {
+    expect(suggestTransportRequirement(OPTIONS, kg(5))).toBe('hand_carryable');
+  });
+
+  it('suggests the most demanding option offered when nothing covers the weight', () => {
+    // 300 kg against a top band of 150. It still has to go in something, and the
+    // heaviest thing this category offers is the honest answer.
+    expect(suggestTransportRequirement(OPTIONS, kg(3000))).toBe('van_required');
+  });
+
+  it('compares against the category’s own scale, not against kilograms', () => {
+    // The same physical weight at a different configured precision. 12 kg at
+    // zero decimal places is `12`, not `120`, and reading it as 1.2 kg would
+    // suggest hand-carrying a mower.
+    expect(suggestTransportRequirement(OPTIONS, kg(12, 0))).toBe('car_boot');
+    expect(suggestTransportRequirement(OPTIONS, kg(1250, 2))).toBe('car_boot');
+  });
+
+  it('suggests nothing when there is no weight yet', () => {
+    // An untouched form, a half-typed number, or a category with no weight
+    // attribute. All the same answer: not yet.
+    expect(suggestTransportRequirement(OPTIONS, null)).toBeNull();
+  });
+
+  it('suggests nothing when the category configured no thresholds', () => {
+    // Opting out, and it must stay opted out — including for an item heavier
+    // than anything, where the fallback would otherwise invent a suggestion.
+    const noBands = [
+      { requirement: 'car_boot' as const },
+      { requirement: 'van_required' as const },
+    ];
+
+    expect(suggestTransportRequirement(noBands, kg(125))).toBeNull();
+    expect(suggestTransportRequirement(noBands, kg(99_999))).toBeNull();
+  });
+
+  it('suggests nothing when the category offers no options at all', () => {
+    expect(suggestTransportRequirement([], kg(125))).toBeNull();
+  });
+
+  it('skips an option with no threshold rather than stopping at it', () => {
+    // A gap in the middle: estate is offered but never suggested by weight, and
+    // a 40 kg item belongs in the van band rather than nowhere.
+    const gapped = [
+      { requirement: 'car_boot' as const, suggestedUpToKg: 25 },
+      { requirement: 'estate_or_hatchback' as const },
+      { requirement: 'van_required' as const, suggestedUpToKg: 150 },
+    ];
+
+    expect(suggestTransportRequirement(gapped, kg(400))).toBe('van_required');
+  });
+
+  it('can suggest an option with no threshold as the heaviest offered', () => {
+    // Over every band, and the most demanding thing on offer happens to have no
+    // threshold of its own. It is still the right answer.
+    const gapped = [
+      { requirement: 'car_boot' as const, suggestedUpToKg: 25 },
+      { requirement: 'trailer_required' as const },
+    ];
+
+    expect(suggestTransportRequirement(gapped, kg(4000))).toBe('trailer_required');
   });
 });

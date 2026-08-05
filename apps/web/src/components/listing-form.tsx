@@ -6,11 +6,13 @@ import {
   LISTING_TITLE_MAX_LENGTH,
   LISTING_TITLE_MIN_LENGTH,
 } from '@platform/contracts';
-import type { CategoryOption } from '@platform/contracts';
+import { readItemWeight } from '@platform/contracts';
+import type { CategoryOption, TransportRequirement } from '@platform/contracts';
 import { createListingAction } from '../app/listings/new/actions';
 import { INITIAL_LISTING_STATE } from '../app/listings/new/state';
 import { AttributeFields, toSubmittedAttributes } from './attribute-fields';
 import type { AttributeAnswers } from './attribute-fields';
+import { TransportField } from './transport-field';
 
 /**
  * Creating a draft listing.
@@ -37,8 +39,23 @@ export function ListingForm({
 
   const [slug, setSlug] = useState(state.categorySlug);
   const [answers, setAnswers] = useState<AttributeAnswers>({});
+  /**
+   * What the owner has *chosen*, which is not the same as what the field shows.
+   *
+   * Null means they have not decided, and the transport field then follows the
+   * weight as it is typed. Once they choose, this holds it and the suggestion
+   * stops moving underneath them — the alternative is a control that fights its
+   * own user every time they correct the weight.
+   */
+  const [transport, setTransport] = useState<TransportRequirement | null>(null);
+  const [twoPersonLift, setTwoPersonLift] = useState(false);
 
   const chosen = categories.find((category) => category.slug === slug);
+  // The weight the category captured, if it captured one. Keyed off the
+  // attribute key rather than the unit string (ADR 0027), and null for every
+  // half-typed state on the way to a number.
+  const weight =
+    chosen === undefined ? null : readItemWeight(chosen.attributes, answers);
 
   /**
    * Put the failure where the person is looking.
@@ -55,6 +72,16 @@ export function ListingForm({
    * failure React reuses the same node, which is already focused, so the call
    * does nothing and the page sits still exactly when somebody is most likely
    * to think it is stuck. Found that way, on the second failure in a row.
+   *
+   * **The dependency is the whole state object, not `state.message`**, and that
+   * is the half slice 2.4b missed. Two identical failures produce the same
+   * string, so a dependency on the string compares equal and the effect never
+   * runs again — the `focus()` and `scrollIntoView()` above are not merely
+   * ineffective on the second press, they are never called. Confirmed in a
+   * browser: press Save twice with the same bad value and the alert is not
+   * focused the second time. `useActionState` returns a fresh object per
+   * settled action, so this fires on every attempt including an identical
+   * repeat.
    */
   const alert = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -63,7 +90,7 @@ export function ListingForm({
     // Optional call: jsdom does not implement `scrollIntoView`, and a component
     // test asserting the message should not fail on a browser affordance.
     alert.current?.scrollIntoView?.({ block: 'center' });
-  }, [state.message]);
+  }, [state]);
 
   return (
     <form action={action}>
@@ -91,6 +118,11 @@ export function ListingForm({
             // submit answers to questions that were never asked, so switching
             // category starts the category's own fields empty.
             setAnswers({});
+            // Cleared for a sharper reason than the answers: two categories
+            // offer different transport options, so a choice carried across
+            // could be one the new category does not offer — which the API
+            // would refuse, about a field the owner never touched.
+            setTransport(null);
           }}
         >
           <option value="">Choose a category</option>
@@ -203,6 +235,21 @@ export function ListingForm({
             onChange={(key, value) => {
               setAnswers((current) => ({ ...current, [key]: value }));
             }}
+          />
+
+          {/*
+            After the attributes, deliberately: the weight is one of them, and a
+            field that suggests an answer should appear below the thing it read
+            rather than above it. Renders nothing at all when the category offers
+            no options.
+          */}
+          <TransportField
+            options={chosen.transportOptions}
+            weight={weight}
+            chosen={transport}
+            onChange={setTransport}
+            requiresTwoPersonLift={twoPersonLift}
+            onLiftChange={setTwoPersonLift}
           />
         </>
       )}

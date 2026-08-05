@@ -82,6 +82,12 @@ const CATEGORIES: readonly CategoryOption[] = [
         ],
       },
     ],
+    // The launch category's real bands, and it has a `weight_kg` attribute
+    // above — so this fixture is the one that can suggest.
+    transportOptions: [
+      { requirement: 'car_boot', suggestedUpToKg: 25 },
+      { requirement: 'van_required', suggestedUpToKg: 150 },
+    ],
   },
   {
     slug: 'cleaning-floorcare',
@@ -97,6 +103,9 @@ const CATEGORIES: readonly CategoryOption[] = [
         decimalPlaces: 0,
       },
     ],
+    // Offers none, deliberately: it is the "asks nothing about collection"
+    // branch, which every category configured before slice 2.4c-i is in.
+    transportOptions: [],
   },
 ];
 
@@ -202,6 +211,24 @@ describe('ListingForm', () => {
     expect(document.activeElement).toBe(alert);
     // Focusable, but not in the tab order — it is a message, not a control.
     expect(alert.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('takes them there again on a second, identical failure', () => {
+    // The half slice 2.4b missed, found by pressing Save twice in a browser with
+    // the same bad value. Two identical failures produce the same string, so an
+    // effect keyed on the *message* compares equal and never runs again — the
+    // page then sits perfectly still on the second press, which is precisely
+    // when somebody decides the form is broken.
+    withState({ status: 'error', message: 'That did not save.' });
+    const { rerender } = render(<ListingForm categories={CATEGORIES} />);
+    (document.activeElement as HTMLElement).blur();
+
+    // A fresh state object carrying the same words, which is what
+    // `useActionState` hands back when the same save is refused twice.
+    state.current = { ...state.current };
+    rerender(<ListingForm categories={CATEGORIES} />);
+
+    expect(document.activeElement).toBe(screen.getByRole('alert'));
   });
 
   it('scrolls as well as focuses, so a second failure in a row still moves', () => {
@@ -374,7 +401,13 @@ describe('the fields a category asks for', () => {
     render(
       <ListingForm
         categories={[
-          { slug: 'plain', name: 'Plain', versionNumber: 1, attributes: [] },
+          {
+            slug: 'plain',
+            name: 'Plain',
+            versionNumber: 1,
+            attributes: [],
+            transportOptions: [],
+          },
         ]}
       />,
     );
@@ -382,5 +415,151 @@ describe('the fields a category asks for', () => {
 
     expect(screen.getByText(/asks for no extra details/i)).toBeTruthy();
     expect(submitted()).toEqual({});
+  });
+});
+
+describe('the transport requirement', () => {
+  /** The select the category's options are rendered into. */
+  const field = () => screen.queryByLabelText(/What is needed to collect it/i);
+
+  const weigh = (value: string) => {
+    fireEvent.change(screen.getByLabelText(/Weight \(kg\)/i), {
+      target: { value },
+    });
+  };
+
+  it('asks nothing when the category offers no options', () => {
+    // No dead control: an empty select would invite an answer that cannot be
+    // given, and the API would refuse any value for such a category.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('cleaning-floorcare');
+
+    expect(field()).toBeNull();
+  });
+
+  it('offers only what the category offers', () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    // Two of the platform's five, because that is what this category configured.
+    expect(screen.getByRole('option', { name: /Car boot/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /Van or large vehicle/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /Trailer/ })).toBeNull();
+  });
+
+  it('starts unanswered, because a draft may be', () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    expect((field() as HTMLSelectElement).value).toBe('');
+  });
+
+  it('suggests a band once a weight is typed', () => {
+    // §8.3: the weight drives a suggested default rather than being asked twice.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    weigh('12.5');
+
+    expect((field() as HTMLSelectElement).value).toBe('car_boot');
+  });
+
+  it('moves the suggestion up as the weight grows', () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    weigh('12.5');
+    weigh('90');
+
+    expect((field() as HTMLSelectElement).value).toBe('van_required');
+  });
+
+  it('says the answer came from the weight rather than from the owner', () => {
+    // A field that filled itself in silently is one somebody submits without
+    // reading — and this one is a promise to a stranger about what to arrive in.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    weigh('12.5');
+
+    expect(screen.getByRole('status').textContent).toMatch(
+      /suggested from the weight/i,
+    );
+  });
+
+  it('stops suggesting once the owner chooses for themselves', () => {
+    // The important one. A suggestion that kept reasserting itself would drag
+    // the answer back every time the weight was corrected.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    weigh('12.5');
+
+    fireEvent.change(field() as HTMLElement, { target: { value: 'van_required' } });
+    weigh('9');
+
+    expect((field() as HTMLSelectElement).value).toBe('van_required');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('lets the owner go back to unanswered', () => {
+    // Choosing the empty option must clear the choice rather than hand control
+    // back to the suggestion, or "no answer yet" would be unreachable.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    weigh('12.5');
+    fireEvent.change(field() as HTMLElement, { target: { value: 'van_required' } });
+
+    fireEvent.change(field() as HTMLElement, { target: { value: '' } });
+
+    // Back to the suggestion, which is what an unanswered field shows.
+    expect((field() as HTMLSelectElement).value).toBe('car_boot');
+  });
+
+  it('suggests nothing while the weight is half typed', () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    weigh('12.');
+
+    expect((field() as HTMLSelectElement).value).toBe('');
+  });
+
+  it('forgets the choice when the category changes', () => {
+    // Two categories offer different options, so a choice carried across could
+    // be one the new category does not offer — refused by the API, about a field
+    // the owner never touched.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    weigh('12.5');
+    fireEvent.change(field() as HTMLElement, { target: { value: 'van_required' } });
+
+    choose('cleaning-floorcare');
+    choose('outdoor-gardening');
+
+    expect((field() as HTMLSelectElement).value).toBe('');
+  });
+
+  it('keeps a ticked two-person lift through the form reset React does after an action', () => {
+    // The defect slice 2.4c-i found on the admin form, in the place it would
+    // have arrived next: a refused save would otherwise discard something the
+    // owner stated about their own item.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    const lift = screen.getByLabelText(/It takes two people to lift/i);
+    fireEvent.click(lift);
+    (document.querySelector('form') as HTMLFormElement).reset();
+
+    expect((lift as HTMLInputElement).checked).toBe(true);
   });
 });

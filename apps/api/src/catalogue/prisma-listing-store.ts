@@ -1,10 +1,17 @@
 import type { PrismaClient } from '@platform/database';
 import type {
   CategoryAttribute,
+  CategoryTransportOption,
   ListingAttributeValues,
   ListingStatus,
+  TransportRequirement,
 } from '@platform/contracts';
-import { LISTING_STATUSES, parseCategoryAttributes } from '@platform/contracts';
+import {
+  LISTING_STATUSES,
+  TRANSPORT_REQUIREMENTS,
+  parseCategoryAttributes,
+  parseCategoryTransportOptions,
+} from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import { Money } from '@platform/core';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
@@ -64,6 +71,8 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         replacementValueAmount: draft.replacementValue.amount,
         replacementValueCurrency: draft.replacementValue.currency,
         attributes: draft.attributes,
+        transportRequirement: draft.transportRequirement,
+        requiresTwoPersonLift: draft.requiresTwoPersonLift,
         status: DRAFT,
       },
       include: LISTING_CATEGORY,
@@ -137,6 +146,7 @@ interface VersionRow {
   name: string;
   versionNumber: number;
   attributes: unknown;
+  transportOptions: unknown;
 }
 
 function toOption(slug: string, version: VersionRow): CategoryOptionRecord {
@@ -144,6 +154,10 @@ function toOption(slug: string, version: VersionRow): CategoryOptionRecord {
     slug,
     name: version.name,
     attributes: asAttributes(version.attributes, `category "${slug}"`),
+    transportOptions: asTransportOptions(
+      version.transportOptions,
+      `category "${slug}"`,
+    ),
     versionNumber: version.versionNumber,
   };
 }
@@ -156,6 +170,8 @@ interface ListingRow {
   replacementValueAmount: number;
   replacementValueCurrency: string;
   attributes: unknown;
+  transportRequirement: string | null;
+  requiresTwoPersonLift: boolean;
   status: string;
   createdAt: Date;
   updatedAt: Date;
@@ -183,6 +199,8 @@ function toRecord(listing: ListingRow): ListingRecord {
       listing.id,
     ),
     attributes: asValues(listing.attributes, listing.id),
+    transportRequirement: asRequirement(listing.transportRequirement, listing.id),
+    requiresTwoPersonLift: listing.requiresTwoPersonLift,
     status: asStatus(listing.status),
     createdAt: listing.createdAt,
     updatedAt: listing.updatedAt,
@@ -269,6 +287,60 @@ function asValues(raw: unknown, listingId: string): ListingAttributeValues {
   }
 
   return values;
+}
+
+/**
+ * A category's offered transport options, on the way out of `jsonb`.
+ *
+ * Throws rather than falling back to an empty selection, for the reason the
+ * admin store gives: reading it as "none" would present the category as not
+ * asking how its items are collected, and the listing form would silently stop
+ * asking — §8.3's failed handover, arriving through a parse failure nobody sees.
+ */
+function asTransportOptions(
+  raw: unknown,
+  what: string,
+): readonly CategoryTransportOption[] {
+  try {
+    return parseCategoryTransportOptions(raw);
+  } catch (error) {
+    throw new Error(
+      `The transport options on ${what} are not ones this build can read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * The stored requirement, on the way out.
+ *
+ * Null is a real value here — a draft that has not said (§8.3) — and is passed
+ * through rather than treated as missing.
+ *
+ * A value outside the vocabulary throws, for `asStatus`' reason. It means the
+ * row was written by a newer build, and the two lenient readings are both wrong:
+ * null would present an owner's stated requirement as unanswered, and passing it
+ * through would put an unrenderable value in front of a renter deciding whether
+ * they can collect the thing.
+ *
+ * **It deliberately does not check that the category still offers it.** That is
+ * settled on the way in, against the pinned version; re-deciding it here would
+ * mean withdrawing an option makes existing listings unreadable, which is what
+ * pinning exists to prevent (ADR 0029).
+ */
+function asRequirement(
+  value: string | null,
+  listingId: string,
+): TransportRequirement | null {
+  if (value === null) return null;
+  if ((TRANSPORT_REQUIREMENTS as readonly string[]).includes(value)) {
+    return value as TransportRequirement;
+  }
+  throw new Error(
+    `Listing ${listingId} has a transport requirement this build does not know: ${value}`,
+  );
 }
 
 /**

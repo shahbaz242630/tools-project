@@ -1,5 +1,9 @@
-import { validateAttributeValues } from '@platform/contracts';
-import type { AttributeValueIssue } from '@platform/contracts';
+import {
+  TRANSPORT_REQUIREMENT_LABELS,
+  offersTransportRequirement,
+  validateAttributeValues,
+} from '@platform/contracts';
+import type { AttributeValueIssue, TransportRequirement } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import type {
   CategoryOptionRecord,
@@ -25,7 +29,39 @@ export interface SubmittedListing {
   readonly description: string;
   readonly replacementValue: MoneyValue;
   readonly attributes: unknown;
+  /**
+   * In the platform's vocabulary already — the wire schema checked that — but
+   * not yet known to be one *this category* offers. That is configuration on the
+   * version about to be pinned, so only this service can decide it.
+   */
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
   readonly categoryVersionNumber: number;
+}
+
+/**
+ * Raised when the category does not offer the transport requirement chosen.
+ *
+ * Its own error rather than an `AttributeValueIssue`, because it is not an
+ * attribute and a form showing errors beside fields must not be told it is one.
+ * The message names the offered options **by label**, because the stored values
+ * appear nowhere on screen — 2.4b's lesson, and 2.4c-i's.
+ */
+export class TransportRequirementNotOfferedError extends Error {
+  constructor(
+    readonly requirement: string,
+    offered: readonly { readonly requirement: TransportRequirement }[],
+  ) {
+    super(
+      offered.length === 0
+        ? 'This category does not ask how an item is collected, so it cannot ' +
+            'take a transport requirement'
+        : `This category is collected by ${offered
+            .map((option) => TRANSPORT_REQUIREMENT_LABELS[option.requirement])
+            .join(', ')}`,
+    );
+    this.name = 'TransportRequirementNotOfferedError';
+  }
 }
 
 /**
@@ -100,6 +136,27 @@ export class ListingsService {
     const values = validateAttributeValues(category.attributes, submitted.attributes);
     if (!values.ok) throw new AttributeValuesInvalidError(values.issues);
 
+    // Checked against the options on the version being pinned, never against the
+    // category as it stands now — the rule ADR 0029 established for attribute
+    // values, and it matters here for the same reason: withdrawing an option
+    // must not retroactively invalidate a listing that chose it.
+    //
+    // Null is always allowed. §8.3 makes a draft permissive, so "not said yet"
+    // is legitimate even for a category that offers plenty; completeness is a
+    // publication rule (2.8).
+    if (
+      submitted.transportRequirement !== null &&
+      !offersTransportRequirement(
+        category.transportOptions,
+        submitted.transportRequirement,
+      )
+    ) {
+      throw new TransportRequirementNotOfferedError(
+        submitted.transportRequirement,
+        category.transportOptions,
+      );
+    }
+
     return this.store.createDraft({
       ownerId: submitted.ownerId,
       categorySlug: submitted.categorySlug,
@@ -107,6 +164,8 @@ export class ListingsService {
       description: submitted.description,
       replacementValue: submitted.replacementValue,
       attributes: values.values,
+      transportRequirement: submitted.transportRequirement,
+      requiresTwoPersonLift: submitted.requiresTwoPersonLift,
       categoryVersionNumber: category.versionNumber,
     });
   }

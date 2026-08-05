@@ -5,6 +5,7 @@ export * from './catalogue.js';
 export * from './export.js';
 export * from './health.js';
 export * from './identity.js';
+export * from './item-weight.js';
 export * from './listings.js';
 export * from './money.js';
 export * from './parse.js';
