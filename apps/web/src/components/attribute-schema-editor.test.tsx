@@ -285,3 +285,35 @@ describe('an existing schema', () => {
     expect(screen.getAllByText(/Permanent in practice/i)[0]).toBeInTheDocument();
   });
 });
+
+describe('surviving the form reset React 19 does after an action', () => {
+  /**
+   * The same defect the transport editor documents, pre-existing here since
+   * slice 2.2 and never noticed — this box is usually left alone, and until
+   * ADR 0030 no administrator could open the page at all.
+   *
+   * React 19 resets the form once a server action settles, which un-ticks a
+   * checkbox whose state came from a click while React's own state still says it
+   * is ticked. The form then shows "an owner need not answer this" and posts
+   * `required: true`.
+   */
+  it('keeps a toggled "an owner must answer this"', () => {
+    render(
+      <form>
+        <AttributeSchemaEditor name="attributes" idPrefix="test" initial={SCHEMA} />
+      </form>,
+    );
+    const form = document.querySelector('form') as HTMLFormElement;
+
+    // `weight_kg` arrives required; untick it, which is the gesture that used to
+    // be silently undone.
+    const box = screen.getAllByLabelText(/An owner must answer this/)[1];
+    fireEvent.click(box as HTMLElement);
+
+    form.reset();
+
+    expect((box as HTMLInputElement).checked).toBe(false);
+    const attributes = posted() as readonly { key: string; required: boolean }[];
+    expect(attributes.find((a) => a.key === 'weight_kg')?.required).toBe(false);
+  });
+});

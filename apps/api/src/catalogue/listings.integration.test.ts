@@ -154,6 +154,10 @@ async function givenACategory(
       riskLevel: 'medium',
       reportableActivity: 'none',
       attributes,
+      // 2.4c-i configures these; 2.4c-ii is where a listing carries one. A
+      // category with none asks nothing about transport, which is what every
+      // listing test here is unaffected by.
+      transportOptions: [],
     },
     author,
   );
@@ -169,6 +173,7 @@ async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<v
       riskLevel: 'medium',
       reportableActivity: 'none',
       attributes,
+      transportOptions: [],
     },
     author,
   );

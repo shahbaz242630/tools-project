@@ -47,6 +47,7 @@ const CATEGORY: AdminCategory = {
   riskLevel: 'low',
   reportableActivity: 'none',
   attributes: [],
+  transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-04T09:00:00.000Z',
   createdAt: '2026-08-04T09:00:00.000Z',
@@ -175,5 +176,63 @@ describe('the reportable-activity field when reconfiguring', () => {
     fireEvent.change(select(), { target: { value: 'means_of_transport' } });
 
     expect(screen.getByRole('alert').textContent).toMatch(/not reversible/i);
+  });
+});
+
+describe('the feedback message', () => {
+  /**
+   * Where the message goes, and whether anybody sees it.
+   *
+   * This form renders its outcome at the top and its button at the bottom, and
+   * slice 2.4c-i made the gap much longer by adding the transport fieldset. That
+   * is session 25's failure on the listing form: press Save, the page does not
+   * move, and a refusal well above the fold reads as a form that does nothing.
+   *
+   * The second case is the one that matters and the one a naive fix misses. Two
+   * identical failures produce the same string, so an effect keyed on the
+   * *message* compares equal and never runs again — the page sits perfectly
+   * still on the second press, which is precisely when somebody decides it is
+   * broken.
+   */
+  const refused = () => ({
+    status: 'error' as const,
+    message: 'Transport options: that selection was refused.',
+    slug: '',
+    name: '',
+    reason: '',
+    reportableActivity: 'none' as AdminCategory['reportableActivity'],
+  });
+
+  it('takes focus so the refusal is announced and scrolled to', () => {
+    state.current = refused();
+    render(<CreateCategoryForm />);
+
+    expect(document.activeElement).toBe(screen.getByRole('alert'));
+  });
+
+  it('takes focus again on a second, identical refusal', () => {
+    state.current = refused();
+    const { rerender } = render(<CreateCategoryForm />);
+    (document.activeElement as HTMLElement).blur();
+
+    // A fresh state object carrying the same words — what `useActionState` hands
+    // back when the same save is refused twice.
+    state.current = refused();
+    rerender(<CreateCategoryForm />);
+
+    expect(document.activeElement).toBe(screen.getByRole('alert'));
+  });
+
+  it('does the same for a success, which is equally far from the button', () => {
+    state.current = {
+      ...refused(),
+      status: 'done',
+      message: 'Saved as a new version.',
+    };
+    render(<CreateCategoryForm />);
+
+    // By its words, not by its role: the transport editor also carries a
+    // `status` for its empty state, and `getByRole` would match both.
+    expect(document.activeElement).toBe(screen.getByText('Saved as a new version.'));
   });
 });

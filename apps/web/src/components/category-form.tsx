@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 import {
   CATEGORY_REPORTABLE_ACTIVITIES,
   CATEGORY_RISK_LEVELS,
@@ -18,6 +18,7 @@ import {
 } from '../app/admin/categories/actions';
 import { INITIAL_CATEGORY_STATE } from '../app/admin/categories/state';
 import { AttributeSchemaEditor } from './attribute-schema-editor';
+import { TransportOptionsEditor } from './transport-options-editor';
 
 /** Human wording for the vocabulary. The values themselves are the contract's. */
 const RISK_LABELS: Record<CategoryRiskLevel, string> = {
@@ -156,16 +157,60 @@ function ReportableActivityField({
   );
 }
 
+/**
+ * The outcome of a save, put where the person pressing the button is looking.
+ *
+ * This form has always rendered its message at the top and its button at the
+ * bottom, and this slice made the gap much longer by adding a whole fieldset.
+ * That is the failure session 25 found on the listing form: press Save, the page
+ * does not move, and a message 300px above the fold reads as a form that does
+ * nothing. Same shape, same fix — focus for a screen reader, scroll for
+ * everybody else, and both because `focus()` on an already-focused node does not
+ * scroll.
+ *
+ * **The effect depends on the whole state object, not on `state.message`.** A
+ * second consecutive failure produces an identical string, and a dependency on
+ * the string would compare equal and skip the effect entirely — leaving the page
+ * perfectly still on the second press, which is exactly when somebody concludes
+ * it is stuck. `useActionState` hands back a fresh object each time, so this
+ * fires on every settled submit, including an identical repeat.
+ */
 function Feedback({
-  status,
-  message,
+  state,
 }: {
-  readonly status: 'idle' | 'done' | 'error';
-  readonly message: string | null;
+  readonly state: {
+    readonly status: 'idle' | 'done' | 'error';
+    readonly message: string | null;
+  };
 }) {
-  if (message === null) return null;
-  if (status === 'error') return <p role="alert">{message}</p>;
-  if (status === 'done') return <p role="status">{message}</p>;
+  const alert = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (state.message === null) return;
+    alert.current?.focus({ preventScroll: true });
+    // Optional call: jsdom does not implement `scrollIntoView`, and a component
+    // test asserting the message should not fail on a browser affordance.
+    alert.current?.scrollIntoView?.({ block: 'center' });
+  }, [state]);
+
+  if (state.message === null) return null;
+
+  // `tabIndex={-1}` makes it focusable without putting it in the tab order — it
+  // is a message, not a control.
+  if (state.status === 'error') {
+    return (
+      <p role="alert" ref={alert} tabIndex={-1}>
+        {state.message}
+      </p>
+    );
+  }
+  if (state.status === 'done') {
+    return (
+      <p role="status" ref={alert} tabIndex={-1}>
+        {state.message}
+      </p>
+    );
+  }
   return null;
 }
 
@@ -189,7 +234,7 @@ export function CreateCategoryForm() {
 
   return (
     <form action={action}>
-      <Feedback status={state.status} message={state.message} />
+      <Feedback state={state} />
 
       <p>
         <label htmlFor="create-name">Name</label>
@@ -229,6 +274,8 @@ export function CreateCategoryForm() {
       />
 
       <AttributeSchemaEditor name="attributes" idPrefix="create" />
+
+      <TransportOptionsEditor name="transportOptions" idPrefix="create" />
 
       <p>
         <label htmlFor="create-reason">Why</label>
@@ -280,7 +327,7 @@ export function ReconfigureCategoryForm({
 
   return (
     <form action={action}>
-      <Feedback status={state.status} message={state.message} />
+      <Feedback state={state} />
 
       <input type="hidden" name="slug" value={category.slug} />
 
@@ -312,6 +359,15 @@ export function ReconfigureCategoryForm({
         name="attributes"
         idPrefix={category.slug}
         initial={category.attributes}
+      />
+
+      {/* Seeded for the same reason the attribute editor is: `PUT` replaces the
+          whole configuration, so an editor that started with nothing ticked
+          would look like "choose some" and mean "withdraw the ones you have". */}
+      <TransportOptionsEditor
+        name="transportOptions"
+        idPrefix={category.slug}
+        initial={category.transportOptions}
       />
 
       <p>

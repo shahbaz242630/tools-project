@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { CategoryAttribute } from '@platform/contracts';
+import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
 import { CategorySlugTakenError } from './category-store.js';
 import { createCatalogueFakes } from './testing/fakes.js';
 import type { CatalogueFakes } from './testing/fakes.js';
@@ -28,6 +28,7 @@ const draft = {
   // every test here describe a platform we are not.
   reportableActivity: 'none',
   attributes: [],
+  transportOptions: [],
 } as const;
 
 /**
@@ -53,6 +54,19 @@ const SCHEMA: readonly CategoryAttribute[] = [
     unit: 'kg',
     decimalPlaces: 1,
   },
+];
+
+/**
+ * What the launch category would offer for collection (§8.3, ADR 0031).
+ *
+ * Already in display order and with increasing thresholds, because the contract
+ * normalises and checks both before anything reaches this service — these tests
+ * are about what the *service* does with a valid selection, which is carry it
+ * and digest it.
+ */
+const TRANSPORT: readonly CategoryTransportOption[] = [
+  { requirement: 'car_boot', suggestedUpToKg: 25 },
+  { requirement: 'van_required', suggestedUpToKg: 150 },
 ];
 
 describe('creating a category', () => {
@@ -130,6 +144,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Renamed after the taxonomy review',
     );
@@ -153,6 +168,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Renamed after the taxonomy review',
     );
@@ -173,6 +189,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Testing that the slug is stable',
     );
@@ -191,6 +208,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Renamed after the taxonomy review',
     );
@@ -218,6 +236,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Saving the identical configuration again',
     );
@@ -230,7 +249,13 @@ describe('reconfiguring a category', () => {
     const missing = await fakes.service.reconfigure(
       ADMIN,
       'no-such-category',
-      { name: 'Nothing', riskLevel: 'low', reportableActivity: 'none', attributes: [] },
+      {
+        name: 'Nothing',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
       'Should not be possible',
     );
 
@@ -251,6 +276,7 @@ describe('reading categories', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       REASON,
     );
@@ -262,6 +288,7 @@ describe('reading categories', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Renamed after the taxonomy review',
     );
@@ -313,6 +340,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       'Clearing the schema',
     );
@@ -332,6 +360,7 @@ describe('the attribute schema', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: SCHEMA,
+        transportOptions: [],
       },
       'Adding the attribute schema',
     );
@@ -355,6 +384,7 @@ describe('the attribute schema', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: draft.reportableActivity,
         attributes: [...SCHEMA].reverse(),
+        transportOptions: [],
       },
       'Putting weight first',
     );
@@ -373,6 +403,121 @@ describe('the attribute schema', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: SCHEMA,
+        transportOptions: [],
+      },
+      'Saving the identical configuration again',
+    );
+
+    const entry = fakes.audit.log.entries()[1];
+    expect(entry?.beforeHash).toBe(entry?.afterHash);
+  });
+});
+
+describe('the transport options', () => {
+  it('are returned with the configuration in force', async () => {
+    const created = await fakes.service.create(
+      ADMIN,
+      { ...draft, transportOptions: TRANSPORT },
+      REASON,
+    );
+
+    expect(created.transportOptions).toEqual(TRANSPORT);
+  });
+
+  it('leave the previous version offering exactly what it offered', async () => {
+    // The property that makes withdrawing an option safe. A listing created
+    // under version 1 said "car boot" against a category that offered it, and
+    // that must stay true after the category stops offering it.
+    await fakes.service.create(
+      ADMIN,
+      { ...draft, transportOptions: TRANSPORT },
+      REASON,
+    );
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
+      'Withdrawing the transport options',
+    );
+
+    const versions = fakes.store.versionsOf('outdoor-gardening');
+    expect(versions[0]?.transportOptions).toEqual(TRANSPORT);
+    expect(versions[1]?.transportOptions).toEqual([]);
+  });
+
+  it('register as a change in the audit digest', async () => {
+    await fakes.service.create(ADMIN, draft, REASON);
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: TRANSPORT,
+      },
+      'Offering transport options for the first time',
+    );
+
+    const entry = fakes.audit.log.entries()[1];
+    // Everything else is untouched, so if the options were left out of
+    // `auditable` these two would match and offering a new option would leave
+    // no trace at all.
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('register a changed threshold as a change, though nothing is added or removed', async () => {
+    // The quiet one. The same two options are offered before and after; only
+    // the weight at which the form suggests one has moved. That changes what
+    // owners are nudged to say about collection, so it is a configuration
+    // decision somebody should be accountable for.
+    await fakes.service.create(
+      ADMIN,
+      { ...draft, transportOptions: TRANSPORT },
+      REASON,
+    );
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [
+          { requirement: 'car_boot', suggestedUpToKg: 40 },
+          { requirement: 'van_required', suggestedUpToKg: 150 },
+        ],
+      },
+      'Raising the car boot threshold',
+    );
+
+    const entry = fakes.audit.log.entries()[1];
+    expect(entry?.beforeHash).not.toBe(entry?.afterHash);
+  });
+
+  it('digest an unchanged selection identically', async () => {
+    await fakes.service.create(
+      ADMIN,
+      { ...draft, transportOptions: TRANSPORT },
+      REASON,
+    );
+    await fakes.service.reconfigure(
+      ADMIN,
+      'outdoor-gardening',
+      {
+        name: draft.name,
+        riskLevel: draft.riskLevel,
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: TRANSPORT,
       },
       'Saving the identical configuration again',
     );

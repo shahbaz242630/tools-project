@@ -711,6 +711,34 @@ model CategoryVersion {
   /// before slice 2.2 has. No backfill invents a schema nobody chose.
   attributes Json @default("[]") @db.JsonB
 
+  /// Which transport requirements this category offers a listing, and the weight
+  /// each one is suggested up to (BRD §8.3, ADR 0031, slice 2.4c).
+  ///
+  /// **A selection from a closed platform vocabulary, not a per-category option
+  /// list.** §8.3 requires the requirement to reach the booking summary, the
+  /// collection instructions, the handover checklist and a search filter — four
+  /// consumers that must be able to ask any listing what it needs. If each
+  /// category spelled its own options, `van` here and `van_required` there would
+  /// be two different filters with nothing to notice. The vocabulary lives in
+  /// @platform/contracts and adding a value to it is a deploy.
+  ///
+  /// **On the version rather than on `Category`**, with the rest of the
+  /// configuration and for the same reason: §8.2 requires a booking to be
+  /// interpreted under the configuration in force when it was made, and a
+  /// listing pins this row. Withdrawing an option must not change what an
+  /// existing listing claims about itself.
+  ///
+  /// Stored in the vocabulary's display order, which the contract normalises on
+  /// the way in — so two administrators ticking the same boxes in a different
+  /// order produce the same value, and the audit digest does not report a change
+  /// nobody made.
+  ///
+  /// Defaults to an empty selection, which is what every category configured
+  /// before this migration has. No backfill invents a selection nobody chose;
+  /// such a category simply asks nothing about transport until it is
+  /// reconfigured.
+  transportOptions Json @default("[]") @db.JsonB
+
   /// Which statutory reporting head this category's activity falls under
   /// (§8.14.2). `none`, `means_of_transport`, `personal_service` or
   /// `sale_of_goods`, as a closed union in code exactly like `riskLevel`.

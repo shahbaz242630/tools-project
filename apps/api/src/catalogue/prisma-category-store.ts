@@ -3,11 +3,13 @@ import type {
   CategoryAttribute,
   CategoryReportableActivity,
   CategoryRiskLevel,
+  CategoryTransportOption,
 } from '@platform/contracts';
 import {
   CATEGORY_REPORTABLE_ACTIVITIES,
   CATEGORY_RISK_LEVELS,
   parseCategoryAttributes,
+  parseCategoryTransportOptions,
 } from '@platform/contracts';
 import { CategorySlugTakenError } from './category-store.js';
 import type {
@@ -52,6 +54,7 @@ export class PrismaCategoryStore implements CategoryStore {
               // the spread is the cheapest honest way to hand it a mutable copy
               // rather than widening the port's type to suit the ORM.
               attributes: [...input.attributes],
+              transportOptions: [...input.transportOptions],
               createdById: authorId,
             },
           },
@@ -99,6 +102,7 @@ export class PrismaCategoryStore implements CategoryStore {
         riskLevel: configuration.riskLevel,
         reportableActivity: configuration.reportableActivity,
         attributes: [...configuration.attributes],
+        transportOptions: [...configuration.transportOptions],
         createdById: authorId,
       },
     });
@@ -110,6 +114,7 @@ export class PrismaCategoryStore implements CategoryStore {
       riskLevel: asRiskLevel(version.riskLevel),
       reportableActivity: asReportableActivity(version.reportableActivity),
       attributes: asAttributes(version.attributes, existing.slug),
+      transportOptions: asTransportOptions(version.transportOptions, existing.slug),
       versionNumber: version.versionNumber,
       versionCreatedAt: version.createdAt,
       createdAt: existing.createdAt,
@@ -149,6 +154,7 @@ interface CategoryRow {
     riskLevel: string;
     reportableActivity: string;
     attributes: unknown;
+    transportOptions: unknown;
     versionNumber: number;
     createdAt: Date;
   }[];
@@ -170,6 +176,7 @@ function toRecord(category: CategoryRow): CategoryRecord {
     riskLevel: asRiskLevel(current.riskLevel),
     reportableActivity: asReportableActivity(current.reportableActivity),
     attributes: asAttributes(current.attributes, category.slug),
+    transportOptions: asTransportOptions(current.transportOptions, category.slug),
     versionNumber: current.versionNumber,
     versionCreatedAt: current.createdAt,
     createdAt: category.createdAt,
@@ -200,6 +207,33 @@ function asAttributes(value: unknown, slug: string): readonly CategoryAttribute[
       }`,
       // The contract violation carries the field-level issues. Losing it would
       // leave a log line saying a schema is unreadable and not which part.
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * The transport selection, on the way out of `jsonb`.
+ *
+ * Throws for `asAttributes`' reason, and here the failure is quieter and so
+ * worth more. A selection this build cannot read means the row was written by a
+ * newer application, and falling back to an empty list would present the
+ * category as offering **no** transport options at all — a listing form that
+ * silently stops asking how an item is collected, which is precisely the failed
+ * handover §8.3 exists to prevent. There would be nothing on screen to suggest
+ * anything was missing.
+ */
+function asTransportOptions(
+  value: unknown,
+  slug: string,
+): readonly CategoryTransportOption[] {
+  try {
+    return parseCategoryTransportOptions(value);
+  } catch (error) {
+    throw new Error(
+      `Category ${slug} has transport options this build cannot read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
       { cause: error },
     );
   }

@@ -14,6 +14,7 @@ import type {
 } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { readAttributeSchema } from '../../../lib/attribute-schema';
+import { readTransportOptions } from '../../../lib/transport-options';
 import { createCategory, reconfigureCategory } from '../../../lib/admin-categories';
 import type { AdminCategoryOutcome } from '../../../lib/admin-categories';
 import { webEnv } from '../../../lib/env';
@@ -126,6 +127,16 @@ export async function createCategoryAction(
     };
   }
 
+  const transport = readTransportOptions(form.get('transportOptions'));
+  if (transport.kind === 'unreadable') {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: transport.message,
+    };
+  }
+
   // The contract's own schema, not a second opinion about what a slug is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
@@ -139,6 +150,7 @@ export async function createCategoryAction(
     reportableActivity,
     reportingDutiesAcknowledged: readAcknowledgement(form),
     attributes: schema.attributes,
+    transportOptions: transport.options,
   });
   if (!parsed.success) {
     return {
@@ -201,6 +213,16 @@ export async function reconfigureCategoryAction(
     };
   }
 
+  const transport = readTransportOptions(form.get('transportOptions'));
+  if (transport.kind === 'unreadable') {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: transport.message,
+    };
+  }
+
   // Parsed here as well as on create, which it was not before this slice. The
   // reason is §8.14.2's confirmation: a switch from `none` to a reportable head
   // is the change §17 names as the undetected-breach risk, and the round trip
@@ -211,6 +233,7 @@ export async function reconfigureCategoryAction(
     reportableActivity,
     reportingDutiesAcknowledged: readAcknowledgement(form),
     attributes: schema.attributes,
+    transportOptions: transport.options,
   });
   if (!parsed.success) {
     return {

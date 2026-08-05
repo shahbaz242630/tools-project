@@ -114,6 +114,23 @@ function attributeSummary(count: number): string {
 }
 
 /**
+ * Whether this category asks how an item is collected (§8.3).
+ *
+ * On the summary line beside the attribute count, because a category offering
+ * none asks nothing about transport — and that is a real difference between two
+ * categories that otherwise read identically here. Configuration nobody can see
+ * in the list is configuration nobody checks.
+ *
+ * The count is deliberately not spelled out. Which five are offered is a
+ * decision to make in the form; whether the question gets asked at all is what
+ * somebody scanning this list needs to know.
+ */
+function transportSummary(count: number): string {
+  if (count === 0) return 'no transport options';
+  return count === 1 ? '1 transport option' : `${String(count)} transport options`;
+}
+
+/**
  * Every failure gets its own sentence.
  *
  * A single "something went wrong" would make an expired session, a missing
@@ -174,6 +191,7 @@ function CategoryList({
           <p>
             <code>{category.slug}</code> · risk {category.riskLevel} ·{' '}
             {attributeSummary(category.attributes.length)} ·{' '}
+            {transportSummary(category.transportOptions.length)} ·{' '}
             <strong>version {category.versionNumber}</strong>
           </p>
           {/*

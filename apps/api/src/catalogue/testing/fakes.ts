@@ -22,6 +22,7 @@ import type {
   CategoryAttribute,
   CategoryReportableActivity,
   CategoryRiskLevel,
+  CategoryTransportOption,
 } from '@platform/contracts';
 import { CategorySlugTakenError } from '../category-store.js';
 import { CategoryChangedError, UnknownCategoryError } from '../listing-store.js';
@@ -48,6 +49,7 @@ interface StoredVersion {
   readonly riskLevel: CategoryRiskLevel;
   readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
+  readonly transportOptions: readonly CategoryTransportOption[];
   readonly createdById: string;
   readonly createdAt: Date;
 }
@@ -101,6 +103,7 @@ export class InMemoryCategoryStore implements CategoryStore {
           // rewrite a stored version — and a double that shared the reference
           // would make an immutability test pass for the wrong reason.
           attributes: [...input.attributes],
+          transportOptions: [...input.transportOptions],
           createdById: authorId,
           createdAt: Time.nowUtc(),
         },
@@ -130,6 +133,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       riskLevel: configuration.riskLevel,
       reportableActivity: configuration.reportableActivity,
       attributes: [...configuration.attributes],
+      transportOptions: [...configuration.transportOptions],
       createdById: authorId,
       createdAt: Time.nowUtc(),
     });
@@ -173,6 +177,7 @@ function toRecord(category: StoredCategory): CategoryRecord {
     riskLevel: latest.riskLevel,
     reportableActivity: latest.reportableActivity,
     attributes: latest.attributes,
+    transportOptions: latest.transportOptions,
     versionNumber: latest.versionNumber,
     versionCreatedAt: latest.createdAt,
     createdAt: category.createdAt,

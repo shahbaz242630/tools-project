@@ -98,6 +98,7 @@ async function newCategory(
       riskLevel: 'medium',
       reportableActivity: 'none',
       attributes,
+      transportOptions: [],
     },
     authorId,
   );
@@ -162,6 +163,7 @@ describe('creating a draft', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       owner,
     );
@@ -186,6 +188,7 @@ describe('creating a draft', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       owner,
     );
@@ -221,6 +224,7 @@ describe('creating a draft', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       owner,
     );
@@ -325,6 +329,7 @@ describe('the attribute values', () => {
             decimalPlaces: 1,
           },
         ],
+        transportOptions: [],
       },
       owner,
     );
@@ -389,6 +394,7 @@ describe('the categories an owner may choose', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       owner,
     );
@@ -525,6 +531,7 @@ describe('the category options', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );

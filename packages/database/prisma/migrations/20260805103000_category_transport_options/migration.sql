@@ -1,0 +1,80 @@
+-- Migration: category_transport_options
+--
+-- Slice 2.4c-i. A category version gains the transport requirements it offers a
+-- listing, and the weight each one is suggested up to (BRD §8.3, ADR 0031).
+--
+-- §8.3 added the transport requirement on 26 July 2026 because a depot operator
+-- controls collection and we do not: in a peer-to-peer model the renter drives
+-- to a stranger's house, and an item that will not fit their car is a failed
+-- handover and a dispute. The BRD requires the options to be "category-
+-- appropriate ... as versioned configuration", which is this column.
+--
+-- Why a selection rather than a per-category option list
+-- -----------------------------------------------------
+-- The vocabulary is closed and lives in @platform/contracts: `hand_carryable`,
+-- `car_boot`, `estate_or_hatchback`, `van_required`, `trailer_required`. This
+-- column stores which of them a category offers, not what they are called.
+--
+-- §8.3 requires the requirement to reach the booking summary (Phase 4), the
+-- collection instructions and handover checklist (Phase 7) and a search filter
+-- (Phase 3). All four must be able to ask *any* listing what it needs. If each
+-- category invented its own strings, a renter filtering "fits in my car boot"
+-- would match listings in one category and miss them in another, because `van`
+-- and `van_required` would be two different filters with nothing to notice.
+--
+-- Adding an option to a category is therefore configuration; adding a value to
+-- the vocabulary is a deploy. ADR 0027's rule about attribute types, for the
+-- same reason — a value is something later code reasons about, not merely
+-- renders.
+--
+-- Why on the version rather than on `categories`
+-- ---------------------------------------------
+-- §8.2 requires a booking to be interpreted under the configuration in force
+-- when it was made, and a listing pins one `category_versions` row. Withdrawing
+-- an option must not change what an existing listing claims about itself. The
+-- trigger refusing UPDATE on this table (slice 2.1) is what makes that true, and
+-- a column inherits it.
+--
+-- Why no CHECK constraint
+-- -----------------------
+-- The checks that matter are that every entry names a known requirement, that
+-- none is offered twice, and that the weight thresholds increase down the
+-- vocabulary's display order. All three are statements about a vocabulary that
+-- lives in TypeScript and changes with a deploy, so a constraint here would be a
+-- second copy that silently stops agreeing — the same argument the attribute
+-- schema column makes one migration earlier. `categoryTransportOptionsSchema`
+-- is where they hold, and the integration tests are what prove it.
+--
+-- The order is normalised on the way in rather than checked here, so that two
+-- administrators ticking the same boxes in a different order store the same
+-- value and the audit digest does not report a change nobody made (ADR 0017).
+--
+-- Data impact
+-- -----------
+-- One column, defaulted to an empty selection. In PostgreSQL 11 and later,
+-- ADD COLUMN with a non-volatile DEFAULT is a catalogue-only change — existing
+-- rows are not rewritten and the default is materialised on read. Locally that
+-- is two categories: `outdoor-gardening` at version 1 and the seeded fixture.
+-- There is no deployed environment.
+--
+-- **Existing versions are left offering nothing, truthfully.** No backfill
+-- invents a selection nobody chose. A category in that state asks nothing about
+-- transport on its listing form until an administrator reconfigures it, which
+-- mints a new version with an author, a reason and an audit entry — which is how
+-- the launch category gets its options rather than by a migration writing them.
+--
+-- The table takes a brief ACCESS EXCLUSIVE lock. Only admin routes and the
+-- owner-facing category list read it.
+--
+-- Rollback
+-- --------
+--   ALTER TABLE "category_versions" DROP COLUMN "transportOptions";
+--
+-- Lossless for every version written before this migration. Lossy afterwards —
+-- dropping the column discards a selection an administrator made, and because
+-- these rows are immutable it cannot be re-entered on the same version; the
+-- category would need reconfiguring again, minting another version. Roll forward
+-- is the honest answer once a real environment exists.
+
+-- AlterTable
+ALTER TABLE "category_versions" ADD COLUMN     "transportOptions" JSONB NOT NULL DEFAULT '[]';

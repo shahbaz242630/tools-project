@@ -170,6 +170,7 @@ function configurationOf(body: CategoryConfigurationInput): CategoryConfiguratio
     riskLevel: body.riskLevel,
     reportableActivity: body.reportableActivity,
     attributes: body.attributes,
+    transportOptions: body.transportOptions,
   };
 }
 
@@ -193,6 +194,7 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     riskLevel: category.riskLevel,
     reportableActivity: category.reportableActivity,
     attributes: category.attributes,
+    transportOptions: category.transportOptions,
     versionNumber: category.versionNumber,
     versionCreatedAt: Time.toIsoUtc(category.versionCreatedAt),
     createdAt: Time.toIsoUtc(category.createdAt),
