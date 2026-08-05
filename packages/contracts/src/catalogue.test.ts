@@ -324,6 +324,20 @@ describe('text attributes', () => {
 });
 
 /**
+ * What the launch category would offer for collection (§8.3, ADR 0031).
+ *
+ * Kept realistic for the same reason the attribute schema above is: a change
+ * that makes the real category unconfigurable should break a test rather than a
+ * listing form.
+ */
+const realisticTransportOptions = [
+  { requirement: 'hand_carryable', suggestedUpToKg: 8 },
+  { requirement: 'car_boot', suggestedUpToKg: 25 },
+  { requirement: 'estate_or_hatchback', suggestedUpToKg: 60 },
+  { requirement: 'van_required', suggestedUpToKg: 150 },
+];
+
+/**
  * A body with nothing wrong with it, which each test then breaks in one way.
  *
  * Spelled out rather than built by a helper with optional overrides: the point
@@ -337,6 +351,7 @@ const validDraft = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
+  transportOptions: realisticTransportOptions,
 };
 
 const validConfiguration = {
@@ -345,6 +360,7 @@ const validConfiguration = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
+  transportOptions: realisticTransportOptions,
 };
 
 /**
@@ -369,6 +385,29 @@ describe('the category body schemas', () => {
     expect(() => parseCategoryDraft(without(validDraft, 'attributes'))).toThrow(
       ContractViolationError,
     );
+  });
+
+  it('requires transport options on a draft rather than defaulting them', () => {
+    // The same rule, and here the silent default is worse than an empty schema:
+    // a category with no transport options asks nothing about collection, which
+    // is §8.3's whole failure mode arriving through an omission.
+    expect(() => parseCategoryDraft(without(validDraft, 'transportOptions'))).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('requires transport options on a reconfiguration for the same reason', () => {
+    expect(() =>
+      parseCategoryConfiguration(without(validConfiguration, 'transportOptions')),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('accepts an explicitly empty set of transport options', () => {
+    // What every category configured before slice 2.4c has, and a legitimate
+    // choice for a category whose items are all hand-carryable.
+    expect(
+      parseCategoryDraft({ ...validDraft, transportOptions: [] }).transportOptions,
+    ).toEqual([]);
   });
 
   it('requires attributes on a reconfiguration for the same reason', () => {

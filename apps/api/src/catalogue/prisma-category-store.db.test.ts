@@ -78,6 +78,7 @@ describe('create', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -101,6 +102,7 @@ describe('create', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -115,6 +117,7 @@ describe('create', () => {
           riskLevel: 'low',
           reportableActivity: 'none',
           attributes: [],
+          transportOptions: [],
         },
         author,
       ),
@@ -131,6 +134,7 @@ describe('create', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -142,6 +146,7 @@ describe('create', () => {
           riskLevel: 'low',
           reportableActivity: 'none',
           attributes: [],
+          transportOptions: [],
         },
         author,
       ),
@@ -161,6 +166,7 @@ describe('the immutability trigger', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -186,6 +192,7 @@ describe('the immutability trigger', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -215,6 +222,7 @@ describe('the immutability trigger', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -237,6 +245,7 @@ describe('addVersion', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -248,6 +257,7 @@ describe('addVersion', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -276,6 +286,7 @@ describe('addVersion', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -298,7 +309,13 @@ describe('addVersion', () => {
     expect(
       await store.addVersion(
         'no-such-category',
-        { name: 'X', riskLevel: 'low', reportableActivity: 'none', attributes: [] },
+        {
+          name: 'X',
+          riskLevel: 'low',
+          reportableActivity: 'none',
+          attributes: [],
+          transportOptions: [],
+        },
         author,
       ),
     ).toBeNull();
@@ -315,6 +332,7 @@ describe('the author foreign key', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -337,6 +355,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -347,12 +366,19 @@ describe('reads', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
     await store.addVersion(
       identity,
-      { name: 'Third', riskLevel: 'high', reportableActivity: 'none', attributes: [] },
+      {
+        name: 'Third',
+        riskLevel: 'high',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
       author,
     );
 
@@ -373,6 +399,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -383,6 +410,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -413,6 +441,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -466,6 +495,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: SCHEMA,
+        transportOptions: [],
       },
       author,
     );
@@ -493,6 +523,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -527,6 +558,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: SCHEMA,
+        transportOptions: [],
       },
       author,
     );
@@ -537,6 +569,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -564,6 +597,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: SCHEMA,
+        transportOptions: [],
       },
       author,
     );
@@ -590,6 +624,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -621,6 +656,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -654,6 +690,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'medium',
         reportableActivity: 'means_of_transport',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -678,6 +715,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -706,6 +744,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -717,6 +756,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'medium',
         reportableActivity: 'means_of_transport',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -745,6 +785,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        transportOptions: [],
       },
       author,
     );
@@ -762,5 +803,192 @@ describe('the reportable-activity flag', () => {
     });
 
     await expect(store.findBySlug(identity)).rejects.toThrow(/reportable activity/i);
+  });
+});
+
+describe('the transport options', () => {
+  const TRANSPORT = [
+    { requirement: 'car_boot' as const, suggestedUpToKg: 25 },
+    { requirement: 'van_required' as const, suggestedUpToKg: 150 },
+  ];
+
+  it('round-trips a selection with its thresholds through jsonb', async () => {
+    const author = await newUser();
+    const identity = slug();
+    await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: TRANSPORT,
+      },
+      author,
+    );
+
+    expect((await store.findBySlug(identity))?.transportOptions).toEqual(TRANSPORT);
+  });
+
+  it('keeps an option with no threshold absent rather than null', async () => {
+    // One representation of "not configured". A jsonb round trip is exactly
+    // where an absent key could come back as null without anybody noticing.
+    const author = await newUser();
+    const identity = slug();
+    await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [{ requirement: 'trailer_required' }],
+      },
+      author,
+    );
+
+    const read = (await store.findBySlug(identity))?.transportOptions;
+    expect(read).toEqual([{ requirement: 'trailer_required' }]);
+    expect(read?.[0]).not.toHaveProperty('suggestedUpToKg');
+  });
+
+  it('reads a version written before this column as offering nothing', async () => {
+    // What every category configured before slice 2.4c is. The default is what
+    // makes that a truthful answer rather than a crash, and no backfill invents
+    // a selection nobody chose.
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: TRANSPORT,
+      },
+      author,
+    );
+
+    // Written without the column at all, which is exactly what a row from
+    // before the migration looks like.
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'As if written before 2.4c',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        createdById: author,
+      },
+    });
+
+    expect((await store.findBySlug(identity))?.transportOptions).toEqual([]);
+  });
+
+  it('leaves the previous version offering exactly what it offered', async () => {
+    // The reason this lives on the version and not on the category: a listing
+    // that named the van under version 1 must stay readable after the category
+    // stops offering it.
+    const author = await newUser();
+    const identity = slug();
+    await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: TRANSPORT,
+      },
+      author,
+    );
+    await store.addVersion(
+      identity,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
+      author,
+    );
+
+    const versions = await client.categoryVersion.findMany({
+      where: { category: { slug: identity } },
+      orderBy: { versionNumber: 'asc' },
+    });
+    expect(versions[0]?.transportOptions).toEqual(TRANSPORT);
+    expect(versions[1]?.transportOptions).toEqual([]);
+  });
+
+  it('refuses to read a selection this build cannot understand', async () => {
+    // `asAttributes`' argument, and quieter. Falling back to an empty list would
+    // present the category as offering *no* transport options — a listing form
+    // that silently stops asking how an item is collected, with nothing on
+    // screen to suggest anything is missing.
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
+      author,
+    );
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'From a newer build',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [{ requirement: 'helicopter_required' }],
+        createdById: author,
+      },
+    });
+
+    await expect(store.findBySlug(identity)).rejects.toThrow(/transport options/i);
+  });
+
+  it('names the category when it cannot read one', async () => {
+    const author = await newUser();
+    const identity = slug();
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Original',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
+      author,
+    );
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: created.id,
+        versionNumber: 2,
+        name: 'Malformed',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        // Not even a list. The failure has to survive anything, not only a
+        // plausible selection from a newer build.
+        transportOptions: { requirement: 'car_boot' },
+        createdById: author,
+      },
+    });
+
+    await expect(store.findBySlug(identity)).rejects.toThrow(identity);
   });
 });

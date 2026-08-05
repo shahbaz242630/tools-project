@@ -15,6 +15,8 @@
 
 import { z } from 'zod';
 import { parseWith } from './parse.js';
+import { categoryTransportOptionsSchema } from './transport.js';
+import type { CategoryTransportOption } from './transport.js';
 
 /**
  * How much care a category's items demand.
@@ -435,6 +437,15 @@ export interface AdminCategory {
   readonly reportableActivity: CategoryReportableActivity;
   /** In render order. Empty is a legitimate schema — it is what a pre-2.2 category has. */
   readonly attributes: readonly CategoryAttribute[];
+  /**
+   * Which transport requirements this category offers a listing (§8.3,
+   * ADR 0031), in display order, with any weight thresholds that suggest one.
+   *
+   * Empty is legitimate and is what every category configured before slice 2.4c
+   * has. No backfill invents a selection nobody chose — the same treatment the
+   * attribute schema got when it arrived.
+   */
+  readonly transportOptions: readonly CategoryTransportOption[];
   readonly versionNumber: number;
   /** ISO 8601 UTC. When this *version* was written, not when the category was. */
   readonly versionCreatedAt: string;
@@ -457,6 +468,7 @@ const adminCategorySchema = z.object({
   riskLevel: categoryRiskLevelSchema,
   reportableActivity: categoryReportableActivitySchema,
   attributes: categoryAttributesSchema,
+  transportOptions: categoryTransportOptionsSchema,
   versionNumber: z.number().int().positive(),
   versionCreatedAt: z.string(),
   createdAt: z.string(),
@@ -493,6 +505,16 @@ export const categoryDraftSchema = z
     riskLevel: categoryRiskLevelSchema,
     ...reportingConfiguration,
     attributes: categoryAttributesSchema,
+    /**
+     * Which transport requirements this category offers (§8.3, ADR 0031).
+     *
+     * **Required, and `[]` is legitimate.** ADR 0025's rule for the fifth time:
+     * an optional field is a silent default, and the silent default here would
+     * clear a category's transport options on any caller that forgot them —
+     * which would leave every listing form in that category asking nothing about
+     * collection, with nothing reporting a problem.
+     */
+    transportOptions: categoryTransportOptionsSchema,
   })
   .superRefine(requireReportingAcknowledgement);
 
@@ -504,8 +526,11 @@ export const categoryDraftSchema = z
  */
 export type CategoryDraftInput = Omit<
   z.infer<typeof categoryDraftSchema>,
-  'attributes'
-> & { readonly attributes: readonly CategoryAttribute[] };
+  'attributes' | 'transportOptions'
+> & {
+  readonly attributes: readonly CategoryAttribute[];
+  readonly transportOptions: readonly CategoryTransportOption[];
+};
 
 export function parseCategoryDraft(raw: unknown): CategoryDraftInput {
   return parseWith(categoryDraftSchema, 'The category', raw);
@@ -539,12 +564,17 @@ export const categoryConfigurationSchema = z
     riskLevel: categoryRiskLevelSchema,
     ...reportingConfiguration,
     attributes: categoryAttributesSchema,
+    /** Replace semantics, exactly as `attributes` has — see the draft above. */
+    transportOptions: categoryTransportOptionsSchema,
   })
   .superRefine(requireReportingAcknowledgement);
 export type CategoryConfigurationInput = Omit<
   z.infer<typeof categoryConfigurationSchema>,
-  'attributes'
-> & { readonly attributes: readonly CategoryAttribute[] };
+  'attributes' | 'transportOptions'
+> & {
+  readonly attributes: readonly CategoryAttribute[];
+  readonly transportOptions: readonly CategoryTransportOption[];
+};
 
 export function parseCategoryConfiguration(raw: unknown): CategoryConfigurationInput {
   return parseWith(categoryConfigurationSchema, 'The configuration', raw);

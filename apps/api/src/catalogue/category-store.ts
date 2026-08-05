@@ -2,6 +2,7 @@ import type {
   CategoryAttribute,
   CategoryReportableActivity,
   CategoryRiskLevel,
+  CategoryTransportOption,
 } from '@platform/contracts';
 
 /**
@@ -30,6 +31,8 @@ export interface CategoryRecord {
   readonly riskLevel: CategoryRiskLevel;
   readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
+  /** Which transport requirements this category offers (§8.3, ADR 0031). */
+  readonly transportOptions: readonly CategoryTransportOption[];
   readonly versionNumber: number;
   readonly versionCreatedAt: Date;
   readonly createdAt: Date;
@@ -58,6 +61,16 @@ export interface CategoryConfiguration {
    */
   readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
+  /**
+   * Which of the platform's transport requirements this category offers, and
+   * the weight each is suggested up to (§8.3, ADR 0031).
+   *
+   * Required for `attributes`' reason, and the consequence of forgetting it is
+   * the same shape: a category that offers none asks nothing about how an item
+   * is collected, and §8.3 exists because that question going unasked is what
+   * produces a failed handover.
+   */
+  readonly transportOptions: readonly CategoryTransportOption[];
 }
 
 /**

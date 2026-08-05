@@ -57,6 +57,7 @@ const DRAFT = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: [],
+  transportOptions: [],
 } as const;
 
 let app: NestFastifyApplication;
@@ -283,6 +284,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
     });
 
@@ -305,6 +307,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
     });
     expect(response.statusCode).toBe(404);
@@ -321,6 +324,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
     });
 
@@ -342,6 +346,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
         slug: 'something-else',
       },
     });
@@ -470,6 +475,7 @@ describe('the attribute schema, through the routes', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [SCHEMA[0]],
+        transportOptions: [],
       },
     });
 
@@ -611,6 +617,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
     });
 
@@ -632,6 +639,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         reportingDutiesAcknowledged: true,
         attributes: [],
+        transportOptions: [],
       },
     });
 
@@ -679,6 +687,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         reportingDutiesAcknowledged: true,
         attributes: [],
+        transportOptions: [],
       },
     });
 
@@ -706,5 +715,140 @@ describe('the reportable-activity flag', () => {
     // read as evidence of something it never proved.
     const stored = store.versionsOf('trailers-towing')[0];
     expect(stored).not.toHaveProperty('reportingDutiesAcknowledged');
+  });
+});
+
+describe('the transport options', () => {
+  beforeEach(async () => {
+    await promoteAdmin();
+  });
+
+  const configurePath = (slug: string, reason: string) =>
+    `${adminCategoryPath(slug)}?reason=${encodeURIComponent(reason)}`;
+
+  const TRANSPORT = [
+    { requirement: 'car_boot', suggestedUpToKg: 25 },
+    { requirement: 'van_required', suggestedUpToKg: 150 },
+  ];
+
+  it('accepts a selection on create and returns it', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      transportOptions: TRANSPORT,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseAdminCategory(response.json()).transportOptions).toEqual(TRANSPORT);
+  });
+
+  it('stores the selection in display order however it arrived', async () => {
+    // The normalisation the contract does, proved at the boundary that actually
+    // writes. Two administrators ticking the same boxes in a different order
+    // must produce the same stored value, or the audit digest reports a change
+    // nobody made (ADR 0017).
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      transportOptions: [
+        { requirement: 'trailer_required' },
+        { requirement: 'hand_carryable' },
+        { requirement: 'van_required' },
+      ],
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(
+      parseAdminCategory(response.json()).transportOptions.map(
+        (option) => option.requirement,
+      ),
+    ).toEqual(['hand_carryable', 'van_required', 'trailer_required']);
+  });
+
+  it('demands the selection rather than assuming none', async () => {
+    // ADR 0025's rule at the route. A caller that forgets must get a 400, not a
+    // category that silently asks nothing about how its items are collected.
+    const withoutOptions = Object.fromEntries(
+      Object.entries(DRAFT).filter(([key]) => key !== 'transportOptions'),
+    );
+
+    expect((await createCategory('admin-token', withoutOptions)).statusCode).toBe(400);
+  });
+
+  it('rejects a requirement outside the vocabulary', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      transportOptions: [{ requirement: 'roof_rack' }],
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects the same requirement offered twice', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      transportOptions: [{ requirement: 'car_boot' }, { requirement: 'car_boot' }],
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects thresholds that do not increase, and says which two disagree', async () => {
+    const response = await createCategory('admin-token', {
+      ...DRAFT,
+      transportOptions: [
+        { requirement: 'car_boot', suggestedUpToKg: 50 },
+        { requirement: 'van_required', suggestedUpToKg: 20 },
+      ],
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    // Named by label, because the stored value appears nowhere on the form —
+    // the mistake 2.4b made with `weight_kg` and fixed.
+    expect(body.issues?.join(' ')).toContain('Van or large vehicle');
+  });
+
+  it('writes nothing when the selection is refused', async () => {
+    await createCategory('admin-token', {
+      ...DRAFT,
+      slug: 'bad-transport',
+      transportOptions: [{ requirement: 'roof_rack' }],
+    });
+
+    // A rejected request must not leave a category behind, or a retry hits 409
+    // on one nobody successfully created.
+    expect(await store.findBySlug('bad-transport')).toBeNull();
+  });
+
+  it('replaces the whole selection on a reconfiguration', async () => {
+    await createCategory('admin-token', { ...DRAFT, transportOptions: TRANSPORT });
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: configurePath('outdoor-gardening', 'these items all fit in a car'),
+      headers: auth('admin-token'),
+      payload: {
+        name: DRAFT.name,
+        riskLevel: DRAFT.riskLevel,
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+        transportOptions: [{ requirement: 'car_boot', suggestedUpToKg: 25 }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(parseAdminCategory(response.json()).transportOptions).toHaveLength(1);
+    // Version 1 still offers both. A listing that named the van under it is
+    // still readable, which is why this lives on the version.
+    expect(store.versionsOf('outdoor-gardening')[0]?.transportOptions).toHaveLength(2);
+  });
+
+  it('refuses an ordinary user', async () => {
+    const response = await createCategory('bob-token', {
+      ...DRAFT,
+      transportOptions: TRANSPORT,
+    });
+
+    expect(response.statusCode).toBe(403);
   });
 });

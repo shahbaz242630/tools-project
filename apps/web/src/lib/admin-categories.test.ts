@@ -21,6 +21,7 @@ const CATEGORY = {
   // claiming to have evidence of something it never held.
   reportableActivity: 'none',
   attributes: [],
+  transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-03T09:00:00.000Z',
   createdAt: '2026-08-03T09:00:00.000Z',
@@ -33,6 +34,7 @@ const DRAFT = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: [],
+  transportOptions: [],
 } as const;
 
 function responds(status: number, body = ''): FetchLike {
@@ -169,6 +171,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
       'renamed after the taxonomy review',
       fetchImpl,
@@ -191,6 +194,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
       'renamed after the taxonomy review',
       fetchImpl,
@@ -211,6 +215,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
       REASON,
       responds(404),
@@ -230,6 +235,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        transportOptions: [],
       },
       REASON,
       fetchImpl,

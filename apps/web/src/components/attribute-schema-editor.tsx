@@ -406,10 +406,22 @@ function AttributeRow({
 
       <p>
         <label htmlFor={id('required')}>
+          {/*
+            `defaultChecked`, not `checked` — the same reset hazard the transport
+            editor documents at length. React 19 resets the form after a server
+            action, which un-ticks a checkbox whose state came from a click while
+            leaving React's own state saying it is ticked.
+
+            Pre-existing here since slice 2.2 and never seen, because this box is
+            usually left alone and because no administrator could open the page
+            until ADR 0030. It surfaces the moment somebody toggles "an owner
+            must answer this" and the save is then refused: the tick vanishes and
+            the form still posts `required: true`.
+          */}
           <input
             id={id('required')}
             type="checkbox"
-            checked={draft.required}
+            defaultChecked={draft.required}
             onChange={(event) => {
               onChange({ required: event.target.checked });
             }}

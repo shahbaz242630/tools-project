@@ -130,6 +130,13 @@ export class CatalogueService {
  * moving an attribute up the form registers as a change — which it is. The order
  * is what an owner filling in a listing sees, and a reorder that left no trace
  * would be the one configuration change nobody could account for afterwards.
+ *
+ * **The transport options are in**, for the reason §8.3 gives for having them at
+ * all: withdrawing one changes what an owner can say about how their item is
+ * collected, and changing a weight threshold changes what the form suggests they
+ * say. Both are configuration decisions somebody should be accountable for. The
+ * contract normalises the order on the way in, so unlike the attributes above,
+ * a reorder here is not a change and cannot register as one.
  */
 function auditable(record: CategoryRecord): Record<string, unknown> {
   return {
@@ -138,5 +145,6 @@ function auditable(record: CategoryRecord): Record<string, unknown> {
     riskLevel: record.riskLevel,
     reportableActivity: record.reportableActivity,
     attributes: record.attributes,
+    transportOptions: record.transportOptions,
   };
 }

@@ -59,3 +59,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0028](0028-reporting-scope-is-confirmed-per-request-and-its-entity-stays-empty.md) | Confirm reporting scope per request, keep the tax profile empty       | Accepted                         |
 | [0029](0029-attribute-values-are-read-against-the-pinned-version.md)                | Read attribute values against the pinned version, refuse a stale form | Accepted                         |
 | [0030](0030-a-development-escape-hatch-for-the-admin-second-factor.md)              | Give the admin second factor a development escape hatch               | Accepted — remove with Clerk Pro |
+| [0031](0031-the-transport-requirement-is-a-platform-vocabulary.md)                  | Make the transport requirement a platform vocabulary a category picks | Accepted                         |
