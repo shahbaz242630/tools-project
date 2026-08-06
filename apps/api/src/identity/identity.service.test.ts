@@ -11,6 +11,7 @@ import { createAuditFakes } from '../audit/testing/fakes.js';
 import {
   RecordingEraser,
   StubDataSource,
+  StubListingDataSource,
   StubProfileSummarySource,
   InMemoryAdminApprovalStore,
 } from './testing/fakes.js';
@@ -38,6 +39,7 @@ beforeEach(() => {
     createAuditFakes().service,
     new RecordingEraser(),
     new StubDataSource(),
+    new StubListingDataSource(),
     new StubProfileSummarySource(),
     new InMemoryAdminApprovalStore(),
     new InMemoryAuthenticationEvents(),
@@ -334,6 +336,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -371,6 +374,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -398,6 +402,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -424,6 +429,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -451,6 +457,7 @@ describe('the audit trail', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -488,6 +495,7 @@ describe('requestDeletion', () => {
       audit.service,
       eraser,
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -634,6 +642,7 @@ describe('exportFor', () => {
       audit.service,
       new RecordingEraser(),
       source,
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -671,8 +680,10 @@ describe('exportFor', () => {
 
     // Literal rather than the constant: importing EXPORT_SCHEMA_VERSION here
     // would make this assert that a number equals itself, and pass through any
-    // bump. Version 2 added `signIns` in slice 1.11a.
-    expect(document?.schemaVersion).toBe(2);
+    // bump. Version 2 added `signIns` in slice 1.11a; version 3 added
+    // `listings` in 2.5a — and this line failing is how that bump announced
+    // itself, which is the whole reason it is a literal.
+    expect(document?.schemaVersion).toBe(3);
     expect(document?.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
@@ -805,6 +816,7 @@ describe('correcting the email', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -904,6 +916,7 @@ describe('correcting the email', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -935,6 +948,7 @@ describe('correcting the email', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       new InMemoryAuthenticationEvents(),
@@ -1013,6 +1027,7 @@ describe('authentication events', () => {
       audit.service,
       new RecordingEraser(),
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       events,
@@ -1197,6 +1212,7 @@ describe('deletion erases whichever path starts it', () => {
       audit.service,
       eraser,
       new StubDataSource(),
+      new StubListingDataSource(),
       new StubProfileSummarySource(),
       new InMemoryAdminApprovalStore(),
       events,

@@ -1,6 +1,6 @@
 import { Postcode } from '@platform/core';
 import type { PrismaClient } from '@platform/database';
-import type { FieldEncryptor } from './field-encryption.js';
+import type { FieldEncryptor } from '../encryption/field-encryption.js';
 import { ProfileConflictError } from './profile-store.js';
 import type {
   AddressDetail,

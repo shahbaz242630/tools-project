@@ -16,6 +16,8 @@
  */
 
 import { z } from 'zod';
+import { postalAddressResponseSchema, postalAddressSchema } from './address.js';
+import type { PostalAddress } from './address.js';
 import { boundedMoneySchema, moneySchema } from './money.js';
 import { categoryAttributesSchema, categorySlugSchema } from './catalogue.js';
 import type { CategoryAttribute } from './catalogue.js';
@@ -209,9 +211,40 @@ export const listingDraftSchema = z.object({
    * what the category configured.
    */
   requiresTwoPersonLift: z.boolean(),
+  /**
+   * Where the item is collected from (§8.3's "collection location").
+   *
+   * **Required to be present, allowed to be null** — the third field on this
+   * shape to draw that distinction, and for the same reason. A draft
+   * legitimately has not said where the thing lives yet; a caller that omitted
+   * the field has forgotten it. Publication is where a location becomes
+   * mandatory (2.8), because a listing nobody can collect is not one anybody can
+   * book.
+   *
+   * **What happens to it afterwards is the whole of slice 2.5.** The full
+   * postcode and the street lines are private: they reach the renter only once a
+   * booking authorises collection (§8.4.1). What is published is the outward
+   * code and the town, derived on write and stored separately, so a public query
+   * selects columns that have never held the rest. The **imprecise point** §8.3
+   * asks for — a coordinate displaced by a persisted offset of at least 500 m —
+   * arrives in 2.5b with the geocoder; there are no coordinates in the system
+   * yet, and nothing renders a map.
+   */
+  collectionLocation: postalAddressSchema.nullable(),
 });
 
 export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
+
+/**
+ * The listing's collection address, as its **owner** reads it back.
+ *
+ * They typed it, so they see it — the same rule `MyProfile` follows. This is the
+ * only listing projection that carries the precise half, and 2.10's public one
+ * carries `CoarseLocation` instead. Two types rather than one with nullable
+ * fields, because an optional `postcode?: string` compiles whether or not the
+ * API remembered to strip it.
+ */
+export type ListingCollectionLocation = PostalAddress;
 
 export function parseListingDraft(raw: unknown): ListingDraftInput {
   return parseWith(listingDraftSchema, 'The listing', raw);
@@ -257,6 +290,14 @@ export interface OwnerListing {
    */
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
+  /**
+   * Where it is collected from, in full, or null on a draft that has not said.
+   *
+   * In full **because this shape is only ever served to the owner**, who typed
+   * it. The public projection in 2.10 gets the outward code and the town and
+   * nothing else, and it is a different type for exactly that reason.
+   */
+  readonly collectionLocation: ListingCollectionLocation | null;
   readonly status: ListingStatus;
   /** ISO 8601 UTC. */
   readonly createdAt: string;
@@ -285,6 +326,10 @@ const ownerListingSchema = z.object({
   attributes: z.record(z.string(), attributeValueSchema),
   transportRequirement: transportRequirementSchema.nullable(),
   requiresTwoPersonLift: z.boolean(),
+  // The response shape, not the input one. The input normalises the postcode
+  // and defaults `line2`; a response check that transformed would rewrite what
+  // the API actually sent, which is the one thing this check exists to detect.
+  collectionLocation: postalAddressResponseSchema.nullable(),
   status: listingStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),

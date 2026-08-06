@@ -85,6 +85,7 @@ export class OwnerListingsController {
         attributes: draft.attributes,
         transportRequirement: draft.transportRequirement,
         requiresTwoPersonLift: draft.requiresTwoPersonLift,
+        collectionLocation: draft.collectionLocation,
         categoryVersionNumber: draft.categoryVersionNumber,
       });
       return toOwnerListing(created);
@@ -177,6 +178,11 @@ function toOwnerListing(listing: ListingRecord): OwnerListing {
     attributes: listing.attributes,
     transportRequirement: listing.transportRequirement,
     requiresTwoPersonLift: listing.requiresTwoPersonLift,
+    // In full, because this shape reaches nobody but the owner who typed it.
+    // 2.10 builds a different projection for strangers, carrying the outward
+    // code and the town — BRD §8.4.1's rule, kept as a type rather than as a
+    // field somebody has to remember to delete.
+    collectionLocation: listing.collectionLocation,
     status: listing.status,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),

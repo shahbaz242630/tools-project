@@ -1,3 +1,4 @@
+export * from './address.js';
 export * from './admin.js';
 export * from './attribute-values.js';
 export * from './audit.js';

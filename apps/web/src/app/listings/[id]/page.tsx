@@ -3,7 +3,7 @@ import { Fragment } from 'react';
 import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Money, Scaled, Time } from '@platform/core';
+import { Money, Postcode, Scaled, Time } from '@platform/core';
 import {
   TRANSPORT_REQUIREMENT_HINTS,
   TRANSPORT_REQUIREMENT_LABELS,
@@ -162,16 +162,77 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
           ) : null}
         </dd>
 
+        {/*
+          Shown in full, because this page is only ever your own listing. The
+          public page in 2.10 shows the district and town and nothing else —
+          it is a different projection of a different type, so this block
+          cannot be reused there by accident (BRD §8.4.1).
+
+          Shown even when unanswered, like the transport requirement above and
+          for the same reason: "we do not know where this is" is information,
+          and an omitted row would read as though nobody had been asked.
+        */}
+        <dt>Collected from</dt>
+        <dd>
+          {listing.collectionLocation === null ? (
+            <em>
+              Not said yet. A listing needs an address before it can be published,
+              because nobody can come and fetch a thing that is nowhere.
+            </em>
+          ) : (
+            <>
+              {listing.collectionLocation.line1}
+              {listing.collectionLocation.line2 === null ? null : (
+                <>
+                  <br />
+                  {listing.collectionLocation.line2}
+                </>
+              )}
+              <br />
+              {listing.collectionLocation.town}
+              <br />
+              {listing.collectionLocation.postcode}
+              <br />
+              <small>
+                Renters see only{' '}
+                <strong>{outwardCodeOf(listing.collectionLocation.postcode)}</strong>,{' '}
+                {listing.collectionLocation.town} until a booking reaches collection.
+              </small>
+            </>
+          )}
+        </dd>
+
         <dt>Saved</dt>
         <dd>{Time.formatLocal(Time.fromIsoUtc(listing.createdAt))}</dd>
       </dl>
 
       <p>
-        Photographs, a collection point and prices are not built yet. When they are,
-        they will appear here — and publishing will be a separate step.
+        Photographs and prices are not built yet. When they are, they will appear here —
+        and publishing will be a separate step.
       </p>
     </>
   );
+}
+
+/**
+ * The published half of a postcode, for showing an owner what a renter sees.
+ *
+ * Derived here rather than sent by the API, because this page already holds the
+ * full postcode — it is the owner's own. On the public page in 2.10 the outward
+ * code is the *stored column*, never a truncation applied at render time, and
+ * that difference is deliberate: there, forgetting the truncation would be a
+ * disclosure, and here there is nothing to disclose.
+ *
+ * Falls back to the whole thing rather than throwing. This is an explanatory
+ * aside, and a stored postcode that somehow will not parse should not take down
+ * a page whose real job is showing somebody their own address.
+ */
+function outwardCodeOf(postcode: string): string {
+  try {
+    return Postcode.outwardCode(postcode);
+  } catch {
+    return postcode;
+  }
 }
 
 /**

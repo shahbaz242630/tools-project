@@ -258,6 +258,12 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       attributes: { ...draft.attributes },
       transportRequirement: draft.transportRequirement,
       requiresTwoPersonLift: draft.requiresTwoPersonLift,
+      // Copied rather than referenced, for the reason the attributes are: the
+      // real store round-trips this through two tables and a cipher, so a
+      // caller holding on to its own object must not be able to rewrite what
+      // was stored.
+      collectionLocation:
+        draft.collectionLocation === null ? null : { ...draft.collectionLocation },
       status: 'DRAFT',
       createdAt: now,
       updatedAt: now,
@@ -272,6 +278,34 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       (candidate) => candidate.id === id && candidate.ownerId === ownerId,
     );
     return Promise.resolve(listing ?? null);
+  }
+
+  listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]> {
+    // Newest first, matching the real store's `orderBy` and the index behind
+    // it. A double that returned insertion order would let a test pass while
+    // the dashboard in 2.9 showed the oldest listing at the top.
+    return Promise.resolve(
+      this.listings
+        .filter((listing) => listing.ownerId === ownerId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+    );
+  }
+
+  /**
+   * Erase the precise half, keep the listing — the real store's behaviour, and
+   * the thing worth getting right in a double.
+   *
+   * A fake that deleted the listings would let an erasure test pass while the
+   * real system kept rows a booking depends on, and a fake that did nothing
+   * would let one pass while an address survived a deletion request.
+   */
+  eraseLocationsFor(ownerId: string): Promise<void> {
+    this.listings.forEach((listing, index) => {
+      if (listing.ownerId === ownerId) {
+        this.listings[index] = { ...listing, collectionLocation: null };
+      }
+    });
+    return Promise.resolve();
   }
 
   async listOptions(): Promise<readonly CategoryOptionRecord[]> {

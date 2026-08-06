@@ -31,7 +31,7 @@ import { AuditService } from './audit/audit.service.js';
 import { PrismaAuditLog } from './audit/prisma-audit-log.js';
 import { createStateDigest } from './audit/state-digest.js';
 import { NestLoggerAdapter } from './observability/nest-logger.js';
-import { createFieldEncryptor } from './profiles/field-encryption.js';
+import { createFieldEncryptor } from './encryption/field-encryption.js';
 import { PrismaProfileStore } from './profiles/prisma-profile-store.js';
 import { ProfilesService } from './profiles/profiles.service.js';
 import { CatalogueService } from './catalogue/catalogue.service.js';
@@ -125,15 +125,30 @@ async function bootstrap(): Promise<void> {
   );
 
   // Declared before `profiles` exists so the two can reference each other; the
-  // eraser is the one direction that has to be late-bound. When listings and
-  // messages hold personal data too, several erasers compose into this one
-  // function and nothing inside the identity module changes.
+  // eraser is the one direction that has to be late-bound.
+  //
+  // **Slice 2.5a is the "when listings hold personal data too" this comment used
+  // to predict, and the prediction held: nothing inside the identity module
+  // changed.** Two erasers compose into the one function below, and a second
+  // export source sits beside the profile one. That is the whole return on
+  // having made them ports rather than calls into `ProfilesService`.
   const identity: IdentityService = new IdentityService(
     new PrismaUserDirectory(database),
     new PrismaWebhookLedger(database),
     audit,
-    { erase: (actor) => profiles.eraseFor(actor) },
+    {
+      // Sequential rather than `Promise.all`, deliberately. Erasure must be
+      // idempotent and retryable, and running them in order means a failure in
+      // the second leaves the first done — a retry then finishes the job. In
+      // parallel, a rejection abandons the other mid-flight with no record of
+      // how far it got.
+      erase: async (actor) => {
+        await profiles.eraseFor(actor);
+        await listings.eraseFor(actor);
+      },
+    },
     { exportFor: (userId) => profiles.exportFor(userId) },
+    { exportFor: (userId) => listings.exportFor(userId) },
     { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
     new PrismaAdminApprovalStore(database),
     new PrismaAuthenticationEvents(database),
@@ -158,15 +173,23 @@ async function bootstrap(): Promise<void> {
     audit,
   );
 
-  // Catalogue depends on nothing but the audit trail. It holds no personal data
-  // and answers no question about a person, which is why it needs neither the
-  // encryptor nor a lookup into identity (BRD §5.1).
+  // Categories depend on nothing but the audit trail. Configuration has no
+  // subject, so this half of Catalogue still needs neither the encryptor nor a
+  // lookup into identity (BRD §5.1).
   const catalogue = new CatalogueService(new PrismaCategoryStore(database), audit);
   // One store, both ports. `PrismaListingStore` implements `ListingStore` and
   // `CategoryOptionSource` because both are reads of the same two tables through
   // the same client; the ports stay separate so a caller cannot reach the admin
   // projection of a category through the one that serves a form control.
-  const listingStore = new PrismaListingStore(database);
+  //
+  // **The encryptor arrives here in slice 2.5a**, and it is the moment listings
+  // stopped being ordinary content: a collection address is personal data, so
+  // this store now encrypts street lines exactly as the profile store does, and
+  // the service below answers both the eraser and the export.
+  const listingStore = new PrismaListingStore(
+    database,
+    createFieldEncryptor(personalDataEnv.PERSONAL_DATA_ENCRYPTION_KEY),
+  );
   const listings = new ListingsService(listingStore, listingStore);
 
   const app = await NestFactory.create<NestFastifyApplication>(

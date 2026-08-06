@@ -3,10 +3,20 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 /**
  * Encrypting a single column value at rest.
  *
- * Lives in this module rather than a shared package because it has exactly one
- * caller — the address store. It moves to a package the moment a second module
- * needs it; building the package first would be inventing a shared abstraction
- * from one example, which is how the wrong one gets locked in.
+ * **It lived in `profiles/` until slice 2.5a, with a note saying it would move
+ * the moment a second module needed it.** That moment is a listing's collection
+ * address: the same envelope, the same key, a different owner. Moving it was the
+ * cheaper half of the change — the expensive half is that "only the profiles
+ * module has the encryptor" is no longer a true sentence anywhere, and the
+ * `PersonalDataSource` docblock that said so has been corrected.
+ *
+ * **A folder in this application rather than a workspace package**, deliberately.
+ * A package would be reachable from the worker and the web app, and neither
+ * should ever hold `PERSONAL_DATA_ENCRYPTION_KEY` — the web app in particular is
+ * the only process a browser reaches. Keeping it here means the key stays where
+ * `main.ts` puts it. It is not in `@platform/core` for a harder reason: that
+ * package is shared with the browser bundle and bans Node imports, and this file
+ * is `node:crypto` from its first line.
  *
  * **What this protects against, and what it does not.** It protects a stolen
  * backup, a mis-scoped read and a leaked dump: those yield ciphertext, and the

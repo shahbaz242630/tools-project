@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createFieldEncryptor } from './field-encryption.js';
+import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaProfileStore } from './prisma-profile-store.js';
 import type { ProfileChanges } from './profile-store.js';
 

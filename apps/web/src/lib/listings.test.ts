@@ -28,6 +28,7 @@ const LISTING = {
   attributes: { weight_kg: 52 },
   transportRequirement: 'car_boot',
   requiresTwoPersonLift: false,
+  collectionLocation: null,
   status: 'DRAFT',
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
@@ -44,6 +45,11 @@ const DRAFT = {
   // allows and 2.4c-ii made explicit rather than assumed.
   transportRequirement: null,
   requiresTwoPersonLift: false,
+  // Null for the same reason: a draft need not say where the item is either
+  // (§8.3, slice 2.5a). The field is required to be *present*, so omitting it
+  // here would be the compile error that made every caller of this fixture
+  // findable in the first place.
+  collectionLocation: null,
 } as const;
 
 function responds(status: number, body = ''): FetchLike {

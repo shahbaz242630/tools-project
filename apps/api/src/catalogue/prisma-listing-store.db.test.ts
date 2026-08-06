@@ -18,8 +18,10 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
   CategoryAttribute,
   ListingAttributeValues,
+  ListingCollectionLocation,
   TransportRequirement,
 } from '@platform/contracts';
+import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { PrismaListingStore } from './prisma-listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
@@ -37,7 +39,17 @@ const client = createPrismaClient({
 });
 
 const categories = new PrismaCategoryStore(client);
-const store = new PrismaListingStore(client);
+
+/**
+ * A real encryptor with a throwaway key.
+ *
+ * Not a pass-through double: what these tests need to establish is that the
+ * street lines are unreadable *in the database* and readable through the store,
+ * and a fake that returned its input would let both halves of that pass while
+ * the column held plaintext.
+ */
+const KEY = Buffer.alloc(32, 7).toString('base64');
+const store = new PrismaListingStore(client, createFieldEncryptor(KEY));
 
 async function newUser(): Promise<string> {
   const user = await client.user.create({
@@ -116,6 +128,7 @@ const draft = (
     readonly categoryVersionNumber?: number;
     readonly transportRequirement?: TransportRequirement | null;
     readonly requiresTwoPersonLift?: boolean;
+    readonly collectionLocation?: ListingCollectionLocation | null;
   } = {},
 ) => ({
   ownerId,
@@ -131,8 +144,19 @@ const draft = (
   // decision, and these tests are about what Postgres does with the row.
   transportRequirement: overrides.transportRequirement ?? null,
   requiresTwoPersonLift: overrides.requiresTwoPersonLift ?? false,
+  // Null by default too — a draft that has not said where the item is. The
+  // postcode arrives already normalised, because the contract normalises it
+  // before the service is reached.
+  collectionLocation: overrides.collectionLocation ?? null,
   categoryVersionNumber: overrides.categoryVersionNumber ?? 1,
 });
+
+const ADDRESS: ListingCollectionLocation = {
+  line1: '12 Gloucester Road',
+  line2: 'Flat 3',
+  town: 'Bristol',
+  postcode: 'BS7 8AA',
+};
 
 beforeEach(async () => {
   await client.listing.deleteMany();
@@ -717,5 +741,200 @@ describe('the transport requirement', () => {
     expect((await store.findOwnedBy(created.id, owner))?.transportRequirement).toBe(
       'van_required',
     );
+  });
+});
+
+/**
+ * The collection address (slice 2.5a).
+ *
+ * These are the tests a double cannot fake. Whether the street lines are
+ * *actually* unreadable in the column, whether the two halves land in two
+ * tables, whether the CHECK fires, and whether cascade and erasure do what the
+ * comments claim are all facts about Postgres and the cipher.
+ */
+describe('the collection address', () => {
+  it('stores the district on the listing and the rest in its own table', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    const row = await client.listing.findUniqueOrThrow({
+      where: { id: created.id },
+      include: { location: true },
+    });
+
+    // Derived on write, from the postcode that was stored beside it.
+    expect(row.outwardCode).toBe('BS7');
+    expect(row.town).toBe('Bristol');
+    expect(row.location?.postcode).toBe('BS7 8AA');
+  });
+
+  it('leaves no street line readable in the database', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    const stored = await client.listingLocation.findUniqueOrThrow({
+      where: { listingId: created.id },
+    });
+
+    // The whole point of the envelope. A pass-through encryptor would fail
+    // here, which is why this test uses a real one.
+    expect(stored.encryptedDetail).not.toContain('Gloucester');
+    expect(stored.encryptedDetail).not.toContain('Flat 3');
+    expect(stored.encryptedDetail).toMatch(/^v1:/);
+  });
+
+  it('reads the whole address back for its owner', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    expect((await store.findOwnedBy(created.id, owner))?.collectionLocation).toEqual(
+      ADDRESS,
+    );
+  });
+
+  it('refuses an envelope moved onto another listing', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const withAddress = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+    const other = await store.createDraft(draft(owner, category.slug));
+
+    const stolen = await client.listingLocation.findUniqueOrThrow({
+      where: { listingId: withAddress.id },
+    });
+
+    // The attack this binding exists to stop: database write access, no key.
+    // Both listings belong to the same owner, which is why the listing id is
+    // bound rather than the owner id — the profile store's binding would let
+    // this succeed.
+    await client.listingLocation.create({
+      data: {
+        listingId: other.id,
+        postcode: stolen.postcode,
+        encryptedDetail: stolen.encryptedDetail,
+      },
+    });
+
+    await expect(store.findOwnedBy(other.id, owner)).rejects.toThrow(
+      /could not be decrypted/,
+    );
+  });
+
+  it('refuses a district with no town', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    // `location_is_complete`. Not reachable through the store — which always
+    // writes both — so it is provoked directly, because a constraint nothing
+    // tests is a constraint that silently stops existing.
+    await expect(
+      client.listing.update({
+        where: { id: created.id },
+        data: { outwardCode: 'BS7' },
+      }),
+    ).rejects.toThrow(/location_is_complete/);
+  });
+
+  it('takes the address with the listing when the listing goes', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    await client.listing.delete({ where: { id: created.id } });
+
+    // ON DELETE CASCADE. An address with no listing is an address belonging to
+    // nothing, and every integration teardown depends on this working.
+    expect(
+      await client.listingLocation.findUnique({ where: { listingId: created.id } }),
+    ).toBeNull();
+  });
+});
+
+describe('erasing an owner', () => {
+  it('removes the precise half and keeps the listing', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    await store.eraseLocationsFor(owner);
+
+    const row = await client.listing.findUnique({
+      where: { id: created.id },
+      include: { location: true },
+    });
+
+    // The listing survives — from Phase 4 a booking references it — and
+    // collapses to the coarseness it was always published at.
+    expect(row?.location).toBeNull();
+    expect(row?.outwardCode).toBe('BS7');
+    expect(row?.town).toBe('Bristol');
+    expect((await store.findOwnedBy(created.id, owner))?.collectionLocation).toBeNull();
+  });
+
+  it('leaves another owner alone', async () => {
+    const mine = await newUser();
+    const theirs = await newUser();
+    const category = await newCategory(mine);
+
+    const ours = await store.createDraft(
+      draft(mine, category.slug, { collectionLocation: ADDRESS }),
+    );
+    const other = await store.createDraft(
+      draft(theirs, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    await store.eraseLocationsFor(mine);
+
+    expect((await store.findOwnedBy(ours.id, mine))?.collectionLocation).toBeNull();
+    expect((await store.findOwnedBy(other.id, theirs))?.collectionLocation).toEqual(
+      ADDRESS,
+    );
+  });
+
+  it('succeeds when there is nothing to erase', async () => {
+    const owner = await newUser();
+
+    // Idempotence is what `PersonalDataEraser` requires, and the case that
+    // matters is a retry after a partial failure — which looks exactly like
+    // this second call.
+    await expect(store.eraseLocationsFor(owner)).resolves.toBeUndefined();
+    await expect(store.eraseLocationsFor(owner)).resolves.toBeUndefined();
+  });
+});
+
+describe('listing what an owner has', () => {
+  it('returns their own listings, newest first', async () => {
+    const mine = await newUser();
+    const theirs = await newUser();
+    const category = await newCategory(mine);
+
+    const first = await store.createDraft(draft(mine, category.slug));
+    const second = await store.createDraft(draft(mine, category.slug));
+    await store.createDraft(draft(theirs, category.slug));
+
+    const listed = await store.listOwnedBy(mine);
+
+    expect(listed.map((listing) => listing.id)).toEqual([second.id, first.id]);
   });
 });

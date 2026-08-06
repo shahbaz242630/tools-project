@@ -20,8 +20,9 @@
  * previous version.
  */
 
-import { Phone, Postcode } from '@platform/core';
+import { Phone } from '@platform/core';
 import { z } from 'zod';
+import { postalAddressSchema } from './address.js';
 import { parseWith } from './parse.js';
 
 /** Where the API serves the caller's own profile. */
@@ -43,8 +44,6 @@ export const PUBLIC_PROFILE_ROUTE = '/users/:userId/profile';
 
 export const DISPLAY_NAME_MIN_LENGTH = 2;
 export const DISPLAY_NAME_MAX_LENGTH = 50;
-export const ADDRESS_LINE_MAX_LENGTH = 100;
-export const TOWN_MAX_LENGTH = 60;
 
 /**
  * A name other people will see.
@@ -84,28 +83,15 @@ const phone = z
   .refine(Phone.isValid, 'must be a UK phone number')
   .transform(Phone.parse);
 
-/** A UK postcode, normalised to `BS7 8AA`. */
-const postcode = z
-  .string()
-  .trim()
-  .refine(Postcode.isValid, 'must be a valid UK postcode')
-  .transform(Postcode.parse);
-
 /**
- * An address as the owner supplies it.
+ * An address as the owner supplies it — the shared shape, not a second one.
  *
- * All-or-nothing: the whole object is optional, but a postcode with no street
- * line is not an address, and a street line with no postcode cannot be
- * geocoded. Making the fields individually optional would let both halves of
- * that pair go missing one release apart.
+ * Defined in `address.ts` from slice 2.5a, when a listing acquired a collection
+ * address and the platform needed the two to agree about what an address is.
+ * Aliased here rather than re-declared so this module keeps its own vocabulary
+ * at the point of use while there is only ever one definition.
  */
-export const addressInputSchema = z.object({
-  line1: z.string().trim().min(1, 'is required').max(ADDRESS_LINE_MAX_LENGTH),
-  /** Flats, building names. Genuinely optional — most addresses have no second line. */
-  line2: z.string().trim().max(ADDRESS_LINE_MAX_LENGTH).nullable().default(null),
-  town: z.string().trim().min(1, 'is required').max(TOWN_MAX_LENGTH),
-  postcode,
-});
+export const addressInputSchema = postalAddressSchema;
 export type AddressInput = z.infer<typeof addressInputSchema>;
 
 /**

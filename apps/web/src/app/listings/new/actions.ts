@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import { listingDraftSchema, listingPath } from '@platform/contracts';
 import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
+import { readCollectionLocation } from '../../../lib/collection-location';
 import { readReplacementValue } from '../../../lib/replacement-value';
 import { readSubmittedAttributes } from '../../../lib/submitted-attributes';
 import { createListing } from '../../../lib/listings';
@@ -48,7 +49,22 @@ export async function createListingAction(
   const title = String(form.get('title') ?? '').trim();
   const description = String(form.get('description') ?? '');
   const replacementValue = String(form.get('replacementValue') ?? '');
-  const typed = { categorySlug, title, description, replacementValue };
+  // Echoed back on every failure path below, so a refusal about a title does
+  // not empty an address somebody has just typed out.
+  const line1 = String(form.get('line1') ?? '');
+  const line2 = String(form.get('line2') ?? '');
+  const town = String(form.get('town') ?? '');
+  const postcode = String(form.get('postcode') ?? '');
+  const typed = {
+    categorySlug,
+    title,
+    description,
+    replacementValue,
+    line1,
+    line2,
+    town,
+    postcode,
+  };
 
   // The category's own fields arrive as one JSON value rather than as indexed
   // field names — see the hidden input in `ListingForm`. Parsed here and
@@ -87,6 +103,19 @@ export async function createListingAction(
     };
   }
 
+  // All four blank is a real answer — a draft need not say where the item is
+  // (§8.3). A *partly* filled address is not blank, and is refused rather than
+  // dropped: see `readCollectionLocation`.
+  const location = readCollectionLocation({ line1, line2, town, postcode });
+  if (!location.ok) {
+    return {
+      ...INITIAL_LISTING_STATE,
+      ...typed,
+      status: 'error',
+      message: location.message,
+    };
+  }
+
   // The contract's own schema, not a second opinion about what a title is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
@@ -107,6 +136,7 @@ export async function createListingAction(
     // than by truthiness, so that the day the control changes shape this stops
     // compiling instead of quietly reading every listing as one-person.
     requiresTwoPersonLift: form.get('requiresTwoPersonLift') !== null,
+    collectionLocation: location.value,
   });
   if (!parsed.success) {
     return {

@@ -51,7 +51,11 @@ import type {
   ApprovalDecision,
   ProposeApproval,
 } from '../admin-approval.js';
-import type { AdminProfile, ExportedProfile } from '@platform/contracts';
+import type {
+  AdminProfile,
+  ExportedListings,
+  ExportedProfile,
+} from '@platform/contracts';
 
 /**
  * What a test supplies for a session.
@@ -302,7 +306,7 @@ export class RecordingEraser implements PersonalDataEraser {
 }
 
 /** Returns whatever a test seeds, standing in for the profiles module. */
-export class StubDataSource implements PersonalDataSource {
+export class StubDataSource implements PersonalDataSource<ExportedProfile> {
   private profile: ExportedProfile = null;
 
   returns(profile: ExportedProfile): this {
@@ -312,6 +316,27 @@ export class StubDataSource implements PersonalDataSource {
 
   exportFor(): Promise<ExportedProfile> {
     return Promise.resolve(this.profile);
+  }
+}
+
+/**
+ * Catalogue's section of the export, stubbed (slice 2.5a).
+ *
+ * Its own stub rather than a generic one parameterised by section, because the
+ * empty *list* is this section's "holds nothing" and a shared stub would have
+ * to be seeded with it — which is exactly the default a test forgets, leaving
+ * an assertion about listings passing against null.
+ */
+export class StubListingDataSource implements PersonalDataSource<ExportedListings> {
+  private listings: ExportedListings = [];
+
+  returns(listings: ExportedListings): this {
+    this.listings = listings;
+    return this;
+  }
+
+  exportFor(): Promise<ExportedListings> {
+    return Promise.resolve(this.listings);
   }
 }
 
@@ -549,6 +574,8 @@ export interface IdentityFakes {
   readonly audit: AuditFakes;
   readonly eraser: RecordingEraser;
   readonly source: StubDataSource;
+  /** Catalogue's section of the export (slice 2.5a). */
+  readonly listingSource: StubListingDataSource;
   readonly summaries: StubProfileSummarySource;
   readonly approvals: InMemoryAdminApprovalStore;
   readonly authenticationEvents: InMemoryAuthenticationEvents;
@@ -567,6 +594,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const ledger = new InMemoryWebhookLedger();
   const eraser = new RecordingEraser();
   const source = new StubDataSource();
+  const listingSource = new StubListingDataSource();
   const summaries = new StubProfileSummarySource();
   const approvals = new InMemoryAdminApprovalStore();
   const authenticationEvents = new InMemoryAuthenticationEvents();
@@ -589,6 +617,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     audit,
     eraser,
     source,
+    listingSource,
     summaries,
     approvals,
     authenticationEvents,
@@ -599,6 +628,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
       audit.service,
       eraser,
       source,
+      listingSource,
       summaries,
       approvals,
       authenticationEvents,

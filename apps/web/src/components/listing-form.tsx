@@ -2,9 +2,11 @@
 
 import { useActionState, useEffect, useRef, useState } from 'react';
 import {
+  ADDRESS_LINE_MAX_LENGTH,
   LISTING_DESCRIPTION_MAX_LENGTH,
   LISTING_TITLE_MAX_LENGTH,
   LISTING_TITLE_MIN_LENGTH,
+  TOWN_MAX_LENGTH,
 } from '@platform/contracts';
 import { readItemWeight } from '@platform/contracts';
 import type { CategoryOption, TransportRequirement } from '@platform/contracts';
@@ -12,6 +14,7 @@ import { createListingAction } from '../app/listings/new/actions';
 import { INITIAL_LISTING_STATE } from '../app/listings/new/state';
 import { AttributeFields, toSubmittedAttributes } from './attribute-fields';
 import type { AttributeAnswers } from './attribute-fields';
+import { ResetSafeSelect } from './reset-safe-select';
 import { TransportField } from './transport-field';
 
 /**
@@ -104,14 +107,22 @@ export function ListingForm({
 
       <p>
         <label htmlFor="listing-category">Category</label>
-        <select
+        {/*
+          `ResetSafeSelect`, not a bare `<select value=…>`. React's post-action
+          form reset leaves a controlled select showing its first option while
+          React still holds the real one — and here that meant "Choose a
+          category" above a fieldset of that category's own fields, with the
+          hidden version number still set. Read that component before changing
+          this back.
+        */}
+        <ResetSafeSelect
           id="listing-category"
           name="categorySlug"
           required
           value={slug}
-          aria-describedby="listing-category-help"
-          onChange={(event) => {
-            setSlug(event.target.value);
+          describedBy="listing-category-help"
+          onChange={(next) => {
+            setSlug(next);
             // Answers are keyed by attribute key, and two categories that share
             // a key rarely mean the same thing by it — one category's "petrol"
             // is not necessarily on another's list. Carrying them across would
@@ -131,7 +142,7 @@ export function ListingForm({
               {category.name}
             </option>
           ))}
-        </select>
+        </ResetSafeSelect>
       </p>
       <p id="listing-category-help">
         The category decides which details you are asked for and which rules apply. It
@@ -253,6 +264,83 @@ export function ListingForm({
           />
         </>
       )}
+
+      {/*
+        The collection address, outside the category block on purpose: every
+        item is somewhere, whatever category it is in, and nothing here comes
+        from configuration.
+
+        Below the category's own fields rather than above them because it is the
+        one part of this form that asks about the owner rather than the item, and
+        the explanation of what gets published needs to be read before it is
+        filled in — not scrolled past on the way to the title.
+      */}
+      <fieldset>
+        <legend>Where it is collected from</legend>
+
+        <p id="listing-location-help">
+          Renters only ever see the <strong>district and town</strong> — “BS7, Bristol”
+          — which covers thousands of homes. Your full postcode and street are never
+          shown publicly and are given to a renter only once a booking reaches the point
+          of collection. You can leave this blank for now, but a listing needs it before
+          it can be published.
+        </p>
+
+        <p>
+          <label htmlFor="listing-line1">Address line 1</label>
+          <input
+            id="listing-line1"
+            name="line1"
+            type="text"
+            maxLength={ADDRESS_LINE_MAX_LENGTH}
+            autoComplete="address-line1"
+            defaultValue={state.line1}
+            aria-describedby="listing-location-help"
+          />
+        </p>
+
+        <p>
+          <label htmlFor="listing-line2">Address line 2</label>
+          <input
+            id="listing-line2"
+            name="line2"
+            type="text"
+            maxLength={ADDRESS_LINE_MAX_LENGTH}
+            autoComplete="address-line2"
+            defaultValue={state.line2}
+          />
+        </p>
+
+        <p>
+          <label htmlFor="listing-town">Town or city</label>
+          <input
+            id="listing-town"
+            name="town"
+            type="text"
+            maxLength={TOWN_MAX_LENGTH}
+            autoComplete="address-level2"
+            defaultValue={state.town}
+            aria-describedby="listing-town-help"
+          />
+        </p>
+        <p id="listing-town-help">This one is public, beside the postcode district.</p>
+
+        <p>
+          <label htmlFor="listing-postcode">Postcode</label>
+          <input
+            id="listing-postcode"
+            name="postcode"
+            type="text"
+            autoComplete="postal-code"
+            defaultValue={state.postcode}
+            placeholder="BS7 8AA"
+            aria-describedby="listing-postcode-help"
+          />
+        </p>
+        <p id="listing-postcode-help">
+          Only the first part — <strong>BS7</strong> — is ever published.
+        </p>
+      </fieldset>
 
       <p>
         <button type="submit" disabled={pending}>
