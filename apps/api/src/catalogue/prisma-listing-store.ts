@@ -127,6 +127,14 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
             line1: location.line1,
             line2: location.line2,
           }),
+          // All six together or none — the service produces them as one object
+          // and `location_is_geocoded_or_not` refuses any half state. Spread
+          // rather than written field by field so that a column added to
+          // `LocatedListingPoint` cannot be silently dropped here.
+          ...(draft.locatedPoint ?? {}),
+          // `fuzzedPoint` is absent on purpose: the trigger derives it from the
+          // fuzzed pair. Writing it from here would be a second source of truth
+          // for the one column BRD §4.2 says Prisma cannot express.
         },
       });
 
@@ -252,6 +260,10 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       transportRequirement: asRequirement(listing.transportRequirement, listing.id),
       requiresTwoPersonLift: listing.requiresTwoPersonLift,
       collectionLocation: this.toLocation(listing),
+      // A boolean, never the coordinates. §8.4.1 keeps true coordinates out of
+      // every projection above this line, and the honest way to guarantee that
+      // is for them not to be on the record at all.
+      isLocated: listing.location?.latitude != null,
       status: asStatus(listing.status),
       createdAt: listing.createdAt,
       updatedAt: listing.updatedAt,
@@ -352,6 +364,13 @@ function toOption(slug: string, version: VersionRow): CategoryOptionRecord {
 interface LocationRow {
   postcode: string;
   encryptedDetail: string;
+  /**
+   * Null until the postcode has been geocoded — read only to answer *whether*
+   * it has. The true coordinates go no further than this file (§8.4.1); Phase 7
+   * will add a deliberate, audited method that discloses them once a booking
+   * authorises collection.
+   */
+  latitude: number | null;
 }
 
 interface ListingRow {

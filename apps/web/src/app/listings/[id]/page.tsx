@@ -198,6 +198,26 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
                 <strong>{outwardCodeOf(listing.collectionLocation.postcode)}</strong>,{' '}
                 {listing.collectionLocation.town} until a booking reaches collection.
               </small>
+              {/*
+                Only when it is *not* located. A line saying "we found this
+                address" on every listing is one nobody reads, and the whole
+                value here is that the exception stands out — the same reasoning
+                as the two-person-lift line above.
+
+                It matters to an owner because it is the difference between a
+                listing people can find nearby and one they cannot, and slice 2.8
+                will refuse to publish while it is true.
+              */}
+              {listing.isLocated ? null : (
+                <>
+                  <br />
+                  <em role="status">
+                    We have not been able to place this postcode on a map yet, so nobody
+                    searching nearby would find it. That usually fixes itself — save the
+                    listing again in a few minutes.
+                  </em>
+                </>
+              )}
             </>
           )}
         </dd>

@@ -298,6 +298,20 @@ export interface OwnerListing {
    * nothing else, and it is a different type for exactly that reason.
    */
   readonly collectionLocation: ListingCollectionLocation | null;
+  /**
+   * Whether that address has been resolved to a point yet (slice 2.5b).
+   *
+   * **A boolean, never the coordinates.** BRD §8.4.1 keeps the true point out of
+   * every response, and the published one is a Phase 3 concern that this
+   * projection has no use for. What an owner needs from it is one fact: their
+   * listing cannot be found by anybody searching nearby until this is true, and
+   * slice 2.8 will refuse to publish it.
+   *
+   * False is ordinary rather than alarming — the geocoder may not recognise a
+   * new postcode, or may have been unreachable when the listing was saved.
+   * Saving again tries once more.
+   */
+  readonly isLocated: boolean;
   readonly status: ListingStatus;
   /** ISO 8601 UTC. */
   readonly createdAt: string;
@@ -330,6 +344,7 @@ const ownerListingSchema = z.object({
   // and defaults `line2`; a response check that transformed would rewrite what
   // the API actually sent, which is the one thing this check exists to detect.
   collectionLocation: postalAddressResponseSchema.nullable(),
+  isLocated: z.boolean(),
   status: listingStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),

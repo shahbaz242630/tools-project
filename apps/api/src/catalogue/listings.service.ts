@@ -11,6 +11,7 @@ import type {
 } from '@platform/contracts';
 import { Time } from '@platform/core';
 import type { Actor } from '../audit/audit-log.js';
+import type { ListingLocator } from './listing-locator.js';
 import type { MoneyValue } from '@platform/core';
 import type {
   CategoryOptionRecord,
@@ -115,6 +116,16 @@ export class ListingsService {
   constructor(
     private readonly store: ListingStore,
     private readonly categories: CategoryOptionSource,
+    /**
+     * Search & Location, reached through the port `listing-locator.ts` states
+     * (BRD §5.1: Catalogue must not own postcodes or coordinates).
+     *
+     * Required rather than optional, for the reason slice 2.1 learned when it
+     * made `catalogue` a required `AppModule` option: an optional dependency is
+     * one that several boot sites forget, and the failure would arrive as
+     * listings silently never being locatable.
+     */
+    private readonly locator: ListingLocator,
   ) {}
 
   /**
@@ -174,6 +185,21 @@ export class ListingsService {
       );
     }
 
+    // **After every refusal above, and deliberately.** Geocoding is a call to a
+    // third party; doing it before the checks would spend somebody else's
+    // service on drafts we are about to reject, and would make a validation
+    // error take 2.5 s to arrive when the provider is slow.
+    //
+    // Null for either failure — unrecognised postcode or unreachable provider —
+    // and neither stops the save. §8.3 makes a draft permissive, so a listing
+    // with an address we could not place is a legitimate draft that reads as
+    // "not located yet". **Slice 2.8 must refuse to publish one**, because a
+    // published listing no search can find is worse than a draft.
+    const locatedPoint =
+      submitted.collectionLocation === null
+        ? null
+        : await this.locator.locate(submitted.collectionLocation.postcode);
+
     return this.store.createDraft({
       ownerId: submitted.ownerId,
       categorySlug: submitted.categorySlug,
@@ -184,6 +210,7 @@ export class ListingsService {
       transportRequirement: submitted.transportRequirement,
       requiresTwoPersonLift: submitted.requiresTwoPersonLift,
       collectionLocation: submitted.collectionLocation,
+      locatedPoint,
       categoryVersionNumber: category.versionNumber,
     });
   }

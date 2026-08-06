@@ -37,6 +37,8 @@ import { ProfilesService } from './profiles/profiles.service.js';
 import { CatalogueService } from './catalogue/catalogue.service.js';
 import { PrismaCategoryStore } from './catalogue/prisma-category-store.js';
 import { ListingsService } from './catalogue/listings.service.js';
+import { LocationService } from './search-location/location.service.js';
+import { PostcodesIoGeocoder } from './search-location/postcodes-io-geocoder.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { createShutdown } from '@platform/runtime';
 
@@ -190,7 +192,23 @@ async function bootstrap(): Promise<void> {
     database,
     createFieldEncryptor(personalDataEnv.PERSONAL_DATA_ENCRYPTION_KEY),
   );
-  const listings = new ListingsService(listingStore, listingStore);
+  // Search & Location opens here (BRD §5.1). It owns postcodes and coordinates;
+  // Catalogue owns listings and asks it where a postcode is, through the port
+  // `catalogue/listing-locator.ts` states — the same shape as Profiles asking
+  // Identity whether an account is active.
+  //
+  // `globalThis.fetch` is left to the adapter's default. postcodes.io needs no
+  // credentials at all, which is why this line carries none: it is ONS open data
+  // behind a free, keyless API, so there is nothing to put in the secret manager
+  // and nothing to rotate.
+  const location = new LocationService(
+    new PostcodesIoGeocoder(logger.child({ module: 'search-location' })),
+    logger.child({ module: 'search-location' }),
+  );
+
+  const listings = new ListingsService(listingStore, listingStore, {
+    locate: (postcode) => location.locate(postcode),
+  });
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({

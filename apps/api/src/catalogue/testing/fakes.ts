@@ -18,6 +18,9 @@
  */
 
 import { Time } from '@platform/core';
+import { createRecordingLogger } from '@platform/observability/testing';
+import { LocationService } from '../../search-location/location.service.js';
+import { FakeGeocoder } from '../../search-location/testing/fakes.js';
 import type {
   CategoryAttribute,
   CategoryReportableActivity,
@@ -264,6 +267,10 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       // was stored.
       collectionLocation:
         draft.collectionLocation === null ? null : { ...draft.collectionLocation },
+      // A boolean, mirroring the real store: nothing above the store ever sees
+      // the coordinates, so a double that exposed them would let a test assert
+      // something production cannot do.
+      isLocated: draft.locatedPoint !== null,
       status: 'DRAFT',
       createdAt: now,
       updatedAt: now,
@@ -302,7 +309,15 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
   eraseLocationsFor(ownerId: string): Promise<void> {
     this.listings.forEach((listing, index) => {
       if (listing.ownerId === ownerId) {
-        this.listings[index] = { ...listing, collectionLocation: null };
+        // The coordinates go with the address, because the whole
+        // `listing_locations` row goes. A double that cleared the address and
+        // left the listing "located" would let an erasure test pass while the
+        // real system kept a point on somebody's house.
+        this.listings[index] = {
+          ...listing,
+          collectionLocation: null,
+          isLocated: false,
+        };
       }
     });
     return Promise.resolve();
@@ -327,6 +342,8 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
 export interface ListingFakes {
   readonly categories: InMemoryCategoryStore;
   readonly listings: InMemoryListingStore;
+  /** Seed it with `knows(...)` for a test that needs a listing to be locatable. */
+  readonly geocoder: FakeGeocoder;
   readonly service: ListingsService;
 }
 
@@ -342,5 +359,18 @@ export function createListingFakes(
   categories: InMemoryCategoryStore = new InMemoryCategoryStore(),
 ): ListingFakes {
   const listings = new InMemoryListingStore(categories);
-  return { categories, listings, service: new ListingsService(listings, listings) };
+  // A real `LocationService` over a fake geocoder, rather than a stub locator.
+  // The fuzz is the part worth exercising — a stubbed locator would let a test
+  // pass with the offset never drawn, which is the one thing §8.4.1 requires.
+  const geocoder = new FakeGeocoder();
+  const location = new LocationService(geocoder, createRecordingLogger().logger);
+
+  return {
+    categories,
+    listings,
+    geocoder,
+    service: new ListingsService(listings, listings, {
+      locate: (postcode) => location.locate(postcode),
+    }),
+  };
 }

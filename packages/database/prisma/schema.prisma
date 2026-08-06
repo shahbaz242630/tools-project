@@ -997,9 +997,79 @@ model ListingLocation {
   /// to decrypt rather than being served as that listing's address.
   encryptedDetail String @db.Text
 
+  /// Where the postcode actually is (slice 2.5b).
+  ///
+  /// **Floats, and that is correct — ADR 0002 is about money.** Pence are whole
+  /// and a rounding error there is somebody's money; a coordinate is a
+  /// continuous quantity with no natural unit, and the nearest whole degree is
+  /// 111 km wide. Do not "fix" these into integers on the strength of the money
+  /// rule.
+  ///
+  /// **Nullable, because geocoding depends on a third party.** It can be down,
+  /// and it can simply not recognise a valid new postcode — its data is a
+  /// snapshot. §8.3 makes a draft permissive, so neither may stop somebody
+  /// saving one: the listing keeps its address and reads as "not located yet".
+  /// **Slice 2.8 must refuse to publish a listing with no coordinates**, because
+  /// a published listing no search can find is worse than a draft.
+  ///
+  /// **Never returned by a public or pre-booking response** (§8.4.1). It exists
+  /// for Phase 7, which hands the renter an exact place once a booking
+  /// authorises collection — re-geocoding at handover would make two strangers
+  /// meeting depend on a third party being up.
+  latitude  Float? @db.DoublePrecision
+  longitude Float? @db.DoublePrecision
+
+  /// The persisted fuzz offset — BRD §8.4.1, ADR 0032.
+  ///
+  /// **Drawn once at random when the coordinates first exist, and never
+  /// recomputed.** Recomputing per request leaks the true point through
+  /// averaging. Not derived from the listing id either: a derived offset is
+  /// invertible, so a leaked key would yield every owner's home address with no
+  /// database access at all. Read ADR 0032 before changing any of this.
+  ///
+  /// Integers: a whole degree of bearing at 1 km is under 18 m, and metre
+  /// precision on a deliberate blur is already far finer than the blur.
+  fuzzBearingDegrees Int?
+  fuzzDistanceMetres Int?
+
+  /// The published point — the true one displaced by the offset above.
+  ///
+  /// **Stored rather than derived at read time**, and that is the same instinct
+  /// as `addresses.outwardCode`: deriving makes the published location the
+  /// output of a function somebody can change, and a different earth radius or
+  /// rounding would silently move every listing. Storing makes it a fact.
+  fuzzedLatitude  Float? @db.DoublePrecision
+  fuzzedLongitude Float? @db.DoublePrecision
+
+  /// The GiST-indexed geography for Phase 3's radius query — BRD §4.2.
+  ///
+  /// **Nullable, and that is load-bearing.** §4.2: *"A **required**
+  /// `Unsupported` column blocks ordinary Prisma Client writes on that model."*
+  /// Nullable, it does not, so this model stays fully writable through Prisma
+  /// and only the radius query needs raw SQL.
+  ///
+  /// **Derived from the FUZZED point, by trigger, never written by application
+  /// code.** On the fuzzed point because it exists to serve public radius
+  /// queries and §8.4.1 permits those to touch nothing else — an index on the
+  /// true point would be an index no public query may use. ADR 0032 makes that
+  /// binding on Phase 3: filtering on the true coordinate would let an attacker
+  /// binary-search the radius from three origins and recover the exact point,
+  /// which is the trilateration attack §8.4.1 opens by describing.
+  fuzzedPoint Unsupported("geography(Point,4326)")?
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
+  /// Declared here as well as created in the migration, so the datamodel and the
+  /// database agree.
+  ///
+  /// Without it `prisma migrate diff` reports drift — *"removed index on columns
+  /// (fuzzedPoint)"* — because Prisma would generate a schema with no such index
+  /// and conclude the database has one it should not. Harmless under
+  /// `migrate deploy`, which is what the deploy runs, and **not** harmless under
+  /// `migrate dev`, which would helpfully write a migration dropping the index
+  /// BRD §4.2 requires.
+  @@index([fuzzedPoint], type: Gist)
   @@map("listing_locations")
 }
 
