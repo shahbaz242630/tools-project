@@ -86,6 +86,17 @@ const DRAFT = {
   // transport tests below override it.
   transportRequirement: null,
   requiresTwoPersonLift: false,
+  // Null by default too — a draft that has not said where the item is. The
+  // collection-address tests below override it.
+  collectionLocation: null,
+};
+
+/** A complete collection address, normalised as the contract produces it. */
+const ADDRESS = {
+  line1: '12 Gloucester Road',
+  line2: null,
+  town: 'Bristol',
+  postcode: 'BS7 8AA',
 };
 
 /** What the launch category offers, for the tests that need a category to offer something. */
@@ -742,5 +753,106 @@ describe('the transport requirement', () => {
     expect(parseOwnerListing(response.json()).transportRequirement).toBe(
       'van_required',
     );
+  });
+});
+
+describe('where the item is collected from', () => {
+  it('stores it and gives it back to the owner in full', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: ADDRESS,
+    });
+
+    expect(response.statusCode).toBe(201);
+    // In full, because this response only ever reaches the owner who typed it.
+    expect(parseOwnerListing(response.json()).collectionLocation).toEqual(ADDRESS);
+  });
+
+  it('accepts a draft that has not said, because §8.3 lets owners save progress', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: null,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).collectionLocation).toBeNull();
+  });
+
+  it('refuses the field being absent altogether', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    // ADR 0025's rule, for the fourth time on this shape: an optional field is
+    // a silent default, and a caller that forgot the address should hear so
+    // rather than have "not said" assumed for them.
+    const response = await createListing(
+      'alice-token',
+      Object.fromEntries(
+        Object.entries(DRAFT).filter(([key]) => key !== 'collectionLocation'),
+      ),
+    );
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('refuses a postcode that is not one', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: { ...ADDRESS, postcode: 'NOT A POSTCODE' },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('refuses half an address, rather than storing the half it was given', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: { line1: '12 Gloucester Road', line2: null, town: '' },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('normalises the postcode rather than storing what was typed', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    const created = parseOwnerListing(
+      (
+        await createListing('alice-token', {
+          ...DRAFT,
+          collectionLocation: { ...ADDRESS, postcode: 'bs7  8aa' },
+        })
+      ).json(),
+    );
+
+    expect(created.collectionLocation?.postcode).toBe('BS7 8AA');
+  });
+
+  it('does not give one owner another owner’s address', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    const hers = parseOwnerListing(
+      (
+        await createListing('alice-token', { ...DRAFT, collectionLocation: ADDRESS })
+      ).json(),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingPath(hers.id),
+      headers: auth('bob-token'),
+    });
+
+    // 404 rather than 403, so the refusal does not confirm the listing exists —
+    // and, more to the point here, the body carries no address at all.
+    expect(response.statusCode).toBe(404);
+    expect(JSON.stringify(response.json())).not.toContain('Gloucester');
+    expect(JSON.stringify(response.json())).not.toContain('BS7');
   });
 });

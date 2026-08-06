@@ -5,6 +5,7 @@ import {
   TRANSPORT_REQUIREMENT_LABELS,
   suggestTransportRequirement,
 } from '@platform/contracts';
+import { ResetSafeSelect } from './reset-safe-select';
 import type {
   CategoryTransportOption,
   ItemWeight,
@@ -79,20 +80,22 @@ export function TransportField({
 
       <p>
         <label htmlFor={id('requirement')}>What is needed to collect it</label>
-        <select
+        {/*
+          `ResetSafeSelect`, not a bare `<select value=…>` — see that component.
+          This one is the reason it re-asserts through a ref rather than using
+          `defaultValue`: the displayed value moves on its own as the weight is
+          typed, so it has to stay genuinely controlled.
+        */}
+        <ResetSafeSelect
           id={id('requirement')}
           name="transportRequirement"
           value={value}
-          aria-describedby={id('help')}
-          onChange={(event) => {
+          describedBy={id('help')}
+          onChange={(next) => {
             // The empty option is a real answer — "I have not decided" — and it
             // must clear the choice rather than reapply the suggestion, or the
             // owner could never get back to unanswered.
-            onChange(
-              event.target.value === ''
-                ? null
-                : (event.target.value as TransportRequirement),
-            );
+            onChange(next === '' ? null : (next as TransportRequirement));
           }}
         >
           {/* What "not answered yet" looks like on a draft. Without it the
@@ -105,7 +108,7 @@ export function TransportField({
               {TRANSPORT_REQUIREMENT_HINTS[option.requirement]}
             </option>
           ))}
-        </select>
+        </ResetSafeSelect>
       </p>
 
       {/*

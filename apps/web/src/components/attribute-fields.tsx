@@ -5,6 +5,7 @@ import {
   type AttributeOption,
   type CategoryAttribute,
 } from '@platform/contracts';
+import { ResetSafeSelect } from './reset-safe-select';
 
 /**
  * The fields a category asks for, drawn from its configuration.
@@ -178,11 +179,18 @@ function AttributeField({
           <label htmlFor={id}>
             {attribute.label} <Requirement attribute={attribute} />
           </label>
-          <select
+          {/*
+            `ResetSafeSelect`, not a bare `<select value=…>` — see that
+            component. React's post-action form reset leaves a controlled select
+            showing its first option while React still holds the real answer,
+            so a refused save would blank every `choice` field on screen while
+            the hidden JSON value went on carrying the answers.
+          */}
+          <ResetSafeSelect
             id={id}
             value={asText(answer)}
-            onChange={(event) => {
-              onChange(event.target.value);
+            onChange={(next) => {
+              onChange(next);
             }}
           >
             {/* The empty option is what "not answered yet" looks like on a
@@ -194,7 +202,7 @@ function AttributeField({
                 {option.label}
               </option>
             ))}
-          </select>
+          </ResetSafeSelect>
         </p>
       );
 

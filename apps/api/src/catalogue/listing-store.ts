@@ -2,6 +2,7 @@ import type {
   CategoryAttribute,
   CategoryTransportOption,
   ListingAttributeValues,
+  ListingCollectionLocation,
   ListingStatus,
   TransportRequirement,
 } from '@platform/contracts';
@@ -45,6 +46,20 @@ export interface ListingRecord {
   /** What it takes to collect it, or null on a draft that has not said (§8.3). */
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
+  /**
+   * Where it is collected from, **decrypted**, or null on a draft that has not
+   * said.
+   *
+   * This record is the owner's view, so it carries the precise half. The
+   * decryption happens in the adapter, which is the only thing holding the key —
+   * the same division `PrismaProfileStore` makes, and the reason neither service
+   * ever sees an envelope.
+   *
+   * 2.10's public projection is a different method returning a different type
+   * (`CoarseLocation`), so a route cannot reach the precise half by asking the
+   * wrong question.
+   */
+  readonly collectionLocation: ListingCollectionLocation | null;
   readonly status: ListingStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -84,6 +99,19 @@ export interface ListingDraft {
    */
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
+  /**
+   * Where the item is collected from, in plaintext.
+   *
+   * **The port speaks plaintext and the adapter encrypts**, exactly as
+   * `ProfileStore` does. It is what stops a caller forgetting to encrypt on a
+   * path somebody adds later: there is no way to reach the database with a
+   * street line except through the one method that puts it in an envelope.
+   *
+   * The outward code is *not* here. It is derived from the postcode on write, in
+   * the adapter, because that is the only place the two can diverge — the same
+   * reasoning `addresses.outwardCode` records.
+   */
+  readonly collectionLocation: ListingCollectionLocation | null;
   /**
    * The version the values above were validated against.
    *
@@ -157,6 +185,36 @@ export interface ListingStore {
    * telling a stranger "that exists but is not yours" confirms it exists.
    */
   findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null>;
+
+  /**
+   * Every listing this owner has, newest first.
+   *
+   * Exists for the data export, which is what made Catalogue a personal-data
+   * module in the first place. Slice 2.9's owner dashboard wants the same query
+   * and should reuse it rather than adding a second one that can drift in
+   * ordering.
+   */
+  listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]>;
+
+  /**
+   * Erase everything precise about where this owner's listings are.
+   *
+   * **It erases locations, not listings, and the name says so.** A listing must
+   * survive its owner's account deletion — from Phase 4 a booking references it,
+   * and a rental history that loses one side is not a history. What must not
+   * survive is the front door: the full postcode and the street lines go, and
+   * the outward code and town stay on the listing, so it collapses to the
+   * coarseness it was always published at.
+   *
+   * Whether a deleted owner's listing should still be *visible* is a different
+   * question, and it is slice 2.8's — that is archival, and it has to be settled
+   * before any real user data exists.
+   *
+   * **Idempotent**, as `PersonalDataEraser` requires: erasing what is already
+   * gone is a success, because a retry after a partial failure has to be able to
+   * finish the job.
+   */
+  eraseLocationsFor(ownerId: string): Promise<void>;
 }
 
 /**

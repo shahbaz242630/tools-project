@@ -23,6 +23,21 @@ export interface ListingActionState {
   readonly description: string;
   readonly replacementValue: string;
   /**
+   * The collection address, kept as typed so a refusal does not empty it.
+   *
+   * Four separate strings rather than one object, because that is what the form
+   * holds — these are echoed straight back into `defaultValue` on four inputs,
+   * and an object here would be assembled and taken apart again for nothing.
+   *
+   * **Kept even when the failure is about something else.** Retyping an address
+   * because a title was two characters short is the kind of small insult that
+   * makes people abandon a form.
+   */
+  readonly line1: string;
+  readonly line2: string;
+  readonly town: string;
+  readonly postcode: string;
+  /**
    * The category-specific answers are **not** here, and that is not an
    * oversight. They live in the form component's own state, which survives an
    * action round trip because the component is re-rendered rather than
@@ -38,6 +53,10 @@ export const INITIAL_LISTING_STATE: ListingActionState = {
   title: '',
   description: '',
   replacementValue: '',
+  line1: '',
+  line2: '',
+  town: '',
+  postcode: '',
 };
 
 /** Re-exported so the form imports its props type from one place. */

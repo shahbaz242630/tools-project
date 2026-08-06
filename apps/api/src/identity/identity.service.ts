@@ -21,7 +21,12 @@ import type {
 import type { PersonalDataEraser } from './personal-data-eraser.js';
 import type { PersonalDataSource } from './personal-data-source.js';
 import type { ProfileSummarySource } from './profile-summary-source.js';
-import type { AdminUserView, DataExport } from '@platform/contracts';
+import type {
+  AdminUserView,
+  DataExport,
+  ExportedListings,
+  ExportedProfile,
+} from '@platform/contracts';
 import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
 import { UserConflictError } from './user-directory.js';
 import type { MirroredUser, UserDirectory, UserRole } from './user-directory.js';
@@ -174,7 +179,18 @@ export class IdentityService {
     private readonly ledger: WebhookLedger,
     private readonly audit: AuditService,
     private readonly eraser: PersonalDataEraser,
-    private readonly profileSource: PersonalDataSource,
+    private readonly profileSource: PersonalDataSource<ExportedProfile>,
+    /**
+     * Catalogue's section — the listings this person wrote, and the collection
+     * addresses on them (slice 2.5a).
+     *
+     * A **second** source rather than a wider first one, because each module
+     * supplies what it holds and knows how to make readable. Its erasure travels
+     * through the same `eraser` port as profiles, composed at the composition
+     * root; there is no second eraser argument here, which is the port doing its
+     * job.
+     */
+    private readonly listingSource: PersonalDataSource<ExportedListings>,
     private readonly profileSummaries: ProfileSummarySource,
     private readonly approvals: AdminApprovalStore,
     private readonly authenticationEvents: AuthenticationEvents,
@@ -323,13 +339,14 @@ export class IdentityService {
     const user = await this.users.findById(actor.userId);
     if (user === null) return null;
 
-    const [profile, activity, signIns] = await Promise.all([
+    const [profile, activity, signIns, listings] = await Promise.all([
       this.profileSource.exportFor(user.id),
       this.audit.listForActor(user.id),
       // One more than we will serve, so "there were more" is measured rather
       // than inferred from the page being full — a count that equals the limit
       // exactly is otherwise indistinguishable from a truncated one.
       this.authenticationEvents.listFor(user.id, EXPORTED_SIGN_IN_LIMIT + 1),
+      this.listingSource.exportFor(user.id),
     ]);
 
     const signInsTruncated = signIns.length > EXPORTED_SIGN_IN_LIMIT;
@@ -396,6 +413,16 @@ export class IdentityService {
         deviceType: entry.activity.deviceType,
         isMobile: entry.activity.isMobile,
       })),
+
+      // Catalogue's section (slice 2.5a). Supplied by that module rather than
+      // read from here, for the same reason as the profile: it is the module
+      // holding the key, and this one has no way to decrypt an address.
+      //
+      // **This is the third bulk disclosure in the document**, after the
+      // decrypted profile address and the sign-in history, and it is one more
+      // reason the whole endpoint is audited (ADR 0019). Somebody with several
+      // listings has several addresses in this file.
+      listings,
     };
   }
 

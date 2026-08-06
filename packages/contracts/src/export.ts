@@ -30,9 +30,10 @@ export const ME_EXPORT_PATH = '/me/export';
  * field added here means yesterday's file no longer parses, and the useful
  * failure is "this is a version 1 document" rather than "signIns is missing",
  * which reads like corruption. Version 2 added `signIns` and
- * `signInsTruncated` in slice 1.11a.
+ * `signInsTruncated` in slice 1.11a; version 3 added `listings` in 2.5a, when
+ * Catalogue became the second module holding personal data.
  */
-export const EXPORT_SCHEMA_VERSION = 2;
+export const EXPORT_SCHEMA_VERSION = 3;
 
 /** The account itself, as Identity & Access holds it. */
 export const exportedAccountSchema = z.object({
@@ -123,6 +124,49 @@ export const exportedSignInsSchema = z.array(
 export type ExportedSignIns = z.infer<typeof exportedSignInsSchema>;
 
 /**
+ * The listings this person has written, as Catalogue holds them — **with the
+ * collection address decrypted**.
+ *
+ * A section of its own from slice 2.5a, and the reason it exists at all is that
+ * a listing carries somebody's address. Until 2.5a the only personal data
+ * outside Identity was a profile, and this document said so by omission; a
+ * subject-access request answered from it would have missed the street the
+ * person is standing on.
+ *
+ * **Not the whole listing.** The title and the id are here so the address has
+ * something to belong to — an address in a file with no indication of which
+ * listing it is for is a fact nobody can act on. Prices, photographs and
+ * attribute values are content this person can read on the listing page itself
+ * and are not what Article 15 is about; the moment any of them holds personal
+ * data, they belong here too.
+ *
+ * The empty list is the answer for somebody with no listings. There is no null
+ * variant beside it: "you have no listings" and "we hold no listing data about
+ * you" are the same statement, and two ways to say it is how a reader ends up
+ * treating them differently.
+ */
+export const exportedListingsSchema = z.array(
+  z.object({
+    id: z.uuid(),
+    title: z.string(),
+    createdAt: z.iso.datetime(),
+    /**
+     * Null for a draft that has not said where the item lives — which is a
+     * legitimate state for a draft (§8.3), not a missing value.
+     */
+    collectionLocation: z
+      .object({
+        line1: z.string(),
+        line2: z.string().nullable(),
+        town: z.string(),
+        postcode: z.string(),
+      })
+      .nullable(),
+  }),
+);
+export type ExportedListings = z.infer<typeof exportedListingsSchema>;
+
+/**
  * Everything the platform holds about one person.
  *
  * `retained` is not decoration: BRD §10.1 requires the deletion workflow to
@@ -137,6 +181,7 @@ export const dataExportSchema = z.object({
   profile: exportedProfileSchema,
   activity: exportedActivitySchema,
   signIns: exportedSignInsSchema,
+  listings: exportedListingsSchema,
 
   /**
    * Whether `signIns` was cut short.

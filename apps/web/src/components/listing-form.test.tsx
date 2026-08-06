@@ -18,6 +18,10 @@ const state = vi.hoisted(() => ({
     title: '',
     description: '',
     replacementValue: '',
+    line1: '',
+    line2: '',
+    town: '',
+    postcode: '',
   },
 }));
 
@@ -561,5 +565,157 @@ describe('the transport requirement', () => {
     (document.querySelector('form') as HTMLFormElement).reset();
 
     expect((lift as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe('the collection address', () => {
+  it('is asked for whatever the category, because every item is somewhere', () => {
+    // Outside the category block on purpose: nothing here comes from
+    // configuration, so it renders before a category has been chosen.
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+
+    expect(screen.getByLabelText(/Address line 1/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Postcode/i)).toBeTruthy();
+  });
+
+  it('says what a renter will actually see, before it is filled in', () => {
+    // BRD §10.1's spirit on the profile page, applied here: this is the moment
+    // somebody decides whether to type their home address into a marketplace,
+    // and the answer to "who sees this" has to be above the field rather than
+    // in a policy.
+    withState({ status: 'idle', message: null });
+    const { container } = render(<ListingForm categories={CATEGORIES} />);
+
+    // Read through `aria-describedby` rather than by finding the text
+    // anywhere on the page: the assertion worth making is that the explanation
+    // is *attached to the field*, which is what makes a screen reader announce
+    // it when somebody lands there rather than leaving it as decoration.
+    const describedBy = screen
+      .getByLabelText(/Address line 1/i)
+      .getAttribute('aria-describedby');
+    const help = container.querySelector(`#${String(describedBy)}`);
+
+    expect(help?.textContent).toMatch(/district and town/i);
+    expect(help?.textContent).toMatch(/never shown publicly/i);
+  });
+
+  it('does not demand one, because a draft holds progress', () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+
+    // No `required`. §8.3 lets an owner save progress, and publication is where
+    // completeness is enforced (2.8) — an HTML `required` here would refuse to
+    // save a draft.
+    expect(screen.getByLabelText(/Address line 1/i).hasAttribute('required')).toBe(
+      false,
+    );
+    expect(screen.getByLabelText(/Postcode/i).hasAttribute('required')).toBe(false);
+  });
+
+  it('keeps what was typed when the save is refused', () => {
+    // A refusal about a title must not empty an address somebody has just
+    // written out. The state carries all four back, and the inputs read them
+    // from `defaultValue`.
+    withState({
+      status: 'error',
+      message: 'Title must be at least 3 characters',
+      line1: '12 Gloucester Road',
+      town: 'Bristol',
+      postcode: 'BS7 8AA',
+    });
+    render(<ListingForm categories={CATEGORIES} />);
+
+    expect((screen.getByLabelText(/Address line 1/i) as HTMLInputElement).value).toBe(
+      '12 Gloucester Road',
+    );
+    expect((screen.getByLabelText(/Postcode/i) as HTMLInputElement).value).toBe(
+      'BS7 8AA',
+    );
+  });
+});
+
+/**
+ * The form reset React performs after a settled action, applied to every
+ * control this form has.
+ *
+ * 2.4c-i found it on a checkbox and concluded "controlled `value` inputs are
+ * unaffected; React re-applies those". These tests exist to find out how far
+ * that is actually true, because a `<select value=…>` is a controlled value
+ * input and a reset has nothing to restore it to — no `<option>` carries
+ * `selected`, so the browser falls back to the first one.
+ */
+describe('what survives the form reset React does after an action', () => {
+  /**
+   * A reset, then the microtask that restores the selects.
+   *
+   * `reset` fires *before* the controls are restored, so `ResetSafeSelect`
+   * re-applies in a microtask immediately after. Awaiting one here is what a
+   * browser gives for free.
+   */
+  const reset = async () => {
+    (document.querySelector('form') as HTMLFormElement).reset();
+    await Promise.resolve();
+  };
+
+  it('keeps the chosen category', async () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+
+    await reset();
+
+    // The worst version of this defect: the category's own fields stay on
+    // screen and the hidden version number stays set, so the form goes on
+    // posting a version for a category the select no longer names.
+    expect((screen.getByLabelText('Category') as HTMLSelectElement).value).toBe(
+      'outdoor-gardening',
+    );
+  });
+
+  it('keeps a chosen transport requirement', async () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    fireEvent.change(screen.getByLabelText(/What is needed to collect it/i), {
+      target: { value: 'van_required' },
+    });
+
+    await reset();
+
+    expect(
+      (screen.getByLabelText(/What is needed to collect it/i) as HTMLSelectElement)
+        .value,
+    ).toBe('van_required');
+  });
+
+  it('keeps an answer to a category’s own choice field', async () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    fireEvent.change(screen.getByLabelText(/Power source/i), {
+      target: { value: 'petrol' },
+    });
+
+    await reset();
+
+    expect((screen.getByLabelText(/Power source/i) as HTMLSelectElement).value).toBe(
+      'petrol',
+    );
+  });
+
+  it('keeps an answer to a category’s own text field', async () => {
+    withState({ status: 'idle', message: null });
+    render(<ListingForm categories={CATEGORIES} />);
+    choose('outdoor-gardening');
+    fireEvent.change(screen.getByLabelText(/Condition notes/i), {
+      target: { value: 'Blade recently sharpened' },
+    });
+
+    await reset();
+
+    expect((screen.getByLabelText(/Condition notes/i) as HTMLInputElement).value).toBe(
+      'Blade recently sharpened',
+    );
   });
 });

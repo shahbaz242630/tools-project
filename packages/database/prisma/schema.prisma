@@ -897,6 +897,35 @@ model Listing {
   /// configured, which is why it is asked of every listing.
   requiresTwoPersonLift Boolean @default(false)
 
+  /// The **publishable** half of where this item is collected from (§8.4.1,
+  /// slice 2.5a). `BS7` and `Bristol`.
+  ///
+  /// **On the listing, while the precise half lives in `listing_locations`.**
+  /// The split is the disclosure rule made structural. A listing row is public
+  /// content — 2.10 renders it, Phase 3 searches it, and both will select it
+  /// broadly — so a full postcode stored here would be personal data on a row
+  /// whose whole purpose is to be shown to strangers, protected only by every
+  /// future author remembering a `select`. Instead the private half is a
+  /// different table nobody joins by accident, and these two columns have never
+  /// held anything finer than a postal district covering thousands of homes.
+  ///
+  /// **Derived on write from the stored postcode**, in one place, exactly as
+  /// `addresses.outwardCode` is. That is the only place the two can diverge.
+  ///
+  /// Both null together or both set together — a `CHECK` enforces it below.
+  /// Nullable at all because a draft legitimately has not said where the item
+  /// lives (§8.3); publication is where that becomes required (2.8).
+  ///
+  /// **They survive erasure**, deliberately. Deleting an account removes the
+  /// `listing_locations` row and leaves these, so the listing collapses to the
+  /// coarseness it was always published at rather than losing coherence — a
+  /// listing that must outlive its owner for booking history, and a district
+  /// that identifies nobody.
+  outwardCode String? @db.Text
+  town        String? @db.Text
+
+  location ListingLocation?
+
   /// `DRAFT`, and nothing else until slice 2.8 brings the rest of the lifecycle.
   ///
   /// Text with a closed union in code, exactly as `riskLevel` and
@@ -913,6 +942,65 @@ model Listing {
   /// owner dashboard (2.9) wants the same order.
   @@index([ownerId, createdAt(sort: Desc)])
   @@map("listings")
+}
+
+/// Where a listing actually is — **the half that is never published**.
+///
+/// A table of its own rather than more columns on `listings`, for three reasons
+/// that all point the same way (slice 2.5a).
+///
+/// **Disclosure.** A listing is public content and this is not. Separating them
+/// means the public projection in 2.10 and the search in Phase 3 do not join
+/// this table at all, rather than joining it and remembering to exclude columns.
+/// A `select` can be forgotten; a join that was never written cannot.
+///
+/// **Erasure.** Removing everything precise about where somebody lives is one
+/// row delete, and "erased" is then unambiguous. The alternative — nulling four
+/// columns on a row that must survive — leaves the question of whether a null
+/// means erased or never-supplied, on the one table where that distinction is
+/// answered years later by a regulator.
+///
+/// **Slice 2.5b.** The coordinates, the persisted fuzz offset and the
+/// `Unsupported("geography(Point,4326)")` column BRD §4.2 requires all belong
+/// with the postcode they are derived from. Putting an `Unsupported` column on
+/// `listings` would put a raw-SQL-only concern on the central model of this
+/// entire phase; here it stays where the raw SQL is meant to be confined.
+///
+/// **There are no coordinates here yet**, and that is 2.5a's boundary. This
+/// slice captures the address and publishes the district; 2.5b geocodes it and
+/// displaces it.
+model ListingLocation {
+  /// The listing itself is the identity — one location per listing, and the
+  /// listing id *is* the primary key rather than a surrogate beside a unique
+  /// constraint. A second key would allow two rows to exist long enough for
+  /// something to read the wrong one.
+  listingId String  @id @db.Uuid
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  /// The full postcode, normalised to `BS7 8AA` — **in clear, deliberately.**
+  ///
+  /// The same decision `addresses.postcode` records, and the same reason: slice
+  /// 2.5b geocodes this column, and encrypting a value the geocoder needs would
+  /// mean decrypting every row to answer "what is near me". It is the most
+  /// sensitive column in this table — about fifteen households, often one
+  /// building — and it is protected by living in a table no public query joins,
+  /// not by a cipher.
+  postcode String @db.Text
+
+  /// The street lines, as an AES-256-GCM envelope, exactly as `addresses` holds
+  /// them (ADR 0016).
+  ///
+  /// One ciphertext over a small JSON object rather than a column per line, so
+  /// adding a line later needs no migration and the column count reveals nothing
+  /// about what is stored. The **listing id** is bound in as additional
+  /// authenticated data, so an envelope copied onto another listing's row fails
+  /// to decrypt rather than being served as that listing's address.
+  encryptedDetail String @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("listing_locations")
 }
 
 /// A seller's tax position for statutory reporting — **present and inactive**.

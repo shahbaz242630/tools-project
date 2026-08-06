@@ -22,10 +22,12 @@ import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import { CatalogueService } from '../catalogue/catalogue.service.js';
 import {
-  createCatalogueFakes,
+  InMemoryCategoryStore,
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
+import type { ListingFakes } from '../catalogue/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { ProfilesService } from '../profiles/profiles.service.js';
 import {
@@ -84,6 +86,8 @@ let users: InMemoryUserDirectory;
 let profileStore: InMemoryProfileStore;
 let accounts: InMemoryAccountLookup;
 let approvals: InMemoryAdminApprovalStore;
+let categories: InMemoryCategoryStore;
+let listings: ListingFakes;
 
 beforeEach(async () => {
   audit = createAuditFakes();
@@ -109,13 +113,30 @@ beforeEach(async () => {
     accounts,
     audit.service,
   );
+
+  // **Catalogue is wired in for real from slice 2.5a**, not stubbed. The point
+  // of this file is that the halves are connected: an eraser that works
+  // perfectly and was never passed to `IdentityService` leaves every address in
+  // place, and no unit test can see that. It was true of profiles in 1.5c and
+  // it is true of listings now.
+  categories = new InMemoryCategoryStore();
+  listings = createListingFakes(categories);
   const identity: IdentityService = new IdentityService(
     users,
     new InMemoryWebhookLedger(),
     audit.service,
-    { erase: (actor) => profiles.eraseFor(actor) },
-    { exportFor: (userId) => profiles.exportFor(userId) },
-    { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
+    {
+      // Both erasers, composed exactly as `main.ts` composes them — and
+      // sequentially for the same reason: erasure must be retryable, and a
+      // failure in the second must leave the first done.
+      erase: async (actor) => {
+        await profiles.eraseFor(actor);
+        await listings.service.eraseFor(actor);
+      },
+    },
+    { exportFor: (userId: string) => profiles.exportFor(userId) },
+    { exportFor: (userId: string) => listings.service.exportFor(userId) },
+    { summaryFor: (userId: string) => profiles.adminSummaryFor(userId) },
     approvals,
     new InMemoryAuthenticationEvents(),
     createRecordingLogger().logger,
@@ -136,8 +157,8 @@ beforeEach(async () => {
         identity: { sessionVerifier, service: identity },
         profiles,
         audit: audit.service,
-        catalogue: createCatalogueFakes().service,
-        listings: createListingFakes().service,
+        catalogue: new CatalogueService(categories, audit.service),
+        listings: listings.service,
       }),
     ],
   }).compile();
@@ -1020,5 +1041,122 @@ describe('GET /admin/users/:userId', () => {
       reason: REASON,
       ipAddress: null,
     });
+  });
+});
+
+/**
+ * A listing's collection address, through the two paths that must reach it.
+ *
+ * **This is what "Catalogue holds personal data" means in practice** (slice
+ * 2.5a). The store tests prove the rows; the service tests prove the rules;
+ * these prove the wiring — that the second eraser was actually composed into
+ * the one identity calls, and that the second export source was actually passed
+ * to the constructor. Both are one forgotten argument away from being silently
+ * absent, which is exactly how a subject-access request comes to miss a street.
+ */
+describe('a listing address, in the personal-data paths', () => {
+  const CATEGORY = 'outdoor-gardening';
+  const ADDRESS = {
+    line1: '12 Gloucester Road',
+    line2: null,
+    town: 'Bristol',
+    postcode: 'BS7 8AA',
+  };
+
+  async function givenAListingWithAnAddress(): Promise<string> {
+    const alice = await idOf('alice-token');
+
+    await categories.create(
+      {
+        slug: CATEGORY,
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+      },
+      alice,
+    );
+
+    const created = await listings.service.createDraft({
+      ownerId: alice,
+      categorySlug: CATEGORY,
+      title: 'Petrol hedge trimmer',
+      description: '',
+      replacementValue: { amount: 24_999, currency: 'GBP' },
+      attributes: {},
+      transportRequirement: null,
+      requiresTwoPersonLift: false,
+      collectionLocation: ADDRESS,
+      categoryVersionNumber: 1,
+    });
+
+    return created.id;
+  }
+
+  it('puts it in the data export', async () => {
+    const listingId = await givenAListingWithAnAddress();
+
+    const document = dataExportSchema.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: ME_EXPORT_PATH,
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+
+    // Article 15 is about the personal data we hold, and until 2.5a this
+    // document would have answered without the street the person is standing on.
+    expect(document.listings).toEqual([
+      {
+        id: listingId,
+        title: 'Petrol hedge trimmer',
+        createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) as unknown as string,
+        collectionLocation: ADDRESS,
+      },
+    ]);
+  });
+
+  it('erases it when the account is deleted, and keeps the listing', async () => {
+    const listingId = await givenAListingWithAnAddress();
+    const alice = await idOf('alice-token');
+
+    await requestDeletion('alice-token');
+
+    const [listing] = listings.listings.all();
+    // The listing survives — from Phase 4 a booking references it — and only
+    // the precise half is gone.
+    expect(listing?.id).toBe(listingId);
+    expect(listing?.collectionLocation).toBeNull();
+    expect(await listings.service.exportFor(alice)).toEqual([
+      expect.objectContaining({ collectionLocation: null }) as unknown,
+    ]);
+  });
+
+  it('leaves another owner’s address alone', async () => {
+    await givenAListingWithAnAddress();
+    const bob = await idOf('bob-token');
+
+    const theirs = await listings.service.createDraft({
+      ownerId: bob,
+      categorySlug: CATEGORY,
+      title: 'Cylinder mower',
+      description: '',
+      replacementValue: { amount: 24_999, currency: 'GBP' },
+      attributes: {},
+      transportRequirement: null,
+      requiresTwoPersonLift: false,
+      collectionLocation: ADDRESS,
+      categoryVersionNumber: 1,
+    });
+
+    await requestDeletion('alice-token');
+
+    expect(
+      listings.listings.all().find((listing) => listing.id === theirs.id)
+        ?.collectionLocation,
+    ).toEqual(ADDRESS);
   });
 });

@@ -93,8 +93,11 @@ beforeEach(async () => {
     new InMemoryWebhookLedger(),
     audit.service,
     { erase: (actor) => profiles.eraseFor(actor) },
-    { exportFor: (userId) => profiles.exportFor(userId) },
-    { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
+    { exportFor: (userId: string) => profiles.exportFor(userId) },
+    // Catalogue's section, stubbed empty — this file is about what suspension
+    // refuses, and it creates no listings.
+    { exportFor: () => Promise.resolve([]) },
+    { summaryFor: (userId: string) => profiles.adminSummaryFor(userId) },
     approvals,
     new InMemoryAuthenticationEvents(),
     createRecordingLogger().logger,

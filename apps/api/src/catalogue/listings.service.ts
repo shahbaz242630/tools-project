@@ -3,7 +3,14 @@ import {
   offersTransportRequirement,
   validateAttributeValues,
 } from '@platform/contracts';
-import type { AttributeValueIssue, TransportRequirement } from '@platform/contracts';
+import type {
+  AttributeValueIssue,
+  ExportedListings,
+  ListingCollectionLocation,
+  TransportRequirement,
+} from '@platform/contracts';
+import { Time } from '@platform/core';
+import type { Actor } from '../audit/audit-log.js';
 import type { MoneyValue } from '@platform/core';
 import type {
   CategoryOptionRecord,
@@ -36,6 +43,16 @@ export interface SubmittedListing {
    */
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
+  /**
+   * Where the item is collected from, or null on a draft that has not said.
+   *
+   * Already normalised by the contract — the postcode arrives as `BS7 8AA` and
+   * `line2` as null rather than absent — so nothing here re-decides what a valid
+   * postcode is. **Unlike the attributes and the transport requirement, this
+   * needs no check against the category**: where somebody's lawnmower lives is
+   * not something a category configures, and no version pins it.
+   */
+  readonly collectionLocation: ListingCollectionLocation | null;
   readonly categoryVersionNumber: number;
 }
 
@@ -166,6 +183,7 @@ export class ListingsService {
       attributes: values.values,
       transportRequirement: submitted.transportRequirement,
       requiresTwoPersonLift: submitted.requiresTwoPersonLift,
+      collectionLocation: submitted.collectionLocation,
       categoryVersionNumber: category.versionNumber,
     });
   }
@@ -184,5 +202,65 @@ export class ListingsService {
   /** The categories an owner may list in, with the fields each one asks for. */
   categoryOptions(): Promise<readonly CategoryOptionRecord[]> {
     return this.categories.listOptions();
+  }
+
+  /**
+   * This module's contribution to somebody's data export.
+   *
+   * **Catalogue became a personal-data module in slice 2.5a**, and this method
+   * and `eraseFor` below are what that means in practice. Until a listing
+   * carried a collection address, the only personal data outside Identity was a
+   * profile, and the export document said so by omission — a subject-access
+   * request answered from it would have missed the street the person is
+   * standing on.
+   *
+   * The address arrives **decrypted**, which is why this is built here rather
+   * than by the identity module assembling the document: the key belongs to this
+   * module's store, and handing it out so somebody else could decrypt would put
+   * it in a second place. Exactly the reasoning `ProfilesService.exportFor`
+   * gives.
+   *
+   * The empty list is the answer for somebody with no listings — see
+   * `exportedListingsSchema` for why there is no null beside it.
+   */
+  async exportFor(userId: string): Promise<ExportedListings> {
+    const listings = await this.store.listOwnedBy(userId);
+
+    return listings.map((listing) => ({
+      id: listing.id,
+      title: listing.title,
+      createdAt: Time.toIsoUtc(listing.createdAt),
+      collectionLocation: listing.collectionLocation,
+    }));
+  }
+
+  /**
+   * Remove everything precise this module holds about where somebody is.
+   *
+   * **It erases locations, not listings**, and the difference is the decision.
+   * A listing has to outlive its owner's account deletion — from Phase 4 a
+   * booking references it, and a rental history missing one side is not a
+   * history — while a front door must not. So the `listing_locations` row goes
+   * and the listing stays, collapsed to the outward code and town it was always
+   * published at. A postal district covering thousands of homes is not what
+   * §10.1 asks us to remove.
+   *
+   * **Whether a deleted owner's listing should still be *visible* is not settled
+   * here.** That is archival, it belongs with the lifecycle work in slice 2.8,
+   * and it must be settled before any real user data exists. Today nothing is
+   * publishable at all, so the question has no observable consequence yet — which
+   * is exactly the kind of thing that gets forgotten.
+   *
+   * **Unaudited, deliberately, and it is the one place that reads oddly.**
+   * `ProfilesService.eraseFor` writes a `profile.erased` entry. There is no
+   * equivalent here because the audit entry for the deletion itself is written
+   * by Identity, and a second line saying "and the listing addresses went too"
+   * would record a consequence rather than an action — with a target id for
+   * every listing, in a trail retained six years, about rows that still exist.
+   * If 2.8 makes archival a real state change, *that* is an action and deserves
+   * its own entry.
+   */
+  async eraseFor(actor: Actor): Promise<void> {
+    await this.store.eraseLocationsFor(actor.userId);
   }
 }

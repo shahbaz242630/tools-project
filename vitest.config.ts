@@ -209,6 +209,22 @@ export default defineConfig({
         // If any code appears in here, delete this line rather than keeping it
         // honest by accident.
         '**/api/src/audit/audit-log.ts',
+        // And for listings, from slice 2.5a. prisma-listing-store.db.test.ts
+        // proves what only Postgres and a real cipher can: that the composite
+        // foreign key makes a listing's category and its pinned version agree,
+        // that `location_is_complete` fires, that the address cascades away with
+        // its listing, that erasure removes the precise half and leaves the
+        // listing standing, and that what lands in `encryptedDetail` is
+        // unreadable and refuses to decrypt on another listing's row. A double
+        // asserting any of those would be asserting itself.
+        //
+        // **It is excluded now rather than in 2.4a because it only now got big
+        // enough to matter** — the encryption and the second table roughly
+        // doubled it, and 0% of a file that size moved the global figure below
+        // the threshold. Keep this exclusion narrow: the pure readers in here
+        // (`asMoney`, `asValues`, `asStatus`) stop being counted, and logic
+        // worth counting belongs in the service, which is.
+        '**/api/src/catalogue/prisma-listing-store.ts',
         // And again for dual approval. prisma-admin-approval-store.db.test.ts
         // proves the things that only Postgres can: that the CHECK constraint
         // refuses a self-approval however the row is reached, that a failed

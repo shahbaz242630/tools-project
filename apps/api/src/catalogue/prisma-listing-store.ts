@@ -3,6 +3,7 @@ import type {
   CategoryAttribute,
   CategoryTransportOption,
   ListingAttributeValues,
+  ListingCollectionLocation,
   ListingStatus,
   TransportRequirement,
 } from '@platform/contracts';
@@ -13,7 +14,8 @@ import {
   parseCategoryTransportOptions,
 } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
-import { Money } from '@platform/core';
+import { Money, Postcode } from '@platform/core';
+import type { FieldEncryptor } from '../encryption/field-encryption.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type {
   CategoryOptionRecord,
@@ -29,9 +31,26 @@ import type {
  * The one thing worth reading closely is `createDraft`: it resolves the category
  * and pins its current version **inside the same statement that writes the
  * row**, so no caller ever holds a version id long enough for it to go stale.
+ *
+ * **Encryption lives here and nowhere else**, the same rule
+ * `PrismaProfileStore` follows. The port above speaks plaintext, so no caller
+ * can forget to encrypt on a path somebody adds later: the only way a street
+ * line reaches the database is through `createDraft`, and the only way one comes
+ * back is through `toRecord`.
  */
 export class PrismaListingStore implements ListingStore, CategoryOptionSource {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    /**
+     * Catalogue holds personal data from slice 2.5a, which is why this argument
+     * exists at all. Before it, `main.ts` noted that Catalogue "holds no
+     * personal data and answers no question about a person, which is why it
+     * needs neither the encryptor nor a lookup into identity" — the first half
+     * of that sentence stopped being true the moment a listing carried an
+     * address.
+     */
+    private readonly encryptor: FieldEncryptor,
+  ) {}
 
   async createDraft(draft: ListingDraft): Promise<ListingRecord> {
     const category = await this.prisma.category.findUnique({
@@ -59,26 +78,65 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       );
     }
 
-    const listing = await this.prisma.listing.create({
-      data: {
-        ownerId: draft.ownerId,
-        // Both halves of the composite foreign key, resolved from one read so
-        // they cannot disagree. The database refuses the pair if they ever do.
-        categoryId: category.id,
-        categoryVersionId: current.id,
-        title: draft.title,
-        description: draft.description,
-        replacementValueAmount: draft.replacementValue.amount,
-        replacementValueCurrency: draft.replacementValue.currency,
-        attributes: draft.attributes,
-        transportRequirement: draft.transportRequirement,
-        requiresTwoPersonLift: draft.requiresTwoPersonLift,
-        status: DRAFT,
-      },
-      include: LISTING_CATEGORY,
+    const location = draft.collectionLocation;
+
+    // The listing and its location are written as one unit, for the reason
+    // `PrismaProfileStore.save` gives about a profile and its address: they are
+    // two tables holding one answer to one form, and a failure between the two
+    // writes leaves a listing claiming a district it has no address for.
+    //
+    // Two statements rather than a nested create, because the envelope binds the
+    // **listing id** as additional authenticated data and that id does not exist
+    // until the first insert returns. The alternative — minting the uuid here so
+    // one nested write could do both — would move identity generation out of the
+    // database to buy a round trip inside a transaction that is already open.
+    const listing = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.listing.create({
+        data: {
+          ownerId: draft.ownerId,
+          // Both halves of the composite foreign key, resolved from one read so
+          // they cannot disagree. The database refuses the pair if they ever do.
+          categoryId: category.id,
+          categoryVersionId: current.id,
+          title: draft.title,
+          description: draft.description,
+          replacementValueAmount: draft.replacementValue.amount,
+          replacementValueCurrency: draft.replacementValue.currency,
+          attributes: draft.attributes,
+          transportRequirement: draft.transportRequirement,
+          requiresTwoPersonLift: draft.requiresTwoPersonLift,
+          // The publishable half, derived on write from the same postcode that
+          // is about to be stored. This is the one place the two can diverge, so
+          // it is the one place that derives one from the other — the rule
+          // `addresses.outwardCode` established.
+          outwardCode:
+            location === null ? null : Postcode.outwardCode(location.postcode),
+          town: location?.town ?? null,
+          status: DRAFT,
+        },
+        include: LISTING_CATEGORY,
+      });
+
+      if (location === null) return created;
+
+      const stored = await tx.listingLocation.create({
+        data: {
+          listingId: created.id,
+          postcode: location.postcode,
+          encryptedDetail: this.encrypt(created.id, {
+            line1: location.line1,
+            line2: location.line2,
+          }),
+        },
+      });
+
+      // Re-attached rather than re-read. The include above ran before this row
+      // existed, and issuing a second select for a value we are holding would be
+      // a query whose only purpose is to fetch what we just wrote.
+      return { ...created, location: stored };
     });
 
-    return toRecord(listing);
+    return this.toRecord(listing);
   }
 
   async findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null> {
@@ -90,7 +148,41 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       include: LISTING_CATEGORY,
     });
 
-    return listing === null ? null : toRecord(listing);
+    return listing === null ? null : this.toRecord(listing);
+  }
+
+  async listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]> {
+    const listings = await this.prisma.listing.findMany({
+      where: { ownerId },
+      // Newest first, matching the index on `(ownerId, createdAt DESC)`. The
+      // owner dashboard in 2.9 wants the same order, which is why this is one
+      // method rather than two that can drift.
+      orderBy: { createdAt: 'desc' },
+      include: LISTING_CATEGORY,
+    });
+
+    return listings.map((listing) => this.toRecord(listing));
+  }
+
+  /**
+   * Erase every precise location this owner's listings hold.
+   *
+   * **`deleteMany`, not `delete`**, because a missing row is not an error here:
+   * somebody who never gave an address is still entitled to erasure, and a retry
+   * after a partial failure has to be able to finish. That is what
+   * `PersonalDataEraser` means by idempotent.
+   *
+   * **The listings themselves are untouched, and the outward code and town stay
+   * on them.** A listing must outlive its owner's deletion — from Phase 4 a
+   * booking references it — and a district covering thousands of homes is not
+   * what §10.1 asks us to remove. What goes is the front door.
+   *
+   * Scoped by a relation filter rather than by reading the listing ids first,
+   * so there is no window in which a listing created between the two statements
+   * escapes the erasure.
+   */
+  async eraseLocationsFor(ownerId: string): Promise<void> {
+    await this.prisma.listingLocation.deleteMany({ where: { listing: { ownerId } } });
   }
 
   async listOptions(): Promise<readonly CategoryOptionRecord[]> {
@@ -122,6 +214,90 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     // exist" lead to the same honest answer.
     return current === undefined ? null : toOption(category.slug, current);
   }
+
+  /**
+   * The listing id is bound into the ciphertext as additional authenticated
+   * data.
+   *
+   * It means an encrypted address copied onto another listing's row fails to
+   * decrypt rather than being served as that listing's — an attack available to
+   * anyone with database write access but no key. The **listing** rather than
+   * the owner, which is stricter than the profile store's binding: one owner may
+   * have many listings at many addresses, and moving an address between two of
+   * their own should fail too.
+   */
+  private encrypt(listingId: string, detail: EncryptedDetail): string {
+    return this.encryptor.encrypt(JSON.stringify(detail), listingId);
+  }
+
+  private toRecord(listing: ListingRow): ListingRecord {
+    return {
+      id: listing.id,
+      ownerId: listing.ownerId,
+      categorySlug: listing.categoryVersion.category.slug,
+      categoryName: listing.categoryVersion.name,
+      categoryVersionNumber: listing.categoryVersion.versionNumber,
+      categoryAttributes: asAttributes(
+        listing.categoryVersion.attributes,
+        `the category version pinned by listing ${listing.id}`,
+      ),
+      title: listing.title,
+      description: listing.description,
+      replacementValue: asMoney(
+        listing.replacementValueAmount,
+        listing.replacementValueCurrency,
+        listing.id,
+      ),
+      attributes: asValues(listing.attributes, listing.id),
+      transportRequirement: asRequirement(listing.transportRequirement, listing.id),
+      requiresTwoPersonLift: listing.requiresTwoPersonLift,
+      collectionLocation: this.toLocation(listing),
+      status: asStatus(listing.status),
+      createdAt: listing.createdAt,
+      updatedAt: listing.updatedAt,
+    };
+  }
+
+  /**
+   * The stored location, reassembled from the two tables it lives in.
+   *
+   * The town comes from the **listing** row rather than from inside the
+   * envelope, because that is where the publishable copy lives and a second copy
+   * in the ciphertext could disagree with it. A listing carrying a location row
+   * always has that column — `location_is_complete` and the write transaction
+   * both see to it — so the fallback below is unreachable. It is an empty string
+   * rather than a throw because a town that has somehow gone missing should not
+   * make somebody's own listing unopenable to them, and the street lines and
+   * postcode beside it are still true.
+   */
+  private toLocation(listing: ListingRow): ListingCollectionLocation | null {
+    if (listing.location === null) return null;
+
+    const detail = JSON.parse(
+      this.encryptor.decrypt(listing.location.encryptedDetail, listing.id),
+    ) as EncryptedDetail;
+
+    return {
+      line1: detail.line1,
+      line2: detail.line2,
+      town: listing.town ?? '',
+      postcode: listing.location.postcode,
+    };
+  }
+}
+
+/**
+ * What goes inside the encrypted envelope.
+ *
+ * The identifying lines, and only those — the same split `PrismaProfileStore`
+ * makes. `town` stays in a clear column because it is publishable, and
+ * `postcode` stays in clear because slice 2.5b geocodes it: encrypting a value
+ * the search index needs would mean decrypting every row to answer "what is near
+ * me".
+ */
+interface EncryptedDetail {
+  readonly line1: string;
+  readonly line2: string | null;
 }
 
 const DRAFT: ListingStatus = 'DRAFT';
@@ -140,6 +316,16 @@ const LATEST_VERSION = {
  */
 const LISTING_CATEGORY = {
   categoryVersion: { include: { category: true } },
+  /**
+   * The precise half of the location, joined **only here**.
+   *
+   * This include belongs to the owner's own reads. Slice 2.10's public
+   * projection and Phase 3's search must not reuse it — they read
+   * `listings.outwardCode` and `listings.town`, which are on the row already and
+   * have never held anything finer. That is the whole reason the two halves are
+   * in different tables (BRD §8.4.1).
+   */
+  location: true,
 } as const;
 
 interface VersionRow {
@@ -162,6 +348,12 @@ function toOption(slug: string, version: VersionRow): CategoryOptionRecord {
   };
 }
 
+/** The private half, as it comes out of `listing_locations`. */
+interface LocationRow {
+  postcode: string;
+  encryptedDetail: string;
+}
+
 interface ListingRow {
   id: string;
   ownerId: string;
@@ -172,39 +364,16 @@ interface ListingRow {
   attributes: unknown;
   transportRequirement: string | null;
   requiresTwoPersonLift: boolean;
+  /** The publishable half. Null together with `town` (`location_is_complete`). */
+  town: string | null;
   status: string;
   createdAt: Date;
   updatedAt: Date;
   categoryVersion: VersionRow & {
     category: { slug: string };
   };
-}
-
-function toRecord(listing: ListingRow): ListingRecord {
-  return {
-    id: listing.id,
-    ownerId: listing.ownerId,
-    categorySlug: listing.categoryVersion.category.slug,
-    categoryName: listing.categoryVersion.name,
-    categoryVersionNumber: listing.categoryVersion.versionNumber,
-    categoryAttributes: asAttributes(
-      listing.categoryVersion.attributes,
-      `the category version pinned by listing ${listing.id}`,
-    ),
-    title: listing.title,
-    description: listing.description,
-    replacementValue: asMoney(
-      listing.replacementValueAmount,
-      listing.replacementValueCurrency,
-      listing.id,
-    ),
-    attributes: asValues(listing.attributes, listing.id),
-    transportRequirement: asRequirement(listing.transportRequirement, listing.id),
-    requiresTwoPersonLift: listing.requiresTwoPersonLift,
-    status: asStatus(listing.status),
-    createdAt: listing.createdAt,
-    updatedAt: listing.updatedAt,
-  };
+  /** Null for a draft that has not said where the item is. */
+  location: LocationRow | null;
 }
 
 /**
