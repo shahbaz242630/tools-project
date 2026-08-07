@@ -8,12 +8,14 @@ import {
   NotFoundException,
   Param,
   Post,
+  UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
 import {
   CATEGORY_OPTIONS_ROUTE,
   ContractViolationError,
   LISTINGS_ROUTE,
+  LISTING_PUBLICATION_ROUTE,
   LISTING_ROUTE,
   describeAttributeIssue,
   parseListingDraft,
@@ -21,6 +23,7 @@ import {
 import type { CategoryOption, OwnerListing } from '@platform/contracts';
 import { Time } from '@platform/core';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
+import { ListingNotPublishableError } from './listings.service.js';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -141,6 +144,42 @@ export class OwnerListingsController {
     if (listing === null) throw new NotFoundException();
 
     return toOwnerListing(listing);
+  }
+
+  /**
+   * Publish a listing (§8.3, slice 2.8a).
+   *
+   * **Not `@AllowsSuspended()`.** Reading your own listing while suspended is
+   * right — ADR 0024 keeps a suspended account able to see and export its data.
+   * Putting a new listing in front of strangers is not reading, and a suspended
+   * owner doing it is the thing the suspension exists to stop.
+   *
+   * **422, not 400, when the listing is not ready.** The request is well formed
+   * and coherent; what is wrong is the state of the listing, which no different
+   * request body would fix. A client deciding between "show a field error" and
+   * "show a list of what is left to do" needs those apart.
+   */
+  @Post(LISTING_PUBLICATION_ROUTE)
+  async publish(
+    @Param('id') id: string,
+    @CurrentUser() owner: MirroredUser,
+  ): Promise<OwnerListing> {
+    try {
+      const published = await this.listings.publish(id, owner.id);
+      // Null for both "no such listing" and "not yours", so a stranger cannot
+      // learn that somebody else's listing exists by trying to publish it.
+      if (published === null) throw new NotFoundException();
+
+      return toOwnerListing(published);
+    } catch (error) {
+      if (error instanceof ListingNotPublishableError) {
+        throw new UnprocessableEntityException({
+          message: 'This listing is not ready to be published yet.',
+          blockers: error.blockers,
+        });
+      }
+      throw error;
+    }
   }
 }
 

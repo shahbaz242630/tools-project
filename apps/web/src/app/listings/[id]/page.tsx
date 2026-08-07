@@ -16,6 +16,7 @@ import type {
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
+import { PublishListingForm } from '../../../components/publish-listing-form';
 
 /** Never prerendered — it is somebody's own draft. */
 export const dynamic = 'force-dynamic';
@@ -75,8 +76,25 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
     <>
       <h1>{listing.title}</h1>
 
+      {/*
+        **Derived from the status, not written as prose.** This said
+        "Draft. Nobody else can see this" unconditionally until slice 2.8a,
+        which was true for as long as `DRAFT` was the only status a listing
+        could have — and became a lie the moment publishing worked, while the
+        page below it correctly said "Published". Found by publishing one and
+        reading the whole page rather than the part that had just changed.
+      */}
       <p role="status">
-        <strong>Draft.</strong> Nobody else can see this and nobody can book it.
+        {listing.status === 'PUBLISHED' ? (
+          <>
+            <strong>Published.</strong> People can find this and book it. The map shows
+            an approximate point, never your address.
+          </>
+        ) : (
+          <>
+            <strong>Draft.</strong> Nobody else can see this and nobody can book it.
+          </>
+        )}
       </p>
 
       <dl>
@@ -304,10 +322,9 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
         <dd>{Time.formatLocal(Time.fromIsoUtc(listing.createdAt))}</dd>
       </dl>
 
-      <p>
-        Photographs and prices are not built yet. When they are, they will appear here —
-        and publishing will be a separate step.
-      </p>
+      <PublishListingForm listingId={listing.id} status={listing.status} />
+
+      <p>Photographs are not built yet. When they are, they will appear here.</p>
     </>
   );
 }

@@ -1,12 +1,14 @@
 import {
   TRANSPORT_REQUIREMENT_LABELS,
   offersTransportRequirement,
+  publicationBlockers,
   validateAttributeValues,
 } from '@platform/contracts';
 import type {
   AttributeValueIssue,
   ExportedListings,
   ListingCollectionLocation,
+  PublicationBlocker,
   TransportRequirement,
 } from '@platform/contracts';
 import { Time } from '@platform/core';
@@ -104,6 +106,28 @@ export class AttributeValuesInvalidError extends Error {
   constructor(readonly issues: readonly AttributeValueIssue[]) {
     super(`The attribute values were rejected: ${String(issues.length)} problem(s)`);
     this.name = 'AttributeValuesInvalidError';
+  }
+}
+
+/**
+ * Raised when a listing is not complete enough to be published (§8.3).
+ *
+ * **Distinct from `AttributeValuesInvalidError`, and the difference is which
+ * question was answered wrongly.** That one means the request carried a value
+ * the category cannot accept — a different body would fix it. This means the
+ * request was fine and the *listing* is not ready, which no request body can
+ * fix. The controller turns the first into a 400 and this into a 422 for that
+ * reason.
+ *
+ * Carries every blocker rather than the first, so an owner sees the whole list
+ * at once instead of discovering it one save at a time.
+ */
+export class ListingNotPublishableError extends Error {
+  constructor(readonly blockers: readonly PublicationBlocker[]) {
+    super(
+      `The listing is not ready to publish: ${String(blockers.length)} thing(s) missing`,
+    );
+    this.name = 'ListingNotPublishableError';
   }
 }
 
@@ -262,6 +286,50 @@ export class ListingsService {
    * The empty list is the answer for somebody with no listings — see
    * `exportedListingsSchema` for why there is no null beside it.
    */
+  /**
+   * Publish a listing, if it is ready (§8.3, slice 2.8a).
+   *
+   * The completeness rules live in `@platform/contracts` rather than here,
+   * because 2.9's owner dashboard needs the same answer *without* performing the
+   * transition — "what is still missing" is what a dashboard shows, and a rule
+   * reachable only by trying to publish would have to be written twice.
+   *
+   * **The rules read the pinned version's schema and options**, which the record
+   * already carries for exactly this reason (ADR 0029). A listing is judged
+   * against the terms it was written under, not against what the category asks
+   * today.
+   *
+   * **Publishing does not re-pin.** ADR 0029 makes re-pinning explicit and
+   * value-migrating, never a side effect — and "side effect of publishing" is
+   * the same defect as "side effect of saving". A listing goes live under the
+   * version it was written against; moving it to a newer one is slice 2.8d's
+   * deliberate operation.
+   *
+   * Returns null when no such listing belongs to this owner, so the route can
+   * answer 404 without distinguishing "not yours" from "does not exist".
+   *
+   * Throws `ListingNotPublishableError` with every unmet requirement.
+   */
+  async publish(id: string, ownerId: string): Promise<ListingRecord | null> {
+    const listing = await this.store.findOwnedBy(id, ownerId);
+    if (listing === null) return null;
+
+    const blockers = publicationBlockers({
+      description: listing.description,
+      attributes: listing.attributes,
+      categoryAttributes: listing.categoryAttributes,
+      categoryTransportOptions: listing.categoryTransportOptions,
+      transportRequirement: listing.transportRequirement,
+      rates: listing.rates,
+      hasCollectionLocation: listing.collectionLocation !== null,
+      isLocated: listing.isLocated,
+    });
+
+    if (blockers.length > 0) throw new ListingNotPublishableError(blockers);
+
+    return this.store.publish(id, ownerId);
+  }
+
   async exportFor(userId: string): Promise<ExportedListings> {
     const listings = await this.store.listOwnedBy(userId);
 
