@@ -1,0 +1,49 @@
+# Loki, in its smallest useful configuration (slice H1).
+#
+# Single-binary, filesystem-backed, no object storage. That is the right shape
+# for one VPS: the alternative is an S3 bucket and a second failure mode for
+# something whose whole job is being available when other things are not.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  # Nothing outside the stack reaches this, so it listens on all interfaces
+  # inside the container network and is published nowhere.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # 14 days, roughly matching Prometheus's 15. **This is the setting that needs
+  # revisiting before real users exist**: application logs carry IP addresses
+  # and user ids, so §10.1's retention schedule reaches them in a way it does
+  # not reach metrics. Fourteen days is a development default, not a decision.
+  retention_period: 336h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true

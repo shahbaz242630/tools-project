@@ -29,6 +29,7 @@ import {
   InMemoryWebhookLedger,
 } from './testing/fakes.js';
 import { InMemoryAuthenticationEvents } from './testing/fakes.js';
+import { createNoopMetrics } from '@platform/observability';
 
 /**
  * A suspended account against the real application.
@@ -106,6 +107,10 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        // A real registry is not wanted here: these tests are about routing and
+        // authorisation, and a metrics backend that collected would make two
+        // suites in one process share series.
+        metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
         identity: { sessionVerifier, service: identity },

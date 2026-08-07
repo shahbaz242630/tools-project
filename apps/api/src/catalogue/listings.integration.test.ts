@@ -23,6 +23,7 @@ import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from './catalogue.service.js';
 import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import type { ListingFakes } from './testing/fakes.js';
+import { createNoopMetrics } from '@platform/observability';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -141,6 +142,10 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        // A real registry is not wanted here: these tests are about routing and
+        // authorisation, and a metrics backend that collected would make two
+        // suites in one process share series.
+        metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
         identity: {

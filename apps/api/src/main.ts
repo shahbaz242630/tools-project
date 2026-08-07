@@ -11,7 +11,11 @@ import {
   loadIdentityEnv,
   loadPersonalDataEnv,
 } from '@platform/config';
-import { createLogger } from '@platform/observability';
+import {
+  createLogger,
+  createNoopMetrics,
+  createPrometheusMetrics,
+} from '@platform/observability';
 import type { Logger } from '@platform/observability';
 import { createPrismaClient, ping } from '@platform/database';
 import type { PrismaClient } from '@platform/database';
@@ -212,6 +216,19 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
+      /*
+       * Metrics are built here, in the composition root, so `prom-client` stays
+       * out of the module graph exactly as `@clerk/backend` and Prisma do — and
+       * so a test can boot the real application against a recording double
+       * without a registry.
+       *
+       * Disabled collects nothing and still serves an empty exposition, which
+       * tells a scraper "reachable, collecting nothing" rather than refusing the
+       * connection.
+       */
+      metrics: env.METRICS_ENABLED
+        ? createPrometheusMetrics({ service: 'api' })
+        : createNoopMetrics(logger),
       checks: [
         // `ping` is bound to the client here rather than the check holding a
         // Prisma instance, so the check stays testable without one.

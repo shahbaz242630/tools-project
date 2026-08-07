@@ -23,6 +23,7 @@ import { createProfileFakes } from '../profiles/testing/fakes.js';
 import type { ProfileFakes } from '../profiles/testing/fakes.js';
 import { createIdentityFakes } from './testing/fakes.js';
 import type { IdentityFakes } from './testing/fakes.js';
+import { createNoopMetrics } from '@platform/observability';
 
 /**
  * Dual approval against the real application — real routing, real guard.
@@ -80,6 +81,10 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        // A real registry is not wanted here: these tests are about routing and
+        // authorisation, and a metrics backend that collected would make two
+        // suites in one process share series.
+        metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
         identity: {

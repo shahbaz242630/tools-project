@@ -36,6 +36,23 @@ const schema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
   /**
+   * Whether to collect and expose metrics (slice H1).
+   *
+   * **Defaults to on**, unlike most flags here. A service nobody can see the
+   * state of is the situation this was built to end, and a default of "off"
+   * would mean every environment has to remember to switch it on — which is the
+   * one that will be forgotten in the environment that matters.
+   *
+   * Off is for a constrained box or a test that wants no registry. The endpoint
+   * still answers when it is off; it serves an empty exposition, which tells a
+   * scraper "reachable, collecting nothing" rather than failing to connect.
+   */
+  METRICS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+
+  /**
    * `0.0.0.0`, not `localhost`. Inside a container, binding to the loopback
    * interface makes the service unreachable from outside it — the process
    * starts, logs that it is listening, and every request is refused.
@@ -149,6 +166,7 @@ export function describeEnv(env: Env): Record<string, string> {
   return {
     nodeEnv: env.NODE_ENV,
     logLevel: env.LOG_LEVEL,
+    metrics: env.METRICS_ENABLED ? 'enabled' : 'disabled',
     database: redactUrl(env.databaseUrl),
     redis: redactUrl(env.redisUrl),
   };

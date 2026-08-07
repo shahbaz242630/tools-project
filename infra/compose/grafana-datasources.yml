@@ -1,0 +1,22 @@
+# Grafana's data sources, provisioned rather than clicked (slice H1).
+#
+# Configuration in a file means a rebuilt box comes back with the same setup,
+# which is the same reason the rest of infra/compose exists. Clicking it in
+# would make the dashboard's configuration the one thing on the box that is not
+# reproducible.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
