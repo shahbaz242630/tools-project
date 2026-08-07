@@ -17,6 +17,20 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { CategorySlugTakenError } from './category-store.js';
 
+/**
+ * A priced category (BRD §8.2, §3.4, slice 2.7a).
+ *
+ * Real rates rather than zeroes: zero is what an unpriced category defaults to,
+ * so a suite where every fixture is unpriced could not tell a policy that was
+ * carried through from one that was silently dropped.
+ */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
+};
+
 const env = loadEnv();
 
 const client = createPrismaClient({
@@ -78,6 +92,7 @@ describe('create', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -102,6 +117,7 @@ describe('create', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -117,6 +133,7 @@ describe('create', () => {
           riskLevel: 'low',
           reportableActivity: 'none',
           attributes: [],
+          feePolicy: FEE_POLICY,
           transportOptions: [],
         },
         author,
@@ -134,6 +151,7 @@ describe('create', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -146,6 +164,7 @@ describe('create', () => {
           riskLevel: 'low',
           reportableActivity: 'none',
           attributes: [],
+          feePolicy: FEE_POLICY,
           transportOptions: [],
         },
         author,
@@ -166,6 +185,7 @@ describe('the immutability trigger', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -192,6 +212,7 @@ describe('the immutability trigger', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -222,6 +243,7 @@ describe('the immutability trigger', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -245,6 +267,7 @@ describe('addVersion', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -257,6 +280,7 @@ describe('addVersion', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -286,6 +310,7 @@ describe('addVersion', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -314,6 +339,7 @@ describe('addVersion', () => {
           riskLevel: 'low',
           reportableActivity: 'none',
           attributes: [],
+          feePolicy: FEE_POLICY,
           transportOptions: [],
         },
         author,
@@ -332,6 +358,7 @@ describe('the author foreign key', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -355,6 +382,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -366,6 +394,7 @@ describe('reads', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -377,6 +406,7 @@ describe('reads', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -399,6 +429,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -410,6 +441,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -441,6 +473,7 @@ describe('reads', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -495,6 +528,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: SCHEMA,
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -523,6 +557,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -558,6 +593,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: SCHEMA,
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -569,6 +605,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -597,6 +634,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: SCHEMA,
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -624,6 +662,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -656,6 +695,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -690,6 +730,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'medium',
         reportableActivity: 'means_of_transport',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -715,6 +756,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -744,6 +786,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -756,6 +799,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'medium',
         reportableActivity: 'means_of_transport',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -785,6 +829,7 @@ describe('the reportable-activity flag', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -822,6 +867,7 @@ describe('the transport options', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: TRANSPORT,
       },
       author,
@@ -842,6 +888,7 @@ describe('the transport options', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [{ requirement: 'trailer_required' }],
       },
       author,
@@ -865,6 +912,7 @@ describe('the transport options', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: TRANSPORT,
       },
       author,
@@ -900,6 +948,7 @@ describe('the transport options', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: TRANSPORT,
       },
       author,
@@ -911,6 +960,7 @@ describe('the transport options', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -938,6 +988,7 @@ describe('the transport options', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -951,6 +1002,10 @@ describe('the transport options', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        // A raw Prisma write, so the fee policy is its six columns rather than
+        // the port's nested shape. Left at their defaults: this row exists to be
+        // unreadable for its *transport* options, and giving it rates would
+        // suggest the two were related.
         transportOptions: [{ requirement: 'helicopter_required' }],
         createdById: author,
       },
@@ -969,6 +1024,7 @@ describe('the transport options', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       author,
@@ -990,5 +1046,202 @@ describe('the transport options', () => {
     });
 
     await expect(store.findBySlug(identity)).rejects.toThrow(identity);
+  });
+});
+
+/**
+ * The fee policy (BRD §8.2, §3.4, slice 2.7a).
+ *
+ * These are the ones a double cannot fake: three CHECK constraints, and the
+ * question of whether an earlier version keeps its own rates when a later one
+ * changes them — which is the guarantee §8.2 asks this table to provide, and the
+ * only reason the rates are on the version rather than on the category.
+ */
+describe('the fee policy', () => {
+  it('round-trips through create', async () => {
+    const author = await newUser();
+    const identity = slug();
+
+    const created = await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: FEE_POLICY,
+        transportOptions: [],
+      },
+      author,
+    );
+
+    expect(created.feePolicy).toEqual(FEE_POLICY);
+    // Read back rather than trusted from the write, because the six columns are
+    // assembled on the way out and a `toRecord` that dropped one would still
+    // return the object `create` was handed.
+    expect((await store.findBySlug(identity))?.feePolicy).toEqual(FEE_POLICY);
+  });
+
+  /**
+   * The whole reason the policy is on the version.
+   *
+   * §8.2 requires a booking to retain the configuration it was made under, and
+   * from Phase 4 a booking pins a version. If reconfiguring re-priced version 1,
+   * every completed booking's fees would move retrospectively — and nothing
+   * would report it, because the row would simply read differently than it did.
+   */
+  it('leaves an earlier version priced as it was', async () => {
+    const author = await newUser();
+    const identity = slug();
+
+    await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: FEE_POLICY,
+        transportOptions: [],
+      },
+      author,
+    );
+
+    await store.addVersion(
+      identity,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_200 },
+        transportOptions: [],
+      },
+      author,
+    );
+
+    const versions = await client.categoryVersion.findMany({
+      where: { category: { slug: identity } },
+      orderBy: { versionNumber: 'asc' },
+    });
+
+    expect(versions[0]?.renterFeeBasisPoints).toBe(800);
+    expect(versions[1]?.renterFeeBasisPoints).toBe(1_200);
+    // And the current read is the new one, so "current" still means highest.
+    expect((await store.findBySlug(identity))?.feePolicy.renterFeeBasisPoints).toBe(
+      1_200,
+    );
+  });
+
+  it('defaults an unpriced category to charging nothing', async () => {
+    const author = await newUser();
+    const identity = slug();
+    const category = await client.category.create({ data: { slug: identity } });
+
+    // A version written without any fee columns, which is exactly what every row
+    // predating this migration is.
+    await client.categoryVersion.create({
+      data: {
+        categoryId: category.id,
+        versionNumber: 1,
+        name: 'Configured before fees existed',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+        createdById: author,
+      },
+    });
+
+    expect((await store.findBySlug(identity))?.feePolicy).toEqual({
+      ownerCommissionBasisPoints: 0,
+      renterFeeBasisPoints: 0,
+      minimumBookingTotal: { amount: 0, currency: 'GBP' },
+      minimumPlatformFee: { amount: 0, currency: 'GBP' },
+    });
+  });
+
+  /**
+   * Each CHECK, watched failing.
+   *
+   * The contract refuses all three before a request reaches the store, so these
+   * writes go through Prisma directly — which is the point. The constraint exists
+   * because the contract's bounds are constants in a TypeScript file somebody can
+   * raise in one line, and what they guard is how much money the platform takes
+   * from a stranger.
+   */
+  async function writeVersion(data: Record<string, unknown>): Promise<void> {
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: category.id,
+        versionNumber: 1,
+        name: 'Probe',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+        createdById: author,
+        ...data,
+      },
+    });
+  }
+
+  it('refuses a rate above the ceiling, in the database', async () => {
+    await expect(writeVersion({ renterFeeBasisPoints: 5_001 })).rejects.toThrow(
+      /fee_rates_are_within_bounds/,
+    );
+  });
+
+  it('refuses a negative rate, in the database', async () => {
+    await expect(writeVersion({ ownerCommissionBasisPoints: -1 })).rejects.toThrow(
+      /fee_rates_are_within_bounds/,
+    );
+  });
+
+  it('refuses a negative floor, in the database', async () => {
+    await expect(writeVersion({ minimumPlatformFeeAmount: -1 })).rejects.toThrow(
+      /fee_floors_are_not_negative/,
+    );
+  });
+
+  it('refuses a fee floor above the booking floor, in the database', async () => {
+    await expect(
+      writeVersion({ minimumPlatformFeeAmount: 100, minimumBookingTotalAmount: 50 }),
+    ).rejects.toThrow(/platform_fee_floor_does_not_exceed_booking_floor/);
+  });
+
+  /**
+   * A currency this build cannot do arithmetic in.
+   *
+   * Reading it as GBP would be worse than failing: `Money`'s operations refuse a
+   * mismatched pair, so the error would surface deep inside a fee calculation
+   * with a message about currencies rather than about a category — if it
+   * surfaced at all. Naming the category is the only useful question.
+   */
+  it('refuses to read a fee policy in an unknown currency', async () => {
+    const author = await newUser();
+    const identity = slug();
+    const category = await client.category.create({ data: { slug: identity } });
+
+    await client.categoryVersion.create({
+      data: {
+        categoryId: category.id,
+        versionNumber: 1,
+        name: 'From a newer build',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        transportOptions: [],
+        createdById: author,
+        minimumBookingTotalCurrency: 'EUR',
+        minimumPlatformFeeCurrency: 'EUR',
+      },
+    });
+
+    await expect(store.findBySlug(identity)).rejects.toThrow(identity);
+    await expect(store.findBySlug(identity)).rejects.toThrow(/EUR/);
   });
 });

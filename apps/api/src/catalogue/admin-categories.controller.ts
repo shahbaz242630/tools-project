@@ -171,6 +171,7 @@ function configurationOf(body: CategoryConfigurationInput): CategoryConfiguratio
     reportableActivity: body.reportableActivity,
     attributes: body.attributes,
     transportOptions: body.transportOptions,
+    feePolicy: body.feePolicy,
   };
 }
 
@@ -195,6 +196,7 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     reportableActivity: category.reportableActivity,
     attributes: category.attributes,
     transportOptions: category.transportOptions,
+    feePolicy: category.feePolicy,
     versionNumber: category.versionNumber,
     versionCreatedAt: Time.toIsoUtc(category.versionCreatedAt),
     createdAt: Time.toIsoUtc(category.createdAt),

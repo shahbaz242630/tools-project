@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@platform/database';
 import type {
   CategoryAttribute,
+  CategoryFeePolicy,
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
@@ -11,6 +12,7 @@ import {
   parseCategoryAttributes,
   parseCategoryTransportOptions,
 } from '@platform/contracts';
+import { Money } from '@platform/core';
 import { CategorySlugTakenError } from './category-store.js';
 import type {
   CategoryConfiguration,
@@ -55,6 +57,7 @@ export class PrismaCategoryStore implements CategoryStore {
               // rather than widening the port's type to suit the ORM.
               attributes: [...input.attributes],
               transportOptions: [...input.transportOptions],
+              ...feePolicyColumns(input.feePolicy),
               createdById: authorId,
             },
           },
@@ -103,6 +106,7 @@ export class PrismaCategoryStore implements CategoryStore {
         reportableActivity: configuration.reportableActivity,
         attributes: [...configuration.attributes],
         transportOptions: [...configuration.transportOptions],
+        ...feePolicyColumns(configuration.feePolicy),
         createdById: authorId,
       },
     });
@@ -115,6 +119,7 @@ export class PrismaCategoryStore implements CategoryStore {
       reportableActivity: asReportableActivity(version.reportableActivity),
       attributes: asAttributes(version.attributes, existing.slug),
       transportOptions: asTransportOptions(version.transportOptions, existing.slug),
+      feePolicy: asFeePolicy(version, existing.slug),
       versionNumber: version.versionNumber,
       versionCreatedAt: version.createdAt,
       createdAt: existing.createdAt,
@@ -155,6 +160,12 @@ interface CategoryRow {
     reportableActivity: string;
     attributes: unknown;
     transportOptions: unknown;
+    ownerCommissionBasisPoints: number;
+    renterFeeBasisPoints: number;
+    minimumBookingTotalAmount: number;
+    minimumBookingTotalCurrency: string;
+    minimumPlatformFeeAmount: number;
+    minimumPlatformFeeCurrency: string;
     versionNumber: number;
     createdAt: Date;
   }[];
@@ -177,10 +188,81 @@ function toRecord(category: CategoryRow): CategoryRecord {
     reportableActivity: asReportableActivity(current.reportableActivity),
     attributes: asAttributes(current.attributes, category.slug),
     transportOptions: asTransportOptions(current.transportOptions, category.slug),
+    feePolicy: asFeePolicy(current, category.slug),
     versionNumber: current.versionNumber,
     versionCreatedAt: current.createdAt,
     createdAt: category.createdAt,
   };
+}
+
+/**
+ * The fee policy, flattened into the six columns that hold it.
+ *
+ * One function rather than six properties written at each of the two call
+ * sites, because `create` and `addVersion` must agree exactly: a policy written
+ * one way on creation and another on reconfiguration would produce categories
+ * whose price depends on which route last touched them, and nothing would
+ * report it.
+ */
+function feePolicyColumns(policy: CategoryFeePolicy) {
+  return {
+    ownerCommissionBasisPoints: policy.ownerCommissionBasisPoints,
+    renterFeeBasisPoints: policy.renterFeeBasisPoints,
+    minimumBookingTotalAmount: policy.minimumBookingTotal.amount,
+    minimumBookingTotalCurrency: policy.minimumBookingTotal.currency,
+    minimumPlatformFeeAmount: policy.minimumPlatformFee.amount,
+    minimumPlatformFeeCurrency: policy.minimumPlatformFee.currency,
+  };
+}
+
+/**
+ * The six columns, on the way back out.
+ *
+ * **The currency gets `asRiskLevel`'s treatment rather than a cast**, and the
+ * reason is the one ADR 0002 keeps making: a currency code this build cannot do
+ * arithmetic in is not a display problem, it is an amount nothing can add up.
+ * `Money`'s operations refuse a mismatched pair, so a row carrying an unknown
+ * code would fail somewhere deep in a fee calculation with a message about
+ * currencies rather than about a category — if it failed at all. Naming the
+ * category here is the only useful question.
+ *
+ * The numbers themselves are not re-validated against the contract's bounds.
+ * Three CHECK constraints already hold them, so a row outside those bounds is
+ * not a row this adapter can be handed — and re-asserting them here would be a
+ * second copy of a rule that lives in two places already.
+ */
+function asFeePolicy(
+  version: {
+    ownerCommissionBasisPoints: number;
+    renterFeeBasisPoints: number;
+    minimumBookingTotalAmount: number;
+    minimumBookingTotalCurrency: string;
+    minimumPlatformFeeAmount: number;
+    minimumPlatformFeeCurrency: string;
+  },
+  slug: string,
+): CategoryFeePolicy {
+  return {
+    ownerCommissionBasisPoints: version.ownerCommissionBasisPoints,
+    renterFeeBasisPoints: version.renterFeeBasisPoints,
+    minimumBookingTotal: {
+      amount: version.minimumBookingTotalAmount,
+      currency: asCurrency(version.minimumBookingTotalCurrency, slug),
+    },
+    minimumPlatformFee: {
+      amount: version.minimumPlatformFeeAmount,
+      currency: asCurrency(version.minimumPlatformFeeCurrency, slug),
+    },
+  };
+}
+
+function asCurrency(value: string, slug: string): Money.CurrencyCode {
+  if ((Money.SUPPORTED_CURRENCIES as readonly string[]).includes(value)) {
+    return value as Money.CurrencyCode;
+  }
+  throw new Error(
+    `Category ${slug} has a fee policy in a currency this build cannot do arithmetic in: ${value}`,
+  );
 }
 
 /**

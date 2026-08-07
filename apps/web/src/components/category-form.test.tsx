@@ -1,6 +1,15 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { UNCONFIGURED_FEE_POLICY } from '@platform/contracts';
 import type { AdminCategory } from '@platform/contracts';
+
+/** A priced category (BRD §8.2, §3.4, slice 2.7a). */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
+};
 
 /**
  * The reportable-activity control, which is the only part of these forms that
@@ -47,6 +56,7 @@ const CATEGORY: AdminCategory = {
   riskLevel: 'low',
   reportableActivity: 'none',
   attributes: [],
+  feePolicy: FEE_POLICY,
   transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-04T09:00:00.000Z',
@@ -234,5 +244,100 @@ describe('the feedback message', () => {
     // By its words, not by its role: the transport editor also carries a
     // `status` for its empty state, and `getByRole` would match both.
     expect(document.activeElement).toBe(screen.getByText('Saved as a new version.'));
+  });
+});
+
+/**
+ * The fee fields, and the refused save that used to empty them.
+ *
+ * React 19 resets the form once a server action settles. Before slice 2.7a's
+ * fix these four were `defaultValue`, and a reset restores an input from its
+ * *attribute* — so an unpriced category, whose attribute is `''`, lost every
+ * value the administrator had typed the moment one of them was refused. They
+ * would then have been told the required rates were missing, which is a second
+ * and misleading error about fields they had filled in correctly.
+ *
+ * The same React 19 defect 2.4c-i found on checkboxes and 2.5a on selects. This
+ * is the text-input case, which 2.4c-i's note said was safe — true only when the
+ * value round-trips through the action state, as `slug` and `reason` do.
+ */
+describe('the fee fields', () => {
+  const fee = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
+
+  it('seeds blank for a category nobody has priced', () => {
+    render(
+      <ReconfigureCategoryForm
+        category={{ ...CATEGORY, feePolicy: UNCONFIGURED_FEE_POLICY }}
+      />,
+    );
+
+    // Not "0". A default shown as an answer is how a category ends up earning
+    // the platform nothing because somebody pressed Save.
+    expect(fee(/owner commission/i).value).toBe('');
+    expect(fee(/renter fee/i).value).toBe('');
+  });
+
+  it('seeds the rates a priced category already has', () => {
+    render(<ReconfigureCategoryForm category={CATEGORY} />);
+
+    expect(fee(/owner commission/i).value).toBe('15');
+    expect(fee(/renter fee/i).value).toBe('8');
+    expect(fee(/minimum booking total/i).value).toBe('10.00');
+    expect(fee(/minimum platform fee/i).value).toBe('1.00');
+  });
+
+  /**
+   * The regression, and it must be the *reset* that is exercised rather than a
+   * re-render — `form.reset()` is what React 19 actually does after an action
+   * settles, and it is what `defaultValue` cannot survive.
+   */
+  it('keeps what was typed when the form is reset after a refused save', () => {
+    render(
+      <ReconfigureCategoryForm
+        category={{ ...CATEGORY, feePolicy: UNCONFIGURED_FEE_POLICY }}
+      />,
+    );
+
+    fireEvent.change(fee(/owner commission/i), { target: { value: '15' } });
+    fireEvent.change(fee(/renter fee/i), { target: { value: '8' } });
+    fireEvent.change(fee(/minimum booking total/i), { target: { value: '10.00' } });
+    fireEvent.change(fee(/minimum platform fee/i), { target: { value: '20.00' } });
+
+    // **`form.reset()`, not `fireEvent.reset(form)`.** The latter dispatches a
+    // reset *event* without performing the reset algorithm, so the values never
+    // move and the test passes against the bug it exists to catch — verified by
+    // reintroducing `defaultValue` and watching it still pass. Calling the real
+    // method does what React 19 does after an action settles.
+    const form = fee(/owner commission/i).closest('form');
+    if (form === null) throw new Error('the fee fields are not inside a form');
+    form.reset();
+
+    // All four, not only the one that was wrong. Losing the other three is what
+    // made the refusal punishing rather than merely unhelpful.
+    expect(fee(/owner commission/i).value).toBe('15');
+    expect(fee(/renter fee/i).value).toBe('8');
+    expect(fee(/minimum booking total/i).value).toBe('10.00');
+    expect(fee(/minimum platform fee/i).value).toBe('20.00');
+  });
+
+  it('keeps a priced category’s edits through the same reset', () => {
+    render(<ReconfigureCategoryForm category={CATEGORY} />);
+
+    fireEvent.change(fee(/renter fee/i), { target: { value: '12.5' } });
+
+    const form = fee(/renter fee/i).closest('form');
+    if (form === null) throw new Error('the fee fields are not inside a form');
+    form.reset();
+
+    // Not back to the stored 8. A reset restoring the *stored* value would
+    // silently discard an edit and look like the save had been applied.
+    expect(fee(/renter fee/i).value).toBe('12.5');
+  });
+
+  it('states the recommended bands as guidance rather than limits', () => {
+    render(<ReconfigureCategoryForm category={CATEGORY} />);
+
+    expect(screen.getByText(/Recommended 12–20%/)).toBeTruthy();
+    expect(screen.getByText(/Recommended 5–12%/)).toBeTruthy();
   });
 });

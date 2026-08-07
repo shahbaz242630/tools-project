@@ -18,6 +18,7 @@ import {
 } from '../app/admin/categories/actions';
 import { INITIAL_CATEGORY_STATE } from '../app/admin/categories/state';
 import { AttributeSchemaEditor } from './attribute-schema-editor';
+import { FeePolicyEditor } from './fee-policy-editor';
 import { TransportOptionsEditor } from './transport-options-editor';
 
 /** Human wording for the vocabulary. The values themselves are the contract's. */
@@ -277,6 +278,8 @@ export function CreateCategoryForm() {
 
       <TransportOptionsEditor name="transportOptions" idPrefix="create" />
 
+      <FeePolicyEditor idPrefix="create" />
+
       <p>
         <label htmlFor="create-reason">Why</label>
         <input
@@ -369,6 +372,11 @@ export function ReconfigureCategoryForm({
         idPrefix={category.slug}
         initial={category.transportOptions}
       />
+
+      {/* Seeded for the same reason as the two editors above. An unpriced
+          category seeds blank rates, which is what it has — not a zero it
+          never chose. */}
+      <FeePolicyEditor idPrefix={category.slug} initial={category.feePolicy} />
 
       <p>
         <label htmlFor={id('reason')}>Why</label>

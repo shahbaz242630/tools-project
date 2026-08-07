@@ -15,6 +15,8 @@
 
 import { z } from 'zod';
 import { parseWith } from './parse.js';
+import { categoryFeePolicySchema } from './pricing.js';
+import type { CategoryFeePolicy } from './pricing.js';
 import { categoryTransportOptionsSchema } from './transport.js';
 import type { CategoryTransportOption } from './transport.js';
 
@@ -446,6 +448,16 @@ export interface AdminCategory {
    * attribute schema got when it arrived.
    */
   readonly transportOptions: readonly CategoryTransportOption[];
+  /**
+   * What the platform charges on a booking in this category (§8.2, §3.4).
+   *
+   * On the version rather than the category, because §8.2 requires a booking to
+   * remain readable under the terms it was made under — see `CategoryFeePolicy`.
+   * A category configured before slice 2.7a carries
+   * `UNCONFIGURED_FEE_POLICY`, which charges nothing rather than guessing a
+   * rate nobody agreed to.
+   */
+  readonly feePolicy: CategoryFeePolicy;
   readonly versionNumber: number;
   /** ISO 8601 UTC. When this *version* was written, not when the category was. */
   readonly versionCreatedAt: string;
@@ -469,6 +481,7 @@ const adminCategorySchema = z.object({
   reportableActivity: categoryReportableActivitySchema,
   attributes: categoryAttributesSchema,
   transportOptions: categoryTransportOptionsSchema,
+  feePolicy: categoryFeePolicySchema,
   versionNumber: z.number().int().positive(),
   versionCreatedAt: z.string(),
   createdAt: z.string(),
@@ -515,6 +528,20 @@ export const categoryDraftSchema = z
      * collection, with nothing reporting a problem.
      */
     transportOptions: categoryTransportOptionsSchema,
+    /**
+     * What this category charges (§8.2, §3.4).
+     *
+     * **Required at creation, like every other piece of configuration on this
+     * body.** ADR 0025's rule again: an optional fee policy defaults silently,
+     * and the silent default would be "charges nothing" — a category that
+     * quietly earns the platform nothing on every booking, with no error
+     * anywhere and nothing on screen to show it. Making it required turns that
+     * into a 400.
+     *
+     * A caller that genuinely wants no fees sends zeroes and means it, which is
+     * a different fact from having forgotten.
+     */
+    feePolicy: categoryFeePolicySchema,
   })
   .superRefine(requireReportingAcknowledgement);
 
@@ -566,6 +593,15 @@ export const categoryConfigurationSchema = z
     attributes: categoryAttributesSchema,
     /** Replace semantics, exactly as `attributes` has — see the draft above. */
     transportOptions: categoryTransportOptionsSchema,
+    /**
+     * Replace semantics here too, and this is the field where that matters
+     * most: reconfiguring a category mints a new version, and **every booking
+     * made after it is priced under these numbers**. A caller that omitted this
+     * and got a silent zero would not be misconfiguring a form — it would be
+     * giving the platform's margin away on every future booking in the
+     * category, discoverable only by reconciliation.
+     */
+    feePolicy: categoryFeePolicySchema,
   })
   .superRefine(requireReportingAcknowledgement);
 export type CategoryConfigurationInput = Omit<

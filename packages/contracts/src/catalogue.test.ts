@@ -13,6 +13,14 @@ import {
 } from './catalogue.js';
 import type { CategoryAttribute } from './catalogue.js';
 
+/** A priced category (BRD §8.2, §3.4, slice 2.7a). */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' },
+};
+
 /**
  * The five shapes the category research actually found, in one schema.
  *
@@ -351,6 +359,7 @@ const validDraft = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
+  feePolicy: FEE_POLICY,
   transportOptions: realisticTransportOptions,
 };
 
@@ -360,6 +369,7 @@ const validConfiguration = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
+  feePolicy: FEE_POLICY,
   transportOptions: realisticTransportOptions,
 };
 

@@ -19,6 +19,22 @@ beforeEach(() => {
   fakes = createCatalogueFakes();
 });
 
+/**
+ * A priced category, at the launch rates decided on 7 August: 15% owner
+ * commission, 8% renter fee (BRD §3.4's mid-band).
+ *
+ * A fixture with real rates rather than zeroes, because zero is the *default* a
+ * category carries when nobody has priced it — and a test suite where every
+ * category is unpriced would never notice a path that silently dropped the
+ * policy on the way to the store.
+ */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' },
+} as const;
+
 const draft = {
   slug: 'outdoor-gardening',
   name: 'Outdoor and gardening',
@@ -29,6 +45,7 @@ const draft = {
   reportableActivity: 'none',
   attributes: [],
   transportOptions: [],
+  feePolicy: FEE_POLICY,
 } as const;
 
 /**
@@ -144,6 +161,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -168,6 +186,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -189,6 +208,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'high',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Testing that the slug is stable',
@@ -208,6 +228,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -236,6 +257,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Saving the identical configuration again',
@@ -254,6 +276,7 @@ describe('reconfiguring a category', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Should not be possible',
@@ -276,6 +299,7 @@ describe('reading categories', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       REASON,
@@ -288,6 +312,7 @@ describe('reading categories', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -340,6 +365,7 @@ describe('the attribute schema', () => {
         riskLevel: 'low',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Clearing the schema',
@@ -360,6 +386,7 @@ describe('the attribute schema', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: SCHEMA,
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Adding the attribute schema',
@@ -384,6 +411,7 @@ describe('the attribute schema', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: draft.reportableActivity,
         attributes: [...SCHEMA].reverse(),
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Putting weight first',
@@ -403,6 +431,7 @@ describe('the attribute schema', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: SCHEMA,
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Saving the identical configuration again',
@@ -441,6 +470,7 @@ describe('the transport options', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'Withdrawing the transport options',
@@ -461,6 +491,7 @@ describe('the transport options', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: TRANSPORT,
       },
       'Offering transport options for the first time',
@@ -491,6 +522,7 @@ describe('the transport options', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [
           { requirement: 'car_boot', suggestedUpToKg: 40 },
           { requirement: 'van_required', suggestedUpToKg: 150 },
@@ -517,6 +549,7 @@ describe('the transport options', () => {
         riskLevel: draft.riskLevel,
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: TRANSPORT,
       },
       'Saving the identical configuration again',

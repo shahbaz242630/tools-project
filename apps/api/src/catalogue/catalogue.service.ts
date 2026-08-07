@@ -137,6 +137,13 @@ export class CatalogueService {
  * say. Both are configuration decisions somebody should be accountable for. The
  * contract normalises the order on the way in, so unlike the attributes above,
  * a reorder here is not a change and cannot register as one.
+ *
+ * **The fee policy is in, and of everything here it is the one with money on the
+ * other side of it.** A rate change decides what every owner is paid and what
+ * every renter is charged from that version onward. §8.13 makes administrative
+ * actions auditable; a fee change that left the same digest as the version
+ * before it would be the platform's own margin moving with nobody accountable —
+ * and the person it costs would have no way to establish when it changed.
  */
 function auditable(record: CategoryRecord): Record<string, unknown> {
   return {
@@ -146,5 +153,6 @@ function auditable(record: CategoryRecord): Record<string, unknown> {
     reportableActivity: record.reportableActivity,
     attributes: record.attributes,
     transportOptions: record.transportOptions,
+    feePolicy: record.feePolicy,
   };
 }
