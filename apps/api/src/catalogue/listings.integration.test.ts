@@ -13,6 +13,7 @@ import type { CategoryAttribute, CategoryTransportOption } from '@platform/contr
 import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
+import { FakeGeocoder } from '../search-location/testing/fakes.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
@@ -854,5 +855,123 @@ describe('where the item is collected from', () => {
     expect(response.statusCode).toBe(404);
     expect(JSON.stringify(response.json())).not.toContain('Gloucester');
     expect(JSON.stringify(response.json())).not.toContain('BS7');
+  });
+});
+
+describe('placing the collection address on a map', () => {
+  it('locates a postcode the geocoder knows', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: ADDRESS,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).isLocated).toBe(true);
+  });
+
+  it('never returns a coordinate, located or not', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: ADDRESS,
+    });
+
+    // BRD §8.4.1: the true coordinate is never returned by any public or
+    // pre-booking response, and this is the owner's own — the narrowest one
+    // there is. `51.47` and `-2.59` are the real coordinates of BS7 8AA.
+    const body = JSON.stringify(response.json());
+    expect(body).not.toContain('51.47');
+    expect(body).not.toContain('2.59');
+  });
+
+  it('saves the draft anyway when the postcode is not recognised', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    // Nothing seeded, so the fake answers "not recognised" — the state a real
+    // provider is in for a postcode issued after its last data refresh.
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: ADDRESS,
+    });
+
+    // §8.3 makes a draft permissive. Refusing here would mean a valid new-build
+    // address cannot be listed until somebody else updates their database.
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).isLocated).toBe(false);
+  });
+
+  it('saves the draft anyway when the geocoder is unreachable', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA).failsOnce();
+
+    const response = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: ADDRESS,
+    });
+
+    // A third party being down must not stop somebody listing their lawnmower.
+    // If the error propagated this would be a 500.
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).isLocated).toBe(false);
+  });
+
+  it('locates it on a later save, once the provider is back', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA).failsOnce();
+
+    await createListing('alice-token', { ...DRAFT, collectionLocation: ADDRESS });
+    const second = await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: ADDRESS,
+    });
+
+    // The whole degradation story: the outage costs a listing its coordinates
+    // until it is saved again, and nothing has to be repaired by hand.
+    expect(parseOwnerListing(second.json()).isLocated).toBe(true);
+  });
+
+  it('does not ask the geocoder when there is no address', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    await createListing('alice-token', { ...DRAFT, collectionLocation: null });
+
+    // A draft that has not said where the item is has nothing to geocode, and
+    // calling a third party to find that out would be a request that exists
+    // only because nobody checked.
+    expect(listings.geocoder.asked).toEqual([]);
+  });
+
+  it('does not ask the geocoder for a draft it is about to refuse', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+
+    await createListing('alice-token', {
+      ...DRAFT,
+      title: 'x',
+      collectionLocation: ADDRESS,
+    });
+
+    // Geocoding runs after every validation, deliberately: spending somebody
+    // else's service on a draft we are rejecting is rude, and it would make a
+    // "title too short" take 2.5 s to arrive whenever the provider is slow.
+    expect(listings.geocoder.asked).toEqual([]);
+  });
+
+  it('asks with the normalised postcode, not what was typed', async () => {
+    await givenACategory('outdoor-gardening', SCHEMA);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+
+    await createListing('alice-token', {
+      ...DRAFT,
+      collectionLocation: { ...ADDRESS, postcode: 'bs7  8aa' },
+    });
+
+    // The contract normalises before the service sees it, so the provider is
+    // asked one question per postcode rather than one per way of writing it.
+    expect(listings.geocoder.asked).toEqual(['BS7 8AA']);
   });
 });

@@ -183,6 +183,10 @@ function toOwnerListing(listing: ListingRecord): OwnerListing {
     // code and the town — BRD §8.4.1's rule, kept as a type rather than as a
     // field somebody has to remember to delete.
     collectionLocation: listing.collectionLocation,
+    // Whether, not where. The coordinates stop at the store (§8.4.1) — there is
+    // no field on `ListingRecord` that could leak them, which is a stronger
+    // guarantee than remembering not to map one.
+    isLocated: listing.isLocated,
     status: listing.status,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),

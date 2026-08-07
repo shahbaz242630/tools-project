@@ -7,6 +7,7 @@ import type {
   TransportRequirement,
 } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
+import type { LocatedListingPoint } from './listing-locator.js';
 
 /**
  * Listings, as the rest of the application sees them.
@@ -60,6 +61,20 @@ export interface ListingRecord {
    * wrong question.
    */
   readonly collectionLocation: ListingCollectionLocation | null;
+  /**
+   * Whether the collection postcode has been resolved to a point (slice 2.5b).
+   *
+   * **A boolean, not the coordinates.** Nothing above the store needs to know
+   * where the listing is: the owner sees their own address, and the published
+   * point is Phase 3's business. What an owner does need to know is that their
+   * listing is not yet locatable, because §8.3's draft is permissive and slice
+   * 2.8 will refuse to publish without it.
+   *
+   * Exposing the pair here instead would put true coordinates on the record that
+   * every controller maps to a response, which is exactly the shape §8.4.1 says
+   * must never reach a public projection.
+   */
+  readonly isLocated: boolean;
   readonly status: ListingStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -112,6 +127,24 @@ export interface ListingDraft {
    * reasoning `addresses.outwardCode` records.
    */
   readonly collectionLocation: ListingCollectionLocation | null;
+  /**
+   * Where that postcode is, with its fuzz offset already drawn (slice 2.5b).
+   *
+   * **Null is ordinary**, and means either that the geocoder does not recognise
+   * the postcode or that it could not be reached. §8.3 makes a draft permissive
+   * and neither may stop a save; slice 2.8 is where publication refuses a
+   * listing nothing can find.
+   *
+   * Always null when `collectionLocation` is null — there is nothing to
+   * geocode — and the store does not check that, because the service is what
+   * produces both from one address. What the *database* checks is the narrower
+   * thing only it can see: that all six coordinate columns are set together.
+   *
+   * Like the attribute values, this arrives already decided. The store does not
+   * know what a fuzz offset is and must not learn: that is domain logic living
+   * in Search & Location (BRD §5.1).
+   */
+  readonly locatedPoint: LocatedListingPoint | null;
   /**
    * The version the values above were validated against.
    *

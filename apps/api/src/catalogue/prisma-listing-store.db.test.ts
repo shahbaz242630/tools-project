@@ -21,6 +21,7 @@ import type {
   ListingCollectionLocation,
   TransportRequirement,
 } from '@platform/contracts';
+import type { LocatedListingPoint } from './listing-locator.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { PrismaListingStore } from './prisma-listing-store.js';
@@ -129,6 +130,7 @@ const draft = (
     readonly transportRequirement?: TransportRequirement | null;
     readonly requiresTwoPersonLift?: boolean;
     readonly collectionLocation?: ListingCollectionLocation | null;
+    readonly locatedPoint?: LocatedListingPoint | null;
   } = {},
 ) => ({
   ownerId,
@@ -148,8 +150,27 @@ const draft = (
   // postcode arrives already normalised, because the contract normalises it
   // before the service is reached.
   collectionLocation: overrides.collectionLocation ?? null,
+  // Null by default: a listing whose postcode has not been geocoded, which is a
+  // legitimate state (§8.3) and the one every existing test is in.
+  locatedPoint: overrides.locatedPoint ?? null,
   categoryVersionNumber: overrides.categoryVersionNumber ?? 1,
 });
+
+/**
+ * BS7 8AA as postcodes.io really returns it, displaced by a fixed offset.
+ *
+ * A *fixed* offset in the fixture, not a drawn one, so that a test asserting
+ * what landed in the columns asserts an exact value. The randomness is the
+ * service's and is covered in `fuzz.test.ts`.
+ */
+const LOCATED: LocatedListingPoint = {
+  latitude: 51.470761,
+  longitude: -2.593052,
+  fuzzBearingDegrees: 137,
+  fuzzDistanceMetres: 742,
+  fuzzedLatitude: 51.46587,
+  fuzzedLongitude: -2.58575,
+};
 
 const ADDRESS: ListingCollectionLocation = {
   line1: '12 Gloucester Road',
@@ -936,5 +957,216 @@ describe('listing what an owner has', () => {
     const listed = await store.listOwnedBy(mine);
 
     expect(listed.map((listing) => listing.id)).toEqual([second.id, first.id]);
+  });
+});
+
+/**
+ * Coordinates, the fuzz offset and the PostGIS column (slice 2.5b).
+ *
+ * These are the tests only a real database can carry: that the trigger builds
+ * the geography from the *fuzzed* pair in the right argument order, that the
+ * CHECK constraints fire, and that the offset survives a round trip unchanged.
+ */
+describe('the geocoded point', () => {
+  it('stores all six values, and the trigger derives the geography', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    const row = await client.listingLocation.findUniqueOrThrow({
+      where: { listingId: created.id },
+    });
+
+    expect(row.latitude).toBeCloseTo(LOCATED.latitude, 6);
+    expect(row.fuzzBearingDegrees).toBe(137);
+    expect(row.fuzzDistanceMetres).toBe(742);
+    expect(row.fuzzedLatitude).toBeCloseTo(LOCATED.fuzzedLatitude, 6);
+  });
+
+  it('builds the geography from the fuzzed pair, longitude first', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    // `ST_MakePoint` takes x then y — longitude then latitude — which is the
+    // reverse of how the pair is spoken and written everywhere else in this
+    // codebase, and is the single easiest thing to get wrong. Swapped, this
+    // listing would sit in the Indian Ocean off Somalia.
+    const [point] = await client.$queryRawUnsafe<
+      { lat: number; lng: number; srid: number }[]
+    >(
+      `SELECT ST_Y("fuzzedPoint"::geometry) AS lat,
+              ST_X("fuzzedPoint"::geometry) AS lng,
+              ST_SRID("fuzzedPoint") AS srid
+         FROM listing_locations WHERE "listingId" = $1`,
+      created.id,
+    );
+
+    expect(point?.lat).toBeCloseTo(LOCATED.fuzzedLatitude, 6);
+    expect(point?.lng).toBeCloseTo(LOCATED.fuzzedLongitude, 6);
+    expect(point?.srid).toBe(4326);
+  });
+
+  it('publishes the fuzzed point and not the true one', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    // The whole of BRD §8.4.1 in one assertion: the indexed, publicly queryable
+    // point is at least 500 m from where the item actually is. An index built on
+    // the true pair would put this at zero.
+    const [distance] = await client.$queryRawUnsafe<{ metres: number }[]>(
+      `SELECT ST_Distance(
+                "fuzzedPoint",
+                ST_SetSRID(ST_MakePoint($2::float8, $3::float8), 4326)::geography
+              ) AS metres
+         FROM listing_locations WHERE "listingId" = $1`,
+      created.id,
+      LOCATED.longitude,
+      LOCATED.latitude,
+    );
+
+    expect(Number(distance?.metres)).toBeGreaterThanOrEqual(500);
+  });
+
+  it('leaves the geography null for a listing that could not be geocoded', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    const row = await client.listingLocation.findUniqueOrThrow({
+      where: { listingId: created.id },
+    });
+
+    expect(row.latitude).toBeNull();
+    expect((await store.findOwnedBy(created.id, owner))?.isLocated).toBe(false);
+  });
+
+  it('reports a geocoded listing as located, without disclosing where', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    const record = await store.findOwnedBy(created.id, owner);
+
+    expect(record?.isLocated).toBe(true);
+    // §8.4.1: no coordinate reaches anything above the store. There is no field
+    // on the record that could carry one, which is what makes this hold.
+    expect(JSON.stringify(record)).not.toContain('51.47');
+  });
+
+  it('refuses a half-geocoded row', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    // A true point with no offset is a listing published at its owner front
+    // door. Not reachable through the store, which writes all six together, so
+    // it is provoked directly — a constraint nothing tests is one that silently
+    // stops existing.
+    await expect(
+      client.listingLocation.update({
+        where: { listingId: created.id },
+        data: { latitude: 51.470761, longitude: -2.593052 },
+      }),
+    ).rejects.toThrow(/location_is_geocoded_or_not/);
+  });
+
+  it('refuses a displacement below the 500 m floor', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    // BRD §8.4.1 floor, held in the database as well as in `fuzz.ts`. An edit to
+    // the constant that lowered it would fail here rather than quietly
+    // publishing points closer to people homes.
+    await expect(
+      client.listingLocation.update({
+        where: { listingId: created.id },
+        data: { fuzzDistanceMetres: 100 },
+      }),
+    ).rejects.toThrow(/fuzz_offset_is_within_bounds/);
+  });
+
+  it('keeps the offset exactly as drawn across a round trip', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    const first = await client.listingLocation.findUniqueOrThrow({
+      where: { listingId: created.id },
+    });
+    const second = await client.listingLocation.findUniqueOrThrow({
+      where: { listingId: created.id },
+    });
+
+    // §8.4.1 "stored once and never recomputed", asserted rather than assumed.
+    // Two reads returning different displacements would be the averaging attack
+    // the rule exists to prevent, arriving from our own code.
+    expect(first.fuzzBearingDegrees).toBe(second.fuzzBearingDegrees);
+    expect(first.fuzzedLatitude).toBe(second.fuzzedLatitude);
+    expect(first.fuzzBearingDegrees).toBe(137);
+  });
+
+  it('takes the coordinates with the address when the owner is erased', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: ADDRESS,
+        locatedPoint: LOCATED,
+      }),
+    );
+
+    await store.eraseLocationsFor(owner);
+
+    // The whole row goes, so the point goes with the street. A deletion that
+    // removed the address and left a coordinate on somebody house would be the
+    // erasure failing at exactly the thing it is for.
+    expect(
+      await client.listingLocation.findUnique({ where: { listingId: created.id } }),
+    ).toBeNull();
+    expect((await store.findOwnedBy(created.id, owner))?.isLocated).toBe(false);
   });
 });

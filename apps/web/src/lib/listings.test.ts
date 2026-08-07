@@ -29,6 +29,7 @@ const LISTING = {
   transportRequirement: 'car_boot',
   requiresTwoPersonLift: false,
   collectionLocation: null,
+  isLocated: false,
   status: 'DRAFT',
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
