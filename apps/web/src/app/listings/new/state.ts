@@ -38,6 +38,18 @@ export interface ListingActionState {
   readonly town: string;
   readonly postcode: string;
   /**
+   * The rates, kept as typed for the address's reason and one more.
+   *
+   * These are `defaultValue` inputs, and React 19 resets the form once an action
+   * settles — a reset restores each input from its attribute, so a rate that was
+   * not echoed back here would silently empty on a refusal about something else.
+   * That is the defect slice 2.7a found on the fee fields, and the fix there was
+   * the same one the address already had: round-trip what was typed.
+   */
+  readonly dailyRate: string;
+  readonly weekendRate: string;
+  readonly weeklyRate: string;
+  /**
    * The category-specific answers are **not** here, and that is not an
    * oversight. They live in the form component's own state, which survives an
    * action round trip because the component is re-rendered rather than
@@ -57,6 +69,9 @@ export const INITIAL_LISTING_STATE: ListingActionState = {
   line2: '',
   town: '',
   postcode: '',
+  dailyRate: '',
+  weekendRate: '',
+  weeklyRate: '',
 };
 
 /** Re-exported so the form imports its props type from one place. */

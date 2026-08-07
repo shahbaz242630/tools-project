@@ -257,9 +257,14 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       categoryName: category.name,
       categoryVersionNumber: category.versionNumber,
       categoryAttributes: category.attributes,
+      // The policy on the version being pinned, resolved from the same read as
+      // the schema — so a test cannot produce a listing priced under one
+      // version's rates while claiming another's.
+      categoryFeePolicy: category.feePolicy,
       title: draft.title,
       description: draft.description,
       replacementValue: draft.replacementValue,
+      rates: draft.rates,
       // Copied for the same reason the category store copies its schema: the
       // real store round-trips through JSONB, so a caller mutating its own
       // object afterwards must not be able to rewrite what was stored.

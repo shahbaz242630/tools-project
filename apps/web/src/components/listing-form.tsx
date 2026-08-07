@@ -205,6 +205,70 @@ export function ListingForm({
         inflated figure is not in your interest either.
       </p>
 
+      <fieldset>
+        <legend>What it costs to rent</legend>
+
+        <p>
+          Leave any of these blank for now — a draft does not have to be priced. You
+          will need a <strong>daily rate</strong> before you can publish.
+        </p>
+
+        <p>
+          <label htmlFor="listing-daily-rate">Daily rate (£)</label>
+          {/*
+            `type="text"` with a numeric input mode, for the replacement value's
+            reason: a number input hands back a JavaScript number, and a float
+            must never touch money (ADR 0002).
+          */}
+          <input
+            id="listing-daily-rate"
+            name="dailyRate"
+            type="text"
+            inputMode="decimal"
+            defaultValue={state.dailyRate}
+            placeholder="18.00"
+            aria-describedby="listing-daily-rate-help"
+          />
+        </p>
+        <p id="listing-daily-rate-help">
+          What one day costs. Renters see this with our fee already added, because the
+          law requires the price shown to be the price paid — you will see both figures
+          once you save.
+        </p>
+
+        <p>
+          <label htmlFor="listing-weekend-rate">Weekend rate (£)</label>
+          <input
+            id="listing-weekend-rate"
+            name="weekendRate"
+            type="text"
+            inputMode="decimal"
+            defaultValue={state.weekendRate}
+            placeholder="30.00"
+            aria-describedby="listing-weekend-rate-help"
+          />
+        </p>
+        <p id="listing-weekend-rate-help">
+          Friday to Sunday as one charge. Optional, and it needs a daily rate beside it.
+        </p>
+
+        <p>
+          <label htmlFor="listing-weekly-rate">Weekly rate (£)</label>
+          <input
+            id="listing-weekly-rate"
+            name="weeklyRate"
+            type="text"
+            inputMode="decimal"
+            defaultValue={state.weeklyRate}
+            placeholder="90.00"
+            aria-describedby="listing-weekly-rate-help"
+          />
+        </p>
+        <p id="listing-weekly-rate-help">
+          Seven days as one charge. Optional, and it needs a daily rate beside it.
+        </p>
+      </fieldset>
+
       {chosen === undefined ? (
         // No dead controls: until a category is chosen there are no
         // category-specific fields to show, and inventing empty ones would ask

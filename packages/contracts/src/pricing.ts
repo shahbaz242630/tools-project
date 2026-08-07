@@ -214,18 +214,17 @@ function checkFloorsAgree(
     return;
   }
 
+  /*
+   * **The message names its own subject**, because its path never can.
+   * `feePolicy.minimumPlatformFee.amount` is three segments of internal
+   * structure against a field labelled "Minimum platform fee (£)". The same
+   * defect 2.4b and 2.4c-i each found and fixed one field at a time; the rule
+   * that retires it for good is in `contract-issues.ts` — a message that is a
+   * sentence is shown alone, a fragment is prefixed with its path.
+   */
   if (policy.minimumPlatformFee.amount > policy.minimumBookingTotal.amount) {
     ctx.addIssue({
       code: 'custom',
-      // **The sentence names its own subject**, because the path does not and
-      // cannot. Every other contract error in this codebase reads `field:
-      // message` and that works where the path *is* what the reader sees — but
-      // this one's path is `feePolicy.minimumPlatformFee.amount`, three
-      // segments of internal structure against a field labelled "Minimum
-      // platform fee (£)". 2.4b and 2.4c-i each found the same defect and fixed
-      // it the same way; this is its third appearance and the first in a nested
-      // object, where the path is guaranteed to be unreadable rather than merely
-      // likely to be.
       message:
         'The minimum platform fee cannot be more than the minimum booking total — ' +
         'the platform would take more than the booking is worth',
@@ -308,3 +307,172 @@ export const UNCONFIGURED_FEE_POLICY: CategoryFeePolicy = {
 export function isFeePolicyConfigured(policy: CategoryFeePolicy): boolean {
   return policy.ownerCommissionBasisPoints > 0 || policy.renterFeeBasisPoints > 0;
 }
+
+/**
+ * What a listing costs to rent, before any platform fee (BRD §8.5.2, §8.3).
+ *
+ * **Every rate is nullable, because §8.3 makes a draft permissive.** An owner
+ * saves progress; completeness is a publication rule and belongs to slice 2.8,
+ * which must refuse to publish a listing with no daily rate for the same reason
+ * it must refuse one with no coordinates — it would be a listing nothing could
+ * price and nobody could book.
+ */
+export interface ListingRateCard {
+  /**
+   * The spine. Every other rate is an alternative to it, and it is the one the
+   * inclusive headline is computed from.
+   */
+  readonly daily: MoneyInput | null;
+  /**
+   * Friday to Sunday as one charge, which is how most domestic tool hire
+   * actually happens — §8.5.2 names it separately from a two-day daily charge
+   * precisely because it is not one.
+   */
+  readonly weekend: MoneyInput | null;
+  readonly weekly: MoneyInput | null;
+}
+
+/**
+ * **Hourly is deliberately absent, and this is the note that says so.**
+ *
+ * §8.5.2 names "daily, hourly, weekend, weekly and configurable discounts". The
+ * other three are here. Hourly is not, because in a peer-to-peer model the
+ * renter drives to a stranger's house to collect — the round trip alone exceeds
+ * the rental — and nothing in the launch category is rented by the hour. An
+ * unused rate is not free: it is a case every consumer from the quote engine to
+ * the booking summary must handle forever, and a field on the listing form that
+ * makes an owner wonder whether they should fill it in.
+ *
+ * It is a column and a form field away if a later category wants it. Adding one
+ * is cheaper than carrying a rate nobody sets through four phases.
+ *
+ * **Configurable discounts are absent for a different reason**: a discount
+ * applies to a *duration*, and there are no dates in Phase 2. They belong with
+ * the quote engine in Phase 4, where a period exists to discount.
+ */
+export const MIN_RENTAL_RATE_MINOR_UNITS = 100;
+export const MAX_RENTAL_RATE_MINOR_UNITS = 1_000_000;
+
+/**
+ * Platform-wide sanity bounds, not policy — the same call
+ * `replacementValueSchema` makes and for the same reason. The easy mistake is
+ * entering pounds where pence are meant, a factor of a hundred, so the range is
+ * wide enough to be uncontroversial and narrow enough to catch that.
+ *
+ * A per-category cap belongs in category configuration beside the deposit bands
+ * §8.2 already promises. Putting one here would hard-code a commercial limit in
+ * a validator.
+ */
+export const rentalRateSchema = moneySchema.superRefine((value, ctx) => {
+  if (value.amount < MIN_RENTAL_RATE_MINOR_UNITS) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `must be at least £${MIN_RENTAL_RATE_MINOR_UNITS / 100}`,
+      path: ['amount'],
+    });
+  }
+  if (value.amount > MAX_RENTAL_RATE_MINOR_UNITS) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `must be at most £${MAX_RENTAL_RATE_MINOR_UNITS / 100}`,
+      path: ['amount'],
+    });
+  }
+});
+
+export const listingRateCardSchema = z
+  .object({
+    daily: rentalRateSchema.nullable(),
+    weekend: rentalRateSchema.nullable(),
+    weekly: rentalRateSchema.nullable(),
+  })
+  .superRefine((rates, ctx) => {
+    /*
+     * A weekly rate above seven daily charges, or a weekend above three, is not
+     * refused — it is *warned about* nowhere and stored happily, because a rate
+     * card is the owner's commercial decision and a validator that second-
+     * guessed it would be hard-coding a pricing opinion (§1.2). What is refused
+     * is only what cannot be interpreted.
+     *
+     * The one real rule: a weekend or weekly rate with no daily rate beside it
+     * describes a listing that can be rented for three days but not one, with
+     * nothing saying so. §8.5.2's quote engine has no way to express that, and
+     * 2.8's publication rule would have to invent a meaning for it.
+     */
+    if (rates.daily === null && (rates.weekend !== null || rates.weekly !== null)) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'A daily rate is needed before a weekend or weekly rate — the others are ' +
+          'alternatives to it, not replacements for it',
+        path: ['daily'],
+      });
+    }
+  });
+
+export type ListingRateCardInput = z.infer<typeof listingRateCardSchema>;
+
+export function parseListingRateCard(raw: unknown): ListingRateCard {
+  return parseWith(listingRateCardSchema, 'The rates', raw);
+}
+
+/** A listing nobody has priced yet. What every listing created before 2.7b has. */
+export const UNPRICED_RATE_CARD: ListingRateCard = {
+  daily: null,
+  weekend: null,
+  weekly: null,
+};
+
+/**
+ * What §3.4.4 requires to be shown, and the parts it requires to be shown
+ * separately.
+ *
+ * **`total` is the headline and the only figure that may be displayed largest.**
+ * Showing `rate` as the price and adding `renterFee` later is the drip pricing
+ * the DMCC regime is actively enforcing against — §3.4.4 is explicit that it is
+ * prohibited, not discouraged.
+ *
+ * The breakdown is carried beside it because §3.4.4 permits a base price shown
+ * *alongside* an inclusive total, and because an owner setting a rate needs to
+ * see what their renter actually pays.
+ */
+export interface InclusiveDailyPrice {
+  /** What the owner asked for, before any platform fee. */
+  readonly rate: MoneyInput;
+  /**
+   * The renter's mandatory fee on a **one-day** rental, after the category's
+   * minimum platform fee has been applied.
+   *
+   * The owner's commission is deliberately not here: §3.4 deducts it from the
+   * owner's payout, so the renter never pays it and it has no place in a figure
+   * governed by a price-transparency rule.
+   */
+  readonly renterFee: MoneyInput;
+  /** `rate + renterFee`. The headline. */
+  readonly total: MoneyInput;
+  /**
+   * Whether the category's minimum platform fee bound rather than the
+   * percentage.
+   *
+   * Carried so the interface can be honest about what "from" means: when the
+   * floor binds, a longer rental genuinely does cost less per day, and that is
+   * the difference between a helpful "from" and a misleading one.
+   */
+  readonly minimumFeeApplied: boolean;
+}
+
+/**
+ * The response check on a computed price.
+ *
+ * Shape-only, deliberately. It does **not** re-derive the total from the parts:
+ * a check that recomputed would be a second implementation of the rounding rule
+ * §6.1 says exists once, and the two would disagree the first time either
+ * changed. What it pins is that the API sent three amounts and a flag, in the
+ * shape everything downstream reads.
+ */
+export const inclusiveDailyPriceSchema = z.object({
+  rate: moneySchema,
+  renterFee: moneySchema,
+  total: moneySchema,
+  minimumFeeApplied: z.boolean(),
+});

@@ -909,6 +909,39 @@ model Listing {
   replacementValueAmount   Int    @db.Integer
   replacementValueCurrency String @db.Text
 
+  /// What it costs to rent (BRD §8.5.2, §8.3, slice 2.7b).
+  ///
+  /// Integer minor units plus the currency on the same record (ADR 0002), the
+  /// same shape `replacementValue` above uses.
+  ///
+  /// **All nullable, because §8.3 makes a draft permissive** — an owner saves
+  /// progress and completeness is a publication rule. **Slice 2.8 must refuse to
+  /// publish a listing with no daily rate**, for the reason it must refuse one
+  /// with no coordinates: it would be a listing nothing can price and nobody can
+  /// book, which is a legitimate draft and an illegitimate published listing.
+  ///
+  /// **The daily rate is the spine.** The other two are alternatives to it, not
+  /// replacements — a `CHECK` refuses a weekend or weekly rate with no daily one
+  /// beside it, because such a row describes an item rentable for three days but
+  /// not one, with nothing saying so.
+  ///
+  /// **There is no hourly rate**, though §8.5.2 names one. In a peer-to-peer
+  /// model the renter drives to a stranger's house to collect, so the round trip
+  /// exceeds the rental, and nothing in the launch category is hired by the
+  /// hour. An unused rate is a case every consumer from the quote engine to the
+  /// handover checklist carries forever. A column away if a later category wants
+  /// it. Configurable discounts are absent for a different reason: a discount
+  /// applies to a duration, and Phase 2 has no dates.
+  ///
+  /// One currency column serves all three. Two rates on one listing in different
+  /// currencies is not a state anything downstream could price, and §6.1's rule
+  /// is that the code travels with the amount — which it does, for the record as
+  /// a whole.
+  dailyRateAmount   Int?   @db.Integer
+  weekendRateAmount Int?   @db.Integer
+  weeklyRateAmount  Int?   @db.Integer
+  rateCurrency      String @default("GBP") @db.Text
+
   /// What is needed to collect and carry this item (BRD §8.3, ADR 0031,
   /// slice 2.4c-ii).
   ///

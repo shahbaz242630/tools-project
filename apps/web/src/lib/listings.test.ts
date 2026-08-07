@@ -30,6 +30,8 @@ const LISTING = {
   requiresTwoPersonLift: false,
   collectionLocation: null,
   isLocated: false,
+  rates: { daily: null, weekend: null, weekly: null },
+  inclusiveDailyPrice: null,
   status: 'DRAFT',
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
@@ -51,6 +53,9 @@ const DRAFT = {
   // here would be the compile error that made every caller of this fixture
   // findable in the first place.
   collectionLocation: null,
+  // Unpriced, which is what a draft nobody has priced looks like (§8.3). The
+  // field is required to be *present* for the reason `collectionLocation` is.
+  rates: { daily: null, weekend: null, weekly: null },
 } as const;
 
 function responds(status: number, body = ''): FetchLike {

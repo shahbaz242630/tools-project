@@ -104,6 +104,9 @@ const DRAFT = {
   // Null by default too — a draft that has not said where the item is. The
   // collection-address tests below override it.
   collectionLocation: null,
+  // Unpriced by default, which §8.3 allows and 2.8 turns into a publication
+  // rule. The pricing tests below override it.
+  rates: { daily: null, weekend: null, weekly: null },
 };
 
 /** A complete collection address, normalised as the contract produces it. */
@@ -989,5 +992,184 @@ describe('placing the collection address on a map', () => {
     // The contract normalises before the service sees it, so the provider is
     // asked one question per postcode rather than one per way of writing it.
     expect(listings.geocoder.asked).toEqual(['BS7 8AA']);
+  });
+});
+
+/**
+ * The price, through the real routes (§3.4.4, §8.5.2, slice 2.7b).
+ *
+ * What only this level can prove is that the figure is computed **server-side
+ * and against the pinned version** — the two properties a unit test of
+ * `inclusiveDailyPrice` cannot show, because it is handed both inputs already
+ * resolved.
+ */
+describe('the rate card and the inclusive price', () => {
+  beforeEach(() => givenACategory());
+
+  const priced = (rates: Record<string, unknown>) => ({ ...DRAFT, rates });
+
+  it('stores the rates and answers with an inclusive daily price', async () => {
+    const response = await createListing(
+      'alice-token',
+      priced({
+        daily: { amount: 1_800, currency: 'GBP' },
+        weekend: { amount: 3_000, currency: 'GBP' },
+        weekly: { amount: 9_000, currency: 'GBP' },
+      }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    const created = parseOwnerListing(response.json());
+
+    expect(created.rates.daily).toEqual({ amount: 1_800, currency: 'GBP' });
+    expect(created.rates.weekly).toEqual({ amount: 9_000, currency: 'GBP' });
+
+    // 8% of £18.00 is £1.44, above the £1.00 floor.
+    expect(created.inclusiveDailyPrice).toEqual({
+      rate: { amount: 1_800, currency: 'GBP' },
+      renterFee: { amount: 144, currency: 'GBP' },
+      total: { amount: 1_944, currency: 'GBP' },
+      minimumFeeApplied: false,
+    });
+  });
+
+  it('answers no price for an unpriced draft rather than a free one', async () => {
+    const response = await createListing();
+
+    expect(response.statusCode).toBe(201);
+    const created = parseOwnerListing(response.json());
+    expect(created.rates.daily).toBeNull();
+    expect(created.inclusiveDailyPrice).toBeNull();
+  });
+
+  it('applies the category minimum platform fee on a cheap rate', async () => {
+    const response = await createListing(
+      'alice-token',
+      priced({ daily: { amount: 600, currency: 'GBP' }, weekend: null, weekly: null }),
+    );
+
+    const created = parseOwnerListing(response.json());
+    // 8% of £6.00 is 48p, below the £1.00 floor, so the floor decides.
+    expect(created.inclusiveDailyPrice?.renterFee).toEqual({
+      amount: 100,
+      currency: 'GBP',
+    });
+    expect(created.inclusiveDailyPrice?.minimumFeeApplied).toBe(true);
+  });
+
+  it('refuses a weekend or weekly rate with no daily rate beside it', async () => {
+    const response = await createListing(
+      'alice-token',
+      priced({
+        daily: null,
+        weekend: null,
+        weekly: { amount: 9_000, currency: 'GBP' },
+      }),
+    );
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { issues?: readonly string[] };
+    expect(body.issues?.join(' ')).toMatch(/daily rate is needed/i);
+  });
+
+  it('refuses a rate below the platform minimum', async () => {
+    const response = await createListing(
+      'alice-token',
+      priced({ daily: { amount: 99, currency: 'GBP' }, weekend: null, weekly: null }),
+    );
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('demands the rates be present rather than assuming unpriced', async () => {
+    // ADR 0025's rule, for the fifth field on this body: an optional value is a
+    // silent default, and the silent default here is "this listing has no
+    // price" — which a caller that forgot the field would get without hearing
+    // about it.
+    const response = await createListing(
+      'alice-token',
+      Object.fromEntries(Object.entries(DRAFT).filter(([key]) => key !== 'rates')),
+    );
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  /**
+   * **The property the whole slice turns on** (§8.2, ADR 0029, ADR 0033).
+   *
+   * A listing priced under version 1 keeps version 1's rates when the category
+   * is repriced. Reading against the current policy would silently re-price
+   * every existing listing the moment an administrator changed a percentage —
+   * and the owner would see a different number with nothing having happened to
+   * their listing.
+   */
+  it('prices against the pinned version, not the category as it stands now', async () => {
+    const created = parseOwnerListing(
+      (
+        await createListing(
+          'alice-token',
+          priced({
+            daily: { amount: 1_800, currency: 'GBP' },
+            weekend: null,
+            weekly: null,
+          }),
+        )
+      ).json(),
+    );
+    expect(created.inclusiveDailyPrice?.renterFee.amount).toBe(144);
+
+    // The category doubles its renter fee, minting version 2. The listing still
+    // points at version 1.
+    const author = await idOf('alice-token');
+    await listings.categories.addVersion(
+      'outdoor-gardening',
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+        feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+      },
+      author,
+    );
+
+    const reread = parseOwnerListing(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingPath(created.id),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+
+    expect(reread.categoryVersionNumber).toBe(1);
+    // Still 8%, not 16%. £1.44, not £2.88.
+    expect(reread.inclusiveDailyPrice?.renterFee.amount).toBe(144);
+    expect(reread.inclusiveDailyPrice?.total.amount).toBe(1_944);
+  });
+
+  /**
+   * §3.4.4's actual requirement, asserted as a property rather than as a number:
+   * the headline is the sum of what is shown beneath it. A response where they
+   * disagreed would be one where some surface could show a total that is not
+   * what a renter pays.
+   */
+  it('always answers a total equal to the sum of its parts', async () => {
+    for (const amount of [100, 1_234, 1_800, 9_999]) {
+      const created = parseOwnerListing(
+        (
+          await createListing(
+            'alice-token',
+            priced({ daily: { amount, currency: 'GBP' }, weekend: null, weekly: null }),
+          )
+        ).json(),
+      );
+
+      const price = created.inclusiveDailyPrice;
+      if (price === null) throw new Error('expected a price');
+      expect(price.total.amount).toBe(price.rate.amount + price.renterFee.amount);
+    }
   });
 });

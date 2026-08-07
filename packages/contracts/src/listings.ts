@@ -16,6 +16,8 @@
  */
 
 import { z } from 'zod';
+import { inclusiveDailyPriceSchema, listingRateCardSchema } from './pricing.js';
+import type { InclusiveDailyPrice, ListingRateCard } from './pricing.js';
 import { postalAddressResponseSchema, postalAddressSchema } from './address.js';
 import type { PostalAddress } from './address.js';
 import { boundedMoneySchema, moneySchema } from './money.js';
@@ -231,6 +233,23 @@ export const listingDraftSchema = z.object({
    * yet, and nothing renders a map.
    */
   collectionLocation: postalAddressSchema.nullable(),
+  /**
+   * What it costs to rent (§8.5.2, slice 2.7b).
+   *
+   * **Required to be present, with every rate inside it allowed to be null** —
+   * the same distinction the three fields above draw, one level down. A draft
+   * legitimately has not been priced; a caller that omitted the object has
+   * forgotten it.
+   *
+   * The rates are the owner's commercial decision and nothing here second-
+   * guesses them. What is refused is only what cannot be interpreted: a weekend
+   * or weekly rate with no daily rate beside it, because the others are
+   * alternatives to the daily rate rather than replacements for it.
+   *
+   * **Publication is where a price becomes mandatory (2.8)**, for the reason a
+   * location does: a listing nothing can price is not one anybody can book.
+   */
+  rates: listingRateCardSchema,
 });
 
 export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
@@ -312,6 +331,22 @@ export interface OwnerListing {
    * Saving again tries once more.
    */
   readonly isLocated: boolean;
+  /** What it costs to rent. Every rate null on a draft nobody has priced. */
+  readonly rates: ListingRateCard;
+  /**
+   * The inclusive daily price §3.4.4 requires, or null when the listing has no
+   * daily rate.
+   *
+   * **Computed by the API, never by whatever renders it.** §6.1 puts rounding in
+   * the pricing service and nowhere else, and a component handed a rate and a
+   * fee percentage would be a second place a price is worked out — which is how
+   * two surfaces come to disagree about what something costs. It is also how
+   * drip pricing gets built by accident: the bare rate is right there, and
+   * showing it is one careless line.
+   *
+   * Null means "show no price", never "free".
+   */
+  readonly inclusiveDailyPrice: InclusiveDailyPrice | null;
   readonly status: ListingStatus;
   /** ISO 8601 UTC. */
   readonly createdAt: string;
@@ -345,6 +380,8 @@ const ownerListingSchema = z.object({
   // the API actually sent, which is the one thing this check exists to detect.
   collectionLocation: postalAddressResponseSchema.nullable(),
   isLocated: z.boolean(),
+  rates: listingRateCardSchema,
+  inclusiveDailyPrice: inclusiveDailyPriceSchema.nullable(),
   status: listingStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),

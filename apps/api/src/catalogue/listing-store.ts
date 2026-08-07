@@ -1,11 +1,13 @@
 import type {
   CategoryAttribute,
+  CategoryFeePolicy,
   CategoryTransportOption,
   ListingAttributeValues,
   ListingCollectionLocation,
   ListingStatus,
   TransportRequirement,
 } from '@platform/contracts';
+import type { ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import type { LocatedListingPoint } from './listing-locator.js';
 
@@ -39,9 +41,22 @@ export interface ListingRecord {
    * nothing without the label it was chosen by.
    */
   readonly categoryAttributes: readonly CategoryAttribute[];
+  /**
+   * The fee policy **as pinned**, read from the version this listing points at
+   * rather than from the category as it stands now (ADR 0029, ADR 0033).
+   *
+   * It travels with the listing for the reason the attribute schema does: a
+   * price cannot be computed without it, and computing one against today's rates
+   * would show the owner a figure their listing's own terms do not produce.
+   * §8.2 is the rule — a booking retains the configuration it was made under —
+   * and this is the read that has to honour it.
+   */
+  readonly categoryFeePolicy: CategoryFeePolicy;
   readonly title: string;
   readonly description: string;
   readonly replacementValue: MoneyValue;
+  /** What it costs to rent. Every rate null on a draft nobody has priced. */
+  readonly rates: ListingRateCard;
   /** Answers keyed by attribute key. An unanswered attribute is absent. */
   readonly attributes: ListingAttributeValues;
   /** What it takes to collect it, or null on a draft that has not said (§8.3). */
@@ -114,6 +129,16 @@ export interface ListingDraft {
    */
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
+  /**
+   * What it costs to rent (§8.5.2).
+   *
+   * Validated by the contract before it reaches here — the daily rate is the
+   * spine and the others are alternatives to it — and the database refuses the
+   * same shape independently. Nothing about a rate is category configuration, so
+   * unlike the attributes and the transport requirement there is no per-version
+   * check for the service to do.
+   */
+  readonly rates: ListingRateCard;
   /**
    * Where the item is collected from, in plaintext.
    *

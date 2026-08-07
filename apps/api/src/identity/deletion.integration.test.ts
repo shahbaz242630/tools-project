@@ -18,6 +18,7 @@ import {
   deletionResponseSchema,
   publicProfilePath,
 } from '@platform/contracts';
+import { UNPRICED_RATE_CARD } from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
@@ -1102,6 +1103,7 @@ describe('a listing address, in the personal-data paths', () => {
       attributes: {},
       transportRequirement: null,
       requiresTwoPersonLift: false,
+      rates: UNPRICED_RATE_CARD,
       collectionLocation: ADDRESS,
       categoryVersionNumber: 1,
     });
@@ -1163,6 +1165,7 @@ describe('a listing address, in the personal-data paths', () => {
       attributes: {},
       transportRequirement: null,
       requiresTwoPersonLift: false,
+      rates: UNPRICED_RATE_CARD,
       collectionLocation: ADDRESS,
       categoryVersionNumber: 1,
     });
