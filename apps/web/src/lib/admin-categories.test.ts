@@ -6,6 +6,14 @@ import {
 } from './admin-categories';
 import type { FetchLike } from './admin-categories';
 
+/** A priced category (BRD §8.2, §3.4, slice 2.7a). */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
+};
+
 const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
 const REASON = 'opening the launch category for the pilot';
@@ -21,6 +29,7 @@ const CATEGORY = {
   // claiming to have evidence of something it never held.
   reportableActivity: 'none',
   attributes: [],
+  feePolicy: FEE_POLICY,
   transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-03T09:00:00.000Z',
@@ -34,6 +43,7 @@ const DRAFT = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: [],
+  feePolicy: FEE_POLICY,
   transportOptions: [],
 } as const;
 
@@ -171,6 +181,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'renamed after the taxonomy review',
@@ -194,6 +205,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       'renamed after the taxonomy review',
@@ -215,6 +227,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       REASON,
@@ -235,6 +248,7 @@ describe('reconfigureCategory', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       REASON,

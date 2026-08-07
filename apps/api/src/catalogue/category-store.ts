@@ -1,5 +1,6 @@
 import type {
   CategoryAttribute,
+  CategoryFeePolicy,
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
@@ -33,6 +34,8 @@ export interface CategoryRecord {
   readonly attributes: readonly CategoryAttribute[];
   /** Which transport requirements this category offers (§8.3, ADR 0031). */
   readonly transportOptions: readonly CategoryTransportOption[];
+  /** What the platform charges on a booking in this category (§8.2, §3.4). */
+  readonly feePolicy: CategoryFeePolicy;
   readonly versionNumber: number;
   readonly versionCreatedAt: Date;
   readonly createdAt: Date;
@@ -71,6 +74,16 @@ export interface CategoryConfiguration {
    * produces a failed handover.
    */
   readonly transportOptions: readonly CategoryTransportOption[];
+  /**
+   * What the platform charges on a booking in this category (§8.2, §3.4).
+   *
+   * Required for the same reason the two above are, and the consequence of
+   * forgetting it is the most expensive of the three: a caller that omitted it
+   * would mint a version charging nothing, and every booking made under that
+   * version would earn the platform nothing — with no error, and nothing on
+   * screen distinguishing it from a category deliberately priced at zero.
+   */
+  readonly feePolicy: CategoryFeePolicy;
 }
 
 /**

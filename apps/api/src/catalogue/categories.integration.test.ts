@@ -19,6 +19,14 @@ import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from './catalogue.service.js';
 import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 
+/** A priced category (BRD §8.2, §3.4, slice 2.7a). */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' },
+};
+
 /**
  * Categories through the real application: real routing, real guard, real
  * exception filter.
@@ -57,6 +65,7 @@ const DRAFT = {
   reportableActivity: 'none',
   reportingDutiesAcknowledged: false,
   attributes: [],
+  feePolicy: FEE_POLICY,
   transportOptions: [],
 } as const;
 
@@ -284,6 +293,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -307,6 +317,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -324,6 +335,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -346,6 +358,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
         slug: 'something-else',
       },
@@ -475,6 +488,7 @@ describe('the attribute schema, through the routes', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [SCHEMA[0]],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -617,6 +631,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -639,6 +654,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         reportingDutiesAcknowledged: true,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -687,6 +703,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         reportingDutiesAcknowledged: true,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
     });
@@ -734,6 +751,7 @@ describe('the transport options', () => {
   it('accepts a selection on create and returns it', async () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
+      feePolicy: FEE_POLICY,
       transportOptions: TRANSPORT,
     });
 
@@ -748,6 +766,7 @@ describe('the transport options', () => {
     // nobody made (ADR 0017).
     const response = await createCategory('admin-token', {
       ...DRAFT,
+      feePolicy: FEE_POLICY,
       transportOptions: [
         { requirement: 'trailer_required' },
         { requirement: 'hand_carryable' },
@@ -794,6 +813,7 @@ describe('the transport options', () => {
   it('rejects thresholds that do not increase, and says which two disagree', async () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
+      feePolicy: FEE_POLICY,
       transportOptions: [
         { requirement: 'car_boot', suggestedUpToKg: 50 },
         { requirement: 'van_required', suggestedUpToKg: 20 },
@@ -832,6 +852,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         reportingDutiesAcknowledged: false,
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [{ requirement: 'car_boot', suggestedUpToKg: 25 }],
       },
     });
@@ -846,6 +867,7 @@ describe('the transport options', () => {
   it('refuses an ordinary user', async () => {
     const response = await createCategory('bob-token', {
       ...DRAFT,
+      feePolicy: FEE_POLICY,
       transportOptions: TRANSPORT,
     });
 

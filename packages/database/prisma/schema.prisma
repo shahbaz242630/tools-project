@@ -756,6 +756,49 @@ model CategoryVersion {
   /// scope.
   reportableActivity String @default("none") @db.Text
 
+  /// What the platform charges on a booking in this category (BRD §8.2, §3.4,
+  /// slice 2.7a).
+  ///
+  /// **Scalar columns, not the `Json` treatment `attributes` gets**, and the
+  /// difference is the shape rather than the taste. An attribute schema is
+  /// variable-length, ordered, and always read whole; a fee policy is four fixed
+  /// values that later phases query *across* categories — §3.4.3's worked
+  /// example, Phase 5's payout reconciliation and any "which categories charge
+  /// more than X" question all want columns rather than a blob every row has to
+  /// be parsed to answer.
+  ///
+  /// **On the version, and that is the whole reason this row exists.** §8.2
+  /// requires a booking to be interpreted under the configuration in force when
+  /// it was made. A rate on `Category` answers "what do we charge now"; a payout
+  /// dispute eighteen months later needs "what did we charge then", and only an
+  /// immutable row can answer that.
+  ///
+  /// Rates are **basis points** — hundredths of a percent, 15% is `1500`.
+  /// Integer for ADR 0002's reason applied one step early: a rate is not money,
+  /// but it is what money gets multiplied by, so a float here reaches the ledger
+  /// just as surely. See `MAX_FEE_BASIS_POINTS` in @platform/contracts.
+  ///
+  /// Both default to zero, which is what every category configured before this
+  /// migration has. **No backfill invents a fee nobody agreed to** — the same
+  /// call the attribute schema and the transport options each made. Zero is safe
+  /// where a guess is not, because §8.2 already forbids enabling a category for
+  /// public booking before §3.4.3's worked example exists.
+  ownerCommissionBasisPoints Int @default(0) @db.Integer
+  renterFeeBasisPoints       Int @default(0) @db.Integer
+
+  /// The booking total below which a booking may not be submitted (§3.4.2), and
+  /// the floor under the platform fee when the percentage falls below it.
+  ///
+  /// Integer minor units plus the currency on the same record, exactly as
+  /// `Listing.replacementValue*` (ADR 0002). The floors are configuration here;
+  /// the *booking* minimum is enforced in Phase 4, where a booking exists to
+  /// refuse. The **fee** floor is pricing logic and applies from 2.7b: 8% of a
+  /// £6 day is 48p, which does not cover the card processing on it.
+  minimumBookingTotalAmount   Int    @default(0) @db.Integer
+  minimumBookingTotalCurrency String @default("GBP") @db.Text
+  minimumPlatformFeeAmount    Int    @default(0) @db.Integer
+  minimumPlatformFeeCurrency  String @default("GBP") @db.Text
+
   /// Who made this configuration what it is. BRD §6.2 puts an author on the
   /// entity; the corresponding audit entry carries the reason and the digests.
   createdById String @db.Uuid

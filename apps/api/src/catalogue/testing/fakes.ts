@@ -23,6 +23,7 @@ import { LocationService } from '../../search-location/location.service.js';
 import { FakeGeocoder } from '../../search-location/testing/fakes.js';
 import type {
   CategoryAttribute,
+  CategoryFeePolicy,
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
@@ -53,6 +54,7 @@ interface StoredVersion {
   readonly reportableActivity: CategoryReportableActivity;
   readonly attributes: readonly CategoryAttribute[];
   readonly transportOptions: readonly CategoryTransportOption[];
+  readonly feePolicy: CategoryFeePolicy;
   readonly createdById: string;
   readonly createdAt: Date;
 }
@@ -107,6 +109,7 @@ export class InMemoryCategoryStore implements CategoryStore {
           // would make an immutability test pass for the wrong reason.
           attributes: [...input.attributes],
           transportOptions: [...input.transportOptions],
+          feePolicy: input.feePolicy,
           createdById: authorId,
           createdAt: Time.nowUtc(),
         },
@@ -137,6 +140,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       reportableActivity: configuration.reportableActivity,
       attributes: [...configuration.attributes],
       transportOptions: [...configuration.transportOptions],
+      feePolicy: configuration.feePolicy,
       createdById: authorId,
       createdAt: Time.nowUtc(),
     });
@@ -181,6 +185,7 @@ function toRecord(category: StoredCategory): CategoryRecord {
     reportableActivity: latest.reportableActivity,
     attributes: latest.attributes,
     transportOptions: latest.transportOptions,
+    feePolicy: latest.feePolicy,
     versionNumber: latest.versionNumber,
     versionCreatedAt: latest.createdAt,
     createdAt: category.createdAt,

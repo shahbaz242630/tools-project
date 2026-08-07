@@ -1,8 +1,9 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import Link from 'next/link';
-import { activatesSellerReporting } from '@platform/contracts';
-import type { AdminCategory } from '@platform/contracts';
+import { activatesSellerReporting, isFeePolicyConfigured } from '@platform/contracts';
+import type { AdminCategory, CategoryFeePolicy } from '@platform/contracts';
+import { percentFromBasisPoints } from '../../../lib/fee-policy';
 import {
   CreateCategoryForm,
   ReconfigureCategoryForm,
@@ -57,9 +58,10 @@ export default async function CategoriesPage() {
 
       <p>
         Today a category carries a name, a risk level, its attribute schema — the fields
-        an owner fills in when listing something in it — and whether its activity is
-        reportable to HMRC. Fees, deposit bands and the rest arrive in later slices, and
-        each will be one more field on the version rather than a new place to look.
+        an owner fills in when listing something in it — what it takes to collect an
+        item, whether its activity is reportable to HMRC, and what the platform charges.
+        Deposit bands and the rest arrive in later slices, and each will be one more
+        field on the version rather than a new place to look.
       </p>
 
       <p>
@@ -131,6 +133,27 @@ function transportSummary(count: number): string {
 }
 
 /**
+ * Whether this category has been priced at all (§8.2, §3.4).
+ *
+ * On the summary line for 's reason, and here it matters
+ * more: a category nobody has priced takes **no fee on any booking in it**, and
+ * it looks exactly like a priced one from this list. §8.2 forbids enabling a
+ * category for public booking before §3.4.3's worked example, so an unpriced
+ * category is a real state — but it is one somebody has to be able to see.
+ *
+ * The rates themselves are shown when set, because they are two short numbers
+ * and the whole question an administrator scans this line for is "what do we
+ * charge here".
+ */
+function feeSummary(policy: CategoryFeePolicy): string {
+  if (!isFeePolicyConfigured(policy)) return 'not priced';
+
+  const owner = percentFromBasisPoints(policy.ownerCommissionBasisPoints);
+  const renter = percentFromBasisPoints(policy.renterFeeBasisPoints);
+  return `${owner}% owner · ${renter}% renter`;
+}
+
+/**
  * Every failure gets its own sentence.
  *
  * A single "something went wrong" would make an expired session, a missing
@@ -192,6 +215,7 @@ function CategoryList({
             <code>{category.slug}</code> · risk {category.riskLevel} ·{' '}
             {attributeSummary(category.attributes.length)} ·{' '}
             {transportSummary(category.transportOptions.length)} ·{' '}
+            {feeSummary(category.feePolicy)} ·{' '}
             <strong>version {category.versionNumber}</strong>
           </p>
           {/*

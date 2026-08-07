@@ -24,6 +24,20 @@ import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import type { ListingFakes } from './testing/fakes.js';
 
 /**
+ * A priced category (BRD §8.2, §3.4, slice 2.7a).
+ *
+ * Real rates rather than zeroes: zero is what an unpriced category defaults to,
+ * so a suite where every fixture is unpriced could not tell a policy that was
+ * carried through from one that was silently dropped.
+ */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
+};
+
+/**
  * Listings through the real application: real routing, real guard, real
  * exception filter.
  *
@@ -181,6 +195,7 @@ async function givenACategory(
       // category that asks nothing about it — which is also what a category
       // configured before slice 2.4c-i is.
       transportOptions,
+      feePolicy: FEE_POLICY,
     },
     author,
   );
@@ -196,6 +211,7 @@ async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<v
       riskLevel: 'medium',
       reportableActivity: 'none',
       attributes,
+      feePolicy: FEE_POLICY,
       transportOptions: [],
     },
     author,

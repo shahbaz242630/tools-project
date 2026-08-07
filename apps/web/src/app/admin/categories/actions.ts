@@ -20,6 +20,7 @@ import type { AdminCategoryOutcome } from '../../../lib/admin-categories';
 import { webEnv } from '../../../lib/env';
 import { INITIAL_CATEGORY_STATE } from './state';
 import type { CategoryActionState } from './state';
+import { readFeePolicy } from '../../../lib/fee-policy';
 
 /**
  * A checkbox is present or absent, never `false`.
@@ -97,6 +98,47 @@ const REASON_HINT =
   'Configuration changes are recorded, and every booking is interpreted under ' +
   'the version in force when it was made.';
 
+/**
+ * The four fee fields, as typed.
+ *
+ * Read here rather than in the component for the reason every other value on
+ * this form is: the browser is not the boundary. The contract validates the
+ * result again below and the API validates it a third time.
+ */
+/**
+ * A contract issue as a sentence somebody can act on.
+ *
+ * Most read `field: message`, and that is right where the path is what the
+ * reader sees — `slug`, `name` and `riskLevel` are all labelled that on the
+ * form. **The fee policy is the exception, and its path is three segments of
+ * internal structure**: `feePolicy.minimumPlatformFee.amount` against a field
+ * labelled "Minimum platform fee (£)". Prefixing it names the field twice, once
+ * unreadably — 2.4b's finding, and 2.4c-i's, arriving a third time through a
+ * nested object.
+ *
+ * So those messages name their own subject and this drops the path. The rule is
+ * the same one ADR 0027 drew for attribute keys: a path that is deliberately
+ * internal must not be shown as though it were a label.
+ */
+function asSentence(issue: {
+  readonly path: PropertyKey[];
+  readonly message: string;
+}): string {
+  const path = issue.path.join('.');
+  return path === '' || path.startsWith('feePolicy')
+    ? issue.message
+    : `${path}: ${issue.message}`;
+}
+
+function readFeePolicyFrom(form: FormData) {
+  return readFeePolicy({
+    ownerCommission: String(form.get('ownerCommission') ?? ''),
+    renterFee: String(form.get('renterFee') ?? ''),
+    minimumBookingTotal: String(form.get('minimumBookingTotal') ?? ''),
+    minimumPlatformFee: String(form.get('minimumPlatformFee') ?? ''),
+  });
+}
+
 export async function createCategoryAction(
   _previous: CategoryActionState,
   form: FormData,
@@ -137,6 +179,16 @@ export async function createCategoryAction(
     };
   }
 
+  const fees = readFeePolicyFrom(form);
+  if (!fees.ok) {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: fees.message,
+    };
+  }
+
   // The contract's own schema, not a second opinion about what a slug is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
@@ -151,15 +203,14 @@ export async function createCategoryAction(
     reportingDutiesAcknowledged: readAcknowledgement(form),
     attributes: schema.attributes,
     transportOptions: transport.options,
+    feePolicy: fees.value,
   });
   if (!parsed.success) {
     return {
       ...INITIAL_CATEGORY_STATE,
       ...typed,
       status: 'error',
-      message: parsed.error.issues
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join('; '),
+      message: parsed.error.issues.map(asSentence).join('; '),
     };
   }
 
@@ -223,6 +274,16 @@ export async function reconfigureCategoryAction(
     };
   }
 
+  const fees = readFeePolicyFrom(form);
+  if (!fees.ok) {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: fees.message,
+    };
+  }
+
   // Parsed here as well as on create, which it was not before this slice. The
   // reason is §8.14.2's confirmation: a switch from `none` to a reportable head
   // is the change §17 names as the undetected-breach risk, and the round trip
@@ -234,15 +295,14 @@ export async function reconfigureCategoryAction(
     reportingDutiesAcknowledged: readAcknowledgement(form),
     attributes: schema.attributes,
     transportOptions: transport.options,
+    feePolicy: fees.value,
   });
   if (!parsed.success) {
     return {
       ...INITIAL_CATEGORY_STATE,
       ...typed,
       status: 'error',
-      message: parsed.error.issues
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join('; '),
+      message: parsed.error.issues.map(asSentence).join('; '),
     };
   }
 

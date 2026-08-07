@@ -44,6 +44,20 @@ import {
 import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 
 /**
+ * A priced category (BRD §8.2, §3.4, slice 2.7a).
+ *
+ * Real rates rather than zeroes: zero is what an unpriced category defaults to,
+ * so a suite where every fixture is unpriced could not tell a policy that was
+ * carried through from one that was silently dropped.
+ */
+const FEE_POLICY = {
+  ownerCommissionBasisPoints: 1_500,
+  renterFeeBasisPoints: 800,
+  minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
+  minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
+};
+
+/**
  * Account deletion against the real application, with identity and profiles
  * wired to each other exactly as the composition root wires them.
  *
@@ -1073,6 +1087,7 @@ describe('a listing address, in the personal-data paths', () => {
         riskLevel: 'medium',
         reportableActivity: 'none',
         attributes: [],
+        feePolicy: FEE_POLICY,
         transportOptions: [],
       },
       alice,
