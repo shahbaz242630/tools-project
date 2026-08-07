@@ -1339,3 +1339,75 @@ describe('the pinned fee policy', () => {
     ).toBe(1_600);
   });
 });
+
+/**
+ * The publication transition, against a real database (slice 2.8a).
+ *
+ * The service tests prove which listings *may* publish; these prove what the
+ * adapter does with the row — that the owner is part of the write rather than a
+ * check beside it, and that publishing twice is not an error.
+ */
+describe('publishing', () => {
+  it('moves a draft to published and re-reads it', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    expect(created.status).toBe('DRAFT');
+
+    const published = await store.publish(created.id, owner);
+
+    expect(published?.status).toBe('PUBLISHED');
+    // Read back independently: `publish` re-reads rather than constructing the
+    // record from what it wrote, and this is what would catch it inventing one.
+    expect((await store.findOwnedBy(created.id, owner))?.status).toBe('PUBLISHED');
+  });
+
+  it('is idempotent', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await store.publish(created.id, owner);
+    const again = await store.publish(created.id, owner);
+
+    // Not null, and not an error. A filter of `status: 'DRAFT'` would have made
+    // the second call indistinguishable from somebody else's listing.
+    expect(again?.status).toBe('PUBLISHED');
+  });
+
+  /**
+   * The owner is in the `where`, not a comparison afterwards. On a read that
+   * mistake discloses a listing; on a write it changes somebody else's.
+   */
+  it('will not publish a listing belonging to somebody else', async () => {
+    const owner = await newUser();
+    const stranger = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    expect(await store.publish(created.id, stranger)).toBeNull();
+    // And the row is untouched, which is the half a null return does not prove.
+    expect((await store.findOwnedBy(created.id, owner))?.status).toBe('DRAFT');
+  });
+
+  it('answers null for a listing that does not exist', async () => {
+    const owner = await newUser();
+    expect(
+      await store.publish('11111111-1111-4111-8111-111111111111', owner),
+    ).toBeNull();
+  });
+
+  it('refuses a status the vocabulary does not know, in the database', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await client.$executeRawUnsafe(
+      `UPDATE listings SET status = 'SOLD' WHERE id = '${created.id}'::uuid`,
+    );
+
+    // `asStatus` throws rather than defaulting: a row written by a newer build
+    // read as DRAFT would hide a listing its owner believes is live.
+    await expect(store.findOwnedBy(created.id, owner)).rejects.toThrow(/status/i);
+  });
+});

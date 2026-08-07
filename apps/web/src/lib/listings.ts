@@ -13,13 +13,16 @@ import {
   CLIENT_IP_HEADER,
   LISTINGS_PATH,
   listingPath,
+  listingPublicationPath,
   parseCategoryOptions,
   parseOwnerListing,
+  parsePublicationRefusal,
 } from '@platform/contracts';
 import type {
   CategoryOption,
   ListingDraftInput,
   OwnerListing,
+  PublicationBlocker,
 } from '@platform/contracts';
 
 export const LISTINGS_TIMEOUT_MS = 5_000;
@@ -42,6 +45,24 @@ export type ListingOutcome<T> =
   | { readonly kind: 'stale-category'; readonly reason: string }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
+
+/**
+ * Publishing can fail one way nothing else can (slice 2.8a).
+ *
+ * **Not a member of `ListingOutcome`**, deliberately. Only the publish route can
+ * answer 422, so putting it in the shared union would make every caller of
+ * `fetchListing` and `createListing` handle a case they can never receive — the
+ * same objection this codebase makes to a status vocabulary carrying values
+ * nothing produces. A reader of one of those switches would have no way to tell
+ * whether the branch is unreachable or merely unimplemented.
+ *
+ * `invalid` is the neighbouring kind and means the opposite thing: that a
+ * corrected request would work. Here the request is fine and the listing is not
+ * ready, which is not something a different body could fix.
+ */
+export type PublishOutcome =
+  | ListingOutcome<OwnerListing>
+  | { readonly kind: 'not-ready'; readonly blockers: readonly PublicationBlocker[] };
 
 export interface FetchResponse {
   status: number;
@@ -84,14 +105,21 @@ function readError(raw: string): { issues?: readonly string[]; message?: string 
   }
 }
 
-async function call<T>(
+async function call<T, E = never>(
   url: string,
   token: string | null,
   clientIp: string | null,
   fetchImpl: FetchLike,
   parse: (raw: unknown) => T,
   init: { method: string; body?: unknown } = { method: 'GET' },
-): Promise<ListingOutcome<T>> {
+  /**
+   * What a 422 means, for the one route that can send one.
+   *
+   * A parameter rather than a branch in here, so that a status only publishing
+   * can receive does not become a case every other caller has to handle.
+   */
+  on422?: (raw: string) => E,
+): Promise<ListingOutcome<T> | E> {
   if (token === null || token === '') return { kind: 'signed-out' };
 
   let response: FetchResponse;
@@ -120,6 +148,10 @@ async function call<T>(
   if (response.status === 400) {
     const { issues } = readError(await response.text());
     return { kind: 'invalid', issues: issues ?? ['The request was rejected'] };
+  }
+
+  if (response.status === 422 && on422 !== undefined) {
+    return on422(await response.text());
   }
 
   if (response.status === 409) {
@@ -194,4 +226,52 @@ export function fetchListing(
     fetchImpl,
     parseOwnerListing,
   );
+}
+
+/**
+ * Publish a listing (§8.3, slice 2.8a).
+ *
+ * `parseOwnerListing` on the way back, so a successful publish returns the
+ * listing in its new state rather than a bare acknowledgement — the page that
+ * called this re-renders from it, and a second read would be a chance for the
+ * two to disagree.
+ */
+export function publishListing(
+  apiBaseUrl: string,
+  token: string | null,
+  id: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<PublishOutcome> {
+  return call(
+    new URL(listingPublicationPath(id), apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseOwnerListing,
+    { method: 'POST' },
+    (raw) => ({ kind: 'not-ready', blockers: readBlockers(raw) }),
+  );
+}
+
+/**
+ * The blockers out of a 422 body.
+ *
+ * Falls back to one generic blocker rather than throwing, because the failure it
+ * would be reporting is *"the API told us why and we could not read it"* — and a
+ * page that crashes there is strictly worse than one saying "something is
+ * missing" while the owner looks at the form. The API is the authority either
+ * way; this list is what the interface points at.
+ */
+function readBlockers(raw: string): readonly PublicationBlocker[] {
+  try {
+    return parsePublicationRefusal(JSON.parse(raw)).blockers;
+  } catch {
+    return [
+      {
+        field: '',
+        message: 'Something is still missing. Check the fields above and save again.',
+      },
+    ];
+  }
 }

@@ -52,6 +52,17 @@ export interface ListingRecord {
    * and this is the read that has to honour it.
    */
   readonly categoryFeePolicy: CategoryFeePolicy;
+  /**
+   * Which transport requirements the **pinned** version offers (ADR 0029,
+   * ADR 0031).
+   *
+   * Here for the reason the schema and the fee policy are: the publication rule
+   * in slice 2.8a has to know whether this listing's category asks how an item
+   * is collected *at all*, and a category configured before 2.4c-i offers
+   * nothing. Reading today's options instead would make a listing publishable or
+   * not according to a configuration change it never saw.
+   */
+  readonly categoryTransportOptions: readonly CategoryTransportOption[];
   readonly title: string;
   readonly description: string;
   readonly replacementValue: MoneyValue;
@@ -253,6 +264,30 @@ export interface ListingStore {
    * ordering.
    */
   listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]>;
+
+  /**
+   * Move a listing to `PUBLISHED`, but only if this owner owns it.
+   *
+   * **Named for the transition rather than as `setStatus`**, for the reason
+   * `addVersion` is not called `update`: a port offering an arbitrary status
+   * write is one some later route uses to move a listing into a state nothing
+   * checked the preconditions for. Each transition gets its own method and its
+   * own guarantees, and 2.8b's pause and archive will be two more.
+   *
+   * **The completeness rules are not checked here**, and cannot be: they read
+   * the `required` flags on the pinned category version's schema, which is JSON
+   * in another table. The service decides whether a listing may be published;
+   * this guarantees only what it alone can see — that the row belongs to this
+   * owner, and that the write happened.
+   *
+   * **Idempotent**, as every state transition in this system is (CLAUDE.md).
+   * Publishing an already-published listing succeeds and changes nothing but
+   * `updatedAt`.
+   *
+   * Resolves to null when no such listing belongs to this owner, matching
+   * `findOwnedBy` so a stranger cannot tell "not yours" from "does not exist".
+   */
+  publish(id: string, ownerId: string): Promise<ListingRecord | null>;
 
   /**
    * Erase everything precise about where this owner's listings are.

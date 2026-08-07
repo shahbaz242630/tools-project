@@ -44,6 +44,26 @@ export function listingPath(id: string): string {
 export const LISTING_ROUTE = '/listings/:id';
 
 /**
+ * Publishing one (§8.3, slice 2.8a).
+ *
+ * **A sub-resource with its own verb rather than a `PATCH` carrying a status.**
+ * A status field a caller may set is a field a caller may set to anything, and
+ * every transition would then need its preconditions checked by whatever route
+ * happened to receive it. Naming the transition makes the rules belong to it —
+ * and 2.8b's pause and archive become two more paths rather than three more
+ * values nobody can enumerate.
+ *
+ * `POST` rather than `PUT`: it is not idempotent in the HTTP sense of replacing
+ * a representation, though the *transition* is idempotent (publishing twice is
+ * not an error).
+ */
+export function listingPublicationPath(id: string): string {
+  return `/listings/${encodeURIComponent(id)}/publication`;
+}
+
+export const LISTING_PUBLICATION_ROUTE = '/listings/:id/publication';
+
+/**
  * Where any signed-in user reads the categories they could list in.
  *
  * Separate from `/admin/categories`, which requires the admin role and a second
@@ -130,16 +150,37 @@ export const replacementValueSchema = boundedMoneySchema({
 /**
  * Where a listing is in its life.
  *
- * Only `DRAFT` exists, and the rest of the vocabulary — published, paused,
- * archived, and the moderation states beside them — arrives in slice 2.8. It is
- * here now rather than later because retrofitting a status column onto rows that
- * already carry bookings is a migration nobody wants, and because a listing with
- * no status is indistinguishable from one that is live.
+ * **A closed vocabulary in code, as `riskLevel` and `transportRequirement` are.**
+ * Adding a listing to a category is configuration; adding a *state* is a deploy,
+ * because every state is a case that search, booking, payouts and the owner
+ * dashboard each handle forever. ADR 0027's rule, third application.
+ *
+ * `PAUSED` and `ARCHIVED` arrive in slice 2.8b and the moderation states beside
+ * them in 2.8c. They are deliberately absent rather than present-and-unreachable:
+ * a value nothing can produce is one every consumer still has to handle, and the
+ * first person to see it in a switch statement has no way to tell whether it is
+ * unimplemented or unused.
  */
-export const LISTING_STATUSES = ['DRAFT'] as const;
+export const LISTING_STATUSES = ['DRAFT', 'PUBLISHED'] as const;
 export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export const listingStatusSchema = z.enum(LISTING_STATUSES);
+
+/**
+ * Whether a listing in this state is visible to anybody but its owner.
+ *
+ * One function rather than `=== 'PUBLISHED'` written in five places, for the
+ * reason `activatesSellerReporting` exists: the rule is one state today, and
+ * when `PAUSED` arrives in 2.8b every caller has to change at once or one of
+ * them silently keeps the old meaning — and here the old meaning would be
+ * *showing a listing its owner has hidden*.
+ *
+ * **2.10's public projection and Phase 3's search must both read this**, never
+ * compare the status themselves.
+ */
+export function isPubliclyVisible(status: ListingStatus): boolean {
+  return status === 'PUBLISHED';
+}
 
 /**
  * Creating a draft.

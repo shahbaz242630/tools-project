@@ -161,6 +161,37 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return listing === null ? null : this.toRecord(listing);
   }
 
+  async publish(id: string, ownerId: string): Promise<ListingRecord | null> {
+    /*
+     * The owner is in the `where`, not a comparison afterwards — `findOwnedBy`'s
+     * rule, and it matters more on a write: a read that forgets to compare
+     * discloses a listing, a write that forgets to compare *changes somebody
+     * else's*.
+     *
+     * `updateMany` rather than `update`, because `update` needs a unique filter
+     * and `ownerId` is not part of one. It reports how many rows it touched,
+     * which is exactly the "was it theirs" answer needed here — and it does the
+     * check inside the statement rather than in a read-then-write that two
+     * concurrent requests could interleave.
+     *
+     * **Idempotent by construction**: the filter does not exclude already-published
+     * rows, so publishing twice writes `PUBLISHED` over `PUBLISHED` and reports
+     * one row either way. A filter of `status: 'DRAFT'` would have made the
+     * second call indistinguishable from somebody else's listing.
+     */
+    const { count } = await this.prisma.listing.updateMany({
+      where: { id, ownerId },
+      data: { status: 'PUBLISHED' },
+    });
+
+    if (count === 0) return null;
+
+    // Re-read rather than construct the record from what was written: the row
+    // carries a fresh `updatedAt` and the joined category version, and inventing
+    // either here would be a second source of truth for what the caller is told.
+    return this.findOwnedBy(id, ownerId);
+  }
+
   async listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]> {
     const listings = await this.prisma.listing.findMany({
       where: { ownerId },
@@ -253,6 +284,10 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       ),
       categoryFeePolicy: asFeePolicy(
         listing.categoryVersion,
+        `the category version pinned by listing ${listing.id}`,
+      ),
+      categoryTransportOptions: asTransportOptions(
+        listing.categoryVersion.transportOptions,
         `the category version pinned by listing ${listing.id}`,
       ),
       title: listing.title,

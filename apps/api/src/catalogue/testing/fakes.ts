@@ -261,6 +261,7 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       // the schema — so a test cannot produce a listing priced under one
       // version's rates while claiming another's.
       categoryFeePolicy: category.feePolicy,
+      categoryTransportOptions: category.transportOptions,
       title: draft.title,
       description: draft.description,
       replacementValue: draft.replacementValue,
@@ -295,6 +296,28 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       (candidate) => candidate.id === id && candidate.ownerId === ownerId,
     );
     return Promise.resolve(listing ?? null);
+  }
+
+  publish(id: string, ownerId: string): Promise<ListingRecord | null> {
+    const index = this.listings.findIndex(
+      (listing) => listing.id === id && listing.ownerId === ownerId,
+    );
+    if (index === -1) return Promise.resolve(null);
+
+    const listing = this.listings[index];
+    /* c8 ignore next */
+    if (listing === undefined) return Promise.resolve(null);
+
+    // Idempotent, and the record is replaced rather than mutated so a caller
+    // holding an earlier one does not see it change underneath them — the real
+    // store re-reads, which has the same effect.
+    const published: ListingRecord = {
+      ...listing,
+      status: 'PUBLISHED',
+      updatedAt: Time.nowUtc(),
+    };
+    this.listings[index] = published;
+    return Promise.resolve(published);
   }
 
   listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]> {

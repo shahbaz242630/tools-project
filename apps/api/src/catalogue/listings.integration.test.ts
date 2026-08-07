@@ -6,6 +6,7 @@ import {
   LISTINGS_PATH,
   ME_PATH,
   listingPath,
+  listingPublicationPath,
   parseCategoryOptions,
   parseOwnerListing,
 } from '@platform/contracts';
@@ -1171,5 +1172,301 @@ describe('the rate card and the inclusive price', () => {
       if (price === null) throw new Error('expected a price');
       expect(price.total.amount).toBe(price.rate.amount + price.renterFee.amount);
     }
+  });
+});
+
+/**
+ * Publication, through the real routes (§8.3, slice 2.8a).
+ *
+ * What only this level proves: that the guard refuses the wrong people, that a
+ * refusal is a 422 carrying every blocker, and that the rules are read against
+ * the **pinned** version rather than the category as it stands.
+ */
+describe('publishing a listing', () => {
+  beforeEach(async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    // Without this the address never resolves and every listing is blocked on
+    // the location rule, which would make every other assertion here vacuous.
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+  });
+
+  /** Everything a listing needs to be publishable, in one body. */
+  const READY = {
+    ...DRAFT,
+    description: 'Serviced last spring. Blade recently sharpened.',
+    attributes: { power_source: 'petrol', weight_kg: '5.2' },
+    transportRequirement: 'car_boot',
+    collectionLocation: ADDRESS,
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  const publish = (id: string, token = 'alice-token') =>
+    app.inject({
+      method: 'POST',
+      url: listingPublicationPath(id),
+      headers: auth(token),
+    });
+
+  async function givenAListing(body: Record<string, unknown> = READY) {
+    const response = await createListing('alice-token', body);
+    return parseOwnerListing(response.json());
+  }
+
+  it('publishes a complete listing', async () => {
+    const listing = await givenAListing();
+    expect(listing.status).toBe('DRAFT');
+
+    const response = await publish(listing.id);
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).status).toBe('PUBLISHED');
+  });
+
+  it('is idempotent, because every state transition is', async () => {
+    const listing = await givenAListing();
+    await publish(listing.id);
+
+    // Not a 409. Publishing something already published is what a double-click
+    // does, and CLAUDE.md makes transitions idempotent.
+    const again = await publish(listing.id);
+    expect(again.statusCode).toBe(201);
+    expect(parseOwnerListing(again.json()).status).toBe('PUBLISHED');
+  });
+
+  it('answers 404 for a listing belonging to somebody else', async () => {
+    const listing = await givenAListing();
+
+    // Not 403: a stranger must not learn that this listing exists.
+    expect((await publish(listing.id, 'bob-token')).statusCode).toBe(404);
+  });
+
+  it('answers 404 for a listing that does not exist', async () => {
+    expect((await publish('11111111-1111-4111-8111-111111111111')).statusCode).toBe(
+      404,
+    );
+  });
+
+  it('refuses an anonymous caller', async () => {
+    const listing = await givenAListing();
+    const response = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(listing.id),
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  /**
+   * ADR 0024 keeps a suspended account able to read and export its own data.
+   * Putting a listing in front of strangers is not reading.
+   */
+  it('refuses a suspended owner, though they may still read it', async () => {
+    const listing = await givenAListing();
+    identity.users.suspend(await idOf('alice-token'), 'admin-id', 'Repeated no-shows');
+
+    expect((await publish(listing.id)).statusCode).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingPath(listing.id),
+          headers: auth('alice-token'),
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+});
+
+describe('what publication refuses', () => {
+  beforeEach(async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+  });
+
+  const READY = {
+    ...DRAFT,
+    description: 'Serviced last spring.',
+    attributes: { power_source: 'petrol', weight_kg: '5.2' },
+    transportRequirement: 'car_boot',
+    collectionLocation: ADDRESS,
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  async function blockersFor(
+    body: Record<string, unknown>,
+  ): Promise<readonly string[]> {
+    const listing = parseOwnerListing(
+      (await createListing('alice-token', body)).json(),
+    );
+    const response = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(listing.id),
+      headers: auth('alice-token'),
+    });
+
+    // 422, not 400: the request is fine and the listing is not ready.
+    expect(response.statusCode).toBe(422);
+    const body_ = response.json() as { blockers?: readonly { field: string }[] };
+    return (body_.blockers ?? []).map((blocker) => blocker.field);
+  }
+
+  it('refuses a listing with no description', async () => {
+    expect(await blockersFor({ ...READY, description: '' })).toEqual(['description']);
+  });
+
+  it('refuses a listing missing a required attribute', async () => {
+    expect(await blockersFor({ ...READY, attributes: { weight_kg: '5.2' } })).toEqual([
+      'attributes.power_source',
+    ]);
+  });
+
+  it('refuses a listing that has not said how it is collected', async () => {
+    expect(await blockersFor({ ...READY, transportRequirement: null })).toEqual([
+      'transportRequirement',
+    ]);
+  });
+
+  it('refuses a listing with no daily rate', async () => {
+    expect(
+      await blockersFor({
+        ...READY,
+        rates: { daily: null, weekend: null, weekly: null },
+      }),
+    ).toEqual(['rates.daily']);
+  });
+
+  /**
+   * Slice 2.5b's rule. The fake geocoder does not recognise this postcode, so
+   * the listing saves with an address and no point — a legitimate draft and an
+   * illegitimate published listing, because no search could ever return it.
+   */
+  it('refuses a listing that could not be placed on a map', async () => {
+    expect(
+      await blockersFor({
+        ...READY,
+        // Well formed and not seeded, so the fake answers "not recognised" —
+        // the state a real provider is in for a postcode issued after its last
+        // data refresh. A malformed one would be refused by the contract long
+        // before the geocoder saw it, and would prove nothing about this rule.
+        collectionLocation: { ...ADDRESS, postcode: 'M3 2LN' },
+      }),
+    ).toEqual(['collectionLocation']);
+  });
+
+  it('refuses a listing with no address at all', async () => {
+    expect(await blockersFor({ ...READY, collectionLocation: null })).toEqual([
+      'collectionLocation',
+    ]);
+  });
+
+  /**
+   * Every reason at once. An owner fixing one thing per round trip is the small
+   * insult that makes people abandon a form.
+   */
+  it('names every unmet requirement rather than the first', async () => {
+    expect(
+      await blockersFor({
+        ...READY,
+        description: '',
+        attributes: {},
+        transportRequirement: null,
+        rates: { daily: null, weekend: null, weekly: null },
+        collectionLocation: null,
+      }),
+    ).toEqual([
+      'description',
+      'attributes.power_source',
+      'attributes.weight_kg',
+      'transportRequirement',
+      'rates.daily',
+      'collectionLocation',
+    ]);
+  });
+
+  it('leaves the listing a draft when it refuses', async () => {
+    const listing = parseOwnerListing(
+      (await createListing('alice-token', { ...READY, description: '' })).json(),
+    );
+    await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(listing.id),
+      headers: auth('alice-token'),
+    });
+
+    const reread = parseOwnerListing(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingPath(listing.id),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+    expect(reread.status).toBe('DRAFT');
+  });
+
+  /**
+   * The question slice 2.4c-i deferred, answered end to end: a category offering
+   * no transport options means its listings cannot state one, so requiring it
+   * would make every listing in that category permanently unpublishable.
+   */
+  it('does not demand a transport requirement the category never offered', async () => {
+    await givenACategory('no-transport', SCHEMA, []);
+
+    const listing = parseOwnerListing(
+      (
+        await createListing('alice-token', {
+          ...READY,
+          categorySlug: 'no-transport',
+          transportRequirement: null,
+        })
+      ).json(),
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(listing.id),
+      headers: auth('alice-token'),
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).status).toBe('PUBLISHED');
+  });
+
+  /**
+   * **ADR 0029, and publication is where it would be easiest to break.**
+   *
+   * The listing is written under version 1, which asks for two attributes. The
+   * category then adds a third required attribute, minting version 2. The
+   * listing must still publish: it is judged against the terms it was written
+   * under, not against a requirement it was never asked for.
+   */
+  it('judges the listing against its pinned version, not the current one', async () => {
+    const listing = await createListing('alice-token', READY);
+    const created = parseOwnerListing(listing.json());
+    expect(created.categoryVersionNumber).toBe(1);
+
+    await reconfigured([
+      ...SCHEMA,
+      {
+        key: 'serial_number',
+        label: 'Serial number',
+        required: true,
+        type: 'text',
+        maxLength: 40,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(created.id),
+      headers: auth('alice-token'),
+    });
+
+    expect(response.statusCode).toBe(201);
+    const published = parseOwnerListing(response.json());
+    expect(published.status).toBe('PUBLISHED');
+    // And publishing did not re-pin: ADR 0029 makes that an explicit operation,
+    // never a side effect of another one.
+    expect(published.categoryVersionNumber).toBe(1);
   });
 });

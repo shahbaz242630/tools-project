@@ -41,9 +41,9 @@ export default async function NewListingPage() {
       <h1>List an item</h1>
 
       <p>
-        This saves a <strong>draft</strong>. Nobody can see it and nobody can book it —
-        photographs, a collection point and prices come next, and publishing is a
-        separate step you take when you are ready.
+        This saves a <strong>draft</strong>. Nobody can see it and nobody can book it.
+        Photographs come later; publishing is a separate step you take when you are
+        ready, and it will tell you if anything is still missing.
       </p>
 
       <Categories outcome={outcome} />
