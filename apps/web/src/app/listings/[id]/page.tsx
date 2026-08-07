@@ -97,6 +97,84 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
         */}
         <dd>{Money.format(listing.replacementValue)}</dd>
 
+        <dt>Price</dt>
+        <dd>
+          {listing.inclusiveDailyPrice === null ? (
+            <em>Not priced yet. You will need a daily rate before you can publish.</em>
+          ) : (
+            <>
+              {/*
+                **The inclusive total is the headline, and the bare rate is
+                never shown on its own** (§3.4.4). Showing the rate as the price
+                and adding the fee later is drip pricing, which the DMCC regime
+                prohibits rather than discourages — and it is one careless line
+                away, because the bare rate is right there on the response.
+
+                The breakdown sits underneath because §3.4.4 permits a base
+                price shown *alongside* an inclusive total, and because an owner
+                setting a rate needs to see what their renter actually pays.
+
+                Every figure here is computed by the API. Nothing on this page
+                does arithmetic with money — §6.1 puts rounding in the pricing
+                service and nowhere else.
+              */}
+              <strong>
+                From {Money.format(listing.inclusiveDailyPrice.total)} a day, fees
+                included
+              </strong>
+              <br />
+              <small>
+                Your rate {Money.format(listing.inclusiveDailyPrice.rate)} + our fee{' '}
+                {Money.format(listing.inclusiveDailyPrice.renterFee)}
+                {listing.inclusiveDailyPrice.minimumFeeApplied ? (
+                  <>
+                    {' '}
+                    (this category&rsquo;s minimum fee, so a longer rental costs less
+                    per day)
+                  </>
+                ) : null}
+              </small>
+              {/*
+                The slot for the refundable damage security, which §3.4.4
+                requires to be shown **separately** and never folded into the
+                headline. The amount arrives in Phase 5 with the deposit bands;
+                the slot is here now because one added later is one somebody
+                forgets, and the rule it exists to satisfy is not a preference.
+              */}
+              <br />
+              <small>
+                A refundable damage hold may also apply. It is not a fee, and it is
+                never part of the price above.
+              </small>
+            </>
+          )}
+        </dd>
+
+        {listing.rates.weekend !== null || listing.rates.weekly !== null ? (
+          <>
+            <dt>Longer hires</dt>
+            <dd>
+              {/*
+                Shown as the owner set them, without a fee added, and labelled as
+                such. These are not yet inclusive totals because the fee on a
+                weekend or a week depends on the booking — that arithmetic
+                belongs to the quote engine in Phase 4, which has dates. Showing
+                a bare figure *labelled* as the owner's rate is not drip pricing;
+                showing it as the price would be.
+              */}
+              {listing.rates.weekend !== null ? (
+                <>Weekend: {Money.format(listing.rates.weekend)} (your rate)</>
+              ) : null}
+              {listing.rates.weekend !== null && listing.rates.weekly !== null ? (
+                <br />
+              ) : null}
+              {listing.rates.weekly !== null ? (
+                <>Weekly: {Money.format(listing.rates.weekly)} (your rate)</>
+              ) : null}
+            </dd>
+          </>
+        ) : null}
+
         <dt>Description</dt>
         <dd>
           {listing.description === '' ? (

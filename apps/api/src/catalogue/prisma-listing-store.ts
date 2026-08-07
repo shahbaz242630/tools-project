@@ -13,6 +13,7 @@ import {
   parseCategoryAttributes,
   parseCategoryTransportOptions,
 } from '@platform/contracts';
+import type { CategoryFeePolicy, ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import { Money, Postcode } from '@platform/core';
 import type { FieldEncryptor } from '../encryption/field-encryption.js';
@@ -102,6 +103,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
           description: draft.description,
           replacementValueAmount: draft.replacementValue.amount,
           replacementValueCurrency: draft.replacementValue.currency,
+          ...rateColumns(draft.rates),
           attributes: draft.attributes,
           transportRequirement: draft.transportRequirement,
           requiresTwoPersonLift: draft.requiresTwoPersonLift,
@@ -249,6 +251,10 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         listing.categoryVersion.attributes,
         `the category version pinned by listing ${listing.id}`,
       ),
+      categoryFeePolicy: asFeePolicy(
+        listing.categoryVersion,
+        `the category version pinned by listing ${listing.id}`,
+      ),
       title: listing.title,
       description: listing.description,
       replacementValue: asMoney(
@@ -256,6 +262,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         listing.replacementValueCurrency,
         listing.id,
       ),
+      rates: asRateCard(listing),
       attributes: asValues(listing.attributes, listing.id),
       transportRequirement: asRequirement(listing.transportRequirement, listing.id),
       requiresTwoPersonLift: listing.requiresTwoPersonLift,
@@ -345,6 +352,12 @@ interface VersionRow {
   versionNumber: number;
   attributes: unknown;
   transportOptions: unknown;
+  ownerCommissionBasisPoints: number;
+  renterFeeBasisPoints: number;
+  minimumBookingTotalAmount: number;
+  minimumBookingTotalCurrency: string;
+  minimumPlatformFeeAmount: number;
+  minimumPlatformFeeCurrency: string;
 }
 
 function toOption(slug: string, version: VersionRow): CategoryOptionRecord {
@@ -380,6 +393,10 @@ interface ListingRow {
   description: string;
   replacementValueAmount: number;
   replacementValueCurrency: string;
+  dailyRateAmount: number | null;
+  weekendRateAmount: number | null;
+  weeklyRateAmount: number | null;
+  rateCurrency: string;
   attributes: unknown;
   transportRequirement: string | null;
   requiresTwoPersonLift: boolean;
@@ -393,6 +410,81 @@ interface ListingRow {
   };
   /** Null for a draft that has not said where the item is. */
   location: LocationRow | null;
+}
+
+/**
+ * The rate card, flattened into the four columns that hold it.
+ *
+ * One function rather than four properties at each write site, for
+ * `feePolicyColumns`' reason: two paths writing a price differently is a
+ * listing whose cost depends on which route last touched it.
+ *
+ * **The currency is written even when every rate is null.** The column is
+ * `NOT NULL` with a default, and writing it explicitly means a listing priced
+ * later inherits the currency it was created under rather than whatever the
+ * default happens to be by then.
+ */
+function rateColumns(rates: ListingRateCard) {
+  return {
+    dailyRateAmount: rates.daily?.amount ?? null,
+    weekendRateAmount: rates.weekend?.amount ?? null,
+    weeklyRateAmount: rates.weekly?.amount ?? null,
+    rateCurrency:
+      rates.daily?.currency ??
+      rates.weekend?.currency ??
+      rates.weekly?.currency ??
+      'GBP',
+  };
+}
+
+/**
+ * The four columns, on the way back out.
+ *
+ * Each amount goes through `asMoney`, which refuses a non-integer and an
+ * unsupported currency — the same narrow guarantee the replacement value gets,
+ * and for a stronger reason: this number is multiplied by a fee rate and shown
+ * to a stranger as what they will pay.
+ */
+function asRateCard(listing: {
+  id: string;
+  dailyRateAmount: number | null;
+  weekendRateAmount: number | null;
+  weeklyRateAmount: number | null;
+  rateCurrency: string;
+}): ListingRateCard {
+  const rate = (amount: number | null) =>
+    amount === null ? null : asMoney(amount, listing.rateCurrency, listing.id);
+
+  return {
+    daily: rate(listing.dailyRateAmount),
+    weekend: rate(listing.weekendRateAmount),
+    weekly: rate(listing.weeklyRateAmount),
+  };
+}
+
+/**
+ * The pinned version's fee policy (ADR 0033).
+ *
+ * The currency gets the same treatment `asMoney` gives: a code this build
+ * cannot do arithmetic in is not a display problem but an amount nothing can add
+ * up, and `Money`'s operations would fail deep inside a fee calculation with a
+ * message about currencies rather than about a listing.
+ */
+function asFeePolicy(version: VersionRow, what: string): CategoryFeePolicy {
+  return {
+    ownerCommissionBasisPoints: version.ownerCommissionBasisPoints,
+    renterFeeBasisPoints: version.renterFeeBasisPoints,
+    minimumBookingTotal: asMoney(
+      version.minimumBookingTotalAmount,
+      version.minimumBookingTotalCurrency,
+      what,
+    ),
+    minimumPlatformFee: asMoney(
+      version.minimumPlatformFeeAmount,
+      version.minimumPlatformFeeCurrency,
+      what,
+    ),
+  };
 }
 
 /**

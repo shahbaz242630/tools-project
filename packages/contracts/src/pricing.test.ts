@@ -6,10 +6,13 @@ import {
   MAX_PRICING_FLOOR_MINOR_UNITS,
   RECOMMENDED_OWNER_COMMISSION_BASIS_POINTS,
   RECOMMENDED_RENTER_FEE_BASIS_POINTS,
+  MAX_RENTAL_RATE_MINOR_UNITS,
   UNCONFIGURED_FEE_POLICY,
+  UNPRICED_RATE_CARD,
   basisPointsToPercent,
   isFeePolicyConfigured,
   parseCategoryFeePolicy,
+  parseListingRateCard,
 } from './pricing.js';
 
 const validPolicy = {
@@ -271,5 +274,89 @@ describe('isFeePolicyConfigured', () => {
         minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
       }),
     ).toBe(false);
+  });
+});
+
+describe('the listing rate card', () => {
+  const rates = (over: Record<string, unknown> = {}) => ({
+    daily: null,
+    weekend: null,
+    weekly: null,
+    ...over,
+  });
+
+  it('accepts a listing nobody has priced', () => {
+    expect(() => parseListingRateCard(rates())).not.toThrow();
+    expect(() => parseListingRateCard(UNPRICED_RATE_CARD)).not.toThrow();
+  });
+
+  it('accepts a daily rate alone', () => {
+    expect(() =>
+      parseListingRateCard(rates({ daily: { amount: 1_800, currency: 'GBP' } })),
+    ).not.toThrow();
+  });
+
+  it('accepts all three', () => {
+    expect(() =>
+      parseListingRateCard({
+        daily: { amount: 1_800, currency: 'GBP' },
+        weekend: { amount: 3_000, currency: 'GBP' },
+        weekly: { amount: 9_000, currency: 'GBP' },
+      }),
+    ).not.toThrow();
+  });
+
+  /**
+   * The one real rule. A weekend or weekly rate with no daily rate describes an
+   * item rentable for three days but not one, with nothing saying so — the quote
+   * engine has no way to express it and 2.8's publication rule would have to
+   * invent a meaning for it.
+   */
+  it('refuses a weekly rate with no daily rate', () => {
+    expect(() =>
+      parseListingRateCard(rates({ weekly: { amount: 9_000, currency: 'GBP' } })),
+    ).toThrow(/daily rate is needed/i);
+  });
+
+  it('refuses a weekend rate with no daily rate', () => {
+    expect(() =>
+      parseListingRateCard(rates({ weekend: { amount: 3_000, currency: 'GBP' } })),
+    ).toThrow(/daily rate is needed/i);
+  });
+
+  it('refuses a rate below the platform minimum', () => {
+    expect(() =>
+      parseListingRateCard(rates({ daily: { amount: 99, currency: 'GBP' } })),
+    ).toThrow(/at least £1/);
+  });
+
+  it('refuses a rate above the platform maximum', () => {
+    expect(() =>
+      parseListingRateCard(
+        rates({ daily: { amount: MAX_RENTAL_RATE_MINOR_UNITS + 1, currency: 'GBP' } }),
+      ),
+    ).toThrow(/at most/);
+  });
+
+  it('refuses fractional pence', () => {
+    expect(() =>
+      parseListingRateCard(rates({ daily: { amount: 18.5, currency: 'GBP' } })),
+    ).toThrow(/whole number of pence/);
+  });
+
+  /**
+   * Deliberately **not** refused: a weekly rate above seven daily charges. A
+   * rate card is the owner's commercial decision, and a validator second-
+   * guessing it would hard-code a pricing opinion (§1.2). What is refused is
+   * only what cannot be interpreted.
+   */
+  it('does not second-guess a rate card that is simply expensive', () => {
+    expect(() =>
+      parseListingRateCard({
+        daily: { amount: 1_000, currency: 'GBP' },
+        weekend: null,
+        weekly: { amount: 100_000, currency: 'GBP' },
+      }),
+    ).not.toThrow();
   });
 });

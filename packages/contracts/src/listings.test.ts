@@ -23,6 +23,9 @@ const validDraft = {
   // Present and null for the same reason: a draft need not say where the item
   // lives either (slice 2.5a).
   collectionLocation: null,
+  // Present and unpriced, for the same reason again (slice 2.7b). A draft need
+  // not have a price; a caller that omitted the field has forgotten it.
+  rates: { daily: null, weekend: null, weekly: null },
 };
 
 /** The draft minus one field, for asserting that its absence is refused. */

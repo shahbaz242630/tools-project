@@ -12,6 +12,7 @@ import type {
 import { Time } from '@platform/core';
 import type { Actor } from '../audit/audit-log.js';
 import type { ListingLocator } from './listing-locator.js';
+import type { ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import type {
   CategoryOptionRecord,
@@ -44,6 +45,16 @@ export interface SubmittedListing {
    */
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
+  /**
+   * What it costs to rent (§8.5.2).
+   *
+   * Typed as the validated shape rather than `unknown`, unlike the attributes
+   * above, and the difference is the point: an attribute value's legality
+   * depends on *category configuration* on the version about to be pinned, so
+   * only this service can judge it. A rate depends on nothing but itself, so the
+   * contract has already finished the job before it arrives here.
+   */
+  readonly rates: ListingRateCard;
   /**
    * Where the item is collected from, or null on a draft that has not said.
    *
@@ -209,6 +220,7 @@ export class ListingsService {
       attributes: values.values,
       transportRequirement: submitted.transportRequirement,
       requiresTwoPersonLift: submitted.requiresTwoPersonLift,
+      rates: submitted.rates,
       collectionLocation: submitted.collectionLocation,
       locatedPoint,
       categoryVersionNumber: category.versionNumber,

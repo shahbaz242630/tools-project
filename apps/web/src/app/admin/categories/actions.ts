@@ -20,6 +20,7 @@ import type { AdminCategoryOutcome } from '../../../lib/admin-categories';
 import { webEnv } from '../../../lib/env';
 import { INITIAL_CATEGORY_STATE } from './state';
 import type { CategoryActionState } from './state';
+import { asSentence } from '../../../lib/contract-issues';
 import { readFeePolicy } from '../../../lib/fee-policy';
 
 /**
@@ -105,31 +106,6 @@ const REASON_HINT =
  * this form is: the browser is not the boundary. The contract validates the
  * result again below and the API validates it a third time.
  */
-/**
- * A contract issue as a sentence somebody can act on.
- *
- * Most read `field: message`, and that is right where the path is what the
- * reader sees — `slug`, `name` and `riskLevel` are all labelled that on the
- * form. **The fee policy is the exception, and its path is three segments of
- * internal structure**: `feePolicy.minimumPlatformFee.amount` against a field
- * labelled "Minimum platform fee (£)". Prefixing it names the field twice, once
- * unreadably — 2.4b's finding, and 2.4c-i's, arriving a third time through a
- * nested object.
- *
- * So those messages name their own subject and this drops the path. The rule is
- * the same one ADR 0027 drew for attribute keys: a path that is deliberately
- * internal must not be shown as though it were a label.
- */
-function asSentence(issue: {
-  readonly path: PropertyKey[];
-  readonly message: string;
-}): string {
-  const path = issue.path.join('.');
-  return path === '' || path.startsWith('feePolicy')
-    ? issue.message
-    : `${path}: ${issue.message}`;
-}
-
 function readFeePolicyFrom(form: FormData) {
   return readFeePolicy({
     ownerCommission: String(form.get('ownerCommission') ?? ''),

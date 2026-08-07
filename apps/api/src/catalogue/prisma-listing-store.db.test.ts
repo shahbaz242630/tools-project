@@ -19,8 +19,10 @@ import type {
   CategoryAttribute,
   ListingAttributeValues,
   ListingCollectionLocation,
+  ListingRateCard,
   TransportRequirement,
 } from '@platform/contracts';
+import { UNPRICED_RATE_CARD } from '@platform/contracts';
 import type { LocatedListingPoint } from './listing-locator.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaCategoryStore } from './prisma-category-store.js';
@@ -146,6 +148,7 @@ const draft = (
     readonly requiresTwoPersonLift?: boolean;
     readonly collectionLocation?: ListingCollectionLocation | null;
     readonly locatedPoint?: LocatedListingPoint | null;
+    readonly rates?: ListingRateCard;
   } = {},
 ) => ({
   ownerId,
@@ -168,6 +171,9 @@ const draft = (
   // Null by default: a listing whose postcode has not been geocoded, which is a
   // legitimate state (§8.3) and the one every existing test is in.
   locatedPoint: overrides.locatedPoint ?? null,
+  // Unpriced by default, which is what every listing created before slice 2.7b
+  // is and what a draft nobody has priced looks like.
+  rates: overrides.rates ?? UNPRICED_RATE_CARD,
   categoryVersionNumber: overrides.categoryVersionNumber ?? 1,
 });
 
@@ -1192,5 +1198,144 @@ describe('the geocoded point', () => {
       await client.listingLocation.findUnique({ where: { listingId: created.id } }),
     ).toBeNull();
     expect((await store.findOwnedBy(created.id, owner))?.isLocated).toBe(false);
+  });
+});
+
+/**
+ * The rate card and the pinned fee policy, against a real database
+ * (slice 2.7b, ADR 0029, ADR 0033).
+ *
+ * The integration test above proves the *controller* prices from
+ * `listing.categoryFeePolicy`. It cannot prove where that value comes from,
+ * because the in-memory double captures the policy when the listing is created
+ * and so could never re-price one. Only here, where the adapter genuinely
+ * re-reads the pinned version row on every read, is that a real assertion.
+ */
+describe('the rate card', () => {
+  it('round-trips all three rates', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        rates: {
+          daily: { amount: 1_800, currency: 'GBP' },
+          weekend: { amount: 3_000, currency: 'GBP' },
+          weekly: { amount: 9_000, currency: 'GBP' },
+        },
+      }),
+    );
+
+    expect(created.rates.daily).toEqual({ amount: 1_800, currency: 'GBP' });
+
+    // Read back rather than trusted from the write: the four columns are
+    // reassembled on the way out, and a mapping that dropped one would still
+    // return what `createDraft` was handed.
+    const reread = await store.findOwnedBy(created.id, owner);
+    expect(reread?.rates).toEqual({
+      daily: { amount: 1_800, currency: 'GBP' },
+      weekend: { amount: 3_000, currency: 'GBP' },
+      weekly: { amount: 9_000, currency: 'GBP' },
+    });
+  });
+
+  it('reads an unpriced listing as three nulls rather than three zeroes', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    const reread = await store.findOwnedBy(created.id, owner);
+    expect(reread?.rates).toEqual({ daily: null, weekend: null, weekly: null });
+  });
+
+  it('refuses a weekly rate with no daily rate, in the database', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    // The contract refuses this first, so this write goes through the store
+    // directly — which is the point. The CHECK is what holds when a future
+    // caller reaches the row another way.
+    await expect(
+      client.listing.create({
+        data: {
+          ownerId: owner,
+          categoryId: category.id,
+          categoryVersionId: (
+            await client.categoryVersion.findFirstOrThrow({
+              where: { categoryId: category.id },
+            })
+          ).id,
+          title: 'Probe',
+          description: '',
+          status: 'DRAFT',
+          replacementValueAmount: 10_000,
+          replacementValueCurrency: 'GBP',
+          weeklyRateAmount: 9_000,
+        },
+      }),
+    ).rejects.toThrow(/rate_card_has_a_daily_rate_if_it_has_any/);
+  });
+});
+
+describe('the pinned fee policy', () => {
+  it('is read from the version the listing points at', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        rates: {
+          daily: { amount: 1_800, currency: 'GBP' },
+          weekend: null,
+          weekly: null,
+        },
+      }),
+    );
+
+    expect(created.categoryFeePolicy.renterFeeBasisPoints).toBe(800);
+  });
+
+  /**
+   * **The guarantee §8.2 asks this table to provide, proved where it can fail.**
+   *
+   * The category is repriced, minting a new version. The listing still points at
+   * the old one, so its fee policy must not move — otherwise reconfiguring a
+   * category would silently re-price every listing already written under it.
+   */
+  it('does not move when the category is repriced', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        rates: {
+          daily: { amount: 1_800, currency: 'GBP' },
+          weekend: null,
+          weekly: null,
+        },
+      }),
+    );
+
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+        feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+      },
+      owner,
+    );
+
+    const reread = await store.findOwnedBy(created.id, owner);
+
+    expect(reread?.categoryVersionNumber).toBe(1);
+    expect(reread?.categoryFeePolicy.renterFeeBasisPoints).toBe(800);
+
+    // And the category itself has genuinely moved on, so the assertion above is
+    // about the pin rather than about a reconfiguration that did not happen.
+    expect(
+      (await categories.findBySlug(category.slug))?.feePolicy.renterFeeBasisPoints,
+    ).toBe(1_600);
   });
 });

@@ -7,6 +7,8 @@ import { listingDraftSchema, listingPath } from '@platform/contracts';
 import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { readCollectionLocation } from '../../../lib/collection-location';
+import { asSentence } from '../../../lib/contract-issues';
+import { readRateCard } from '../../../lib/rate-card';
 import { readReplacementValue } from '../../../lib/replacement-value';
 import { readSubmittedAttributes } from '../../../lib/submitted-attributes';
 import { createListing } from '../../../lib/listings';
@@ -55,6 +57,9 @@ export async function createListingAction(
   const line2 = String(form.get('line2') ?? '');
   const town = String(form.get('town') ?? '');
   const postcode = String(form.get('postcode') ?? '');
+  const dailyRate = String(form.get('dailyRate') ?? '');
+  const weekendRate = String(form.get('weekendRate') ?? '');
+  const weeklyRate = String(form.get('weeklyRate') ?? '');
   const typed = {
     categorySlug,
     title,
@@ -64,6 +69,9 @@ export async function createListingAction(
     line2,
     town,
     postcode,
+    dailyRate,
+    weekendRate,
+    weeklyRate,
   };
 
   // The category's own fields arrive as one JSON value rather than as indexed
@@ -116,6 +124,23 @@ export async function createListingAction(
     };
   }
 
+  // Blank is a real answer — a draft need not be priced (§8.3). A rate that was
+  // typed and cannot be read is refused rather than dropped, for
+  // `readCollectionLocation`'s reason.
+  const rates = readRateCard({
+    daily: dailyRate,
+    weekend: weekendRate,
+    weekly: weeklyRate,
+  });
+  if (!rates.ok) {
+    return {
+      ...INITIAL_LISTING_STATE,
+      ...typed,
+      status: 'error',
+      message: rates.message,
+    };
+  }
+
   // The contract's own schema, not a second opinion about what a title is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
@@ -137,15 +162,14 @@ export async function createListingAction(
     // compiling instead of quietly reading every listing as one-person.
     requiresTwoPersonLift: form.get('requiresTwoPersonLift') !== null,
     collectionLocation: location.value,
+    rates: rates.value,
   });
   if (!parsed.success) {
     return {
       ...INITIAL_LISTING_STATE,
       ...typed,
       status: 'error',
-      message: parsed.error.issues
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join('; '),
+      message: parsed.error.issues.map(asSentence).join('; '),
     };
   }
 

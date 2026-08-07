@@ -20,6 +20,7 @@ import {
 } from '@platform/contracts';
 import type { CategoryOption, OwnerListing } from '@platform/contracts';
 import { Time } from '@platform/core';
+import { inclusiveDailyPrice } from '../pricing/daily-price.js';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -85,6 +86,7 @@ export class OwnerListingsController {
         attributes: draft.attributes,
         transportRequirement: draft.transportRequirement,
         requiresTwoPersonLift: draft.requiresTwoPersonLift,
+        rates: draft.rates,
         collectionLocation: draft.collectionLocation,
         categoryVersionNumber: draft.categoryVersionNumber,
       });
@@ -187,6 +189,22 @@ function toOwnerListing(listing: ListingRecord): OwnerListing {
     // no field on `ListingRecord` that could leak them, which is a stronger
     // guarantee than remembering not to map one.
     isLocated: listing.isLocated,
+    rates: listing.rates,
+    /*
+     * **The price is computed here and never by whatever renders it** (§6.1).
+     *
+     * Rounding lives in the pricing service and nowhere else, so a component
+     * handed a rate and a fee percentage would be a second place a price is
+     * worked out — which is how two surfaces come to disagree about what a thing
+     * costs. It is also how drip pricing gets built by accident: with the bare
+     * rate on the response and the fee somewhere else, showing the wrong one is
+     * a single careless line, and §3.4.4 prohibits exactly that.
+     *
+     * Computed against the **pinned** version's fee policy, not the category's
+     * current one (ADR 0029). Reconfiguring a category must not silently re-price
+     * a listing that was written under different terms.
+     */
+    inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.categoryFeePolicy),
     status: listing.status,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),
