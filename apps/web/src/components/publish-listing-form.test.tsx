@@ -44,7 +44,9 @@ function given(next: PublicationActionState) {
 describe('a draft', () => {
   it('offers the control', () => {
     given({ status: 'idle', message: null, blockers: [] });
-    render(<PublishListingForm listingId={LISTING_ID} status="DRAFT" />);
+    render(
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
+    );
 
     expect(screen.getByRole('button', { name: /publish this listing/i })).toBeTruthy();
   });
@@ -52,7 +54,7 @@ describe('a draft', () => {
   it('carries the listing id, so the action knows what to publish', () => {
     given({ status: 'idle', message: null, blockers: [] });
     const { container } = render(
-      <PublishListingForm listingId={LISTING_ID} status="DRAFT" />,
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
     );
 
     const hidden = container.querySelector('input[name="listingId"]');
@@ -67,7 +69,13 @@ describe('a published listing', () => {
    */
   it('offers no control, because there is nothing left to do', () => {
     given({ status: 'idle', message: null, blockers: [] });
-    render(<PublishListingForm listingId={LISTING_ID} status="PUBLISHED" />);
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PUBLISHED"
+        publicationAvailable
+      />,
+    );
 
     expect(screen.queryByRole('button', { name: /publish/i })).toBeNull();
   });
@@ -82,7 +90,11 @@ describe('a published listing', () => {
   it('says only what the status line cannot — that there is no way back yet', () => {
     given({ status: 'idle', message: null, blockers: [] });
     const { container } = render(
-      <PublishListingForm listingId={LISTING_ID} status="PUBLISHED" />,
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PUBLISHED"
+        publicationAvailable
+      />,
     );
 
     expect(container.textContent).toMatch(/pausing and archiving/i);
@@ -113,7 +125,9 @@ describe('a refusal', () => {
       message: 'This listing is not ready to be published yet.',
       blockers,
     });
-    render(<PublishListingForm listingId={LISTING_ID} status="DRAFT" />);
+    render(
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
+    );
 
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
@@ -128,7 +142,9 @@ describe('a refusal', () => {
       message: 'This listing is not ready to be published yet.',
       blockers,
     });
-    render(<PublishListingForm listingId={LISTING_ID} status="DRAFT" />);
+    render(
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
+    );
 
     expect(screen.getByRole('alert')).toBeTruthy();
   });
@@ -142,7 +158,7 @@ describe('a refusal', () => {
   it('does not tell somebody to edit a listing that cannot be edited', () => {
     given({ status: 'not-ready', message: 'Not ready.', blockers });
     const { container } = render(
-      <PublishListingForm listingId={LISTING_ID} status="DRAFT" />,
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
     );
 
     expect(container.textContent).not.toMatch(/edit the listing/i);
@@ -151,7 +167,9 @@ describe('a refusal', () => {
 
   it('keeps the control, because the whole point is trying again', () => {
     given({ status: 'not-ready', message: 'Not ready.', blockers });
-    render(<PublishListingForm listingId={LISTING_ID} status="DRAFT" />);
+    render(
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
+    );
 
     expect(screen.getByRole('button', { name: /publish this listing/i })).toBeTruthy();
   });
@@ -164,9 +182,108 @@ describe('a failure that is not a refusal', () => {
       message: 'Your session has expired. Sign in again.',
       blockers: [],
     });
-    render(<PublishListingForm listingId={LISTING_ID} status="DRAFT" />);
+    render(
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
+    );
 
     expect(screen.getByRole('alert').textContent).toMatch(/session has expired/i);
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  });
+});
+
+/**
+ * The platform-wide kill switch, as an owner meets it (slice H3b).
+ *
+ * H3a made the API refuse; this is the same fact offered *before* the button is
+ * pressed rather than after. The button is disabled and explained, never hidden.
+ */
+describe('when publishing is switched off across the platform', () => {
+  it('disables the button', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="DRAFT"
+        publicationAvailable={false}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /publish this listing/i });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps the button on the page rather than removing it', () => {
+    // A control that vanishes leaves somebody looking for something that was
+    // there yesterday, with nothing on the page accounting for it — which reads
+    // as broken rather than as a deliberate pause.
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="DRAFT"
+        publicationAvailable={false}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: /publish this listing/i }),
+    ).toBeTruthy();
+  });
+
+  it('says it is the platform and not their listing', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="DRAFT"
+        publicationAvailable={false}
+      />,
+    );
+
+    const notice = screen.getByRole('status');
+    expect(notice.textContent).toMatch(/paused across the whole platform/i);
+    // The half that stops somebody hunting for a field to fix.
+    expect(notice.textContent).toMatch(/nothing to do with your listing/i);
+    expect(notice.textContent).toMatch(/saved, it is unchanged/i);
+  });
+
+  it('enables the button and says nothing while the switch is on', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
+    );
+
+    expect(
+      (
+        screen.getByRole('button', {
+          name: /publish this listing/i,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('still shows the completeness blockers, because the owner can still work on it', () => {
+    // Publishing being paused does not stop somebody getting their listing
+    // ready. Hiding what is still missing would waste the pause.
+    given({
+      status: 'not-ready',
+      message: 'Not ready.',
+      blockers: [
+        {
+          field: 'description',
+          message: 'A description is needed before this listing can be published.',
+        },
+      ],
+    });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="DRAFT"
+        publicationAvailable={false}
+      />,
+    );
+
+    expect(screen.queryAllByRole('listitem').length).toBeGreaterThan(0);
   });
 });

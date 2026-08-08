@@ -38,6 +38,7 @@ const LISTING = {
   rates: { daily: null, weekend: null, weekly: null },
   inclusiveDailyPrice: null,
   status: 'DRAFT',
+  publicationAvailable: true,
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
 };

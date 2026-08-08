@@ -389,6 +389,29 @@ export interface OwnerListing {
    */
   readonly inclusiveDailyPrice: InclusiveDailyPrice | null;
   readonly status: ListingStatus;
+  /**
+   * Whether the platform is accepting publications at all right now (slice H3b).
+   *
+   * **A platform-wide fact on a per-listing shape, and that is deliberate.** The
+   * question this projection answers is *"what can I do with this listing right
+   * now"*, and the answer already depends on the listing's own state — `status`,
+   * `isLocated` — and now also on the `listing.publication` kill switch
+   * (ADR 0036). An owner who can see every reason their listing is not ready and
+   * cannot see the one reason the button will refuse anyway is being told a
+   * half-truth by omission.
+   *
+   * **Not a `PublicationBlocker`**, and the difference is the same one H3a drew
+   * on the server: a blocker is something *this listing* is missing and its owner
+   * can fix. This is neither about the listing nor fixable by them, and putting
+   * it in the blocker list would send somebody hunting for a field that is
+   * already correct.
+   *
+   * **It is a courtesy, never the control.** A page rendered ten seconds before
+   * somebody threw the switch still shows `true`, and the API still refuses with
+   * a 503 — which is why the check exists on both sides and why removing the
+   * server-side one would be a security change rather than a tidy-up.
+   */
+  readonly publicationAvailable: boolean;
   /** ISO 8601 UTC. */
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -424,6 +447,7 @@ const ownerListingSchema = z.object({
   rates: listingRateCardSchema,
   inclusiveDailyPrice: inclusiveDailyPriceSchema.nullable(),
   status: listingStatusSchema,
+  publicationAvailable: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

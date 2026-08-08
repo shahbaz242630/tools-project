@@ -1350,6 +1350,74 @@ describe('publishing a listing', () => {
       expect(response.statusCode).toBe(201);
       expect(parseOwnerListing(response.json()).status).toBe('PUBLISHED');
     });
+
+    /**
+     * What the owner's own view says about it (slice H3b).
+     *
+     * The refusal above is correct and arrives too late to be kind: it is what
+     * an owner meets *after* pressing a button the page invited them to press.
+     * This is the same fact, offered before.
+     */
+    describe('what the listing response says', () => {
+      it('reports publication as available while the switch is on', async () => {
+        const listing = await givenAListing();
+
+        const read = await app.inject({
+          method: 'GET',
+          url: listingPath(listing.id),
+          headers: auth('alice-token'),
+        });
+
+        expect(parseOwnerListing(read.json()).publicationAvailable).toBe(true);
+      });
+
+      it('reports it as unavailable while the switch is off', async () => {
+        const listing = await givenAListing();
+        listings.publication.off();
+
+        const read = await app.inject({
+          method: 'GET',
+          url: listingPath(listing.id),
+          headers: auth('alice-token'),
+        });
+
+        expect(parseOwnerListing(read.json()).publicationAvailable).toBe(false);
+      });
+
+      it('says so on a freshly created draft too', async () => {
+        // The create response is an `OwnerListing` like any other, and the page
+        // an owner lands on after saving renders from it. A field populated on
+        // the read and forgotten on the create would show a working button on
+        // exactly the page somebody is most likely to press it from.
+        listings.publication.off();
+
+        const created = await createListing();
+
+        expect(created.statusCode).toBe(201);
+        expect(parseOwnerListing(created.json()).publicationAvailable).toBe(false);
+      });
+
+      it('still refuses a publish attempt from a page that said it was available', async () => {
+        // **The field is a courtesy; the 503 is the control.** A page rendered
+        // before the switch was thrown reports `true` and its button is enabled,
+        // and the API has to refuse anyway — which is why the check exists on
+        // both sides and why deleting the server-side one would be a security
+        // change rather than a tidy-up.
+        const listing = await givenAListing();
+
+        const read = await app.inject({
+          method: 'GET',
+          url: listingPath(listing.id),
+          headers: auth('alice-token'),
+        });
+        expect(parseOwnerListing(read.json()).publicationAvailable).toBe(true);
+
+        // The switch is thrown after that page was rendered.
+        listings.publication.off();
+
+        expect((await publish(listing.id)).statusCode).toBe(503);
+      });
+    });
   });
 });
 

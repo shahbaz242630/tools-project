@@ -97,7 +97,7 @@ export class OwnerListingsController {
         collectionLocation: draft.collectionLocation,
         categoryVersionNumber: draft.categoryVersionNumber,
       });
-      return toOwnerListing(created);
+      return toOwnerListing(created, await this.listings.isPublicationAvailable());
     } catch (error) {
       if (error instanceof UnknownCategoryError) {
         // 404 rather than 400: the body is well formed and the category was
@@ -147,7 +147,7 @@ export class OwnerListingsController {
     const listing = await this.listings.findOwned(id, owner.id);
     if (listing === null) throw new NotFoundException();
 
-    return toOwnerListing(listing);
+    return toOwnerListing(listing, await this.listings.isPublicationAvailable());
   }
 
   /**
@@ -174,7 +174,11 @@ export class OwnerListingsController {
       // learn that somebody else's listing exists by trying to publish it.
       if (published === null) throw new NotFoundException();
 
-      return toOwnerListing(published);
+      // Read rather than assumed `true`. Publishing succeeded a moment ago, so
+      // it was on then — but this field describes now, and a value that is
+      // right by coincidence is one that stops being right when the code around
+      // it moves.
+      return toOwnerListing(published, await this.listings.isPublicationAvailable());
     } catch (error) {
       if (error instanceof PublicationSuspendedError) {
         /*
@@ -225,7 +229,19 @@ function parse<T>(read: () => T): T {
  * themselves, so echoing their own id back adds nothing — and it is one fewer
  * field to remember to strip when 2.10 adds the public projection beside it.
  */
-function toOwnerListing(listing: ListingRecord): OwnerListing {
+function toOwnerListing(
+  listing: ListingRecord,
+  /**
+   * Whether the platform is accepting publications (slice H3b).
+   *
+   * **A required parameter rather than a field on `ListingRecord`.** It is not a
+   * property of the row and never comes back from the store, so putting it on
+   * the record would mean inventing a value in the adapter. Required rather than
+   * defaulted because a default is what a call site forgets, and the forgotten
+   * value here would tell an owner the button works when it does not.
+   */
+  publicationAvailable: boolean,
+): OwnerListing {
   return {
     id: listing.id,
     categorySlug: listing.categorySlug,
@@ -268,6 +284,7 @@ function toOwnerListing(listing: ListingRecord): OwnerListing {
      */
     inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.categoryFeePolicy),
     status: listing.status,
+    publicationAvailable,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),
   };
