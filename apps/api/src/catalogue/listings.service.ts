@@ -307,6 +307,23 @@ export class ListingsService {
     return this.store.findOwnedBy(id, ownerId);
   }
 
+  /**
+   * Whether the platform is accepting publications right now (slice H3b).
+   *
+   * **Exposed so the interface can say so before somebody presses the button**,
+   * not so it can decide anything. `publish` asks the same question again on
+   * every attempt, and it has to: this answer is read when a page is rendered
+   * and acted on whenever the owner gets round to it, which may be long after
+   * somebody threw the switch.
+   *
+   * Named for the question rather than for the flag. A caller should not have to
+   * know that `listing.publication` exists, or that flags exist at all — which
+   * is the same reason the port is one method rather than the flag service.
+   */
+  isPublicationAvailable(): Promise<boolean> {
+    return this.publication.isPublicationEnabled();
+  }
+
   /** The categories an owner may list in, with the fields each one asks for. */
   async categoryOptions(): Promise<readonly CategoryOptionRecord[]> {
     const rows = await this.categories.listOptions(Paging.probe(CATEGORY_LIST_LIMIT));

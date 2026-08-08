@@ -322,7 +322,11 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
         <dd>{Time.formatLocal(Time.fromIsoUtc(listing.createdAt))}</dd>
       </dl>
 
-      <PublishListingForm listingId={listing.id} status={listing.status} />
+      <PublishListingForm
+        listingId={listing.id}
+        status={listing.status}
+        publicationAvailable={listing.publicationAvailable}
+      />
 
       <p>Photographs are not built yet. When they are, they will appear here.</p>
     </>

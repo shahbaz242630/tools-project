@@ -20,9 +20,20 @@ import { INITIAL_PUBLICATION_STATE } from '../app/listings/[id]/publication-stat
 export function PublishListingForm({
   listingId,
   status,
+  publicationAvailable,
 }: {
   readonly listingId: string;
   readonly status: ListingStatus;
+  /**
+   * Whether the platform is accepting publications right now (slice H3b).
+   *
+   * **This disables the button; it does not replace the server's check.** The
+   * value was true when this page was rendered and may not be by the time
+   * somebody presses the button, so the API asks again and answers 503 either
+   * way. Removing the server-side check because the button is disabled would be
+   * the classic mistake of treating an interface affordance as a control.
+   */
+  readonly publicationAvailable: boolean;
 }) {
   const [state, action, pending] = useActionState(
     publishListingAction,
@@ -101,8 +112,26 @@ export function PublishListingForm({
 
       <input type="hidden" name="listingId" value={listingId} />
 
+      {/*
+        **Disabled and explained, never hidden.** A button that vanishes leaves
+        somebody looking for a control that was there yesterday, with nothing on
+        the page accounting for it — which reads as a broken page rather than as
+        a deliberate pause. Saying so costs one sentence and answers the question
+        before it is asked.
+
+        The explanation sits *above* the button rather than below it, because
+        somebody scanning for the control finds the reason on the way to it.
+      */}
+      {publicationAvailable ? null : (
+        <p role="status">
+          <strong>Publishing is paused across the whole platform right now.</strong>{' '}
+          This is nothing to do with your listing — it is saved, it is unchanged, and
+          you can carry on getting it ready. Try again shortly.
+        </p>
+      )}
+
       <p>
-        <button type="submit" disabled={pending}>
+        <button type="submit" disabled={pending || !publicationAvailable}>
           {pending ? 'Publishing…' : 'Publish this listing'}
         </button>
       </p>
