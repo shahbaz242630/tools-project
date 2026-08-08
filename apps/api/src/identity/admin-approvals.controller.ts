@@ -23,13 +23,14 @@ import {
 } from '@platform/contracts';
 import type { AdminApprovalList, AdminApprovalView } from '@platform/contracts';
 import { Time } from '@platform/core';
-import { AuthGuard, IDENTITY_SERVICE, Roles } from './auth.guard.js';
+import { AuthGuard, Roles } from './auth.guard.js';
+import { ROLE_APPROVAL_SERVICE } from './identity.tokens.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
 import { ApprovalConflictError, approvalState } from './admin-approval.js';
 import type { AdminApproval } from './admin-approval.js';
-import { ApprovalRefusedError } from './identity.service.js';
-import type { IdentityService } from './identity.service.js';
+import { ApprovalRefusedError } from './identity-errors.js';
+import type { RoleApprovalService } from './role-approval.service.js';
 import type { MirroredUser } from './user-directory.js';
 
 /**
@@ -56,7 +57,9 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class AdminApprovalsController {
-  constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
+  constructor(
+    @Inject(ROLE_APPROVAL_SERVICE) private readonly identity: RoleApprovalService,
+  ) {}
 
   @Get(ADMIN_APPROVALS_PATH)
   @Roles('ADMIN')

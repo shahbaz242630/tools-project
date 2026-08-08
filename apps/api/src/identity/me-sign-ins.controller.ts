@@ -1,10 +1,11 @@
 import { Controller, Get, Inject, UseGuards } from '@nestjs/common';
 import { ME_SIGN_INS_PATH } from '@platform/contracts';
 import type { SignInsResponse } from '@platform/contracts';
-import { AllowsSuspended, AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
+import { AllowsSuspended, AuthGuard } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
-import type { IdentityService } from './identity.service.js';
+import type { AccountDataService } from './account-data.service.js';
 import type { MirroredUser } from './user-directory.js';
+import { ACCOUNT_DATA_SERVICE } from './identity.tokens.js';
 
 /**
  * The caller's own sign-in history — BRD §8.1's authentication events.
@@ -24,7 +25,9 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class MeSignInsController {
-  constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
+  constructor(
+    @Inject(ACCOUNT_DATA_SERVICE) private readonly identity: AccountDataService,
+  ) {}
 
   /**
    * Survives suspension, and it matters most then.

@@ -36,6 +36,10 @@ import {
   InMemoryProfileStore,
 } from '../profiles/testing/fakes.js';
 import { IdentityService } from './identity.service.js';
+import { AccountErasure } from './account-erasure.js';
+import { AccountDataService } from './account-data.service.js';
+import { AccountAdminService } from './account-admin.service.js';
+import { RoleApprovalService } from './role-approval.service.js';
 import {
   FakeSessionVerifier,
   InMemoryAdminApprovalStore,
@@ -138,26 +142,49 @@ beforeEach(async () => {
   // it is true of listings now.
   categories = new InMemoryCategoryStore();
   listings = createListingFakes(categories);
-  const identity: IdentityService = new IdentityService(
+  const authenticationEvents = new InMemoryAuthenticationEvents();
+
+  // The erasure both deletion paths share, composed exactly as `main.ts`
+  // composes it. **This test exists to prove that composition**, so building it
+  // the same way here is not incidental — a second instance, or two erasers
+  // wired separately, would let it pass while production did something else.
+  const erasure = new AccountErasure(
     users,
-    new InMemoryWebhookLedger(),
     audit.service,
     {
-      // Both erasers, composed exactly as `main.ts` composes them — and
-      // sequentially for the same reason: erasure must be retryable, and a
-      // failure in the second must leave the first done.
+      // Both erasers, sequentially: erasure must be retryable, and a failure in
+      // the second must leave the first done.
       erase: async (actor) => {
         await profiles.eraseFor(actor);
         await listings.service.eraseFor(actor);
       },
     },
-    { exportFor: (userId: string) => profiles.exportFor(userId) },
-    { exportFor: (userId: string) => listings.service.exportFor(userId) },
-    { summaryFor: (userId: string) => profiles.adminSummaryFor(userId) },
-    approvals,
-    new InMemoryAuthenticationEvents(),
+    authenticationEvents,
+  );
+
+  const identity: IdentityService = new IdentityService(
+    users,
+    new InMemoryWebhookLedger(),
+    audit.service,
+    authenticationEvents,
+    erasure,
     createRecordingLogger().logger,
   );
+
+  const accountData = new AccountDataService(
+    users,
+    audit.service,
+    { exportFor: (userId: string) => profiles.exportFor(userId) },
+    { exportFor: (userId: string) => listings.service.exportFor(userId) },
+    authenticationEvents,
+    erasure,
+  );
+
+  const accountAdmin = new AccountAdminService(users, audit.service, {
+    summaryFor: (userId: string) => profiles.adminSummaryFor(userId),
+  });
+
+  const roleApprovals = new RoleApprovalService(users, audit.service, approvals);
 
   // Stands in for the transaction the real store performs, so approving a
   // proposal in these tests really does change the role.
@@ -175,7 +202,13 @@ beforeEach(async () => {
         metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
-        identity: { sessionVerifier, service: identity },
+        identity: {
+          sessionVerifier,
+          service: identity,
+          accountData,
+          accountAdmin,
+          roleApprovals,
+        },
         profiles,
         audit: audit.service,
         catalogue: new CatalogueService(

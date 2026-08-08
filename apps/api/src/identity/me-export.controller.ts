@@ -8,11 +8,12 @@ import {
 } from '@nestjs/common';
 import { ME_EXPORT_PATH } from '@platform/contracts';
 import type { DataExport } from '@platform/contracts';
-import { AllowsSuspended, AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
+import { AllowsSuspended, AuthGuard } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
-import type { IdentityService } from './identity.service.js';
+import type { AccountDataService } from './account-data.service.js';
 import type { MirroredUser } from './user-directory.js';
+import { ACCOUNT_DATA_SERVICE } from './identity.tokens.js';
 
 /**
  * Everything the platform holds about you.
@@ -29,7 +30,9 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class MeExportController {
-  constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
+  constructor(
+    @Inject(ACCOUNT_DATA_SERVICE) private readonly identity: AccountDataService,
+  ) {}
 
   @Get(ME_EXPORT_PATH)
   @AllowsSuspended()
