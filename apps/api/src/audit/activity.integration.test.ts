@@ -61,6 +61,9 @@ beforeEach(async () => {
         identity: {
           sessionVerifier: identity.sessionVerifier,
           service: identity.service,
+          accountData: identity.accountData,
+          accountAdmin: identity.accountAdmin,
+          roleApprovals: identity.roleApprovals,
         },
         profiles: profiles.service,
         audit: audit.service,

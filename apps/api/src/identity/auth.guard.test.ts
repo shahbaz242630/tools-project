@@ -3,13 +3,7 @@ import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createAuditFakes } from '../audit/testing/fakes.js';
-import {
-  RecordingEraser,
-  StubDataSource,
-  StubListingDataSource,
-  StubProfileSummarySource,
-  InMemoryAdminApprovalStore,
-} from './testing/fakes.js';
+import { RecordingEraser } from './testing/fakes.js';
 import type { SessionInput } from './testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -22,9 +16,10 @@ import {
 import { currentUserFrom } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
 import { IdentityService } from './identity.service.js';
+import { AccountErasure } from './account-erasure.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { FakeSessionVerifier } from './testing/fakes.js';
-import type { MirroredUser, UserRole } from './user-directory.js';
+import type { MirroredUser, UserDirectory, UserRole } from './user-directory.js';
 import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 
 describe('bearerToken', () => {
@@ -98,18 +93,7 @@ beforeEach(() => {
   guard = new AuthGuard(
     new Reflector(),
     verifier,
-    new IdentityService(
-      users,
-      new InMemoryWebhookLedger(),
-      createAuditFakes().service,
-      new RecordingEraser(),
-      new StubDataSource(),
-      new StubListingDataSource(),
-      new StubProfileSummarySource(),
-      new InMemoryAdminApprovalStore(),
-      new InMemoryAuthenticationEvents(),
-      createRecordingLogger().logger,
-    ),
+    mirrorFor(users),
     createRecordingLogger().logger,
     // MFA enforced, which is every test in this file except the two that say
     // otherwise. The bypass is passed explicitly rather than defaulted, so a
@@ -170,18 +154,7 @@ describe('AuthGuard', () => {
       // test that expects to reach an admin route has to say so — privilege is
       // never inherited from a fixture nobody reread.
       new FakeSessionVerifier().accept('good', MFA_SESSION),
-      new IdentityService(
-        admin,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(admin),
       createRecordingLogger().logger,
       false,
     );
@@ -236,18 +209,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
     const broken = new AuthGuard(
       new Reflector(),
       exploding(boom),
-      new IdentityService(
-        users,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(users),
       createRecordingLogger().logger,
       false,
     );
@@ -269,18 +231,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
     const broken = new AuthGuard(
       new Reflector(),
       verifier,
-      new IdentityService(
-        failing,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(failing),
       createRecordingLogger().logger,
       false,
     );
@@ -374,18 +325,7 @@ describe('the second factor an admin route requires', () => {
     return new AuthGuard(
       new Reflector(),
       new FakeSessionVerifier().accept('good', session),
-      new IdentityService(
-        directory,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(directory),
       createRecordingLogger().logger,
       mfaBypassed,
     );
@@ -477,18 +417,7 @@ describe('when the second-factor check is switched off', () => {
     return new AuthGuard(
       new Reflector(),
       new FakeSessionVerifier().accept('good', session),
-      new IdentityService(
-        directory,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(directory),
       createRecordingLogger().logger,
       true,
     );
@@ -528,18 +457,7 @@ describe('when the second-factor check is switched off', () => {
     const guard = new AuthGuard(
       new Reflector(),
       new FakeSessionVerifier().accept('good', SESSION),
-      new IdentityService(
-        ordinary,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(ordinary),
       createRecordingLogger().logger,
       true,
     );
@@ -564,18 +482,7 @@ describe('when the second-factor check is switched off', () => {
     const guard = new AuthGuard(
       new Reflector(),
       new FakeSessionVerifier().accept('good', SESSION),
-      new IdentityService(
-        suspended,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(suspended),
       createRecordingLogger().logger,
       true,
     );
@@ -603,18 +510,7 @@ describe('when the second-factor check is switched off', () => {
     const guard = new AuthGuard(
       new Reflector(),
       new FakeSessionVerifier().accept('good', SESSION),
-      new IdentityService(
-        directory,
-        new InMemoryWebhookLedger(),
-        createAuditFakes().service,
-        new RecordingEraser(),
-        new StubDataSource(),
-        new StubListingDataSource(),
-        new StubProfileSummarySource(),
-        new InMemoryAdminApprovalStore(),
-        new InMemoryAuthenticationEvents(),
-        createRecordingLogger().logger,
-      ),
+      mirrorFor(directory),
       recorder.logger,
       true,
     );
@@ -628,3 +524,26 @@ describe('when the second-factor check is switched off', () => {
     expect(JSON.stringify(warned[0])).toContain('DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA');
   });
 });
+
+/**
+ * The mirror service, with the collaborators the guard actually reaches.
+ *
+ * **Six arguments where this test used to pass ten** (slice H4). The guard calls
+ * exactly one method — `resolveSession` — and before the split it had to be
+ * handed an eraser, two export sources, a profile summary source and an approval
+ * store to get one. That is the cost of a service with four responsibilities,
+ * paid by every test that needed any of them.
+ */
+function mirrorFor(directory: UserDirectory): IdentityService {
+  const audit = createAuditFakes().service;
+  const events = new InMemoryAuthenticationEvents();
+
+  return new IdentityService(
+    directory,
+    new InMemoryWebhookLedger(),
+    audit,
+    events,
+    new AccountErasure(directory, audit, new RecordingEraser(), events),
+    createRecordingLogger().logger,
+  );
+}

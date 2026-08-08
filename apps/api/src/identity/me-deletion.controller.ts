@@ -1,11 +1,12 @@
 import { Controller, HttpCode, Inject, Post, Req, UseGuards } from '@nestjs/common';
 import { ME_DELETION_PATH } from '@platform/contracts';
 import type { DeletionResponse } from '@platform/contracts';
-import { AllowsSuspended, AuthGuard, IDENTITY_SERVICE } from './auth.guard.js';
+import { AllowsSuspended, AuthGuard } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
-import type { IdentityService } from './identity.service.js';
+import type { AccountDataService } from './account-data.service.js';
 import type { MirroredUser } from './user-directory.js';
+import { ACCOUNT_DATA_SERVICE } from './identity.tokens.js';
 
 /**
  * Deleting your own account.
@@ -23,7 +24,9 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class MeDeletionController {
-  constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
+  constructor(
+    @Inject(ACCOUNT_DATA_SERVICE) private readonly identity: AccountDataService,
+  ) {}
 
   @Post(ME_DELETION_PATH)
   @AllowsSuspended()

@@ -21,11 +21,12 @@ import {
 import type { AdminAccount } from '@platform/contracts';
 import { Time } from '@platform/core';
 import type { Actor } from '../audit/audit-log.js';
-import { AuthGuard, IDENTITY_SERVICE, Roles } from './auth.guard.js';
+import { AuthGuard, Roles } from './auth.guard.js';
+import { ACCOUNT_ADMIN_SERVICE } from './identity.tokens.js';
 import { CurrentUser } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
-import { ApprovalRefusedError } from './identity.service.js';
-import type { IdentityService } from './identity.service.js';
+import { ApprovalRefusedError } from './identity-errors.js';
+import type { AccountAdminService } from './account-admin.service.js';
 import type { MirroredUser } from './user-directory.js';
 
 /**
@@ -51,7 +52,9 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class AdminSuspensionController {
-  constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
+  constructor(
+    @Inject(ACCOUNT_ADMIN_SERVICE) private readonly identity: AccountAdminService,
+  ) {}
 
   @Post(ADMIN_SUSPEND_ROUTE)
   @Roles('ADMIN')

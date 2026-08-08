@@ -28,6 +28,10 @@ import type {
 import { createAuditFakes } from '../../audit/testing/fakes.js';
 import type { AuditFakes } from '../../audit/testing/fakes.js';
 import { IdentityService } from '../identity.service.js';
+import { AccountErasure } from '../account-erasure.js';
+import { AccountDataService } from '../account-data.service.js';
+import { AccountAdminService } from '../account-admin.service.js';
+import { RoleApprovalService } from '../role-approval.service.js';
 import { SessionVerificationError } from '../session-verifier.js';
 import type { SessionVerifier, VerifiedSession } from '../session-verifier.js';
 import { UserConflictError } from '../user-directory.js';
@@ -584,7 +588,19 @@ export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
   readonly ledger: InMemoryWebhookLedger;
+  /**
+   * The four services `identity.service.ts` split into (slice H4).
+   *
+   * All four are built here from one set of doubles, so a test that suspends an
+   * account through `accountAdmin` and then resolves a session through `service`
+   * is talking about the same row. Separate fakes per service would have made
+   * that the test's problem to arrange, and got it wrong quietly.
+   */
   readonly service: IdentityService;
+  readonly accountData: AccountDataService;
+  readonly accountAdmin: AccountAdminService;
+  readonly roleApprovals: RoleApprovalService;
+  readonly erasure: AccountErasure;
   /** Exposed so a test can assert what the module recorded. */
   readonly audit: AuditFakes;
   readonly eraser: RecordingEraser;
@@ -625,6 +641,16 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     }
   };
 
+  // One erasure, shared by the mirror and the subject-rights service exactly as
+  // production shares it — a second instance would let a test pass while the two
+  // paths did different things (slice 1.5c is the reason that matters).
+  const erasure = new AccountErasure(
+    users,
+    audit.service,
+    eraser,
+    authenticationEvents,
+  );
+
   return {
     sessionVerifier,
     users,
@@ -637,17 +663,24 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     approvals,
     authenticationEvents,
     logger,
+    erasure,
     service: new IdentityService(
       users,
       ledger,
       audit.service,
-      eraser,
-      source,
-      listingSource,
-      summaries,
-      approvals,
       authenticationEvents,
+      erasure,
       logger.logger,
     ),
+    accountData: new AccountDataService(
+      users,
+      audit.service,
+      source,
+      listingSource,
+      authenticationEvents,
+      erasure,
+    ),
+    accountAdmin: new AccountAdminService(users, audit.service, summaries),
+    roleApprovals: new RoleApprovalService(users, audit.service, approvals),
   };
 }

@@ -31,6 +31,14 @@ import { MeDeletionController } from './identity/me-deletion.controller.js';
 import { MeExportController } from './identity/me-export.controller.js';
 import { MeSignInsController } from './identity/me-sign-ins.controller.js';
 import type { IdentityService } from './identity/identity.service.js';
+import type { AccountDataService } from './identity/account-data.service.js';
+import type { AccountAdminService } from './identity/account-admin.service.js';
+import type { RoleApprovalService } from './identity/role-approval.service.js';
+import {
+  ACCOUNT_ADMIN_SERVICE,
+  ACCOUNT_DATA_SERVICE,
+  ROLE_APPROVAL_SERVICE,
+} from './identity/identity.tokens.js';
 import type { SessionVerifier } from './identity/session-verifier.js';
 import { MeProfileController } from './profiles/me-profile.controller.js';
 import { PROFILES_SERVICE } from './profiles/profiles.tokens.js';
@@ -72,7 +80,20 @@ export interface AppModuleOptions {
    */
   readonly identity: {
     readonly sessionVerifier: SessionVerifier;
+    /**
+     * The mirror — sessions, provisioning and provider events.
+     *
+     * Named `service` still, after slice H4 split the class four ways, because
+     * this is the one the guard resolves every request against. The three
+     * beside it took a responsibility each.
+     */
     readonly service: IdentityService;
+    /** BRD §10.1's subject rights: export, sign-in history, deletion. */
+    readonly accountData: AccountDataService;
+    /** Administering somebody else's account: read, suspend, reinstate. */
+    readonly accountAdmin: AccountAdminService;
+    /** Role changes, which need two administrators (ADR 0023). */
+    readonly roleApprovals: RoleApprovalService;
 
     /**
      * Admit an administrator with no verified second factor (ADR 0030).
@@ -189,6 +210,9 @@ export class AppModule implements NestModule {
         AuthGuard,
         { provide: SESSION_VERIFIER, useValue: options.identity.sessionVerifier },
         { provide: IDENTITY_SERVICE, useValue: options.identity.service },
+        { provide: ACCOUNT_DATA_SERVICE, useValue: options.identity.accountData },
+        { provide: ACCOUNT_ADMIN_SERVICE, useValue: options.identity.accountAdmin },
+        { provide: ROLE_APPROVAL_SERVICE, useValue: options.identity.roleApprovals },
         { provide: AUTH_LOGGER, useValue: options.logger },
         {
           provide: ADMIN_MFA_BYPASS,

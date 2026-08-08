@@ -22,6 +22,10 @@ import type { AuditFakes } from '../audit/testing/fakes.js';
 import { ProfilesService } from '../profiles/profiles.service.js';
 import { InMemoryProfileStore } from '../profiles/testing/fakes.js';
 import { IdentityService } from './identity.service.js';
+import { AccountErasure } from './account-erasure.js';
+import { AccountDataService } from './account-data.service.js';
+import { AccountAdminService } from './account-admin.service.js';
+import { RoleApprovalService } from './role-approval.service.js';
 import {
   FakeSessionVerifier,
   InMemoryAdminApprovalStore,
@@ -90,20 +94,39 @@ beforeEach(async () => {
     },
     audit.service,
   );
+  const authenticationEvents = new InMemoryAuthenticationEvents();
+  const erasure = new AccountErasure(
+    users,
+    audit.service,
+    { erase: (actor) => profiles.eraseFor(actor) },
+    authenticationEvents,
+  );
+
   const identity: IdentityService = new IdentityService(
     users,
     new InMemoryWebhookLedger(),
     audit.service,
-    { erase: (actor) => profiles.eraseFor(actor) },
+    authenticationEvents,
+    erasure,
+    createRecordingLogger().logger,
+  );
+
+  const accountData = new AccountDataService(
+    users,
+    audit.service,
     { exportFor: (userId: string) => profiles.exportFor(userId) },
     // Catalogue's section, stubbed empty — this file is about what suspension
     // refuses, and it creates no listings.
     { exportFor: () => Promise.resolve({ listings: [], truncated: false }) },
-    { summaryFor: (userId: string) => profiles.adminSummaryFor(userId) },
-    approvals,
-    new InMemoryAuthenticationEvents(),
-    createRecordingLogger().logger,
+    authenticationEvents,
+    erasure,
   );
+
+  const accountAdmin = new AccountAdminService(users, audit.service, {
+    summaryFor: (userId: string) => profiles.adminSummaryFor(userId),
+  });
+
+  const roleApprovals = new RoleApprovalService(users, audit.service, approvals);
 
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -114,7 +137,13 @@ beforeEach(async () => {
         metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
-        identity: { sessionVerifier, service: identity },
+        identity: {
+          sessionVerifier,
+          service: identity,
+          accountData,
+          accountAdmin,
+          roleApprovals,
+        },
         profiles,
         audit: audit.service,
         catalogue: createCatalogueFakes().service,

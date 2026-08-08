@@ -40,7 +40,8 @@ let app: NestFastifyApplication | undefined;
 async function boot(
   checks: readonly DependencyCheck[],
 ): Promise<NestFastifyApplication> {
-  const { sessionVerifier, service } = createIdentityFakes();
+  const { sessionVerifier, service, accountData, accountAdmin, roleApprovals } =
+    createIdentityFakes();
 
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -52,7 +53,13 @@ async function boot(
         checks,
         logger: createRecordingLogger().logger,
         readinessTimeoutMs: 50,
-        identity: { sessionVerifier, service },
+        identity: {
+          sessionVerifier,
+          service,
+          accountData,
+          accountAdmin,
+          roleApprovals,
+        },
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,
         catalogue: createCatalogueFakes().service,
