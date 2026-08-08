@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  ServiceUnavailableException,
   UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
@@ -23,7 +24,10 @@ import {
 import type { CategoryOption, OwnerListing } from '@platform/contracts';
 import { Time } from '@platform/core';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
-import { ListingNotPublishableError } from './listings.service.js';
+import {
+  ListingNotPublishableError,
+  PublicationSuspendedError,
+} from './listings.service.js';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -172,6 +176,25 @@ export class OwnerListingsController {
 
       return toOwnerListing(published);
     } catch (error) {
+      if (error instanceof PublicationSuspendedError) {
+        /*
+         * **503, not 422** (slice H3a). 422 means "the state of your listing is
+         * wrong", and an owner reading one goes looking for the field to fix.
+         * Nothing is wrong with their listing: the platform is not accepting
+         * publications, it is temporary, and the same request will work later —
+         * which is what 503 means and what `Retry-After` is for.
+         *
+         * No `blockers` array, deliberately, even though it would keep the shape
+         * uniform. A client that reads `blockers` to decide what to show would
+         * render an empty checklist, which reads as "nothing is wrong, and it
+         * still refused".
+         */
+        throw new ServiceUnavailableException({
+          message:
+            'Publishing is temporarily switched off across the platform. ' +
+            'Your listing is saved and unchanged — try again shortly.',
+        });
+      }
       if (error instanceof ListingNotPublishableError) {
         throw new UnprocessableEntityException({
           message: 'This listing is not ready to be published yet.',

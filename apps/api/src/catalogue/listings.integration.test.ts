@@ -24,6 +24,7 @@ import { CatalogueService } from './catalogue.service.js';
 import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import type { ListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
+import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -159,6 +160,7 @@ beforeEach(async () => {
           audit.service,
           createRecordingLogger().logger,
         ),
+        featureFlags: createFeatureFlagFakes().service,
         listings: listings.service,
       }),
     ],
@@ -1282,6 +1284,72 @@ describe('publishing a listing', () => {
         })
       ).statusCode,
     ).toBe(200);
+  });
+
+  /**
+   * The platform-wide kill switch (slice H3a, §9).
+   *
+   * Distinct from every other refusal in this block: the listing is complete,
+   * it is theirs, and they are not suspended. What has changed is the platform.
+   */
+  describe('when publishing is switched off platform-wide', () => {
+    it('refuses with 503, not 422', async () => {
+      const listing = await givenAListing();
+      listings.publication.off();
+
+      const response = await publish(listing.id);
+
+      // 422 would say "the state of your listing is wrong", and the owner would
+      // go looking for a field to fix. Nothing is wrong with their listing.
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({
+        message: expect.stringContaining('temporarily switched off') as unknown,
+      });
+    });
+
+    it('carries no blockers array, so no client renders an empty checklist', async () => {
+      const listing = await givenAListing();
+      listings.publication.off();
+
+      expect((await publish(listing.id)).json()).not.toHaveProperty('blockers');
+    });
+
+    it('leaves the listing exactly as it was', async () => {
+      const listing = await givenAListing();
+      listings.publication.off();
+      await publish(listing.id);
+
+      const read = await app.inject({
+        method: 'GET',
+        url: listingPath(listing.id),
+        headers: auth('alice-token'),
+      });
+      // Still a draft, still readable, nothing consumed. The refusal copy
+      // promises exactly this, so it is worth proving rather than assuming.
+      expect(parseOwnerListing(read.json()).status).toBe('DRAFT');
+    });
+
+    it('refuses before deciding whether the listing is theirs', async () => {
+      // The switch is checked first, so a suspended platform tells everybody the
+      // same thing rather than telling a stranger "that is not yours" — the
+      // ordering is a disclosure decision as well as a cost one.
+      const listing = await givenAListing();
+      listings.publication.off();
+
+      expect((await publish(listing.id, 'bob-token')).statusCode).toBe(503);
+    });
+
+    it('publishes again once it is switched back on', async () => {
+      const listing = await givenAListing();
+      listings.publication.off();
+      expect((await publish(listing.id)).statusCode).toBe(503);
+
+      listings.publication.on();
+
+      const response = await publish(listing.id);
+      expect(response.statusCode).toBe(201);
+      expect(parseOwnerListing(response.json()).status).toBe('PUBLISHED');
+    });
   });
 });
 

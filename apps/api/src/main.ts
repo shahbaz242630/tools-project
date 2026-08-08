@@ -44,6 +44,8 @@ import { ListingsService } from './catalogue/listings.service.js';
 import { LocationService } from './search-location/location.service.js';
 import { PostcodesIoGeocoder } from './search-location/postcodes-io-geocoder.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
+import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
+import { PrismaFeatureFlagStore } from './feature-flags/prisma-flag-store.js';
 import { createShutdown } from '@platform/runtime';
 
 /**
@@ -214,11 +216,24 @@ async function bootstrap(): Promise<void> {
     logger.child({ module: 'search-location' }),
   );
 
+  // Feature flags open as their own module (slice H3a, ADR 0036). Built before
+  // listings, because listings takes the kill switch as a port.
+  const featureFlags = new FeatureFlagsService(
+    new PrismaFeatureFlagStore(database),
+    audit,
+    logger.child({ module: 'feature-flags' }),
+  );
+
   const listings = new ListingsService(
     listingStore,
     listingStore,
     { locate: (postcode) => location.locate(postcode) },
     logger.child({ module: 'catalogue' }),
+    // The port Catalogue declares, answered by the flags module — the same
+    // shape as the locator above. One method rather than the whole service, so
+    // a listing operation can ask whether publishing is on and can never
+    // *switch* it (BRD §5.1, `publication-switch.ts`).
+    { isPublicationEnabled: () => featureFlags.isEnabled('listing.publication') },
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -251,6 +266,7 @@ async function bootstrap(): Promise<void> {
       profiles,
       audit,
       catalogue,
+      featureFlags,
       listings,
     }),
     new FastifyAdapter(),

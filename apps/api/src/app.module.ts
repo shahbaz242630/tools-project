@@ -39,6 +39,9 @@ import type { ProfilesService } from './profiles/profiles.service.js';
 import { AdminCategoriesController } from './catalogue/admin-categories.controller.js';
 import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
+import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
+import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
+import type { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
 import type { CatalogueService } from './catalogue/catalogue.service.js';
 import type { ListingsService } from './catalogue/listings.service.js';
 import { MetricsController } from './observability/metrics.controller.js';
@@ -116,6 +119,16 @@ export interface AppModuleOptions {
    * compile error listing every place to fix.
    */
   readonly listings: ListingsService;
+
+  /**
+   * Feature flags and the kill switches §9 asks for (slice H3a, ADR 0036).
+   *
+   * Required for the reason `catalogue` and `listings` are. It is worse here
+   * than for either of them if it is forgotten: an optional flag service would
+   * boot an application whose kill switches were absent, and the way anybody
+   * would find out is by reaching for one during an incident.
+   */
+  readonly featureFlags: FeatureFlagsService;
 }
 
 /**
@@ -148,6 +161,7 @@ export class AppModule implements NestModule {
         AdminApprovalsController,
         AdminSuspensionController,
         AdminCategoriesController,
+        AdminFeatureFlagsController,
         OwnerListingsController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
@@ -187,6 +201,7 @@ export class AppModule implements NestModule {
         { provide: AUDIT_SERVICE, useValue: options.audit },
         { provide: CATALOGUE_SERVICE, useValue: options.catalogue },
         { provide: LISTINGS_SERVICE, useValue: options.listings },
+        { provide: FEATURE_FLAGS_SERVICE, useValue: options.featureFlags },
       ],
     };
   }

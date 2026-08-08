@@ -15,6 +15,7 @@ import {
   InMemoryCategoryStore,
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
+import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 
 /**
  * Metrics through the real application (slice H1).
@@ -60,6 +61,7 @@ beforeEach(async () => {
           audit.service,
           createRecordingLogger().logger,
         ),
+        featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes(categories).service,
       }),
     ],

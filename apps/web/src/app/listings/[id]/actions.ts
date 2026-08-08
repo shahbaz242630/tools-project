@@ -95,6 +95,22 @@ export async function publishListingAction(
         message: outcome.issues.join('; '),
       };
 
+    case 'unavailable':
+      /*
+       * The API's own sentence, verbatim and with no prefix (slice H3a).
+       *
+       * **Not `That did not complete — …`**, which is the wording for the cases
+       * below and would be wrong here twice: it reads as a fault, and it reads
+       * as uncertainty about whether anything happened. Neither is true — the
+       * platform refused deliberately, the listing is untouched, and the API
+       * already says so in a sentence written for the person reading it.
+       */
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: outcome.reason,
+      };
+
     case 'stale-category':
     case 'unreachable':
     case 'malformed':
