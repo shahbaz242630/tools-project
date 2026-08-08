@@ -683,7 +683,7 @@ describe('exportFor', () => {
     // bump. Version 2 added `signIns` in slice 1.11a; version 3 added
     // `listings` in 2.5a — and this line failing is how that bump announced
     // itself, which is the whole reason it is a literal.
-    expect(document?.schemaVersion).toBe(3);
+    expect(document?.schemaVersion).toBe(4);
     expect(document?.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 

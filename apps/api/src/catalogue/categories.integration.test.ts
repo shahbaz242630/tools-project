@@ -12,6 +12,7 @@ import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import { CATEGORY_LIST_LIMIT } from './limits.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import { createIdentityFakes } from '../identity/testing/fakes.js';
@@ -101,7 +102,11 @@ beforeEach(async () => {
         },
         profiles: profiles.service,
         audit: audit.service,
-        catalogue: new CatalogueService(store, audit.service),
+        catalogue: new CatalogueService(
+          store,
+          audit.service,
+          createRecordingLogger().logger,
+        ),
         // Sharing `store` so both surfaces talk about the same categories — a
         // category created through the admin routes here is one an owner could
         // then list in.
@@ -176,7 +181,7 @@ describe('authorisation', () => {
   it('refuses an ordinary user trying to create one', async () => {
     const response = await createCategory('bob-token');
     expect(response.statusCode).toBe(403);
-    expect(await store.list()).toHaveLength(0);
+    expect(await store.list(CATEGORY_LIST_LIMIT)).toHaveLength(0);
   });
 
   it('refuses an administrator whose second factor is stale', async () => {

@@ -126,9 +126,10 @@ export class PrismaCategoryStore implements CategoryStore {
     };
   }
 
-  async list(): Promise<readonly CategoryRecord[]> {
+  async list(limit: number): Promise<readonly CategoryRecord[]> {
     const categories = await this.prisma.category.findMany({
       orderBy: { createdAt: 'asc' },
+      take: limit,
       include: { versions: LATEST_VERSION },
     });
 

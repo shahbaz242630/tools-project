@@ -17,6 +17,7 @@ const DOCUMENT = {
   activity: [],
   signIns: [],
   signInsTruncated: false,
+  listingsTruncated: false,
   // The empty list is this section's "holds nothing" — there is no null
   // variant beside it, deliberately (slice 2.5a).
   listings: [],

@@ -54,6 +54,7 @@ import type {
 import type {
   AdminProfile,
   ExportedListings,
+  ExportedListingsSection,
   ExportedProfile,
 } from '@platform/contracts';
 
@@ -327,16 +328,30 @@ export class StubDataSource implements PersonalDataSource<ExportedProfile> {
  * to be seeded with it — which is exactly the default a test forgets, leaving
  * an assertion about listings passing against null.
  */
-export class StubListingDataSource implements PersonalDataSource<ExportedListings> {
+export class StubListingDataSource implements PersonalDataSource<ExportedListingsSection> {
   private listings: ExportedListings = [];
+  private truncated = false;
 
   returns(listings: ExportedListings): this {
     this.listings = listings;
     return this;
   }
 
-  exportFor(): Promise<ExportedListings> {
-    return Promise.resolve(this.listings);
+  /**
+   * Report the section as cut short (slice H2).
+   *
+   * Separate from `returns` rather than a second argument to it, because the two
+   * are independent: the flag is Catalogue's answer to "was there more", and a
+   * test asserting the document carries it should not have to supply a thousand
+   * listings to get there.
+   */
+  wasTruncated(truncated = true): this {
+    this.truncated = truncated;
+    return this;
+  }
+
+  exportFor(): Promise<ExportedListingsSection> {
+    return Promise.resolve({ listings: this.listings, truncated: this.truncated });
   }
 }
 

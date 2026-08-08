@@ -16,6 +16,7 @@ import { createPrismaClient } from '@platform/database';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { CategorySlugTakenError } from './category-store.js';
+import { CATEGORY_LIST_LIMIT } from './limits.js';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -447,8 +448,47 @@ describe('reads', () => {
       author,
     );
 
-    const listed = await store.list();
+    const listed = await store.list(CATEGORY_LIST_LIMIT);
     expect(listed.map((category) => category.slug)).toEqual([first, second]);
+  });
+
+  /**
+   * Slice H2 — the bound is in the query, and only a db test can see it.
+   *
+   * `CatalogueService` slices and reports truncation whatever the store hands
+   * back, so its own tests pass with or without a `take` here. What they cannot
+   * tell apart is a five-hundred-row query from a five-hundred-thousand-row one.
+   */
+  it('asks the database for no more categories than the limit', async () => {
+    const author = await newUser();
+    const first = slug();
+    await store.create(
+      {
+        slug: first,
+        name: 'First',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: FEE_POLICY,
+        transportOptions: [],
+      },
+      author,
+    );
+    await store.create(
+      {
+        slug: slug(),
+        name: 'Second',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: FEE_POLICY,
+        transportOptions: [],
+      },
+      author,
+    );
+
+    // Oldest first, so the one kept is the one created first.
+    expect((await store.list(1)).map((category) => category.slug)).toEqual([first]);
   });
 
   it('answers null for an unknown slug', async () => {

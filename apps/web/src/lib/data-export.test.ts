@@ -6,7 +6,7 @@ const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
 
 const DOCUMENT = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   exportedAt: '2026-07-31T09:00:00.000Z',
   account: {
     id: '11111111-1111-4111-8111-111111111111',
@@ -49,6 +49,7 @@ const DOCUMENT = {
     },
   ],
   signInsTruncated: false,
+  listingsTruncated: false,
   listings: [],
 };
 

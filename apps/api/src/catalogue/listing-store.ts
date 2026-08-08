@@ -256,14 +256,23 @@ export interface ListingStore {
   findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null>;
 
   /**
-   * Every listing this owner has, newest first.
+   * This owner's listings, newest first, at most `limit` of them.
    *
    * Exists for the data export, which is what made Catalogue a personal-data
    * module in the first place. Slice 2.9's owner dashboard wants the same query
    * and should reuse it rather than adding a second one that can drift in
    * ordering.
+   *
+   * **`limit` is required rather than defaulted, and that is the point of slice
+   * H2.** An optional bound is one a caller omits, and the omission is invisible
+   * until the table is large — which is exactly how this method spent five
+   * slices reading every listing an owner had ever written. A caller that wants
+   * to know whether it saw everything asks for `Paging.probe(n)` and reads the
+   * answer with `Paging.fitTo`; nothing here infers truncation from a full page,
+   * because a page that is exactly full is indistinguishable from a complete
+   * one.
    */
-  listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]>;
+  listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]>;
 
   /**
    * Move a listing to `PUBLISHED`, but only if this owner owns it.
@@ -341,8 +350,20 @@ export interface CategoryOptionRecord {
 }
 
 export interface CategoryOptionSource {
-  /** Every category, oldest first, as options. */
-  listOptions(): Promise<readonly CategoryOptionRecord[]>;
+  /**
+   * Categories, oldest first, as options — at most `limit` of them.
+   *
+   * **Bounded even though this table is small** (slice H2, ADR 0035). Categories
+   * arrive only through an audited administrative form, so the row count is a
+   * decision somebody made rather than a number users can drive; the bound is a
+   * guardrail against a bug or a bad migration, not a page size. It is set far
+   * above any plausible catalogue for that reason.
+   *
+   * It still must not truncate silently. A picker missing a category is a
+   * category nobody can list in, with nothing on screen saying so — which is why
+   * the caller probes for one extra row and says something when it comes back.
+   */
+  listOptions(limit: number): Promise<readonly CategoryOptionRecord[]>;
 
   /**
    * One category's current configuration, or null if the slug names none.

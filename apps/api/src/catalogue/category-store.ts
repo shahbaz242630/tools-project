@@ -129,8 +129,17 @@ export interface CategoryStore {
     authorId: string,
   ): Promise<CategoryRecord | null>;
 
-  /** Every category with its current configuration, oldest first. */
-  list(): Promise<readonly CategoryRecord[]>;
+  /**
+   * Categories with their current configuration, oldest first — at most `limit`.
+   *
+   * **Bounded even though this table is small** (slice H2, ADR 0035), for the
+   * reason `CategoryOptionSource.listOptions` records: the guardrail is against
+   * a bug, not against users, because only an audited administrative action
+   * creates a row here. What it must not do is truncate silently — an
+   * administrator looking at a short list has no way to tell it from the whole
+   * catalogue — so the caller probes for one extra row and reports the cut.
+   */
+  list(limit: number): Promise<readonly CategoryRecord[]>;
 
   /** One category with its current configuration, or null. */
   findBySlug(slug: string): Promise<CategoryRecord | null>;
