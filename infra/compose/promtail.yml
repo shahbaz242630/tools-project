@@ -1,0 +1,48 @@
+# Shipping container logs into Loki (slice H1).
+#
+# The application writes structured JSON to stdout with a correlation id on
+# every line (ADR 0016). Docker captures it, `scripts/logs.mjs` reads it back —
+# and neither can search across services or across a restart, which is what you
+# actually need during an incident.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  # Where Promtail remembers how far it read. On a volume, so a restart does not
+  # re-ship a day of logs — which would be both a spike and a duplicate.
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+
+    relabel_configs:
+      # The container name becomes the label you filter by, minus Docker's
+      # leading slash.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+
+    pipeline_stages:
+      # The application logs JSON, so lift the fields that are worth filtering
+      # on into labels — and **only those**. Every distinct label value is a
+      # stream in Loki, so promoting the correlation id would create one stream
+      # per request. It stays in the line, where it is searchable and free.
+      - json:
+          expressions:
+            level: level
+            service: service
+      - labels:
+          level:
+          service:

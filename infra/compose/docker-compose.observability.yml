@@ -1,0 +1,150 @@
+# Observability: metrics, dashboards and log aggregation (slice H1).
+#
+# **A separate compose file, brought up alongside the app stack.** It is
+# optional in a way the app is not: a box too small to run Prometheus should run
+# the marketplace rather than the monitoring, and separating the files makes
+# that a deployment choice instead of an edit.
+#
+#   docker compose -f docker-compose.app.yml -f docker-compose.observability.yml up -d
+#
+# **Nothing here is on the `edge` network.** Prometheus scrapes the API over
+# `internal`, exactly as the API reaches Postgres — the same guarantee, and the
+# reason `/metrics` needs no credential. Grafana is reachable only over an SSH
+# tunnel to the box; publishing a dashboard with a default password on the
+# public internet is how monitoring becomes the way in.
+#
+# **This has never run on a real machine.** Like the rest of `infra/compose`, it
+# is exercised by CI against these same files and nothing more. See the README.
+
+name: rental-${APP_ENV:?set APP_ENV}-observability
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: rental-${APP_ENV}-prometheus
+    restart: unless-stopped
+    logging: *logging
+
+    # Read-only config, writable data. The container runs as `nobody` in this
+    # image, so the volume is what it may write to and nothing else.
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      # 15 days. Long enough to see a week-over-week pattern and answer "when
+      # did this start", short enough to sit inside a VPS disk we have not
+      # bought yet. Metrics are aggregate and carry no identifiers, so §10.1's
+      # retention schedule does not reach them — but disk is finite regardless.
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+
+    # No ports. Nothing outside the stack talks to Prometheus; Grafana reaches
+    # it over `internal`, and a human reaches Grafana over an SSH tunnel.
+    networks:
+      - internal
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: rental-${APP_ENV}-loki
+    restart: unless-stopped
+    logging: *logging
+
+    volumes:
+      - ./loki.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+
+    command: ['-config.file=/etc/loki/config.yml']
+
+    networks:
+      - internal
+
+  # Ships the containers' own log files to Loki.
+  #
+  # The application already logs structured JSON to stdout with a correlation
+  # id on every line (ADR 0016) — `scripts/logs.mjs` reads it back through
+  # Docker. What that cannot do is search across services or across a restart,
+  # which is precisely what you need at 2am. Promtail is the piece that turns
+  # "the logs exist" into "the logs are searchable".
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: rental-${APP_ENV}-promtail
+    restart: unless-stopped
+    logging: *logging
+
+    volumes:
+      - ./promtail.yml:/etc/promtail/config.yml:ro
+      # Read-only, and read-only matters: this container reads every other
+      # container's logs, so a writable mount here would let it rewrite them.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+
+    command: ['-config.file=/etc/promtail/config.yml']
+
+    depends_on:
+      - loki
+
+    networks:
+      - internal
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: rental-${APP_ENV}-grafana
+    restart: unless-stopped
+    logging: *logging
+
+    environment:
+      # No default password. The container refuses to start without one rather
+      # than booting with `admin`, which is the single most common way a
+      # self-hosted dashboard becomes somebody else's.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      # It is reached over an SSH tunnel, so it is served on localhost and
+      # served as HTTP. Terminating TLS here would mean a second certificate for
+      # something that never crosses a network.
+      GF_SERVER_ROOT_URL: http://localhost:3000/
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+
+    # **Bound to the loopback interface, deliberately.** `127.0.0.1:3000` is
+    # reachable from the box and from an SSH tunnel, and from nowhere else. A
+    # bare `3000:3000` would publish it on every interface, which for a
+    # dashboard holding the shape of the whole system is the wrong default even
+    # behind a password.
+    ports:
+      - '127.0.0.1:3000:3000'
+
+    depends_on:
+      - prometheus
+      - loki
+
+    networks:
+      - internal
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+  promtail-positions:
+
+networks:
+  # Declared external so this file joins the network the app stack created
+  # rather than making a second one. Two networks would mean Prometheus could
+  # not reach the API at all — and the failure would look like a scrape target
+  # that is simply always down.
+  internal:
+    external: true
+    name: rental-${APP_ENV}-app_internal

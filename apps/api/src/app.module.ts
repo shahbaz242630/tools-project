@@ -1,6 +1,6 @@
 import { Module, RequestMethod } from '@nestjs/common';
 import type { DynamicModule, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import type { Logger } from '@platform/observability';
+import type { Logger, Metrics } from '@platform/observability';
 import { HealthController } from './health/health.controller.js';
 import type { DependencyCheck } from './health/dependency-check.js';
 import {
@@ -41,12 +41,25 @@ import { OwnerListingsController } from './catalogue/owner-listings.controller.j
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import type { CatalogueService } from './catalogue/catalogue.service.js';
 import type { ListingsService } from './catalogue/listings.service.js';
+import { MetricsController } from './observability/metrics.controller.js';
+import { MetricsHook } from './observability/metrics.hook.js';
+import { METRICS } from './observability/metrics.tokens.js';
 
 export interface AppModuleOptions {
   /** Built in the composition root, so no provider SDK is imported here. */
   readonly checks: readonly DependencyCheck[];
   readonly logger: Logger;
   readonly readinessTimeoutMs?: number;
+
+  /**
+   * Where request timings go (slice H1).
+   *
+   * **Required, not optional**, for slice 2.1's reason: an optional dependency
+   * is one that ten boot sites forget, and the one that forgets is the one in
+   * production. A caller that genuinely wants no metrics passes
+   * `createNoopMetrics()` and has said so.
+   */
+  readonly metrics: Metrics;
 
   /**
    * Identity, assembled outside for the same reason the checks are: it keeps
@@ -119,6 +132,10 @@ export class AppModule implements NestModule {
       module: AppModule,
       controllers: [
         HealthController,
+        // Unguarded, like the health routes and for a stronger reason: the API
+        // is not reachable from the internet, CI asserts it, and Prometheus
+        // scrapes this from inside the stack. See MetricsController.
+        MetricsController,
         MeController,
         ClerkEventsController,
         MeDeletionController,
@@ -139,6 +156,11 @@ export class AppModule implements NestModule {
       ],
       providers: [
         ReadinessService,
+        { provide: METRICS, useValue: options.metrics },
+        // Registers a Fastify `onResponse` hook on boot, which measures every
+        // route without anybody remembering to decorate one — including the
+        // requests a guard refused, which a Nest interceptor never sees.
+        MetricsHook,
         { provide: DEPENDENCY_CHECKS, useValue: options.checks },
         { provide: READINESS_LOGGER, useValue: options.logger },
         {

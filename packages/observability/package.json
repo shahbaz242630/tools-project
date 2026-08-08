@@ -23,7 +23,8 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@platform/core": "workspace:*"
+    "@platform/core": "workspace:*",
+    "prom-client": "^15.1.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.2"

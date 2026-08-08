@@ -1,0 +1,32 @@
+# What Prometheus scrapes (slice H1).
+#
+# The API only. The worker has no HTTP server, and the web app is Next.js —
+# instrumenting either is its own decision rather than something to assume here.
+# `scripts/verify-stack.mjs` and the Deploy rehearsal both check the API is the
+# thing answering.
+
+global:
+  # 15s is the usual default and is a real trade: it is the resolution of every
+  # graph and the granularity of every alert. Slower saves disk on a small box;
+  # faster mostly buys noise on a service with our traffic.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: '${APP_ENV}'
+
+scrape_configs:
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      # The compose service name, resolved on the internal network. Not a
+      # published port: there is none, and there must not be one.
+      - targets: ['api:3000']
+        labels:
+          service: api
+
+  # Prometheus watching itself. Cheap, and it is the only thing that can tell
+  # you the scraper stopped — a dashboard that goes flat looks identical to a
+  # platform with no traffic.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

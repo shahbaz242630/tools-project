@@ -10,6 +10,7 @@ import { createIdentityFakes } from './identity/testing/fakes.js';
 import { createAuditFakes } from './audit/testing/fakes.js';
 import { createCatalogueFakes, createListingFakes } from './catalogue/testing/fakes.js';
 import { createProfileFakes } from './profiles/testing/fakes.js';
+import { createNoopMetrics } from '@platform/observability';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
   const { sessionVerifier, service } = createIdentityFakes();
@@ -17,6 +18,10 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        // A real registry is not wanted here: these tests are about routing and
+        // authorisation, and a metrics backend that collected would make two
+        // suites in one process share series.
+        metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
         identity: { sessionVerifier, service },

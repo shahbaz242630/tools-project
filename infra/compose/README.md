@@ -178,6 +178,39 @@ docker inspect rental-production-api --format '{{.State.StartedAt}}'
 docker image prune -f
 ```
 
+## Watching it (optional)
+
+Metrics, dashboards and searchable logs. A separate compose file, because a box
+too small to run both should run the marketplace rather than the monitoring.
+
+```bash
+# Needs GRAFANA_ADMIN_PASSWORD in the env file. The container refuses to start
+# without one rather than booting with a default.
+docker compose -f docker-compose.app.yml -f docker-compose.observability.yml up -d
+```
+
+**Nothing here is published to the internet.** Prometheus scrapes the API over
+the internal network — the same reachability the API has to Postgres, which is
+why `/metrics` needs no credential. Grafana binds to `127.0.0.1` only, so it is
+reached through an SSH tunnel:
+
+```bash
+ssh -N -L 3000:127.0.0.1:3000 <user>@<box>
+# then open http://localhost:3000
+```
+
+What it gives you: request rate, error rate and latency by route; database and
+queue timings; Node's event-loop lag, heap and GC. Between them they answer
+"is it up", "is it slow", and "is it slow because of us or because of Postgres" —
+which the logs alone cannot.
+
+**Two settings need revisiting before real users exist.** Loki keeps logs for
+14 days, and application logs carry IP addresses and user ids, so §10.1's
+retention schedule reaches them in a way it does not reach metrics (which carry
+no identifiers by construction — see `normaliseRoute`). And there are no alert
+rules yet: this makes the platform _observable_, not _monitored_. Nothing will
+wake anybody up.
+
 ## Not done yet
 
 **There are no backups.** ADR 0009 calls off-box database backups non-negotiable and they are not built. Until they are, nothing that cannot be recreated from scratch should go into either database. This is the single largest gap in this directory.

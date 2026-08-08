@@ -20,6 +20,7 @@ import {
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
 import type { AuditFakes } from './testing/fakes.js';
+import { createNoopMetrics } from '@platform/observability';
 
 /**
  * The activity route against the real application — real routing, real guard.
@@ -50,6 +51,10 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        // A real registry is not wanted here: these tests are about routing and
+        // authorisation, and a metrics backend that collected would make two
+        // suites in one process share series.
+        metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
         identity: {
