@@ -97,7 +97,7 @@ beforeEach(async () => {
     { exportFor: (userId: string) => profiles.exportFor(userId) },
     // Catalogue's section, stubbed empty — this file is about what suspension
     // refuses, and it creates no listings.
-    { exportFor: () => Promise.resolve([]) },
+    { exportFor: () => Promise.resolve({ listings: [], truncated: false }) },
     { summaryFor: (userId: string) => profiles.adminSummaryFor(userId) },
     approvals,
     new InMemoryAuthenticationEvents(),

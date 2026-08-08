@@ -154,7 +154,11 @@ beforeEach(async () => {
         },
         profiles: profiles.service,
         audit: audit.service,
-        catalogue: new CatalogueService(categories, audit.service),
+        catalogue: new CatalogueService(
+          categories,
+          audit.service,
+          createRecordingLogger().logger,
+        ),
         listings: listings.service,
       }),
     ],

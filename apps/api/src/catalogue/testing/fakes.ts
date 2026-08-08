@@ -19,6 +19,7 @@
 
 import { Time } from '@platform/core';
 import { createRecordingLogger } from '@platform/observability/testing';
+import type { RecordingLogger } from '@platform/observability/testing';
 import { LocationService } from '../../search-location/location.service.js';
 import { FakeGeocoder } from '../../search-location/testing/fakes.js';
 import type {
@@ -148,11 +149,15 @@ export class InMemoryCategoryStore implements CategoryStore {
     return Promise.resolve(toRecord(category));
   }
 
-  list(): Promise<readonly CategoryRecord[]> {
+  list(limit: number): Promise<readonly CategoryRecord[]> {
     // Insertion order, which is the real store's `createdAt asc` — several
     // categories created in the same millisecond would sort arbitrarily by
     // clock, and a test creating three in a row does exactly that.
-    return Promise.resolve(this.categories.map(toRecord));
+    //
+    // **The limit is honoured, not ignored** (slice H2). A double that returned
+    // everything would let a truncation test pass with no `take` in the real
+    // adapter at all, which is the bug the slice exists to fix.
+    return Promise.resolve(this.categories.slice(0, limit).map(toRecord));
   }
 
   findBySlug(slug: string): Promise<CategoryRecord | null> {
@@ -206,13 +211,21 @@ function toOption(category: CategoryRecord): CategoryOptionRecord {
 export interface CatalogueFakes {
   readonly store: InMemoryCategoryStore;
   readonly audit: AuditFakes;
+  /** For asserting that a bound firing is reported rather than silent (H2). */
+  readonly logger: RecordingLogger;
   readonly service: CatalogueService;
 }
 
 export function createCatalogueFakes(): CatalogueFakes {
   const store = new InMemoryCategoryStore();
   const audit = createAuditFakes();
-  return { store, audit, service: new CatalogueService(store, audit.service) };
+  const logger = createRecordingLogger();
+  return {
+    store,
+    audit,
+    logger,
+    service: new CatalogueService(store, audit.service, logger.logger),
+  };
 }
 
 /**
@@ -320,14 +333,19 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return Promise.resolve(published);
   }
 
-  listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]> {
+  listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
     // Newest first, matching the real store's `orderBy` and the index behind
     // it. A double that returned insertion order would let a test pass while
     // the dashboard in 2.9 showed the oldest listing at the top.
+    //
+    // **The limit is applied after the sort**, as `take` is in the real query.
+    // Slicing first would keep the oldest rows and drop the newest, which is
+    // the opposite of what the export should cut.
     return Promise.resolve(
       this.listings
         .filter((listing) => listing.ownerId === ownerId)
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, limit),
     );
   }
 
@@ -356,8 +374,8 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return Promise.resolve();
   }
 
-  async listOptions(): Promise<readonly CategoryOptionRecord[]> {
-    const categories = await this.categories.list();
+  async listOptions(limit: number): Promise<readonly CategoryOptionRecord[]> {
+    const categories = await this.categories.list(limit);
     return categories.map(toOption);
   }
 
@@ -377,6 +395,8 @@ export interface ListingFakes {
   readonly listings: InMemoryListingStore;
   /** Seed it with `knows(...)` for a test that needs a listing to be locatable. */
   readonly geocoder: FakeGeocoder;
+  /** For asserting that a bound firing is reported rather than silent (H2). */
+  readonly logger: RecordingLogger;
   readonly service: ListingsService;
 }
 
@@ -396,14 +416,19 @@ export function createListingFakes(
   // The fuzz is the part worth exercising — a stubbed locator would let a test
   // pass with the offset never drawn, which is the one thing §8.4.1 requires.
   const geocoder = new FakeGeocoder();
-  const location = new LocationService(geocoder, createRecordingLogger().logger);
+  const logger = createRecordingLogger();
+  const location = new LocationService(geocoder, logger.logger);
 
   return {
     categories,
     listings,
     geocoder,
-    service: new ListingsService(listings, listings, {
-      locate: (postcode) => location.locate(postcode),
-    }),
+    logger,
+    service: new ListingsService(
+      listings,
+      listings,
+      { locate: (postcode) => location.locate(postcode) },
+      logger.logger,
+    ),
   };
 }

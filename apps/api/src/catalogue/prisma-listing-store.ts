@@ -192,13 +192,17 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return this.findOwnedBy(id, ownerId);
   }
 
-  async listOwnedBy(ownerId: string): Promise<readonly ListingRecord[]> {
+  async listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
     const listings = await this.prisma.listing.findMany({
       where: { ownerId },
       // Newest first, matching the index on `(ownerId, createdAt DESC)`. The
       // owner dashboard in 2.9 wants the same order, which is why this is one
       // method rather than two that can drift.
       orderBy: { createdAt: 'desc' },
+      // The bound the caller asked for, and there is no default behind it (slice
+      // H2). `take` is what turns this from a query that grows with an owner's
+      // history into one whose cost is known before it runs.
+      take: limit,
       include: LISTING_CATEGORY,
     });
 
@@ -226,9 +230,10 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     await this.prisma.listingLocation.deleteMany({ where: { listing: { ownerId } } });
   }
 
-  async listOptions(): Promise<readonly CategoryOptionRecord[]> {
+  async listOptions(limit: number): Promise<readonly CategoryOptionRecord[]> {
     const categories = await this.prisma.category.findMany({
       orderBy: { createdAt: 'asc' },
+      take: limit,
       include: LATEST_VERSION,
     });
 

@@ -6,12 +6,14 @@ import {
 } from '@platform/contracts';
 import type {
   AttributeValueIssue,
-  ExportedListings,
+  ExportedListingsSection,
   ListingCollectionLocation,
   PublicationBlocker,
   TransportRequirement,
 } from '@platform/contracts';
-import { Time } from '@platform/core';
+import { Paging, Time } from '@platform/core';
+import type { Logger } from '@platform/observability';
+import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
 import type { Actor } from '../audit/audit-log.js';
 import type { ListingLocator } from './listing-locator.js';
 import type { ListingRateCard } from '@platform/contracts';
@@ -161,6 +163,12 @@ export class ListingsService {
      * listings silently never being locatable.
      */
     private readonly locator: ListingLocator,
+    /**
+     * Here from slice H2, and only to report a guardrail firing — the same
+     * narrow role it has on `CatalogueService`. Nothing on the ordinary path
+     * logs.
+     */
+    private readonly logger: Logger,
   ) {}
 
   /**
@@ -263,8 +271,23 @@ export class ListingsService {
   }
 
   /** The categories an owner may list in, with the fields each one asks for. */
-  categoryOptions(): Promise<readonly CategoryOptionRecord[]> {
-    return this.categories.listOptions();
+  async categoryOptions(): Promise<readonly CategoryOptionRecord[]> {
+    const rows = await this.categories.listOptions(Paging.probe(CATEGORY_LIST_LIMIT));
+    const page = Paging.fitTo(rows, CATEGORY_LIST_LIMIT);
+
+    if (page.truncated) {
+      // Worse here than on the admin list, which is why it is logged separately
+      // rather than sharing one call site. A truncated admin list is an
+      // administrator seeing less configuration than exists; a truncated picker
+      // is a category **nobody can list an item in**, with a form that looks
+      // perfectly normal and says nothing.
+      this.logger.warn('category list truncated', {
+        limit: CATEGORY_LIST_LIMIT,
+        surface: 'owner-picker',
+      });
+    }
+
+    return page.items;
   }
 
   /**
@@ -330,15 +353,27 @@ export class ListingsService {
     return this.store.publish(id, ownerId);
   }
 
-  async exportFor(userId: string): Promise<ExportedListings> {
-    const listings = await this.store.listOwnedBy(userId);
+  async exportFor(userId: string): Promise<ExportedListingsSection> {
+    // One more than the document will carry, so the cut is measured rather than
+    // guessed from a full page (slice H2). The bound is what stops a subject
+    // access request assembling an owner's entire history into a synchronous
+    // response; declaring it is what stops the bound turning a complete answer
+    // into a quietly partial one, which §10.1 does not allow.
+    const rows = await this.store.listOwnedBy(
+      userId,
+      Paging.probe(EXPORTED_LISTING_LIMIT),
+    );
+    const page = Paging.fitTo(rows, EXPORTED_LISTING_LIMIT);
 
-    return listings.map((listing) => ({
-      id: listing.id,
-      title: listing.title,
-      createdAt: Time.toIsoUtc(listing.createdAt),
-      collectionLocation: listing.collectionLocation,
-    }));
+    return {
+      listings: page.items.map((listing) => ({
+        id: listing.id,
+        title: listing.title,
+        createdAt: Time.toIsoUtc(listing.createdAt),
+        collectionLocation: listing.collectionLocation,
+      })),
+      truncated: page.truncated,
+    };
   }
 
   /**

@@ -177,7 +177,11 @@ beforeEach(async () => {
         identity: { sessionVerifier, service: identity },
         profiles,
         audit: audit.service,
-        catalogue: new CatalogueService(categories, audit.service),
+        catalogue: new CatalogueService(
+          categories,
+          audit.service,
+          createRecordingLogger().logger,
+        ),
         listings: listings.service,
       }),
     ],
@@ -1152,9 +1156,10 @@ describe('a listing address, in the personal-data paths', () => {
     // the precise half is gone.
     expect(listing?.id).toBe(listingId);
     expect(listing?.collectionLocation).toBeNull();
-    expect(await listings.service.exportFor(alice)).toEqual([
-      expect.objectContaining({ collectionLocation: null }) as unknown,
-    ]);
+    expect(await listings.service.exportFor(alice)).toEqual({
+      listings: [expect.objectContaining({ collectionLocation: null }) as unknown],
+      truncated: false,
+    });
   });
 
   it('leaves another owner’s address alone', async () => {

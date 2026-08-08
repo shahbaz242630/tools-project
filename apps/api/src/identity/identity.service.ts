@@ -1,4 +1,4 @@
-import { Time } from '@platform/core';
+import { Paging, Time } from '@platform/core';
 import type { Logger } from '@platform/observability';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
@@ -24,7 +24,7 @@ import type { ProfileSummarySource } from './profile-summary-source.js';
 import type {
   AdminUserView,
   DataExport,
-  ExportedListings,
+  ExportedListingsSection,
   ExportedProfile,
 } from '@platform/contracts';
 import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
@@ -126,10 +126,18 @@ export const DEFAULT_SIGN_IN_LIMIT = 50;
  */
 export const MAX_SIGN_IN_LIMIT = 200;
 
-/** Clamp a caller-supplied limit into range, rejecting nonsense quietly. */
+/**
+ * Clamp a caller-supplied limit into range, rejecting nonsense quietly.
+ *
+ * Delegates to the shared clamp from slice H2. This copy was the guarded one —
+ * the audit module's was not — and consolidating kept this behaviour rather than
+ * the other.
+ */
 export function boundedSignInLimit(limit: number): number {
-  if (!Number.isFinite(limit)) return DEFAULT_SIGN_IN_LIMIT;
-  return Math.min(Math.max(Math.trunc(limit), 1), MAX_SIGN_IN_LIMIT);
+  return Paging.boundedLimit(limit, {
+    fallback: DEFAULT_SIGN_IN_LIMIT,
+    max: MAX_SIGN_IN_LIMIT,
+  });
 }
 
 /**
@@ -190,7 +198,7 @@ export class IdentityService {
      * root; there is no second eraser argument here, which is the port doing its
      * job.
      */
-    private readonly listingSource: PersonalDataSource<ExportedListings>,
+    private readonly listingSource: PersonalDataSource<ExportedListingsSection>,
     private readonly profileSummaries: ProfileSummarySource,
     private readonly approvals: AdminApprovalStore,
     private readonly authenticationEvents: AuthenticationEvents,
@@ -345,12 +353,15 @@ export class IdentityService {
       // One more than we will serve, so "there were more" is measured rather
       // than inferred from the page being full — a count that equals the limit
       // exactly is otherwise indistinguishable from a truncated one.
-      this.authenticationEvents.listFor(user.id, EXPORTED_SIGN_IN_LIMIT + 1),
+      this.authenticationEvents.listFor(user.id, Paging.probe(EXPORTED_SIGN_IN_LIMIT)),
       this.listingSource.exportFor(user.id),
     ]);
 
-    const signInsTruncated = signIns.length > EXPORTED_SIGN_IN_LIMIT;
-    const includedSignIns = signIns.slice(0, EXPORTED_SIGN_IN_LIMIT);
+    // The same probe-and-fit the listings section performs for itself, now
+    // through the shared helper rather than open-coded here (slice H2).
+    const signInPage = Paging.fitTo(signIns, EXPORTED_SIGN_IN_LIMIT);
+    const signInsTruncated = signInPage.truncated;
+    const includedSignIns = signInPage.items;
 
     const exportedAt = Time.toIsoUtc(Time.nowUtc());
 
@@ -422,7 +433,13 @@ export class IdentityService {
       // decrypted profile address and the sign-in history, and it is one more
       // reason the whole endpoint is audited (ADR 0019). Somebody with several
       // listings has several addresses in this file.
-      listings,
+      //
+      // **The section arrives with its own truncation flag** rather than as a
+      // bare array (slice H2). Catalogue applied the bound, so Catalogue is the
+      // only thing that knows whether it bit — inferring it here from a length
+      // would be the guess `Paging.probe` exists to remove.
+      listings: listings.listings,
+      listingsTruncated: listings.truncated,
     };
   }
 

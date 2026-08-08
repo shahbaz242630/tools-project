@@ -31,9 +31,10 @@ export const ME_EXPORT_PATH = '/me/export';
  * failure is "this is a version 1 document" rather than "signIns is missing",
  * which reads like corruption. Version 2 added `signIns` and
  * `signInsTruncated` in slice 1.11a; version 3 added `listings` in 2.5a, when
- * Catalogue became the second module holding personal data.
+ * Catalogue became the second module holding personal data; version 4 added
+ * `listingsTruncated` in H2, when the listings read stopped being unbounded.
  */
-export const EXPORT_SCHEMA_VERSION = 3;
+export const EXPORT_SCHEMA_VERSION = 4;
 
 /** The account itself, as Identity & Access holds it. */
 export const exportedAccountSchema = z.object({
@@ -167,6 +168,25 @@ export const exportedListingsSchema = z.array(
 export type ExportedListings = z.infer<typeof exportedListingsSchema>;
 
 /**
+ * Catalogue's contribution to the document, as it hands it over.
+ *
+ * **A shape rather than a bare array, from slice H2**, because the listings read
+ * is now bounded and the module that applied the bound is the only one that
+ * knows whether it bit. Identity assembles the document but does not run the
+ * query, so a bare array would leave it inferring truncation from a length —
+ * which is precisely the guess `Paging.probe` exists to remove.
+ *
+ * Not a schema, because it never crosses the wire: it is the internal type of a
+ * `PersonalDataSource` section. It lives here beside the document it feeds so
+ * that the two move together, and so Identity does not have to import it from
+ * Catalogue.
+ */
+export interface ExportedListingsSection {
+  readonly listings: ExportedListings;
+  readonly truncated: boolean;
+}
+
+/**
  * Everything the platform holds about one person.
  *
  * `retained` is not decoration: BRD §10.1 requires the deletion workflow to
@@ -192,6 +212,24 @@ export const dataExportSchema = z.object({
    * pagination would fix.
    */
   signInsTruncated: z.boolean(),
+
+  /**
+   * Whether `listings` was cut short.
+   *
+   * Added in slice H2, and it is the *reason* that slice could bound the
+   * listings read at all. Until then the query had no `take` and returned every
+   * listing an owner had ever written — correct for a subject-access response
+   * and a memory problem at scale. A bare `take` would have replaced the memory
+   * problem with a worse one: a silently partial answer to a UK GDPR Article 15
+   * request, which §10.1 requires to be complete.
+   *
+   * So the read is bounded and the cut is declared, exactly as `signIns` is. The
+   * bound is set far above any plausible number of listings, so this is false
+   * for everybody until somebody is genuinely extraordinary — and for that
+   * person it is the difference between a document that is wrong and one that is
+   * short and says so.
+   */
+  listingsTruncated: z.boolean(),
 });
 export type DataExport = z.infer<typeof dataExportSchema>;
 

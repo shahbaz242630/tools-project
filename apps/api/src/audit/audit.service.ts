@@ -1,3 +1,4 @@
+import { Paging } from '@platform/core';
 import type {
   Actor,
   AuditAction,
@@ -173,9 +174,21 @@ export class AuditService {
       .slice(0, bounded);
   }
 
-  /** Clamp a caller's page size. Unchanged behaviour, now shared by both reads. */
+  /**
+   * Clamp a caller's page size.
+   *
+   * Delegates to the shared clamp from slice H2. It was four operations written
+   * here and again in `identity.service.ts`, and **the two disagreed**: this copy
+   * had no guard for a non-finite request, so `NaN` survived every clamp and
+   * reached Prisma as `take: NaN`. Unreachable today only because both callers
+   * use the default, which is a property of today's routes rather than of this
+   * code.
+   */
   private bound(limit: number): number {
-    return Math.min(Math.max(Math.trunc(limit), 1), MAX_ACTIVITY_LIMIT);
+    return Paging.boundedLimit(limit, {
+      fallback: DEFAULT_ACTIVITY_LIMIT,
+      max: MAX_ACTIVITY_LIMIT,
+    });
   }
 }
 

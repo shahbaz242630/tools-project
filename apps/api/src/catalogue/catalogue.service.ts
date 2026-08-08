@@ -1,3 +1,5 @@
+import { Paging } from '@platform/core';
+import type { Logger } from '@platform/observability';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type {
@@ -5,6 +7,7 @@ import type {
   CategoryRecord,
   CategoryStore,
 } from './category-store.js';
+import { CATEGORY_LIST_LIMIT } from './limits.js';
 
 /**
  * The Catalogue module's application service.
@@ -26,6 +29,14 @@ export class CatalogueService {
   constructor(
     private readonly store: CategoryStore,
     private readonly audit: AuditService,
+    /**
+     * Here from slice H2, and only to report a guardrail firing.
+     *
+     * Not for the ordinary path: a service that logs what it did on every call
+     * produces a log nobody reads, and this module's real record of what
+     * happened is the audit trail rather than the log stream.
+     */
+    private readonly logger: Logger,
   ) {}
 
   /**
@@ -102,8 +113,26 @@ export class CatalogueService {
    * time an administrator opens the list would bury the disclosures that matter
    * under noise.
    */
-  list(): Promise<readonly CategoryRecord[]> {
-    return this.store.list();
+  async list(): Promise<readonly CategoryRecord[]> {
+    // One more than we will serve, so "there were more" is measured rather than
+    // inferred from a full page (slice H2).
+    const rows = await this.store.list(Paging.probe(CATEGORY_LIST_LIMIT));
+    const page = Paging.fitTo(rows, CATEGORY_LIST_LIMIT);
+
+    if (page.truncated) {
+      // A guardrail firing, not a page being turned. `CATEGORY_LIST_LIMIT` is
+      // two orders of magnitude above a plausible catalogue, so reaching it
+      // means a bug, a bad migration or a runaway script — and an administrator
+      // looking at a list of five hundred has no way to tell it from the whole
+      // catalogue. It is a warning rather than a refusal because serving most of
+      // the catalogue beats serving none of it.
+      this.logger.warn('category list truncated', {
+        limit: CATEGORY_LIST_LIMIT,
+        surface: 'admin',
+      });
+    }
+
+    return page.items;
   }
 
   findBySlug(slug: string): Promise<CategoryRecord | null> {

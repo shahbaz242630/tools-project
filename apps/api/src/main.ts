@@ -182,7 +182,11 @@ async function bootstrap(): Promise<void> {
   // Categories depend on nothing but the audit trail. Configuration has no
   // subject, so this half of Catalogue still needs neither the encryptor nor a
   // lookup into identity (BRD §5.1).
-  const catalogue = new CatalogueService(new PrismaCategoryStore(database), audit);
+  const catalogue = new CatalogueService(
+    new PrismaCategoryStore(database),
+    audit,
+    logger.child({ module: 'catalogue' }),
+  );
   // One store, both ports. `PrismaListingStore` implements `ListingStore` and
   // `CategoryOptionSource` because both are reads of the same two tables through
   // the same client; the ports stay separate so a caller cannot reach the admin
@@ -210,9 +214,12 @@ async function bootstrap(): Promise<void> {
     logger.child({ module: 'search-location' }),
   );
 
-  const listings = new ListingsService(listingStore, listingStore, {
-    locate: (postcode) => location.locate(postcode),
-  });
+  const listings = new ListingsService(
+    listingStore,
+    listingStore,
+    { locate: (postcode) => location.locate(postcode) },
+    logger.child({ module: 'catalogue' }),
+  );
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({

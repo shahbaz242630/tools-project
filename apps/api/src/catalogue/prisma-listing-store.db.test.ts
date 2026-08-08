@@ -28,6 +28,7 @@ import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { PrismaListingStore } from './prisma-listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
+import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -620,10 +621,24 @@ describe('the category options', () => {
       author,
     );
 
-    const options = await store.listOptions();
+    const options = await store.listOptions(CATEGORY_LIST_LIMIT);
 
     expect(options.map((option) => option.slug)).toEqual([first.slug, second.slug]);
     expect(options[1]?.name).toBe('Renamed');
+  });
+
+  /** Slice H2 — the bound is in the query, which only a db test can see. */
+  it('asks the database for no more categories than the limit', async () => {
+    const author = await newUser();
+    const first = await newCategory(author);
+    await newCategory(author);
+    await newCategory(author);
+
+    const options = await store.listOptions(1);
+
+    // Oldest first, so the one kept is the first created — `take` applied after
+    // `orderBy`, matching the admin list rather than diverging from it.
+    expect(options.map((option) => option.slug)).toEqual([first.slug]);
   });
 
   it('exposes what an owner needs to fill in the form, and nothing more', async () => {
@@ -633,7 +648,9 @@ describe('the category options', () => {
     const author = await newUser();
     await newCategory(author);
 
-    expect(Object.keys((await store.listOptions())[0] ?? {}).sort()).toEqual([
+    expect(
+      Object.keys((await store.listOptions(CATEGORY_LIST_LIMIT))[0] ?? {}).sort(),
+    ).toEqual([
       'attributes',
       'name',
       'slug',
@@ -650,7 +667,7 @@ describe('the category options', () => {
     await newCategory(author, 'aaa-with-schema');
     await newCategory(author, 'bbb-without', []);
 
-    const options = await store.listOptions();
+    const options = await store.listOptions(CATEGORY_LIST_LIMIT);
     expect(options.find((one) => one.slug === 'aaa-with-schema')?.attributes).toEqual(
       SCHEMA,
     );
@@ -984,9 +1001,39 @@ describe('listing what an owner has', () => {
     const second = await store.createDraft(draft(mine, category.slug));
     await store.createDraft(draft(theirs, category.slug));
 
-    const listed = await store.listOwnedBy(mine);
+    const listed = await store.listOwnedBy(mine, EXPORTED_LISTING_LIMIT);
 
     expect(listed.map((listing) => listing.id)).toEqual([second.id, first.id]);
+  });
+
+  /**
+   * Slice H2, and it has to be a db test.
+   *
+   * **The service-level test cannot prove this.** `Paging.fitTo` trims whatever
+   * it is handed, so a service reading every row and slicing afterwards behaves
+   * identically to one whose query was bounded — same list, same truncation
+   * flag, same everything. The difference is entirely in what Postgres was asked
+   * for, and the only place that is observable is here. Confirmed by removing
+   * `take` from the adapter and watching this fail while the service tests
+   * stayed green.
+   *
+   * A small explicit limit rather than `EXPORTED_LISTING_LIMIT`, so the
+   * assertion costs three rows instead of a thousand and one.
+   */
+  it('asks the database for no more rows than the limit', async () => {
+    const mine = await newUser();
+    const category = await newCategory(mine);
+
+    await store.createDraft(draft(mine, category.slug));
+    const second = await store.createDraft(draft(mine, category.slug));
+    const third = await store.createDraft(draft(mine, category.slug));
+
+    const listed = await store.listOwnedBy(mine, 2);
+
+    // The newest two, because `take` applies after `orderBy` — which is the
+    // half worth pinning. A bound that kept the oldest rows would cut an
+    // export down to the listings least likely to matter.
+    expect(listed.map((listing) => listing.id)).toEqual([third.id, second.id]);
   });
 });
 
