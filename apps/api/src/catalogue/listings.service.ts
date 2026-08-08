@@ -16,6 +16,7 @@ import type { Logger } from '@platform/observability';
 import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
 import type { Actor } from '../audit/audit-log.js';
 import type { ListingLocator } from './listing-locator.js';
+import type { PublicationSwitch } from './publication-switch.js';
 import type { ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import type {
@@ -124,6 +125,29 @@ export class AttributeValuesInvalidError extends Error {
  * Carries every blocker rather than the first, so an owner sees the whole list
  * at once instead of discovering it one save at a time.
  */
+/**
+ * Raised when publishing is switched off platform-wide (slice H3a, §9).
+ *
+ * **Its own error rather than a `PublicationBlocker`**, and the distinction is
+ * the point. A blocker is something *this listing* is missing and its owner can
+ * fix — the 422 lists them so somebody knows what to do next. This is nothing to
+ * do with the listing: it is complete, it is theirs, and the platform is not
+ * accepting publications right now. Folding it into the blocker list would tell
+ * an owner that their listing was incomplete, and they would go looking for the
+ * missing field forever.
+ *
+ * It carries no reason, deliberately. The administrator's reason is written for
+ * the audit trail and for whoever reviews the incident; it is not copy for the
+ * public, and a message typed under pressure at 3am is not something to show
+ * strangers verbatim.
+ */
+export class PublicationSuspendedError extends Error {
+  constructor() {
+    super('Publishing listings is temporarily switched off');
+    this.name = 'PublicationSuspendedError';
+  }
+}
+
 export class ListingNotPublishableError extends Error {
   constructor(readonly blockers: readonly PublicationBlocker[]) {
     super(
@@ -169,6 +193,19 @@ export class ListingsService {
      * logs.
      */
     private readonly logger: Logger,
+    /**
+     * Whether publishing is switched on (slice H3a, §9's kill switch).
+     *
+     * A port this module declares and the feature-flags module answers, the same
+     * shape as `locator` above. **One method, not the flag service**, so a later
+     * slice cannot switch a flag from inside a listing operation — a state
+     * change with no administrator and no reason behind it.
+     *
+     * Required rather than optional, for the reason `locator` is: an optional
+     * dependency is one several boot sites forget, and the failure would arrive
+     * as a kill switch that silently does nothing.
+     */
+    private readonly publication: PublicationSwitch,
   ) {}
 
   /**
@@ -331,9 +368,22 @@ export class ListingsService {
    * Returns null when no such listing belongs to this owner, so the route can
    * answer 404 without distinguishing "not yours" from "does not exist".
    *
-   * Throws `ListingNotPublishableError` with every unmet requirement.
+   * Throws `ListingNotPublishableError` with every unmet requirement, and
+   * `PublicationSuspendedError` when the platform-wide switch is off.
+   *
+   * **The switch is checked before the ownership read** (slice H3a). A kill
+   * switch that still costs a database query and a completeness evaluation per
+   * request is not much of a kill switch, and the traffic it is thrown at is
+   * often exactly the traffic causing the incident. It also means a suspended
+   * platform tells everybody the same thing, rather than telling a stranger
+   * "that listing is not yours" first — the ordering is a disclosure decision as
+   * well as a cost one.
    */
   async publish(id: string, ownerId: string): Promise<ListingRecord | null> {
+    if (!(await this.publication.isPublicationEnabled())) {
+      throw new PublicationSuspendedError();
+    }
+
     const listing = await this.store.findOwnedBy(id, ownerId);
     if (listing === null) return null;
 

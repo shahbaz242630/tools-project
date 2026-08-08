@@ -62,7 +62,18 @@ export type ListingOutcome<T> =
  */
 export type PublishOutcome =
   | ListingOutcome<OwnerListing>
-  | { readonly kind: 'not-ready'; readonly blockers: readonly PublicationBlocker[] };
+  | { readonly kind: 'not-ready'; readonly blockers: readonly PublicationBlocker[] }
+  /**
+   * The platform-wide switch is off (slice H3a, ADR 0036).
+   *
+   * **A third kind, not a variant of the two beside it**, because it answers a
+   * different question again. `invalid` means "correct your request";
+   * `not-ready` means "complete your listing"; this means "nothing is wrong
+   * with either, and the platform is not accepting publications right now".
+   * Folding it into `unreachable` — which is where it landed before this
+   * existed — reduces a deliberate, explained refusal to `API answered 503`.
+   */
+  | { readonly kind: 'unavailable'; readonly reason: string };
 
 export interface FetchResponse {
   status: number;
@@ -105,7 +116,7 @@ function readError(raw: string): { issues?: readonly string[]; message?: string 
   }
 }
 
-async function call<T, E = never>(
+async function call<T, E422 = never, E503 = never>(
   url: string,
   token: string | null,
   clientIp: string | null,
@@ -118,8 +129,18 @@ async function call<T, E = never>(
    * A parameter rather than a branch in here, so that a status only publishing
    * can receive does not become a case every other caller has to handle.
    */
-  on422?: (raw: string) => E,
-): Promise<ListingOutcome<T> | E> {
+  on422?: (raw: string) => E422,
+  /**
+   * What a 503 means, for the one route that can send one.
+   *
+   * A parameter for `on422`'s reason, and the omission of it is what slice H3a
+   * found by pressing the button: publish gained a 503, every other status was
+   * already mapped, and this one fell through to the generic branch that prints
+   * the number. **A status added on the server is not handled until the client
+   * that reads it says so.**
+   */
+  on503?: (raw: string) => E503,
+): Promise<ListingOutcome<T> | E422 | E503> {
   if (token === null || token === '') return { kind: 'signed-out' };
 
   let response: FetchResponse;
@@ -152,6 +173,10 @@ async function call<T, E = never>(
 
   if (response.status === 422 && on422 !== undefined) {
     return on422(await response.text());
+  }
+
+  if (response.status === 503 && on503 !== undefined) {
+    return on503(await response.text());
   }
 
   if (response.status === 409) {
@@ -251,7 +276,33 @@ export function publishListing(
     parseOwnerListing,
     { method: 'POST' },
     (raw) => ({ kind: 'not-ready', blockers: readBlockers(raw) }),
+    (raw) => ({ kind: 'unavailable', reason: readUnavailableReason(raw) }),
   );
+}
+
+/**
+ * The API's own sentence out of a 503 body.
+ *
+ * Served verbatim rather than replaced with copy written here, because the API
+ * is the only thing that knows *why* it refused, and a second sentence
+ * maintained on this side would drift from it. The fallback is a full sentence
+ * rather than a status code: somebody who has just pressed Publish needs to know
+ * the platform refused, not that a number came back.
+ */
+function readUnavailableReason(raw: string): string {
+  const fallback =
+    'Publishing is temporarily switched off across the platform. ' +
+    'Your listing is saved and unchanged — try again shortly.';
+
+  try {
+    const body: unknown = JSON.parse(raw);
+    if (typeof body !== 'object' || body === null) return fallback;
+
+    const { message } = body as { message?: unknown };
+    return typeof message === 'string' && message !== '' ? message : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /**

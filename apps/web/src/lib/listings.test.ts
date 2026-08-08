@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createListing, fetchCategoryOptions, fetchListing } from './listings';
+import {
+  createListing,
+  fetchCategoryOptions,
+  fetchListing,
+  publishListing,
+} from './listings';
 import type { FetchLike } from './listings';
 
 const API = 'http://api.internal:3001';
@@ -297,5 +302,79 @@ describe('fetchCategoryOptions', () => {
     await fetchCategoryOptions(API, TOKEN, fetchImpl, '203.0.113.7');
 
     expect(calls[0]?.init?.headers?.['x-client-ip']).toBe('203.0.113.7');
+  });
+});
+
+/**
+ * Publishing, and the two refusals that are not about the request.
+ *
+ * These had no coverage at this layer before slice H3a — the 422 was proven in
+ * the API's integration test and in the form component, and nothing asserted
+ * that this module *translated* either one. That gap is exactly what let a 503
+ * fall through to the generic branch.
+ */
+describe('publishListing', () => {
+  it('returns the published listing', async () => {
+    const outcome = await publishListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(201, JSON.stringify(LISTING)),
+    );
+
+    expect(outcome.kind).toBe('loaded');
+  });
+
+  it('reads a 422 as the listing not being ready, with its blockers', async () => {
+    const outcome = await publishListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(
+        422,
+        JSON.stringify({
+          message: 'This listing is not ready to be published yet.',
+          blockers: [{ field: 'description', message: 'It has to say something.' }],
+        }),
+      ),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'not-ready',
+      blockers: [{ field: 'description', message: 'It has to say something.' }],
+    });
+  });
+
+  it('reads a 503 as the platform switch being off, keeping the API’s message', () => {
+    // Slice H3a, and it was found by pressing the button rather than by a test.
+    // The API writes a careful sentence — "Publishing is temporarily switched
+    // off across the platform. Your listing is saved and unchanged" — and
+    // before this the owner saw "That did not complete — API answered 503",
+    // because 503 fell through to the generic unknown-status branch.
+    //
+    // **The bug was not in the new code.** The kill switch worked perfectly; what
+    // it made untrue was this module's assumption about which statuses publish
+    // can answer with.
+    const message =
+      'Publishing is temporarily switched off across the platform. ' +
+      'Your listing is saved and unchanged — try again shortly.';
+
+    return expect(
+      publishListing(
+        API,
+        TOKEN,
+        LISTING.id,
+        responds(503, JSON.stringify({ message })),
+      ),
+    ).resolves.toEqual({ kind: 'unavailable', reason: message });
+  });
+
+  it('falls back to a usable sentence when a 503 carries no message', async () => {
+    const outcome = await publishListing(API, TOKEN, LISTING.id, responds(503));
+
+    expect(outcome).toMatchObject({ kind: 'unavailable' });
+    // Never the bare status code. Somebody who has just tried to publish needs
+    // to know the platform refused rather than that their listing is wrong.
+    expect('reason' in outcome ? outcome.reason : '').toContain('switched off');
   });
 });

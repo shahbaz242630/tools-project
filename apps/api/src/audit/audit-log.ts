@@ -110,7 +110,24 @@ export type AuditAction =
    * vocabulary should not describe the write as something the database refuses.
    */
   | 'category.created'
-  | 'category.reconfigured';
+  | 'category.reconfigured'
+  /**
+   * An administrator switched a feature flag (slice H3a, ADR 0036).
+   *
+   * Targets a `feature_flag`. The target id is the override row's uuid, not the
+   * flag key — `targetId` is a `uuid` column, and that constraint is why the
+   * override table carries a synthetic id at all when `key` would have been a
+   * perfectly good primary key. The key itself travels in the digested
+   * before/after state, which is exactly where a category's slug lives too.
+   *
+   * **Not versioned like a category, which is why this entry carries more
+   * weight than a category's does** (ADR 0036). `category_versions` records what
+   * the configuration became, so its audit entry only has to record the intent.
+   * There is no version row for a flag, so this entry is the *whole* record that
+   * the state changed — before, after, who and why. It is the reason the audit
+   * write is awaited and its failure propagates.
+   */
+  | 'feature_flag.changed';
 
 /**
  * Who did it, and from where.

@@ -4,6 +4,7 @@ export * from './attribute-values.js';
 export * from './audit.js';
 export * from './catalogue.js';
 export * from './export.js';
+export * from './feature-flags.js';
 export * from './health.js';
 export * from './identity.js';
 export * from './item-weight.js';

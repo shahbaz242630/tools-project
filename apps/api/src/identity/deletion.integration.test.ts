@@ -44,6 +44,7 @@ import {
 } from './testing/fakes.js';
 import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
+import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -182,6 +183,7 @@ beforeEach(async () => {
           audit.service,
           createRecordingLogger().logger,
         ),
+        featureFlags: createFeatureFlagFakes().service,
         listings: listings.service,
       }),
     ],

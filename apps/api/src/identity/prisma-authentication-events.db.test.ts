@@ -72,6 +72,10 @@ beforeEach(async () => {
   // Children before parents, in every file — a new foreign key means editing
   // all of them, not only the one the slice was about.
   await client.sellerTaxProfile.deleteMany();
+  // Before `users`: `feature_flag_overrides.changedById` is ON DELETE
+  // RESTRICT, so an override left behind blocks the account it names
+  // (slice H3a). Children before parents — the rule every file here keeps.
+  await client.featureFlagOverride.deleteMany();
   await client.user.deleteMany();
 });
 

@@ -20,6 +20,7 @@ import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from './catalogue.service.js';
 import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
+import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -107,6 +108,7 @@ beforeEach(async () => {
           audit.service,
           createRecordingLogger().logger,
         ),
+        featureFlags: createFeatureFlagFakes().service,
         // Sharing `store` so both surfaces talk about the same categories — a
         // category created through the admin routes here is one an owner could
         // then list in.

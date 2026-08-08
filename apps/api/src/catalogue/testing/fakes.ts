@@ -397,7 +397,35 @@ export interface ListingFakes {
   readonly geocoder: FakeGeocoder;
   /** For asserting that a bound firing is reported rather than silent (H2). */
   readonly logger: RecordingLogger;
+  /**
+   * The publication kill switch (slice H3a).
+   *
+   * **Defaults to on**, matching the flag's declared default, so every test
+   * written before H3a still describes a platform that can publish. A double
+   * defaulting to off would have made the switch's arrival look like a hundred
+   * unrelated regressions.
+   */
+  readonly publication: SwitchableFlag;
   readonly service: ListingsService;
+}
+
+/** A kill switch a test can throw, standing in for the flags module. */
+export class SwitchableFlag {
+  private enabled = true;
+
+  off(): this {
+    this.enabled = false;
+    return this;
+  }
+
+  on(): this {
+    this.enabled = true;
+    return this;
+  }
+
+  isPublicationEnabled(): Promise<boolean> {
+    return Promise.resolve(this.enabled);
+  }
 }
 
 /**
@@ -419,16 +447,20 @@ export function createListingFakes(
   const logger = createRecordingLogger();
   const location = new LocationService(geocoder, logger.logger);
 
+  const publication = new SwitchableFlag();
+
   return {
     categories,
     listings,
     geocoder,
     logger,
+    publication,
     service: new ListingsService(
       listings,
       listings,
       { locate: (postcode) => location.locate(postcode) },
       logger.logger,
+      publication,
     ),
   };
 }

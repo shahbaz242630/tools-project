@@ -21,6 +21,7 @@ import {
 } from '../catalogue/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
+import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 
 /**
  * Boots the real application — real routing, real guard, real exception filter
@@ -93,6 +94,7 @@ beforeEach(async () => {
         profiles: new ProfilesService(profiles, accounts, audit.service),
         audit: audit.service,
         catalogue: createCatalogueFakes().service,
+        featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes().service,
       }),
     ],

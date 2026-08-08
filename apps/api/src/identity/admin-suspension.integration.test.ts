@@ -25,6 +25,7 @@ import type { ProfileFakes } from '../profiles/testing/fakes.js';
 import { createIdentityFakes } from './testing/fakes.js';
 import type { IdentityFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
+import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 
 /**
  * Suspending and reinstating through the real application.
@@ -82,6 +83,7 @@ beforeEach(async () => {
         profiles: profiles.service,
         audit: audit.service,
         catalogue: createCatalogueFakes().service,
+        featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes().service,
       }),
     ],

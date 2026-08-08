@@ -162,6 +162,11 @@ model User {
   /// What this person has put up for rent. `ON DELETE RESTRICT` — see `Listing`.
   listings Listing[]
 
+  /// Feature flags this account last switched. Declared because Prisma requires
+  /// both ends; the feature-flags module reaches overrides through its own port
+  /// and never through a user.
+  changedFeatureFlags FeatureFlagOverride[]
+
   @@map("users")
 }
 
@@ -1217,4 +1222,67 @@ model SellerTaxProfile {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@map("seller_tax_profiles")
+}
+
+/// A feature flag that has been switched away from its declared default.
+///
+/// **The table holds overrides, not flags** (ADR 0036, slice H3a). The set of
+/// flags is a closed vocabulary declared in code, because a flag key gates a
+/// code path and code paths are code — a key an administrator invented would
+/// gate nothing, which is a dead control with a database row behind it. A key
+/// with no row here is not "off": it is at whatever default its declaration
+/// gives it.
+///
+/// Two consequences, both deliberate. **Adding a flag needs no migration** — it
+/// is a line in the declaration. And **the default survives this table being
+/// unreadable**, which is the property that matters: a default stored in the row
+/// you cannot read is not a default, and a database blip must not silently flip
+/// behaviour.
+///
+/// **Not versioned, and that is the decision ADR 0036 records.** Category
+/// configuration is versioned because §8.2 requires a booking to retain the
+/// version it was made under — a booking *pins* a version. Nothing pins a flag:
+/// it decides whether a code path runs at the instant it runs, and no entity
+/// needs to remember its value afterwards. Version rows would add a table and a
+/// trigger for no invariant, and would make a kill switch slower to operate in
+/// exactly the incident it exists for. Who changed it, when and why is the audit
+/// trail's job (§8.13), and every write here records one.
+model FeatureFlagOverride {
+  /// A synthetic identity, and it exists for one reason: `audit_logs.targetId`
+  /// is a `uuid` column, so an audited entity has to have one.
+  ///
+  /// `key` is a perfectly good natural key and would otherwise be the primary
+  /// key. It is unique instead, which keeps the guarantee that matters — one
+  /// flag has exactly one state — while giving the audit trail something of the
+  /// shape it requires. Every other audited entity in the system is in the same
+  /// position: `category.created` records a category's uuid rather than its
+  /// slug, so this is the established shape rather than a concession invented
+  /// here.
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The declared key, e.g. `listing.publication`.
+  ///
+  /// Unique, because one flag has one state — a second row for the same key
+  /// would be two answers to a question that must have one, and the evaluator
+  /// would have to pick between them.
+  key String @unique @db.Text
+
+  /// What the flag is, against its declared default.
+  enabled Boolean
+
+  /// Who switched it last, and when. Not an audit substitute — the trail holds
+  /// the reason and the before/after — but the administrator looking at the
+  /// list needs to see it without leaving the page, and an incident asks "when
+  /// did this change" before it asks anything else.
+  ///
+  /// `ON DELETE RESTRICT`, Prisma's default for a required relation: accounts
+  /// are soft-deleted so it never fires, and an override that vanished with its
+  /// author would leave the platform in a state nobody appeared to have chosen.
+  changedById String @db.Uuid
+  changedBy   User   @relation(fields: [changedById], references: [id])
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("feature_flag_overrides")
 }

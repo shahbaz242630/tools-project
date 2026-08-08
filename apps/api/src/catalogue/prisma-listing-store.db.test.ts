@@ -209,6 +209,10 @@ beforeEach(async () => {
   await client.auditLog.deleteMany();
   await client.adminApproval.deleteMany();
   await client.authenticationEvent.deleteMany();
+  // Before `users`: `feature_flag_overrides.changedById` is ON DELETE
+  // RESTRICT, so an override left behind blocks the account it names
+  // (slice H3a). Children before parents — the rule every file here keeps.
+  await client.featureFlagOverride.deleteMany();
   await client.user.deleteMany();
 });
 
