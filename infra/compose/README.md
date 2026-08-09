@@ -9,7 +9,11 @@ Everything here follows [ADR 0009](../../adr/0009-self-hosted-vps-with-off-box-b
 > **Still unexercised:** the ingress. It has never run, and it is expected to be the wrong shape — it listens for inbound traffic, and Cloudflare's Tunnel makes an outbound-only connection instead. Until a domain exists the ingress stays down deliberately, because bringing it up would put plain HTTP on a dialable public IP, which BRD §10.2 forbids. Reach the stack over an SSH tunnel meanwhile:
 >
 > ```sh
-> ssh -L 3000:rental-staging-web:3000 deploy@<box>   # then http://localhost:3000
+> # The container name resolves inside the compose network and NOT on the host,
+> # so the forward has to name the container's address. It changes when the
+> # container is recreated, which a deploy does every time.
+> ssh deploy@<box> "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rental-staging-web"
+> ssh -N -L 3000:<that address>:3000 deploy@<box>   # then http://localhost:3000
 > ```
 
 ## What is here
