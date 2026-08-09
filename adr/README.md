@@ -67,3 +67,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0036](0036-feature-flags-are-audited-but-not-versioned.md)                         | Audit feature flags rather than versioning them; their vocabulary is code | Accepted                                   |
 | [0037](0037-managed-postgres-with-self-hosted-applications.md)                      | Run Postgres managed on Neon, applications on our own box                 | Accepted — supersedes 0009's hosting half  |
 | [0038](0038-three-tls-modes-not-libpqs-eight.md)                                    | Accept three Postgres TLS modes, not libpq's eight                        | Accepted                                   |
+| [0039](0039-the-deployment-stack-carries-a-database-it-never-runs.md)               | Keep a database in the deployment stack that no environment runs          | Accepted                                   |

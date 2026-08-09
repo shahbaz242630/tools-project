@@ -330,6 +330,17 @@ jobs:
     #
     # It cannot prove the environment — there is no staging box yet — but it
     # proves the mechanism, which is the part that rots silently.
+    env:
+      # The database moved to Neon (ADR 0037), so the compose file no longer
+      # deploys one. It still carries a throwaway Postgres behind this profile
+      # for exactly this job, because the rehearsal's value is that it drives
+      # the real file and depends on nothing external — a live Neon branch here
+      # would mean a production-grade credential in a pull-request job and a
+      # third party who can redden every PR by having an outage.
+      #
+      # `deploy.mjs` refuses this profile against production. Staging is
+      # permitted, which is what this job deploys as. ADR 0039.
+      COMPOSE_PROFILES: rehearsal
     steps:
       - uses: actions/checkout@v7
 
@@ -414,7 +425,7 @@ jobs:
           # structurally meaningful value cannot be faked with arbitrary text.
           # This one decodes to `rehearsal-only-not-a-real-key!!!`.
           # POSTGRES_SSLMODE is overridden because the rehearsal runs the
-          # sidecar Postgres in docker-compose.app.yml, which speaks no TLS.
+          # profiled Postgres in docker-compose.app.yml, which speaks no TLS.
           # The example file carries `verify-full` because that is right for the
           # managed database a real environment points at (ADR 0037), and this
           # is the same override the password and every Clerk value already get.
@@ -422,7 +433,16 @@ jobs:
           # refuses to start with it unset under NODE_ENV=production -- so the
           # rehearsal proves that requirement is satisfiable rather than routing
           # around it.
+          # The database values all point at the rehearsal container rather than
+          # at Neon: one hostname for both the pooled and the direct endpoint,
+          # because a single Postgres is both, and the credentials the container
+          # is created with rather than ones Neon issued.
           sed -e 's|^IMAGE_REPOSITORY=.*|IMAGE_REPOSITORY=local/rental|' \
+              -e 's|^POSTGRES_HOST=.*|POSTGRES_HOST=postgres|' \
+              -e 's|^POSTGRES_DIRECT_HOST=.*|POSTGRES_DIRECT_HOST=postgres|' \
+              -e 's|^POSTGRES_PORT=.*|POSTGRES_PORT=5432|' \
+              -e 's|^POSTGRES_USER=.*|POSTGRES_USER=rental|' \
+              -e 's|^POSTGRES_DB=.*|POSTGRES_DB=rental|' \
               -e 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=rehearsal-only|' \
               -e 's|^POSTGRES_SSLMODE=.*|POSTGRES_SSLMODE=disable|' \
               -e 's|^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.*|NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_cmVoZWFyc2FsLmNsZXJrLmFjY291bnRzLmRldiQ|' \
@@ -447,6 +467,74 @@ jobs:
           docker compose \
             --env-file "${RELEASE_ROOT}/ingress.env" \
             -f infra/compose/docker-compose.ingress.yml config --quiet
+
+      - name: The compose file deploys no database of its own
+        run: |
+          set -euo pipefail
+
+          # The assertion that keeps ADR 0037 true. Without the rehearsal
+          # profile, resolving the file must produce no `postgres` service at
+          # all -- if one reappears, a deploy would start a database beside the
+          # managed one, nothing would connect to it, and no check would notice.
+          services=$(APP_ENV=staging IMAGE_TAG="${TAG_A}" COMPOSE_PROFILES= \
+            docker compose --env-file "${RELEASE_ROOT}/staging.env" \
+            -f infra/compose/docker-compose.app.yml config --services | sort)
+          echo "$services"
+
+          if echo "$services" | grep -qx postgres; then
+            echo "::error::docker-compose.app.yml deploys a postgres service outside the rehearsal profile"
+            exit 1
+          fi
+
+          # And with the profile on it must come back, or this whole job is
+          # rehearsing against a stack that no longer resembles the real one.
+          if ! APP_ENV=staging IMAGE_TAG="${TAG_A}" \
+               docker compose --env-file "${RELEASE_ROOT}/staging.env" \
+               -f infra/compose/docker-compose.app.yml config --services \
+               | grep -qx postgres; then
+            echo "::error::the rehearsal profile no longer provides a postgres service"
+            exit 1
+          fi
+
+      - name: Production refuses the rehearsal profile
+        run: |
+          set -euo pipefail
+
+          # A production deploy with COMPOSE_PROFILES=rehearsal would start a
+          # Postgres nothing is pointed at, on a disk nobody backs up, while
+          # every health check passed. deploy.mjs refuses instead of filtering
+          # the value out. Asserted here as well as in the unit tests, because
+          # the wiring from `process.env` to the check is what actually protects
+          # the box and a unit test cannot see it. ADR 0039.
+          #
+          # No production.env is created: the refusal deliberately comes before
+          # every precondition about the state of the box, so it must fire even
+          # on a machine where production was never provisioned. That ordering
+          # is part of what is being asserted -- a refusal reachable only after
+          # `requireEnvFile` would not fire on the box that most needs it.
+          if node scripts/deploy.mjs --env production --status > /tmp/refusal.txt 2>&1; then
+            cat /tmp/refusal.txt
+            echo "::error::a production deploy was allowed with the rehearsal profile enabled"
+            exit 1
+          fi
+          cat /tmp/refusal.txt
+          grep -q 'unset COMPOSE_PROFILES' /tmp/refusal.txt
+
+      - name: Start the rehearsal database
+        run: |
+          set -euo pipefail
+
+          # Brought up here rather than by `depends_on`, which the real services
+          # no longer declare: a managed database has nothing in the stack to
+          # wait for, and teaching the app services about a container that does
+          # not exist in a real environment is exactly the drift this job is
+          # meant to catch. `compose run migrations` would not start it either.
+          APP_ENV=staging IMAGE_TAG="${TAG_A}" docker compose \
+            --env-file "${RELEASE_ROOT}/staging.env" \
+            -f infra/compose/docker-compose.app.yml \
+            up --detach --wait --wait-timeout 120 postgres
+
+          docker exec rental-staging-postgres pg_isready -U rental -d rental
 
       - name: Deploy
         run: node scripts/deploy.mjs --env staging --tag "${TAG_A}" --timeout 180

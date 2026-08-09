@@ -2,7 +2,7 @@
 
 How a commit becomes a running process, and how to undo it.
 
-Everything here follows [ADR 0009](../../adr/0009-self-hosted-vps-with-off-box-backups.md) (one self-hosted KVM VPS, staging and production sharing it) and [ADR 0012](../../adr/0012-immutable-image-tags-and-compose-deploys.md) (immutable image tags, the box never builds).
+Everything here follows [ADR 0009](../../adr/0009-self-hosted-vps-with-off-box-backups.md) (one self-hosted KVM VPS, staging and production sharing it), [ADR 0012](../../adr/0012-immutable-image-tags-and-compose-deploys.md) (immutable image tags, the box never builds) and [ADR 0037](../../adr/0037-managed-postgres-with-self-hosted-applications.md) (**the database is not on this box** — it is managed on Neon).
 
 > **Not yet exercised against a real box.** Every command below has been rehearsed locally and in CI against the same compose files, but no VPS exists yet. Expect to correct this file the first time it is used for real, and treat that as the point of writing it down.
 
@@ -10,13 +10,22 @@ Everything here follows [ADR 0009](../../adr/0009-self-hosted-vps-with-off-box-b
 
 | File                         | Purpose                                                                |
 | ---------------------------- | ---------------------------------------------------------------------- |
-| `docker-compose.app.yml`     | One environment: API, worker, Postgres, Redis. Two copies can run.     |
+| `docker-compose.app.yml`     | One environment: web, API, worker, Redis. Two copies can run.          |
 | `docker-compose.ingress.yml` | The shared edge. One per box, holds ports 80/443 and the certificates. |
 | `Caddyfile`                  | TLS and hostname routing for both environments.                        |
 | `app.env.example`            | Template for `/opt/rental/<env>.env`.                                  |
 | `ingress.env.example`        | Template for `/opt/rental/ingress.env`.                                |
 
 The repository root's `docker-compose.yml` is the **local development** stack and is unrelated to any of this.
+
+### The database is somewhere else
+
+`docker-compose.app.yml` does contain a `postgres` service, and **it is not part of any environment.** It sits behind the `rehearsal` compose profile so that the `Deploy rehearsal` CI job can drive this exact file end to end on every pull request without reaching a live managed database. Nothing on the box enables that profile, and `deploy.mjs` refuses to run with it enabled against production. See [ADR 0039](../../adr/0039-the-deployment-stack-carries-a-database-it-never-runs.md).
+
+Two consequences for anyone operating this:
+
+- **There is no `rental-<env>-postgres` container.** Reach the database through the Neon console or `psql` against its endpoint, not through `docker exec`.
+- **Two hostnames, differing by six characters.** `POSTGRES_HOST` is Neon's `-pooler` endpoint and is what the API and worker use; `POSTGRES_DIRECT_HOST` is the same host without it and is used by migrations alone, because Prisma's advisory lock does not survive a transaction pooler.
 
 ## Provisioning a fresh box
 
@@ -42,7 +51,7 @@ systemctl enable --now docker
 
 **3. Close everything except SSH and HTTP(S).**
 
-Postgres and Redis publish no ports, so they are already unreachable — this is the second layer, not the first.
+Redis publishes no ports, so it is already unreachable — this is the second layer, not the first. Postgres is not on this box at all (ADR 0037), so the box's firewall is not what protects it; Neon's own access controls are.
 
 ```sh
 ufw default deny incoming
@@ -167,8 +176,11 @@ Retention is what the json-file driver holds: three files of 10 MB per service, 
 ## Other things you will want
 
 ```sh
-# A psql shell. Postgres publishes no port, so go in through the container.
-docker exec -it rental-production-postgres psql -U rental -d rental
+# A psql shell. There is no Postgres container — the database is on Neon
+# (ADR 0037). Connect to its endpoint directly, with the credentials from
+# /opt/rental/production.env. Use the DIRECT host for anything holding a
+# session-level lock; the pooler will drop it.
+psql "postgresql://$POSTGRES_USER@$POSTGRES_DIRECT_HOST/$POSTGRES_DB?sslmode=verify-full"
 
 # When did the current release start?
 docker inspect rental-production-api --format '{{.State.StartedAt}}'
@@ -213,7 +225,7 @@ wake anybody up.
 
 ## Not done yet
 
-**There are no backups.** ADR 0009 calls off-box database backups non-negotiable and they are not built. Until they are, nothing that cannot be recreated from scratch should go into either database. This is the single largest gap in this directory.
+**The restore has never been drilled.** ADR 0009 called off-box database backups non-negotiable; ADR 0037 discharged that by moving the database to Neon, which takes them for us. What is still owed is proving a restore works, and noting that the **free tier's restore window is only six hours** — it must move to Launch before anything irreplaceable is stored. Until that drill has been run, treat both databases as recreatable from scratch.
 
 **Deploys are not zero-downtime.** The API container stops before its replacement starts — a gap of a few seconds.
 

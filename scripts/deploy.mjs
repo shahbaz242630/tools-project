@@ -26,6 +26,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  assertNoRehearsalProfile,
   interpretProbe,
   interpretWebProbe,
   nextStateAfterDeploy,
@@ -205,9 +206,12 @@ function bringUp(env, tag) {
  * not optional (BRD §15).
  */
 function runMigrations(env, tag) {
-  // Deliberately not `--no-deps`: the service declares `depends_on` on a
-  // healthy Postgres, and compose starting and waiting for it is exactly what
-  // is wanted before the first migration statement runs.
+  // The service declares no `depends_on`, because the database is managed and
+  // off this box (ADR 0037) — there is nothing in the stack to start or wait
+  // for. It also connects to the DIRECT endpoint rather than the pooled one:
+  // Prisma holds an advisory lock for the length of the migration so two
+  // deploys cannot migrate at once, and a transaction pooler gives a different
+  // backend per transaction, which drops that lock the moment it is taken.
   const result = compose(env, tag, ['run', '--rm', 'migrations']);
 
   return result.status === 0;
@@ -420,7 +424,13 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
     // migration must not be followed by code that assumes it worked.
     say('');
     say('FAILED: migrations did not apply. The running release is untouched.');
-    say(`  node scripts/logs.mjs --env ${env} --service postgres --since 10m`);
+    // The migrations container ran with --rm and its output is printed above,
+    // so there is no log to fetch — deliberately not pointing at
+    // `logs.mjs --service postgres`, which stopped existing when the database
+    // moved to Neon (ADR 0037). What is worth checking is the far end.
+    say('  The migration output is above; the container is already gone.');
+    say('  Check POSTGRES_DIRECT_HOST is the endpoint WITHOUT -pooler, and');
+    say('  that POSTGRES_SSLMODE is verify-full. Then the Neon console.');
     return 1;
   }
 
@@ -520,6 +530,13 @@ async function main() {
     say(USAGE);
     return 0;
   }
+
+  // First, ahead of every other precondition. This one is about how the command
+  // was invoked rather than about the state of the box, so it must not depend on
+  // Docker running or an env file existing — and it comes before `--status`
+  // because a wrong profile makes even the status output describe a stack
+  // nobody meant to run.
+  assertNoRehearsalProfile(options.env, process.env.COMPOSE_PROFILES);
 
   requireDocker();
   requireEnvFile(options.env);

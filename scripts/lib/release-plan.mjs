@@ -62,6 +62,45 @@ export function assertDeployableTag(tag) {
   );
 }
 
+/**
+ * The compose profile carrying the throwaway Postgres the CI rehearsal uses.
+ *
+ * It exists so `Deploy rehearsal` can drive the real compose file end to end
+ * without a live managed database (ADR 0039). Nothing else may enable it.
+ */
+export const REHEARSAL_PROFILE = 'rehearsal';
+
+/**
+ * Refuse a production deploy that would also start the rehearsal database.
+ *
+ * `COMPOSE_PROFILES` is an ordinary environment variable, so it can be set by a
+ * shell profile, a CI export that outlived its job, or a copied command line —
+ * and the result would be a production box quietly running a Postgres container
+ * that no application is pointed at, holding a stale copy of the schema on a
+ * disk we do not back up. Nobody would notice: every health check passes,
+ * because the applications are talking to Neon regardless.
+ *
+ * Refusing rather than filtering the value out, for the reason ADR 0030 gives:
+ * a flag silently dropped is one somebody eventually believes is working.
+ * Staging is deliberately allowed, because staging is what CI rehearses as.
+ */
+export function assertNoRehearsalProfile(env, composeProfiles) {
+  const profiles = String(composeProfiles ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  if (env !== 'production' || !profiles.includes(REHEARSAL_PROFILE)) return;
+
+  throw new ReleaseError(
+    `COMPOSE_PROFILES contains "${REHEARSAL_PROFILE}", which starts the ` +
+      `throwaway Postgres that only the CI rehearsal should ever run.\n` +
+      `Production's database is managed on Neon (ADR 0037); a local one here ` +
+      `would be started, never connected to, and never backed up.\n` +
+      `  unset COMPOSE_PROFILES\n`,
+  );
+}
+
 /** The state of an environment that has never been deployed to. */
 export function emptyState() {
   return { version: 1, current: null, history: [] };

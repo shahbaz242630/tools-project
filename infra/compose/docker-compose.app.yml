@@ -1,8 +1,14 @@
-# One environment's application stack: API, worker, database, queue broker.
+# One environment's application stack: API, worker, queue broker.
 #
 # Deployed, not developed. `docker-compose.yml` at the repository root is the
 # local development stack and the two must not be confused — this one runs
 # published images by immutable tag, never builds, and publishes no ports.
+#
+# **The database is not here.** ADR 0037 moved Postgres to Neon, which is what
+# discharges ADR 0009's off-box durability requirement. A `postgres` service
+# still exists at the bottom of this file behind the `rehearsal` profile, for
+# CI and nothing else — see the comment on it, and note that `deploy.mjs`
+# refuses to run with that profile enabled against production.
 #
 # ADR 0009 puts staging and production on the same box, so everything here is
 # parameterised by APP_ENV: project name, container names and volumes. Two
@@ -41,8 +47,15 @@ services:
       # Parts, not a URL. `prisma.config.ts` composes and percent-encodes it —
       # concatenating here would break on any password containing `/`, `@` or
       # `:`, which is most of what `openssl rand -base64` produces.
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      #
+      # **The DIRECT host, not the pooled one, and this is not interchangeable.**
+      # Prisma takes a Postgres advisory lock for the duration of a migration so
+      # two deploys cannot migrate at once. Advisory locks are session state, and
+      # a transaction pooler hands out a different backend per transaction — so
+      # through Neon's `-pooler` endpoint the lock is taken and immediately lost,
+      # and `migrate deploy` either hangs or races. ADR 0037.
+      POSTGRES_HOST: ${POSTGRES_DIRECT_HOST:?set POSTGRES_DIRECT_HOST — the endpoint WITHOUT -pooler}
+      POSTGRES_PORT: ${POSTGRES_PORT:?set POSTGRES_PORT}
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
@@ -57,9 +70,11 @@ services:
     networks:
       - internal
 
-    depends_on:
-      postgres:
-        condition: service_healthy
+    # No `depends_on`. The database is managed and always on; there is nothing
+    # in this stack to wait for. Under the `rehearsal` profile CI starts its own
+    # Postgres and waits for it to be healthy *before* invoking the deploy,
+    # because `compose run` would not start it and this service must not learn
+    # about a container that does not exist in a real environment.
 
     security_opt:
       - no-new-privileges:true
@@ -157,11 +172,17 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 3000
 
-      # Structural, not secret — these name services on the internal network.
-      # POSTGRES_PORT is set explicitly because @platform/config defaults it to
-      # 5433 for the local stack, which is not the port inside this network.
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      # Redis is a service on the internal network. Postgres is not — it is
+      # managed, off this box entirely (ADR 0037), and therefore an address the
+      # environment supplies rather than a name this file knows.
+      #
+      # **The POOLED host here, unlike the migrations service above.** Neon's
+      # `-pooler` endpoint is what a long-lived application should hold
+      # connections through; the direct endpoint has a much lower connection
+      # ceiling. The two differ by six characters, which is why both are named
+      # explicitly rather than one being derived from the other.
+      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST — the -pooler endpoint}
+      POSTGRES_PORT: ${POSTGRES_PORT:?set POSTGRES_PORT}
       REDIS_HOST: redis
       REDIS_PORT: 6379
 
@@ -212,9 +233,12 @@ services:
     networks:
       - internal
 
+    # Redis only. Postgres is managed and off this box, so there is no local
+    # container whose health could gate this one — and gating on a remote
+    # database would mean a Neon blip blocked a redeploy, exactly when you most
+    # want to ship a fix. The readiness probe in `deploy.mjs` is what decides
+    # whether the release is good.
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -253,8 +277,9 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      # The pooled endpoint, as the API uses. ADR 0037.
+      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST — the -pooler endpoint}
+      POSTGRES_PORT: ${POSTGRES_PORT:?set POSTGRES_PORT}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
@@ -268,9 +293,8 @@ services:
     networks:
       - internal
 
+    # Redis only, for the reason given on the API above.
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -284,10 +308,28 @@ services:
         limits:
           memory: 512M
 
+  # ---------------------------------------------------------------------------
+  # NOT PART OF ANY DEPLOYED ENVIRONMENT.
+  #
+  # The database is managed on Neon (ADR 0037). This service exists so the
+  # `Deploy rehearsal` CI job can drive *this file* — the one that really
+  # deploys — end to end on every pull request without reaching a live managed
+  # database. Pointing CI at a real Neon branch would put a production-grade
+  # credential in a pull-request job and make every PR depend on a third party
+  # being up; the rehearsal's whole point is that it depends on nothing.
+  #
+  # It is behind a profile, so it does not start unless something asks for it by
+  # name. Nothing in a real environment does, and `scripts/deploy.mjs` **refuses
+  # to run** with this profile enabled against production rather than trusting
+  # this comment. See ADR 0039.
+  # ---------------------------------------------------------------------------
   postgres:
-    # Pinned to the same image as local development and CI. PostGIS is a hard
-    # dependency (BRD §4.2), not an extension we install later.
+    # Pinned to the same image as local development. PostGIS is a hard
+    # dependency (BRD §4.2), not an extension we install later, and 17-3.5
+    # matches the PostGIS 3.5.0 that Neon's PG17 carries — so what CI rehearses
+    # against and what staging runs against agree on the spatial library.
     image: postgis/postgis:17-3.5
+    profiles: ['rehearsal']
     container_name: rental-${APP_ENV}-postgres
     restart: unless-stopped
     logging: *logging
@@ -370,5 +412,10 @@ networks:
     driver: bridge
 
 volumes:
+  # Only the `rehearsal` postgres above writes to this, so in a real environment
+  # it is declared and never created — Compose creates a volume when a service
+  # that mounts it starts. Kept rather than deleted because deleting it would
+  # make the rehearsal service unable to start, and a rehearsal that cannot
+  # restart a database cannot prove a redeploy keeps its data.
   postgres-data:
   redis-data:
