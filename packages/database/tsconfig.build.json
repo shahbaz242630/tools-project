@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["**/*.test.ts"]
+  // prisma.config.ts is typechecked (see tsconfig.json) but never emitted. The
+  // Prisma CLI reads the TypeScript source directly, and the migrations image
+  // copies that source rather than anything from dist, so a compiled copy would
+  // be an artefact nothing loads and a second answer to which file is the real
+  // configuration.
+  "exclude": ["**/*.test.ts", "prisma.config.ts"]
 }

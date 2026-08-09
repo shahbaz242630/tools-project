@@ -9,5 +9,11 @@
     "outDir": "./dist",
     "types": ["node"]
   },
-  "include": ["src/**/*", "generated/**/*"]
+  // prisma.config.ts is listed so it is typechecked. It lives at the package
+  // root rather than in src because the migrations image copies it standing
+  // alone (ADR 0014), and until slice 0.9c that placement meant it was outside
+  // every tsconfig and every vitest project — untypechecked and untested, while
+  // holding the only duplicate of two rules it has to keep in step with
+  // @platform/config. tsconfig.build.json excludes it from the emit.
+  "include": ["src/**/*", "generated/**/*", "prisma.config.ts"]
 }

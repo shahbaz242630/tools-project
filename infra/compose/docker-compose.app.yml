@@ -46,6 +46,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      # The same TLS mode the API uses, and required here for a reason worth
+      # stating: the Prisma engine and node-postgres disagree about what an
+      # absent `sslmode` means, so migrations can succeed against a database
+      # the application then cannot open a connection to at all. Matching them
+      # is what stops a green migration step from being mistaken for a working
+      # deploy. ADR 0038.
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:?set POSTGRES_SSLMODE}
 
     networks:
       - internal
@@ -165,6 +172,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
 
+      # How the database connection is protected (ADR 0038). Not optional here:
+      # @platform/config requires it whenever NODE_ENV is production, which it
+      # is two lines above, so an unset value stops the deploy at compose time
+      # with a named error rather than at container start with a stack trace.
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:?set POSTGRES_SSLMODE}
+
       # --- Clerk (ADR 0015) ---
       # A *public* key, so not a secret — but still `:?` rather than a default,
       # because an API that starts without it authenticates nobody and only
@@ -247,6 +260,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      # ADR 0038, and required for the same reason as on the API above.
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:?set POSTGRES_SSLMODE}
 
     # Not on `edge`. The worker serves no traffic and has no reason to be
     # addressable from the ingress.
