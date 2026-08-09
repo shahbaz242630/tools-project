@@ -3,6 +3,11 @@
 # ---------------------------------------------------------------------------
 docs/
 
+# External provider inventory — accounts, consoles, plans and contacts. It is
+# not supposed to hold credentials, but it names every service we depend on,
+# which is a map of the attack surface and does not belong in a public repo.
+Details/
+
 # ---------------------------------------------------------------------------
 # Secrets. This repository is PUBLIC. Nothing below may ever be committed.
 # Secrets live in .env.local and in the host secret store — never in git.
