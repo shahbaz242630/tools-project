@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertDeployableTag,
+  assertNoRehearsalProfile,
   emptyState,
   interpretProbe,
   interpretWebProbe,
@@ -12,6 +13,7 @@ import {
   parseState,
   planDeploy,
   planRollback,
+  REHEARSAL_PROFILE,
   ReleaseError,
   setEnvValue,
 } from './release-plan.mjs';
@@ -65,6 +67,57 @@ describe('assertDeployableTag', () => {
   it('explains that there is no latest tag to fall back on', () => {
     expect(() => assertDeployableTag('latest')).toThrow(ReleaseError);
     expect(() => assertDeployableTag('latest')).toThrow(/no "latest"/);
+  });
+});
+
+describe('assertNoRehearsalProfile', () => {
+  it('refuses production when the rehearsal profile is enabled', () => {
+    // The database is managed (ADR 0037). Enabling this profile in production
+    // starts a Postgres container nothing connects to, holding a stale schema
+    // on a disk nobody backs up — and every health check still passes, because
+    // the applications are talking to Neon regardless. Nothing would notice.
+    expect(() => assertNoRehearsalProfile('production', REHEARSAL_PROFILE)).toThrow(
+      ReleaseError,
+    );
+    expect(() => assertNoRehearsalProfile('production', REHEARSAL_PROFILE)).toThrow(
+      /unset COMPOSE_PROFILES/,
+    );
+  });
+
+  it('finds it among several profiles, and tolerates spacing', () => {
+    // COMPOSE_PROFILES is a comma-separated list, so a substring check would
+    // both miss this and match a profile merely named "rehearsal-something".
+    for (const value of [
+      `observability,${REHEARSAL_PROFILE}`,
+      ` ${REHEARSAL_PROFILE} , observability `,
+      `${REHEARSAL_PROFILE},`,
+    ]) {
+      expect(() => assertNoRehearsalProfile('production', value)).toThrow(ReleaseError);
+    }
+  });
+
+  it('allows a profile whose name merely contains it', () => {
+    expect(() =>
+      assertNoRehearsalProfile('production', 'rehearsal-notes'),
+    ).not.toThrow();
+  });
+
+  it('allows staging, which is what CI rehearses as', () => {
+    // Staging must stay permitted or the Deploy rehearsal cannot run at all,
+    // and the rehearsal is the only thing proving this script works.
+    expect(() => assertNoRehearsalProfile('staging', REHEARSAL_PROFILE)).not.toThrow();
+  });
+
+  it('allows production when the variable is absent or empty', () => {
+    for (const value of [undefined, null, '', '   ', ',,']) {
+      expect(() => assertNoRehearsalProfile('production', value)).not.toThrow();
+    }
+  });
+
+  it('allows production with unrelated profiles set', () => {
+    expect(() =>
+      assertNoRehearsalProfile('production', 'observability,debug'),
+    ).not.toThrow();
   });
 });
 
