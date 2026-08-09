@@ -4,7 +4,13 @@ How a commit becomes a running process, and how to undo it.
 
 Everything here follows [ADR 0009](../../adr/0009-self-hosted-vps-with-off-box-backups.md) (one self-hosted KVM VPS, staging and production sharing it), [ADR 0012](../../adr/0012-immutable-image-tags-and-compose-deploys.md) (immutable image tags, the box never builds) and [ADR 0037](../../adr/0037-managed-postgres-with-self-hosted-applications.md) (**the database is not on this box** — it is managed on Neon).
 
-> **Not yet exercised against a real box.** Every command below has been rehearsed locally and in CI against the same compose files, but no VPS exists yet. Expect to correct this file the first time it is used for real, and treat that as the point of writing it down.
+> **Used for real on 9 August 2026**, on a Hetzner CX23 against Neon, and corrected where it was wrong — which was the point of writing it down. What it produced: `web`, `api`, `worker` and Redis healthy, no Postgres container, no published ports, `/ready` reporting `postgres: ok`.
+>
+> **Still unexercised:** the ingress. It has never run, and it is expected to be the wrong shape — it listens for inbound traffic, and Cloudflare's Tunnel makes an outbound-only connection instead. Until a domain exists the ingress stays down deliberately, because bringing it up would put plain HTTP on a dialable public IP, which BRD §10.2 forbids. Reach the stack over an SSH tunnel meanwhile:
+>
+> ```sh
+> ssh -L 3000:rental-staging-web:3000 deploy@<box>   # then http://localhost:3000
+> ```
 
 ## What is here
 
@@ -42,11 +48,22 @@ chown -R deploy:deploy /home/deploy/.ssh
 chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
 ```
 
-**2. Docker.**
+**2. Docker, and Node.**
+
+Node is not optional and is easy to miss: `scripts/deploy.mjs` and
+`scripts/logs.mjs` are Node scripts, and they are the only supported way to
+change what is running. The first real provisioning got as far as the deploy
+command before discovering it.
+
+Ubuntu's own package is fine — no version manager on a box that runs four
+containers. 24.04 and later carry Node 22, which is what `.nvmrc` pins.
 
 ```sh
 curl -fsSL https://get.docker.com | sh
 systemctl enable --now docker
+
+apt-get update && apt-get install -y nodejs
+node --version   # expect v22.x
 ```
 
 **3. Close everything except SSH and HTTP(S).**
@@ -106,13 +123,35 @@ cp repo/infra/compose/app.env.example production.env
 chmod 600 ingress.env staging.env production.env
 ```
 
-Then edit each one. For the two app environments, set `APP_ENV` to match the filename and generate a **different** password for each:
+Then edit each one, setting `APP_ENV` to match the filename.
+
+**The database password is not generated here.** It used to be, when Postgres was
+a container in this stack. Since ADR 0037 it is **issued by Neon** and the
+console is the only place it can be read — Connect, or Branches → _branch_ →
+Roles → Reset password. Staging and production are separate Neon projects with
+separate credentials; sharing one means a staging deploy migrating production.
+
+`PERSONAL_DATA_ENCRYPTION_KEY` **is** generated here, per environment, and is the
+one value that cannot be reissued:
 
 ```sh
 openssl rand -base64 32
 ```
 
 Leave `IMAGE_TAG` empty. The deploy script fills it in.
+
+**Getting values into this file from a Windows machine is where secrets get
+corrupted silently.** Two ways, both found the hard way:
+
+- Python's `print` on Windows emits CRLF, so every value arrives with a trailing
+  carriage return — a 32-byte key becomes 33 and fails at decrypt time.
+- PowerShell piping to a native executable prepends a UTF-8 BOM, which makes the
+  key name unmatchable, so the value is appended as a _second_ key while the real
+  one stays empty. Compose reads the empty one.
+
+Neither is visible in the file. If you must transfer values programmatically,
+**base64-encode them and read stdin as bytes on this end**; `chmod 600` the file
+afterwards and verify with `grep -c $'\xef\xbb\xbf'` returning zero.
 
 **9. DNS.**
 
