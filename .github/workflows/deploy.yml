@@ -1,0 +1,154 @@
+name: Deploy
+
+# Puts a published release on the staging box, from CI, with no human handling a
+# secret. That last clause is the whole point: BRD §14's exit gate asks for a
+# change to travel from a branch to staging through green CI, and every part of
+# that except this one has worked since slice 0.9a.
+#
+# Triggered by the Release workflow finishing, not by the push that started it.
+# A push to `main` starts Release and Deploy at the same moment, and Deploy would
+# then ask the box to pull image tags that are still being built — a failure that
+# looks like a broken deploy and is really a race. See ADR 0040.
+
+on:
+  workflow_run:
+    workflows: ['Release']
+    types: [completed]
+    branches: [main]
+  # Redeploy or roll back without waiting for a commit. The inputs are why this
+  # is here: rollback is the half of the exit gate that a green deploy never
+  # exercises.
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do on staging
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback, status]
+      sha:
+        description: Commit SHA to deploy (deploy only; defaults to this ref)
+        required: false
+        type: string
+
+concurrency:
+  # One deploy at a time, and never cancel one in flight. A deploy interrupted
+  # between `migrate deploy` and the container swap leaves a schema ahead of the
+  # code with nothing recording that it happened.
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+
+    # `workflow_run` fires on failure too, so a red Release would otherwise
+    # deploy images that were never published.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    # Scopes the credentials to this environment rather than the repository, so
+    # a workflow added later cannot reach them by accident, and so production
+    # can be given approval rules without changing anything here.
+    environment: staging
+
+    steps:
+      - name: Work out what to run
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
+          INPUT_SHA: ${{ inputs.sha }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = "workflow_run" ]; then
+            action=deploy
+            sha="$RUN_SHA"
+          else
+            action="$ACTION"
+            sha="${INPUT_SHA:-$GITHUB_SHA}"
+          fi
+
+          # The box refuses anything that is not 40 hex characters, and so does
+          # deploy.mjs. Checked here as well so the failure names the input
+          # rather than arriving as an ssh exit code.
+          if [ "$action" = "deploy" ] && ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::'$sha' is not a full 40-character commit SHA"
+            exit 1
+          fi
+
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Will run: $action ${sha:-}"
+
+      - name: Load the deploy key
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          # An agent rather than a file on disk: the key lives in the process
+          # for the length of the job and never lands in the workspace, which
+          # `actions/upload-artifact` or a stray `tar` could otherwise collect.
+          eval "$(ssh-agent -s)" > /dev/null
+          printf '%s\n' "$SSH_KEY" | ssh-add - 2>/dev/null
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+          # The host key is pinned. `StrictHostKeyChecking=no` would make this
+          # job accept whatever answers on that address, which is the entire
+          # attack this control exists to stop.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          ssh-add -l
+
+      - name: Run it
+        env:
+          TARGET: ${{ secrets.STAGING_SSH_TARGET }}
+          ACTION: ${{ steps.plan.outputs.action }}
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # The key is restricted to a forced command on the box, so this is not
+          # a shell and the argument is a verb rather than a command line. The
+          # box hardcodes `--env staging`: this workflow cannot reach production
+          # even if somebody edits it to try. ADR 0040.
+          case "$ACTION" in
+            deploy)   remote="deploy $SHA" ;;
+            rollback) remote="rollback" ;;
+            status)   remote="status" ;;
+            *) echo "::error::unknown action '$ACTION'"; exit 1 ;;
+          esac
+
+          ssh -o StrictHostKeyChecking=yes -o BatchMode=yes \
+              -o ConnectTimeout=30 "$TARGET" "$remote"
+
+      - name: What is running now
+        if: always()
+        env:
+          TARGET: ${{ secrets.STAGING_SSH_TARGET }}
+        run: ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "$TARGET" status
+
+      - name: Logs, if it went wrong
+        if: failure()
+        env:
+          TARGET: ${{ secrets.STAGING_SSH_TARGET }}
+        run: |
+          # Log retrieval is the other half of the exit gate, and the useful
+          # moment to prove it is the moment something failed.
+          for service in api web worker; do
+            echo "::group::$service"
+            ssh -o StrictHostKeyChecking=yes -o BatchMode=yes "$TARGET" "logs $service" || true
+            echo "::endgroup::"
+          done
