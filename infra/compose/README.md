@@ -157,7 +157,50 @@ Neither is visible in the file. If you must transfer values programmatically,
 **base64-encode them and read stdin as bytes on this end**; `chmod 600` the file
 afterwards and verify with `grep -c $'\xef\xbb\xbf'` returning zero.
 
-**9. DNS.**
+**9. The CI deploy key.**
+
+Only needed once CI should deploy rather than a human. The key is restricted to a forced command so it cannot open a shell, forward a port, or read a credential — `deploy` is in the `docker` group, which is root-equivalent, so an unrestricted key here would be indistinguishable from handing out root. See [ADR 0040](../../adr/0040-the-ci-deploy-key-cannot-open-a-shell.md).
+
+Generate a key **that is not the one you log in with**, on your own machine:
+
+```sh
+ssh-keygen -t ed25519 -N "" -C "github-actions-deploy-staging" -f ci_deploy
+```
+
+Install the wrapper and the restricted key on the box, as `deploy`:
+
+```sh
+cp /opt/rental/repo/infra/compose/ci-command.sh /opt/rental/ci-command.sh
+chmod 755 /opt/rental/ci-command.sh
+printf 'command="/opt/rental/ci-command.sh",restrict %s
+' "$(cat ci_deploy.pub)"   >> /home/deploy/.ssh/authorized_keys
+```
+
+**Reinstall the wrapper whenever it changes in the repository** — nothing does it automatically, and that is deliberate: a mechanism that let CI update the thing constraining CI would defeat itself.
+
+Pin the host key from the box rather than with `ssh-keyscan`, which trusts whatever answers:
+
+```sh
+ssh deploy@<box> cat /etc/ssh/ssh_host_ed25519_key.pub   | awk '{print "<box-ip> " $1 " " $2}' > known_hosts
+```
+
+Then set three secrets on the repository's `staging` **environment** — not repository-wide, so a workflow added later cannot reach them:
+
+```sh
+gh secret set STAGING_SSH_KEY     --env staging < ci_deploy
+gh secret set STAGING_KNOWN_HOSTS --env staging < known_hosts
+printf 'deploy@<box-ip>' | gh secret set STAGING_SSH_TARGET --env staging
+```
+
+Delete the local private key afterwards. Check the restriction actually bites before trusting it:
+
+```sh
+ssh -i ci_deploy deploy@<box> status                    # works
+ssh -i ci_deploy deploy@<box> 'cat /opt/rental/staging.env'   # must be refused
+ssh -i ci_deploy deploy@<box>                           # must refuse a shell
+```
+
+**10. DNS.**
 
 Point both hostnames at the box's IPv4 address with A records, and wait for them to resolve. Caddy obtains certificates on first request, and it cannot do that before DNS is live.
 
@@ -166,7 +209,7 @@ dig +short app.example.com
 dig +short staging.example.com
 ```
 
-**10. Bring up the edge.**
+**11. Bring up the edge.**
 
 ```sh
 cd /opt/rental/repo/infra/compose
