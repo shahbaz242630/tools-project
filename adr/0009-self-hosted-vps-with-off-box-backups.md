@@ -1,8 +1,20 @@
 # 0009. Self-host on a VPS, with database backups off the box
 
-- **Status:** Accepted
+- **Status:** Accepted; **hosting half superseded by [0037](0037-managed-postgres-with-self-hosted-applications.md)** (9 August 2026)
 - **Date:** 2026-07-26
 - **Relates to:** BRD §4, §9, §12.4, §14, §3.4 — §4 and §14 amended 27 July 2026 to match this decision
+
+> **Read 0037 before acting on this.** Applications still run on a self-managed box, so the
+> operational reasoning below stands. **Postgres does not** — it runs managed on Neon, which
+> discharges the off-box durability requirement this ADR called non-negotiable rather than
+> deferring it to a Phase 5 decision.
+>
+> One correction, because it cost us the check: this ADR says _"ADR 0004's `btree_gist`
+> dependency constrains which providers qualify, and must be checked before choosing."_ When
+> that check was finally run, **`btree_gist` was available everywhere tested. PostGIS was not** —
+> Railway's managed Postgres has no PostGIS at all, and that is what disqualified it. The
+> constraint list a provider must satisfy is `postgis`, `btree_gist`, `pg_trgm` and `citext`,
+> and it is exactly the list `scripts/verify-stack.mjs` already checks.
 
 ## Context
 
