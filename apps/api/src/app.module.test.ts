@@ -14,7 +14,8 @@ import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from './feature-flags/testing/fakes.js';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
-  const { sessionVerifier, service } = createIdentityFakes();
+  const { sessionVerifier, service, accountData, accountAdmin, roleApprovals } =
+    createIdentityFakes();
 
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -25,7 +26,13 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
         metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,
-        identity: { sessionVerifier, service },
+        identity: {
+          sessionVerifier,
+          service,
+          accountData,
+          accountAdmin,
+          roleApprovals,
+        },
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,
         catalogue: createCatalogueFakes().service,

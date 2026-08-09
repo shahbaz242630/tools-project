@@ -25,6 +25,10 @@ import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
 import { ClerkSessionVerifier } from './identity/clerk-session-verifier.js';
 import { IdentityService } from './identity/identity.service.js';
+import { AccountErasure } from './identity/account-erasure.js';
+import { AccountDataService } from './identity/account-data.service.js';
+import { AccountAdminService } from './identity/account-admin.service.js';
+import { RoleApprovalService } from './identity/role-approval.service.js';
 import { PrismaAdminApprovalStore } from './identity/prisma-admin-approval-store.js';
 import { PrismaAuthenticationEvents } from './identity/prisma-authentication-events.js';
 import {
@@ -140,9 +144,14 @@ async function bootstrap(): Promise<void> {
   // changed.** Two erasers compose into the one function below, and a second
   // export source sits beside the profile one. That is the whole return on
   // having made them ports rather than calls into `ProfilesService`.
-  const identity: IdentityService = new IdentityService(
-    new PrismaUserDirectory(database),
-    new PrismaWebhookLedger(database),
+  // The identity module is four services from slice H4, assembled here rather
+  // than by a container. They share a directory, the audit trail and — for the
+  // two that can delete an account — one erasure collaborator.
+  const users = new PrismaUserDirectory(database);
+  const authenticationEvents = new PrismaAuthenticationEvents(database);
+
+  const erasure = new AccountErasure(
+    users,
     audit,
     {
       // Sequential rather than `Promise.all`, deliberately. Erasure must be
@@ -155,12 +164,35 @@ async function bootstrap(): Promise<void> {
         await listings.eraseFor(actor);
       },
     },
-    { exportFor: (userId) => profiles.exportFor(userId) },
-    { exportFor: (userId) => listings.exportFor(userId) },
-    { summaryFor: (userId) => profiles.adminSummaryFor(userId) },
-    new PrismaAdminApprovalStore(database),
-    new PrismaAuthenticationEvents(database),
+    authenticationEvents,
+  );
+
+  const identity: IdentityService = new IdentityService(
+    users,
+    new PrismaWebhookLedger(database),
+    audit,
+    authenticationEvents,
+    erasure,
     logger.child({ module: 'identity' }),
+  );
+
+  const accountData = new AccountDataService(
+    users,
+    audit,
+    { exportFor: (userId: string) => profiles.exportFor(userId) },
+    { exportFor: (userId: string) => listings.exportFor(userId) },
+    authenticationEvents,
+    erasure,
+  );
+
+  const accountAdmin = new AccountAdminService(users, audit, {
+    summaryFor: (userId: string) => profiles.adminSummaryFor(userId),
+  });
+
+  const roleApprovals = new RoleApprovalService(
+    users,
+    audit,
+    new PrismaAdminApprovalStore(database),
   );
 
   const profiles: ProfilesService = new ProfilesService(
@@ -261,6 +293,9 @@ async function bootstrap(): Promise<void> {
       identity: {
         sessionVerifier,
         service: identity,
+        accountData,
+        accountAdmin,
+        roleApprovals,
         mfaBypassed: identityEnv.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
       },
       profiles,

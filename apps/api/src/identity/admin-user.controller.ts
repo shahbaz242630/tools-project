@@ -14,9 +14,9 @@ import { ContractViolationError } from '@platform/contracts';
 import type { AdminUserView } from '@platform/contracts';
 import { AuthGuard, Roles } from './auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
-import { IDENTITY_SERVICE } from './auth.guard.js';
+import { ACCOUNT_ADMIN_SERVICE } from './identity.tokens.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
-import type { IdentityService } from './identity.service.js';
+import type { AccountAdminService } from './account-admin.service.js';
 import type { MirroredUser } from './user-directory.js';
 
 /**
@@ -41,7 +41,9 @@ import type { MirroredUser } from './user-directory.js';
 @Controller()
 @UseGuards(AuthGuard)
 export class AdminUserController {
-  constructor(@Inject(IDENTITY_SERVICE) private readonly identity: IdentityService) {}
+  constructor(
+    @Inject(ACCOUNT_ADMIN_SERVICE) private readonly identity: AccountAdminService,
+  ) {}
 
   @Get(ADMIN_USER_ROUTE)
   @Roles('ADMIN')

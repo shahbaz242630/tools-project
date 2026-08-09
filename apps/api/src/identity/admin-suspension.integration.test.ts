@@ -79,6 +79,9 @@ beforeEach(async () => {
         identity: {
           sessionVerifier: identity.sessionVerifier,
           service: identity.service,
+          accountData: identity.accountData,
+          accountAdmin: identity.accountAdmin,
+          roleApprovals: identity.roleApprovals,
         },
         profiles: profiles.service,
         audit: audit.service,
@@ -276,7 +279,7 @@ describe('suspending', () => {
     const admin = await promote('admin-token');
 
     await expect(
-      identity.service.suspend(
+      identity.accountAdmin.suspend(
         {
           userId: '00000000-0000-4000-8000-0000000000ff',
           ipAddress: null,
@@ -293,7 +296,7 @@ describe('suspending', () => {
   it('refuses a deleted account', async () => {
     await promote('admin-token');
     const bob = await idOf('bob-token');
-    await identity.service.requestDeletion({
+    await identity.accountData.requestDeletion({
       userId: bob,
       ipAddress: null,
       sessionId: null,

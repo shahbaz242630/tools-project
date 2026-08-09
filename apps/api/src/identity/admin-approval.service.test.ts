@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalConflictError, approvalState } from './admin-approval.js';
 import type { AdminApproval } from './admin-approval.js';
-import { ApprovalRefusedError } from './identity.service.js';
+import { ApprovalRefusedError } from './identity-errors.js';
 import { createIdentityFakes } from './testing/fakes.js';
 import type { IdentityFakes } from './testing/fakes.js';
 
@@ -66,7 +66,7 @@ beforeEach(async () => {
 });
 
 const propose = (proposer: string, target: string, role: 'ADMIN' | 'USER' = 'ADMIN') =>
-  fakes.service.proposeRoleChange(actor(proposer), target, role, REASON);
+  fakes.roleApprovals.proposeRoleChange(actor(proposer), target, role, REASON);
 
 describe('proposeRoleChange', () => {
   it('creates a pending proposal without changing anything', async () => {
@@ -100,7 +100,7 @@ describe('proposeRoleChange', () => {
   });
 
   it('refuses a deleted account', async () => {
-    await fakes.service.requestDeletion(actor(carol));
+    await fakes.accountData.requestDeletion(actor(carol));
 
     await expect(propose(alice, carol)).rejects.toBeInstanceOf(ApprovalRefusedError);
   });
@@ -119,7 +119,7 @@ describe('approve', () => {
   it('applies the change when a second administrator agrees', async () => {
     const proposal = await propose(alice, carol);
 
-    await fakes.service.approve(actor(bob), proposal.id, AGREED);
+    await fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED);
 
     expect((await fakes.users.findById(carol))?.role).toBe('ADMIN');
   });
@@ -129,7 +129,7 @@ describe('approve', () => {
     const proposal = await propose(alice, carol);
 
     await expect(
-      fakes.service.approve(actor(alice), proposal.id, AGREED),
+      fakes.roleApprovals.approve(actor(alice), proposal.id, AGREED),
     ).rejects.toBeInstanceOf(ApprovalRefusedError);
 
     expect((await fakes.users.findById(carol))?.role).toBe('USER');
@@ -137,7 +137,7 @@ describe('approve', () => {
 
   it('records the change with differing before and after state', async () => {
     const proposal = await propose(alice, carol);
-    await fakes.service.approve(actor(bob), proposal.id, AGREED);
+    await fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED);
 
     const entry = fakes.audit.log
       .entries()
@@ -151,10 +151,10 @@ describe('approve', () => {
 
   it('refuses a proposal that was already decided', async () => {
     const proposal = await propose(alice, carol);
-    await fakes.service.approve(actor(bob), proposal.id, AGREED);
+    await fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED);
 
     await expect(
-      fakes.service.approve(actor(bob), proposal.id, AGREED),
+      fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED),
     ).rejects.toBeInstanceOf(ApprovalConflictError);
   });
 
@@ -163,14 +163,18 @@ describe('approve', () => {
     await expire(proposal.id);
 
     await expect(
-      fakes.service.approve(actor(bob), proposal.id, AGREED),
+      fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED),
     ).rejects.toBeInstanceOf(ApprovalConflictError);
     expect((await fakes.users.findById(carol))?.role).toBe('USER');
   });
 
   it('refuses an unknown proposal', async () => {
     await expect(
-      fakes.service.approve(actor(bob), '00000000-0000-4000-9000-0000000000ff', AGREED),
+      fakes.roleApprovals.approve(
+        actor(bob),
+        '00000000-0000-4000-9000-0000000000ff',
+        AGREED,
+      ),
     ).rejects.toBeInstanceOf(ApprovalRefusedError);
   });
 
@@ -186,7 +190,7 @@ describe('approve', () => {
     fakes.users.seed({ ...stepped!, role: 'USER' });
 
     await expect(
-      fakes.service.approve(actor(alice), proposal.id, AGREED),
+      fakes.roleApprovals.approve(actor(alice), proposal.id, AGREED),
     ).rejects.toBeInstanceOf(ApprovalRefusedError);
     expect((await fakes.users.findById(bob))?.role).toBe('ADMIN');
   });
@@ -195,10 +199,10 @@ describe('approve', () => {
     // A day may pass. The account can be deleted in between, and applying the
     // change then would be acting on facts nobody agreed to.
     const proposal = await propose(alice, carol);
-    await fakes.service.requestDeletion(actor(carol));
+    await fakes.accountData.requestDeletion(actor(carol));
 
     await expect(
-      fakes.service.approve(actor(bob), proposal.id, AGREED),
+      fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED),
     ).rejects.toBeInstanceOf(ApprovalRefusedError);
   });
 });
@@ -209,7 +213,7 @@ describe('cancelApproval', () => {
     // effect, and dual approval is about causing one.
     const proposal = await propose(alice, carol);
 
-    const cancelled = await fakes.service.cancelApproval(
+    const cancelled = await fakes.roleApprovals.cancelApproval(
       actor(alice),
       proposal.id,
       'withdrawn, raised in error',
@@ -221,10 +225,10 @@ describe('cancelApproval', () => {
 
   it('refuses to cancel something already approved', async () => {
     const proposal = await propose(alice, carol);
-    await fakes.service.approve(actor(bob), proposal.id, AGREED);
+    await fakes.roleApprovals.approve(actor(bob), proposal.id, AGREED);
 
     await expect(
-      fakes.service.cancelApproval(actor(alice), proposal.id, 'too late'),
+      fakes.roleApprovals.cancelApproval(actor(alice), proposal.id, 'too late'),
     ).rejects.toBeInstanceOf(ApprovalConflictError);
   });
 });
@@ -233,9 +237,13 @@ describe('listPendingApprovals', () => {
   it('omits what has already been decided', async () => {
     const kept = await propose(alice, carol);
     const withdrawn = await propose(alice, bob, 'USER');
-    await fakes.service.cancelApproval(actor(alice), withdrawn.id, 'withdrawn, error');
+    await fakes.roleApprovals.cancelApproval(
+      actor(alice),
+      withdrawn.id,
+      'withdrawn, error',
+    );
 
-    const pending = await fakes.service.listPendingApprovals();
+    const pending = await fakes.roleApprovals.listPendingApprovals();
     expect(pending.map((p) => p.id)).toEqual([kept.id]);
   });
 });

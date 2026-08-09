@@ -4,7 +4,7 @@ import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { CLIENT_IP_HEADER } from '@platform/contracts';
 import type { Logger } from '@platform/observability';
-import { AccountDeletedError } from './identity.service.js';
+import { AccountDeletedError } from './identity-errors.js';
 import { validIpOrNull } from './ip-address.js';
 import type { IdentityService } from './identity.service.js';
 import { SessionVerificationError } from './session-verifier.js';
@@ -12,6 +12,15 @@ import type { SessionVerifier, VerifiedSession } from './session-verifier.js';
 import type { MirroredUser, UserRole } from './user-directory.js';
 
 export const SESSION_VERIFIER = Symbol('SESSION_VERIFIER');
+/**
+ * The mirror service — what the guard resolves a session against.
+ *
+ * Still named `IDENTITY_SERVICE` after slice H4 split the class four ways,
+ * because this is the piece the guard was always reaching for. The three
+ * services that moved out have their own tokens in `identity.tokens.ts`; they
+ * are not here because nothing in the guard injects them, and a token declared
+ * beside a guard that does not use it is a hint in the wrong direction.
+ */
 export const IDENTITY_SERVICE = Symbol('IDENTITY_SERVICE');
 export const AUTH_LOGGER = Symbol('AUTH_LOGGER');
 
