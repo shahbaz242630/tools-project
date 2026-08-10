@@ -333,6 +333,33 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return Promise.resolve(published);
   }
 
+  pause(id: string, ownerId: string): Promise<ListingRecord | null> {
+    const index = this.listings.findIndex(
+      (listing) => listing.id === id && listing.ownerId === ownerId,
+    );
+    if (index === -1) return Promise.resolve(null);
+
+    const listing = this.listings[index];
+    /* c8 ignore next */
+    if (listing === undefined) return Promise.resolve(null);
+
+    // `publish`'s shape: idempotent, and replacing the record rather than
+    // mutating it, because the real store re-reads and hands back a new one.
+    //
+    // **It does not check the current status**, exactly as the real query does
+    // not put one in its `where`. A double that refused to pause a draft would
+    // hide a missing check in the service — the legality of the transition is
+    // the service's to enforce, and a test proving it does so has to be able to
+    // reach a store that would have allowed it.
+    const paused: ListingRecord = {
+      ...listing,
+      status: 'PAUSED',
+      updatedAt: Time.nowUtc(),
+    };
+    this.listings[index] = paused;
+    return Promise.resolve(paused);
+  }
+
   listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
     // Newest first, matching the real store's `orderBy` and the index behind
     // it. A double that returned insertion order would let a test pass while
@@ -350,27 +377,20 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
   }
 
   /**
-   * Erase the precise half, keep the listing — the real store's behaviour, and
-   * the thing worth getting right in a double.
+   * Delete the listings outright — the real store's behaviour since 2.8b.
    *
-   * A fake that deleted the listings would let an erasure test pass while the
-   * real system kept rows a booking depends on, and a fake that did nothing
-   * would let one pass while an address survived a deletion request.
+   * **This double used to keep the listing and clear its address**, which was
+   * right when the real store did that. Changing it in step matters more than it
+   * looks: a fake that still cleared an address and kept the row would let an
+   * erasure test pass while the real system deleted rows, and the two would only
+   * disagree in a db test nobody had thought to write.
    */
-  eraseLocationsFor(ownerId: string): Promise<void> {
-    this.listings.forEach((listing, index) => {
-      if (listing.ownerId === ownerId) {
-        // The coordinates go with the address, because the whole
-        // `listing_locations` row goes. A double that cleared the address and
-        // left the listing "located" would let an erasure test pass while the
-        // real system kept a point on somebody's house.
-        this.listings[index] = {
-          ...listing,
-          collectionLocation: null,
-          isLocated: false,
-        };
-      }
-    });
+  deleteAllOwnedBy(ownerId: string): Promise<void> {
+    // Spliced in place rather than reassigned, because the array is `readonly`
+    // — the field, not its contents — and because a test holding a reference to
+    // it should see the same emptying the store sees.
+    const survivors = this.listings.filter((listing) => listing.ownerId !== ownerId);
+    this.listings.splice(0, this.listings.length, ...survivors);
     return Promise.resolve();
   }
 

@@ -5,7 +5,7 @@ import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { listingPath } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
-import { publishListing } from '../../../lib/listings';
+import { pauseListing, publishListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { INITIAL_PUBLICATION_STATE } from './publication-state';
 import type { PublicationActionState } from './publication-state';
@@ -109,6 +109,111 @@ export async function publishListingAction(
         ...INITIAL_PUBLICATION_STATE,
         status: 'error',
         message: outcome.reason,
+      };
+
+    case 'stale-category':
+    case 'unreachable':
+    case 'malformed':
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: `That did not complete — ${outcome.reason}`,
+      };
+  }
+}
+
+/**
+ * Pausing a listing (§8.3, slice 2.8b).
+ *
+ * The mirror of `publishListingAction`, and deliberately shorter: pausing has no
+ * completeness rules to fail, no platform switch to be refused by, and nothing
+ * typed into a form that could be wrong. What is left is the id, the request,
+ * and the two ways it can be refused — the listing is not theirs, or it was
+ * never published.
+ *
+ * **Reuses `PublicationActionState`** rather than adding a second shape. Both
+ * controls sit in the same region of the same page and only one can be pressed
+ * at a time; two states would let the page hold a stale refusal from the other
+ * button while showing this one's outcome.
+ */
+export async function pauseListingAction(
+  _previous: PublicationActionState,
+  form: FormData,
+): Promise<PublicationActionState> {
+  const id = String(form.get('listingId') ?? '').trim();
+  if (id === '') {
+    return {
+      ...INITIAL_PUBLICATION_STATE,
+      status: 'error',
+      message: 'That listing could not be identified. Reload the page and try again.',
+    };
+  }
+
+  const { getToken } = await auth();
+  const outcome = await pauseListing(
+    webEnv().API_BASE_URL,
+    await getToken(),
+    id,
+    undefined,
+    clientIpFrom((await headers()).get('x-forwarded-for')),
+  );
+
+  switch (outcome.kind) {
+    case 'loaded':
+      // The page is a server component, so it has to be told the row changed.
+      // Without this the owner presses Pause, the request succeeds, and the page
+      // redraws from cache still saying Published — the defect 2.8a found on the
+      // other button.
+      revalidatePath(listingPath(id));
+      return { ...INITIAL_PUBLICATION_STATE, status: 'idle' };
+
+    case 'refused':
+      /*
+       * The API's own sentence, verbatim and unprefixed — `unavailable`'s
+       * treatment on the publish action, for the same two reasons. It is not a
+       * fault, and there is no uncertainty about whether anything happened: the
+       * listing is exactly as it was and the API has said why in words written
+       * for the person reading them.
+       */
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: outcome.reason,
+      };
+
+    case 'not-found':
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: 'That listing no longer exists.',
+      };
+
+    case 'forbidden':
+      /*
+       * Reachable only if the suspension rule changes, because ADR 0024 lets a
+       * suspended owner pause — taking a listing down makes strangers see less.
+       * Kept rather than folded into the generic branch: if somebody ever
+       * removes `@AllowsSuspended()` from the route, this is the difference
+       * between an explanation and "API answered 403".
+       */
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: 'You cannot change this listing while your account is suspended.',
+      };
+
+    case 'signed-out':
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: 'Your session has expired. Sign in again.',
+      };
+
+    case 'invalid':
+      return {
+        ...INITIAL_PUBLICATION_STATE,
+        status: 'error',
+        message: outcome.issues.join('; '),
       };
 
     case 'stale-category':

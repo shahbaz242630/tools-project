@@ -2,12 +2,15 @@ import {
   TRANSPORT_REQUIREMENT_LABELS,
   offersTransportRequirement,
   publicationBlockers,
+  transitionRefusal,
   validateAttributeValues,
 } from '@platform/contracts';
 import type {
   AttributeValueIssue,
   ExportedListingsSection,
   ListingCollectionLocation,
+  ListingStatus,
+  ListingTransition,
   PublicationBlocker,
   TransportRequirement,
 } from '@platform/contracts';
@@ -145,6 +148,28 @@ export class PublicationSuspendedError extends Error {
   constructor() {
     super('Publishing listings is temporarily switched off');
     this.name = 'PublicationSuspendedError';
+  }
+}
+
+/**
+ * Raised when a transition is not legal from the listing's current state
+ * (slice 2.8b).
+ *
+ * **A third error rather than a blocker or a publication refusal**, because it
+ * answers a third question. `ListingNotPublishableError` means the listing is
+ * incomplete and names what to add. This means the listing is in a state where
+ * the request makes no sense — pausing something that was never published — and
+ * there is nothing to add, nothing to fix, and no reason to show a list of
+ * fields. The controller answers 409 rather than 422 for exactly that reason:
+ * one is fixed by supplying more, the other is not fixed by supplying anything.
+ *
+ * Carries the sentence `transitionRefusal` produced, so the wording lives beside
+ * the rule rather than being reinvented at the route.
+ */
+export class ListingTransitionRefusedError extends Error {
+  constructor(readonly refusal: string) {
+    super(refusal);
+    this.name = 'ListingTransitionRefusedError';
   }
 }
 
@@ -404,6 +429,20 @@ export class ListingsService {
     const listing = await this.store.findOwnedBy(id, ownerId);
     if (listing === null) return null;
 
+    /*
+     * **Resuming a paused listing comes through here**, and that is the design
+     * rather than an accident of routing (slice 2.8b). An owner sees two words,
+     * Publish and Resume, and the platform sees one operation: putting a listing
+     * in front of strangers. Everything that guards the first must guard the
+     * second — the kill switch above, and the completeness rules below.
+     *
+     * A separate `resume` that trusted "it was complete when it was published"
+     * would be a second door into public view, and the first thing to walk
+     * through it would be a listing whose category was reconfigured while it
+     * was paused.
+     */
+    this.refuseIllegalTransition('publish', listing.status);
+
     const blockers = publicationBlockers({
       description: listing.description,
       attributes: listing.attributes,
@@ -418,6 +457,56 @@ export class ListingsService {
     if (blockers.length > 0) throw new ListingNotPublishableError(blockers);
 
     return this.store.publish(id, ownerId);
+  }
+
+  /**
+   * Take a listing out of public view, reversibly (§8.3, slice 2.8b).
+   *
+   * **The kill switch is deliberately not checked here.** It stops listings
+   * *going* public; stopping an owner from taking one down would be the switch
+   * working backwards, and the incident it exists for is exactly when somebody
+   * most needs to be able to withdraw their item. `isPublicationEnabled` gates
+   * `publish` alone, which is why resuming is refused while pausing is not.
+   *
+   * **No audit entry, and that is a decision rather than an omission.** Every
+   * audited action in this system is administrative (§8.13), about personal data
+   * (§10.1), or a configuration change (§8.2). An owner pausing their own
+   * listing is none of the three — it is the same kind of act as publishing it,
+   * which 2.8a also left unaudited. The line is *who performed it*: when an
+   * administrator pauses somebody else's listing in 2.8c, that is an
+   * administrative action on a stranger's property and it must be audited then.
+   *
+   * This supersedes the note slice 2.5a left, which guessed that archival would
+   * deserve an entry because "archival is an action". Archival no longer exists,
+   * and the reasoning was the wrong test anyway.
+   *
+   * Returns null when no such listing belongs to this owner, so the route
+   * answers 404 without telling a stranger whose listing it is.
+   *
+   * Throws `ListingTransitionRefusedError` when the listing is not published.
+   */
+  async pause(id: string, ownerId: string): Promise<ListingRecord | null> {
+    const listing = await this.store.findOwnedBy(id, ownerId);
+    if (listing === null) return null;
+
+    this.refuseIllegalTransition('pause', listing.status);
+
+    return this.store.pause(id, ownerId);
+  }
+
+  /**
+   * The state machine, consulted in one place.
+   *
+   * Both transitions ask the same question of the same table in
+   * `@platform/contracts`, and asking it inline twice is how the two come to
+   * disagree once 2.8c adds moderation states.
+   */
+  private refuseIllegalTransition(
+    transition: ListingTransition,
+    from: ListingStatus,
+  ): void {
+    const refusal = transitionRefusal(transition, from);
+    if (refusal !== null) throw new ListingTransitionRefusedError(refusal);
   }
 
   async exportFor(userId: string): Promise<ExportedListingsSection> {
@@ -444,32 +533,32 @@ export class ListingsService {
   }
 
   /**
-   * Remove everything precise this module holds about where somebody is.
+   * Remove what this module holds about somebody: their listings, entirely.
    *
-   * **It erases locations, not listings**, and the difference is the decision.
-   * A listing has to outlive its owner's account deletion — from Phase 4 a
-   * booking references it, and a rental history missing one side is not a
-   * history — while a front door must not. So the `listing_locations` row goes
-   * and the listing stays, collapsed to the outward code and town it was always
-   * published at. A postal district covering thousands of homes is not what
-   * §10.1 asks us to remove.
+   * **Until 2.8b this erased locations and kept the listings**, and the change
+   * is the product owner's decision of 10 August 2026: deleting an account means
+   * the account and its listings are gone. The question 2.5a left open — whether
+   * a deleted owner's listing stays visible — is answered by there being no
+   * listing to show.
    *
-   * **Whether a deleted owner's listing should still be *visible* is not settled
-   * here.** That is archival, it belongs with the lifecycle work in slice 2.8,
-   * and it must be settled before any real user data exists. Today nothing is
-   * publishable at all, so the question has no observable consequence yet — which
-   * is exactly the kind of thing that gets forgotten.
+   * **§10.1 permits this today and will not permit it forever**, and the
+   * difference is worth stating precisely because it is a legal line rather than
+   * a preference. §10.1 distinguishes erasable personal data from records the
+   * platform is *required to retain*. Nothing refers to a listing today, so
+   * nothing requires retaining one. From Phase 4 a booking does, and a renter's
+   * rental history, receipts and any dispute evidence all point at the listing —
+   * at which point deleting it destroys the other party's records, which is the
+   * carve-out's whole purpose. The rule then becomes delete-if-unreferenced,
+   * hide-if-referenced. `ListingStore.deleteAllOwnedBy` carries the same warning
+   * where whoever adds the booking foreign key will meet it.
    *
-   * **Unaudited, deliberately, and it is the one place that reads oddly.**
-   * `ProfilesService.eraseFor` writes a `profile.erased` entry. There is no
-   * equivalent here because the audit entry for the deletion itself is written
-   * by Identity, and a second line saying "and the listing addresses went too"
-   * would record a consequence rather than an action — with a target id for
-   * every listing, in a trail retained six years, about rows that still exist.
-   * If 2.8 makes archival a real state change, *that* is an action and deserves
-   * its own entry.
+   * **Unaudited, deliberately.** `ProfilesService.eraseFor` writes a
+   * `profile.erased` entry; there is no equivalent here because Identity writes
+   * the entry for the deletion itself, and a second line per listing would
+   * record a consequence rather than an action, with a target id for every row,
+   * in a trail retained six years, about rows that no longer exist.
    */
   async eraseFor(actor: Actor): Promise<void> {
-    await this.store.eraseLocationsFor(actor.userId);
+    await this.store.deleteAllOwnedBy(actor.userId);
   }
 }

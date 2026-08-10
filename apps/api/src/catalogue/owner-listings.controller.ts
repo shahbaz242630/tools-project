@@ -3,6 +3,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
   Get,
   Inject,
   NotFoundException,
@@ -26,6 +27,7 @@ import { Time } from '@platform/core';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
 import {
   ListingNotPublishableError,
+  ListingTransitionRefusedError,
   PublicationSuspendedError,
 } from './listings.service.js';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
@@ -205,9 +207,62 @@ export class OwnerListingsController {
           blockers: error.blockers,
         });
       }
-      throw error;
+      throwRefusalAsConflict(error);
     }
   }
+
+  /**
+   * Take a listing out of public view (§8.3, slice 2.8b).
+   *
+   * **`DELETE` on the publication rather than `POST /pause`.** Pausing is
+   * removing the publication this path already names, and the verb pair says
+   * which two operations are opposites in a way a second noun could not.
+   *
+   * **No kill-switch case here.** The switch stops listings going public; it has
+   * no business stopping an owner taking one down, and an incident is exactly
+   * when somebody most needs to be able to. So this route has no 503 branch —
+   * not because one was forgotten, but because the service never raises it.
+   *
+   * **`@AllowsSuspended()`, unlike publishing, and the asymmetry is the rule
+   * rather than an exception to it.** ADR 0024 stops a suspended account writing
+   * anything others would see. Pausing is the only write on this controller that
+   * makes strangers see *less*, and refusing it would leave a suspended owner
+   * unable to withdraw their own item while it stayed live — punishing them by
+   * forcing publication, which is not what a suspension is for. It sits with
+   * export and deletion, which ADR 0024 also keeps available.
+   */
+  @Delete(LISTING_PUBLICATION_ROUTE)
+  @AllowsSuspended()
+  async pause(
+    @Param('id') id: string,
+    @CurrentUser() owner: MirroredUser,
+  ): Promise<OwnerListing> {
+    try {
+      const paused = await this.listings.pause(id, owner.id);
+      if (paused === null) throw new NotFoundException();
+
+      return toOwnerListing(paused, await this.listings.isPublicationAvailable());
+    } catch (error) {
+      throwRefusalAsConflict(error);
+    }
+  }
+}
+
+/**
+ * An illegal transition as a 409, or the original error untouched.
+ *
+ * **409 rather than 422, and the pair is the point.** 422 says the state of the
+ * listing is wrong in a way its owner can put right, and it carries the list of
+ * what to fix. 409 says the request does not apply to a listing in this state at
+ * all — there is no field to add and no list to show, and pausing a draft will
+ * not become possible by supplying anything. A client that could not tell them
+ * apart would render an empty checklist under "here is what is left to do".
+ */
+function throwRefusalAsConflict(error: unknown): never {
+  if (error instanceof ListingTransitionRefusedError) {
+    throw new ConflictException({ message: error.refusal });
+  }
+  throw error;
 }
 
 /** One place for the contract-violation translation, so no route can 500 on one. */

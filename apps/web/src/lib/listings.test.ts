@@ -3,6 +3,7 @@ import {
   createListing,
   fetchCategoryOptions,
   fetchListing,
+  pauseListing,
   publishListing,
 } from './listings';
 import type { FetchLike } from './listings';
@@ -377,5 +378,96 @@ describe('publishListing', () => {
     // Never the bare status code. Somebody who has just tried to publish needs
     // to know the platform refused rather than that their listing is wrong.
     expect('reason' in outcome ? outcome.reason : '').toContain('switched off');
+  });
+});
+
+/**
+ * Pausing, and the status code that already meant something else.
+ *
+ * The test worth having here is the 409 one. `call` maps every 409 to
+ * `stale-category` — correct for `createListing`, where a conflict really does
+ * mean the category moved underneath the form — so without a hook of its own, a
+ * pause refused for being a draft would have reported *"the category was changed
+ * while this page was open"*. That is H3a's defect one status along: **a status
+ * reused on the server is not handled until the client says which meaning it
+ * has.**
+ */
+describe('pauseListing', () => {
+  it('returns the paused listing', async () => {
+    const outcome = await pauseListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(200, JSON.stringify({ ...LISTING, status: 'PAUSED' })),
+    );
+
+    expect(outcome.kind).toBe('loaded');
+  });
+
+  it('sends DELETE, because pausing removes the publication', async () => {
+    const { calls, fetchImpl } = capturing(
+      200,
+      JSON.stringify({ ...LISTING, status: 'PAUSED' }),
+    );
+    await pauseListing(API, TOKEN, LISTING.id, fetchImpl);
+
+    expect(calls[0]?.init?.method).toBe('DELETE');
+    expect(calls[0]?.url).toContain('/publication');
+  });
+
+  it('reads a 409 as a refusal, keeping the API’s sentence', async () => {
+    const message = 'This listing is not published, so there is nothing to pause.';
+
+    const outcome = await pauseListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(409, JSON.stringify({ message })),
+    );
+
+    expect(outcome).toEqual({ kind: 'refused', reason: message });
+  });
+
+  it('does not report a refused pause as a changed category', async () => {
+    const outcome = await pauseListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(
+        409,
+        JSON.stringify({
+          message: 'This listing is not published, so there is nothing to pause.',
+        }),
+      ),
+    );
+
+    // The assertion this whole hook exists for. Without it the owner is told
+    // something plausible, specific and untrue about their category.
+    expect(outcome.kind).not.toBe('stale-category');
+  });
+
+  it('falls back to a usable sentence when a 409 carries no message', async () => {
+    const outcome = await pauseListing(API, TOKEN, LISTING.id, responds(409));
+
+    expect(outcome).toMatchObject({ kind: 'refused' });
+    expect('reason' in outcome ? outcome.reason : '').toContain('cannot be paused');
+  });
+
+  it('still reads a 404 as not found', async () => {
+    expect((await pauseListing(API, TOKEN, LISTING.id, responds(404))).kind).toBe(
+      'not-found',
+    );
+  });
+});
+
+/**
+ * The mapping every other caller depends on, asserted here so that adding the
+ * `on409` hook cannot have quietly changed it.
+ */
+describe('the default meaning of a 409', () => {
+  it('is still a stale category for callers that supply no hook', async () => {
+    const outcome = await publishListing(API, TOKEN, LISTING.id, responds(409));
+
+    expect(outcome.kind).toBe('stale-category');
   });
 });

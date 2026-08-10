@@ -281,7 +281,8 @@ export interface ListingStore {
    * `addVersion` is not called `update`: a port offering an arbitrary status
    * write is one some later route uses to move a listing into a state nothing
    * checked the preconditions for. Each transition gets its own method and its
-   * own guarantees, and 2.8b's pause and archive will be two more.
+   * own guarantees — `pause` below is the second, and it is the only one 2.8b
+   * added, because archive was removed from the BRD rather than built.
    *
    * **The completeness rules are not checked here**, and cannot be: they read
    * the `required` flags on the pinned category version's schema, which is JSON
@@ -299,24 +300,53 @@ export interface ListingStore {
   publish(id: string, ownerId: string): Promise<ListingRecord | null>;
 
   /**
-   * Erase everything precise about where this owner's listings are.
+   * Move a listing to `PAUSED`, but only if this owner owns it (slice 2.8b).
    *
-   * **It erases locations, not listings, and the name says so.** A listing must
-   * survive its owner's account deletion — from Phase 4 a booking references it,
-   * and a rental history that loses one side is not a history. What must not
-   * survive is the front door: the full postcode and the street lines go, and
-   * the outward code and town stay on the listing, so it collapses to the
-   * coarseness it was always published at.
+   * The mirror of `publish`, and deliberately as dull: the *state machine* lives
+   * in `@platform/contracts` and the decision to allow this in the service. This
+   * guarantees only what it alone can see — the row belongs to this owner, and
+   * the write happened.
    *
-   * Whether a deleted owner's listing should still be *visible* is a different
-   * question, and it is slice 2.8's — that is archival, and it has to be settled
-   * before any real user data exists.
+   * **The filter is id and owner, and deliberately not `status: 'PUBLISHED'`.**
+   * Adding the status would make a repeated pause report zero rows touched,
+   * which the service cannot tell apart from "not yours" — trading idempotence
+   * for a 404 on a request that succeeded the first time. `publish` made the
+   * same choice for the same reason.
    *
-   * **Idempotent**, as `PersonalDataEraser` requires: erasing what is already
+   * Resolves to null when no such listing belongs to this owner.
+   */
+  pause(id: string, ownerId: string): Promise<ListingRecord | null>;
+
+  /**
+   * Delete this owner's listings outright, and everything hanging off them.
+   *
+   * **This deletes listings, and until 2.8b it deliberately did not.** It was
+   * `eraseLocationsFor`, which removed the precise address and left the listing
+   * standing, on the reasoning that a listing must outlive its owner's account
+   * because a booking will reference it. The product owner's decision of
+   * 10 August 2026 is that deleting an account means the account and its
+   * listings are gone, and §10.1 permits exactly that: it distinguishes erasable
+   * personal data from **records the platform is required to retain**, and today
+   * nothing refers to a listing, so nothing requires retaining one.
+   *
+   * **That changes the day bookings exist, and this method must change with
+   * it.** From Phase 4 a booking references a listing, and deleting the row
+   * would leave a renter's rental history and payment records pointing at
+   * nothing — which §10.1's own carve-out is there to prevent. The rule then
+   * becomes delete-if-unreferenced, hide-if-referenced, and the hiding is what
+   * `PAUSED` and the visibility check already exist for. **Whoever adds the
+   * booking foreign key must come back here**; a cascade delete or a foreign-key
+   * error at erasure time are both worse than deciding it deliberately.
+   *
+   * The `listing_locations` row goes with the listing rather than being erased
+   * separately — the location is the listing's, and a location whose listing has
+   * gone is not something to keep tidy.
+   *
+   * **Idempotent**, as `PersonalDataEraser` requires: deleting what is already
    * gone is a success, because a retry after a partial failure has to be able to
    * finish the job.
    */
-  eraseLocationsFor(ownerId: string): Promise<void>;
+  deleteAllOwnedBy(ownerId: string): Promise<void>;
 }
 
 /**

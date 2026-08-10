@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { ContractViolationError } from './parse.js';
 import {
   LISTING_DESCRIPTION_MAX_LENGTH,
+  LISTING_STATUSES,
   LISTING_TITLE_MAX_LENGTH,
   MAX_REPLACEMENT_VALUE_MINOR,
   MIN_REPLACEMENT_VALUE_MINOR,
+  canTransition,
+  isPubliclyVisible,
   parseListingDraft,
+  transitionRefusal,
 } from './listings.js';
+import type { ListingStatus, ListingTransition } from './listings.js';
 
 const validDraft = {
   categorySlug: 'outdoor-gardening',
@@ -335,5 +340,75 @@ describe('the transport requirement', () => {
 
     expect(draft.transportRequirement).toBe('van_required');
     expect(draft.requiresTwoPersonLift).toBe(true);
+  });
+});
+
+describe('what the public can see', () => {
+  it('shows a published listing and nothing else', () => {
+    // Written as an exhaustive sweep rather than three assertions, so that a
+    // status added in 2.8c fails here until somebody has decided whether
+    // strangers may see it. A new state defaulting to invisible would be safe;
+    // a new state defaulting to *visible* is a listing shown against its
+    // owner's wishes, and the difference must not be settled by whoever adds
+    // the enum value.
+    const visible = LISTING_STATUSES.filter((status) => isPubliclyVisible(status));
+
+    expect(visible).toEqual(['PUBLISHED']);
+  });
+
+  it('hides a paused listing, which is the whole point of pausing', () => {
+    expect(isPubliclyVisible('PAUSED')).toBe(false);
+  });
+});
+
+describe('the transitions', () => {
+  // The table in one place, so a reader can see the whole state machine and so
+  // an added status cannot quietly acquire a default answer.
+  const cases: ReadonlyArray<[ListingTransition, ListingStatus, boolean]> = [
+    ['publish', 'DRAFT', true],
+    ['publish', 'PUBLISHED', true],
+    ['publish', 'PAUSED', true],
+    ['pause', 'DRAFT', false],
+    ['pause', 'PUBLISHED', true],
+    ['pause', 'PAUSED', true],
+  ];
+
+  it.each(cases)('%s from %s is %s', (transition, from, allowed) => {
+    expect(canTransition(transition, from)).toBe(allowed);
+  });
+
+  it('covers every status for every transition', () => {
+    // The table above is hand-written, so this asserts it is complete. Without
+    // it, adding a status leaves a pair silently untested — which is exactly
+    // how a state acquires an unconsidered transition rule.
+    const transitions: readonly ListingTransition[] = ['publish', 'pause'];
+    const expected = transitions.length * LISTING_STATUSES.length;
+
+    expect(cases).toHaveLength(expected);
+  });
+
+  it('treats resuming as publishing rather than a transition of its own', () => {
+    // The kill switch and the completeness gate both hang off publish. A
+    // separate resume would be a second door into public view, past both.
+    expect(canTransition('publish', 'PAUSED')).toBe(true);
+  });
+
+  it('is idempotent, because a retried request is not a mistake', () => {
+    expect(canTransition('publish', 'PUBLISHED')).toBe(true);
+    expect(canTransition('pause', 'PAUSED')).toBe(true);
+  });
+
+  it('says nothing when the transition is legal', () => {
+    expect(transitionRefusal('pause', 'PUBLISHED')).toBeNull();
+  });
+
+  it('explains a refused pause in words an owner can act on', () => {
+    const refusal = transitionRefusal('pause', 'DRAFT');
+
+    // A sentence naming its own subject, per contract-issues.ts. Asserted as a
+    // property rather than a literal, so rewording the copy does not fail the
+    // test but dropping the subject does.
+    expect(refusal).toContain('This listing');
+    expect(refusal).not.toContain('DRAFT');
   });
 });

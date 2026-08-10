@@ -21,6 +21,18 @@ export function DeletionExplanation() {
           <li>Your phone number</li>
           <li>Your address, including the encrypted street lines</li>
           <li>Your public profile, which stops being reachable immediately</li>
+          {/*
+            Added in slice 2.8b, and it is the change that made this component's
+            docblock true rather than aspirational: what we retain changed, so
+            what we tell people had to change with it. Until 10 August 2026 a
+            listing survived its owner's deletion with only its precise address
+            removed, and this list said nothing about listings either way —
+            which was defensible then and would be a false statement now.
+          */}
+          <li>
+            <strong>Every listing you have</strong>, including anything currently
+            published, along with the collection address on each one
+          </li>
         </ul>
         <p>
           These are removed outright, not hidden. They will not be in any backup taken

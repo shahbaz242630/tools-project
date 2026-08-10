@@ -1618,3 +1618,142 @@ describe('what publication refuses', () => {
     expect(published.categoryVersionNumber).toBe(1);
   });
 });
+
+/**
+ * Pause, resume, and the states in between (§8.3, slice 2.8b).
+ *
+ * The route is `DELETE` on the publication rather than a `/pause` path, because
+ * pausing is removing the publication that `POST` created.
+ */
+describe('pausing a listing', () => {
+  beforeEach(async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+  });
+
+  const READY = {
+    ...DRAFT,
+    description: 'Serviced last spring. Blade recently sharpened.',
+    attributes: { power_source: 'petrol', weight_kg: '5.2' },
+    transportRequirement: 'car_boot',
+    collectionLocation: ADDRESS,
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  const publish = (id: string, token = 'alice-token') =>
+    app.inject({
+      method: 'POST',
+      url: listingPublicationPath(id),
+      headers: auth(token),
+    });
+
+  const pause = (id: string, token = 'alice-token') =>
+    app.inject({
+      method: 'DELETE',
+      url: listingPublicationPath(id),
+      headers: auth(token),
+    });
+
+  async function givenAPublishedListing(body: Record<string, unknown> = READY) {
+    const listing = parseOwnerListing(
+      (await createListing('alice-token', body)).json(),
+    );
+    await publish(listing.id);
+    return listing;
+  }
+
+  it('takes a published listing out of public view', async () => {
+    const listing = await givenAPublishedListing();
+
+    const response = await pause(listing.id);
+
+    expect(response.statusCode).toBe(200);
+    expect(parseOwnerListing(response.json()).status).toBe('PAUSED');
+  });
+
+  it('is idempotent, because every state transition is', async () => {
+    const listing = await givenAPublishedListing();
+    await pause(listing.id);
+
+    const again = await pause(listing.id);
+
+    expect(again.statusCode).toBe(200);
+    expect(parseOwnerListing(again.json()).status).toBe('PAUSED');
+  });
+
+  it('resumes through POST, because resuming is publishing', async () => {
+    const listing = await givenAPublishedListing();
+    await pause(listing.id);
+
+    const response = await publish(listing.id);
+
+    expect(response.statusCode).toBe(201);
+    expect(parseOwnerListing(response.json()).status).toBe('PUBLISHED');
+  });
+
+  it('refuses to pause a draft, with 409 rather than 422', async () => {
+    // 422 carries a list of what to fix and invites the owner to fix it. There
+    // is nothing to fix here: the listing was never published. A client that
+    // could not tell the two apart would render an empty checklist.
+    const listing = parseOwnerListing(
+      (await createListing('alice-token', READY)).json(),
+    );
+
+    const response = await pause(listing.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.stringify(response.json())).toContain('nothing to pause');
+  });
+
+  it('answers 404 for a listing belonging to somebody else', async () => {
+    const listing = await givenAPublishedListing();
+
+    // Not 403, and not 409 either — a stranger must not learn that this listing
+    // exists, nor what state it is in.
+    expect((await pause(listing.id, 'bob-token')).statusCode).toBe(404);
+  });
+
+  it('answers 404 for a listing that does not exist', async () => {
+    expect((await pause('11111111-1111-4111-8111-111111111111')).statusCode).toBe(404);
+  });
+
+  it('refuses an anonymous caller', async () => {
+    const listing = await givenAPublishedListing();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: listingPublicationPath(listing.id),
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  /**
+   * The asymmetry with publish, asserted rather than described.
+   *
+   * ADR 0024 stops a suspended account writing anything others would see.
+   * Pausing makes others see *less*, and a suspended owner unable to withdraw
+   * their own live item would be punished by forced publication.
+   */
+  it('allows a suspended owner to pause, though not to publish', async () => {
+    const listing = await givenAPublishedListing();
+    identity.users.suspend(await idOf('alice-token'), 'admin-id', 'Repeated no-shows');
+
+    expect((await pause(listing.id)).statusCode).toBe(200);
+    expect((await publish(listing.id)).statusCode).toBe(403);
+  });
+
+  /**
+   * The kill switch stops listings going public. It has no business stopping
+   * one being taken down — an incident is when somebody most needs to.
+   */
+  it('still pauses while publishing is switched off platform-wide', async () => {
+    const listing = await givenAPublishedListing();
+    listings.publication.off();
+
+    expect((await pause(listing.id)).statusCode).toBe(200);
+    // And the way back is shut, which is the half that proves the switch is
+    // still doing its job rather than simply being ignored.
+    expect((await publish(listing.id)).statusCode).toBe(503);
+  });
+});

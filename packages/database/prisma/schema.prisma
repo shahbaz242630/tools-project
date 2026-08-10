@@ -847,9 +847,18 @@ model Listing {
   /// Whose item it is.
   ///
   /// `ON DELETE RESTRICT`, Prisma's default for a required relation. It never
-  /// fires in production because accounts are soft-deleted, and that is the
-  /// point: a listing must not vanish from a booking's history because its owner
-  /// closed their account.
+  /// fires in production because accounts are soft-deleted rather than removed.
+  ///
+  /// **It is not what decides whether a listing survives its owner, and reading
+  /// it that way is the trap** (slice 2.8b). Since 10 August 2026 deleting an
+  /// account deletes its listings, and that happens through a deliberate
+  /// `deleteMany` in `PrismaListingStore.deleteAllOwnedBy` — an application
+  /// decision, taken where §10.1's distinction between erasable data and
+  /// retained records can actually be read. `RESTRICT` stays because the
+  /// alternative, `CASCADE`, would make that decision silently at the schema
+  /// level: once a booking references a listing, a cascade from `users` would
+  /// destroy the other party's rental history with nothing in the application
+  /// having chosen to.
   ownerId String @db.Uuid
   owner   User   @relation(fields: [ownerId], references: [id])
 
@@ -997,11 +1006,19 @@ model Listing {
   /// Nullable at all because a draft legitimately has not said where the item
   /// lives (§8.3); publication is where that becomes required (2.8).
   ///
-  /// **They survive erasure**, deliberately. Deleting an account removes the
-  /// `listing_locations` row and leaves these, so the listing collapses to the
-  /// coarseness it was always published at rather than losing coherence — a
-  /// listing that must outlive its owner for booking history, and a district
-  /// that identifies nobody.
+  /// **They no longer survive erasure, because the listing does not** (slice
+  /// 2.8b). This said the opposite until 10 August 2026: deleting an account
+  /// removed the `listing_locations` row and left these, so a listing collapsed
+  /// to the district it was always published at. The product owner's decision is
+  /// that deleting an account deletes its listings, and §10.1 permits it while
+  /// nothing the platform must retain refers to one.
+  ///
+  /// **These columns still hold nothing finer than a postal district**, which is
+  /// the reason they are here and is unchanged: they are the publishable half,
+  /// and the public projection reads them instead of joining `listing_locations`
+  /// at all (§8.4.1). When Phase 4 makes a booking reference a listing, erasure
+  /// becomes delete-if-unreferenced and hide-if-referenced — and the retained
+  /// listing collapses to exactly these two columns again.
   outwardCode String? @db.Text
   town        String? @db.Text
 

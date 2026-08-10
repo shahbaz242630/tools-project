@@ -49,13 +49,23 @@ export const LISTING_ROUTE = '/listings/:id';
  * **A sub-resource with its own verb rather than a `PATCH` carrying a status.**
  * A status field a caller may set is a field a caller may set to anything, and
  * every transition would then need its preconditions checked by whatever route
- * happened to receive it. Naming the transition makes the rules belong to it —
- * and 2.8b's pause and archive become two more paths rather than three more
- * values nobody can enumerate.
+ * happened to receive it. Naming the transition makes the rules belong to it.
  *
  * `POST` rather than `PUT`: it is not idempotent in the HTTP sense of replacing
  * a representation, though the *transition* is idempotent (publishing twice is
  * not an error).
+ *
+ * **`DELETE` on this same path pauses (2.8b), and that is a departure from what
+ * this docblock originally predicted.** It said pause and archive would become
+ * "two more paths". Archive was then removed from the BRD entirely, and pause
+ * turned out to be the exact inverse of the operation this path already names —
+ * removing the publication. A `/pause` path beside `/publication` would have
+ * been a second name for one resource, and the pair `POST`/`DELETE` says which
+ * two operations are opposites in a way two nouns cannot.
+ *
+ * `POST` therefore serves **resume** as well as publish: to an owner they are
+ * different words, but to the platform resuming *is* publishing, subject to the
+ * same completeness gate and the same kill switch.
  */
 export function listingPublicationPath(id: string): string {
   return `/listings/${encodeURIComponent(id)}/publication`;
@@ -155,13 +165,21 @@ export const replacementValueSchema = boundedMoneySchema({
  * because every state is a case that search, booking, payouts and the owner
  * dashboard each handle forever. ADR 0027's rule, third application.
  *
- * `PAUSED` and `ARCHIVED` arrive in slice 2.8b and the moderation states beside
- * them in 2.8c. They are deliberately absent rather than present-and-unreachable:
- * a value nothing can produce is one every consumer still has to handle, and the
- * first person to see it in a switch statement has no way to tell whether it is
- * unimplemented or unused.
+ * `PAUSED` arrives in slice 2.8b and the moderation states in 2.8c. They are
+ * deliberately absent rather than present-and-unreachable: a value nothing can
+ * produce is one every consumer still has to handle, and the first person to see
+ * it in a switch statement has no way to tell whether it is unimplemented or
+ * unused.
+ *
+ * **There is no `ARCHIVED`, and its absence is a decision rather than a
+ * deferral** (BRD amendment, 10 August 2026). Archive was specified in §8.3 and
+ * removed: the only thing distinguishing it from pause was that it could not be
+ * undone, and this platform does not ship an action a user cannot undo or trace.
+ * Do not add it back as "pause, but permanent" — that is the thing that was
+ * rejected. A listing an owner is finished with stays paused, and a listing
+ * nothing refers to is deleted outright when its owner's account goes.
  */
-export const LISTING_STATUSES = ['DRAFT', 'PUBLISHED'] as const;
+export const LISTING_STATUSES = ['DRAFT', 'PUBLISHED', 'PAUSED'] as const;
 export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export const listingStatusSchema = z.enum(LISTING_STATUSES);
@@ -170,16 +188,83 @@ export const listingStatusSchema = z.enum(LISTING_STATUSES);
  * Whether a listing in this state is visible to anybody but its owner.
  *
  * One function rather than `=== 'PUBLISHED'` written in five places, for the
- * reason `activatesSellerReporting` exists: the rule is one state today, and
- * when `PAUSED` arrives in 2.8b every caller has to change at once or one of
- * them silently keeps the old meaning — and here the old meaning would be
- * *showing a listing its owner has hidden*.
+ * reason `activatesSellerReporting` exists: the rule was one state, and when
+ * `PAUSED` arrived every caller had to change at once or one of them would
+ * silently keep the old meaning — which here would be *showing a listing its
+ * owner has hidden*. That is precisely what happened in 2.8b: this function was
+ * the only edit needed, and it is the whole argument for it existing.
  *
  * **2.10's public projection and Phase 3's search must both read this**, never
  * compare the status themselves.
  */
 export function isPubliclyVisible(status: ListingStatus): boolean {
   return status === 'PUBLISHED';
+}
+
+/**
+ * A named change of listing state, as a caller may ask for it.
+ *
+ * The transitions are named rather than expressed as a target status a caller
+ * supplies, for the reason `listingPublicationPath` gives: a status somebody may
+ * set is a status somebody may set to anything, and every precondition would
+ * then have to be re-checked by whichever route happened to receive it.
+ */
+export type ListingTransition = 'publish' | 'pause';
+
+/**
+ * Which states each transition may be applied from.
+ *
+ * **Every transition includes its own destination**, which is what makes them
+ * idempotent: publishing a published listing and pausing a paused one both
+ * succeed and change nothing. 2.8a settled that for publish and the reasoning is
+ * unchanged — a client that retries a request whose response it never saw must
+ * not be told it did something wrong.
+ *
+ * `publish` runs from `PAUSED` as well as `DRAFT`, because **resuming is
+ * publishing**. It is not a third transition: it runs the same completeness gate
+ * and the same platform-wide kill switch, and a separate `resume` that skipped
+ * either would be a way back to public view that publish deliberately guards.
+ *
+ * A table rather than two hand-written conditionals, because 2.8c adds
+ * moderation states to it and a table is the thing that makes the new rows
+ * obvious.
+ */
+const TRANSITIONS: Readonly<Record<ListingTransition, readonly ListingStatus[]>> = {
+  publish: ['DRAFT', 'PUBLISHED', 'PAUSED'],
+  pause: ['PUBLISHED', 'PAUSED'],
+};
+
+/** Whether this transition is legal from this state. */
+export function canTransition(
+  transition: ListingTransition,
+  from: ListingStatus,
+): boolean {
+  return TRANSITIONS[transition].includes(from);
+}
+
+/**
+ * Why this transition cannot be made from this state, or null when it can.
+ *
+ * A sentence naming its own subject, per `contract-issues.ts` — this reaches an
+ * owner verbatim, and "invalid transition PAUSE from DRAFT" is a sentence about
+ * our state machine rather than about their listing.
+ *
+ * Only one pair is illegal today, and it earns a message rather than a bare
+ * boolean because the two reasons a pause can fail are worth telling apart: a
+ * draft has nothing to pause, which is permanent until it is published, while a
+ * refusal from the kill switch is temporary and says so.
+ */
+export function transitionRefusal(
+  transition: ListingTransition,
+  from: ListingStatus,
+): string | null {
+  if (canTransition(transition, from)) return null;
+
+  if (transition === 'pause') {
+    return 'This listing is not published, so there is nothing to pause.';
+  }
+
+  return 'This listing cannot be published from its current state.';
 }
 
 /**

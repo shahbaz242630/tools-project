@@ -80,3 +80,51 @@ describe('AccountLinks', () => {
     expect(hrefOf(/devices/i)).toBe('/account/email');
   });
 });
+
+/**
+ * The one irreversible action here, set apart from the everyday ones
+ * (slice 2.8b).
+ *
+ * Until this slice, "Delete your account" was the sixth bullet in a list of six,
+ * carrying exactly the same weight as "Download your data".
+ */
+describe('the danger zone', () => {
+  it('is a region of its own with its own heading', () => {
+    render(<AccountLinks account={ACTIVE} />);
+
+    // By role rather than by class, because there is no stylesheet to assert
+    // against and the separation that matters is the one a screen reader gets
+    // too.
+    expect(screen.getByRole('heading', { name: /danger zone/i })).toBeTruthy();
+  });
+
+  it('keeps deletion out of the ordinary list of links', () => {
+    render(<AccountLinks account={ACTIVE} />);
+
+    const everydayLinks = screen
+      .getAllByRole('listitem')
+      .map((item) => item.textContent ?? '');
+
+    expect(everydayLinks.some((text) => /delete your account/i.test(text))).toBe(false);
+  });
+
+  it('warns that it is immediate and takes the listings, before the link', () => {
+    render(<AccountLinks account={ACTIVE} />);
+
+    const zone = screen.getByRole('heading', { name: /danger zone/i })
+      .parentElement as HTMLElement;
+
+    expect(zone.textContent).toMatch(/cannot be undone/i);
+    // Named explicitly, because "your account" is not a phrase most people read
+    // as including the listings they spent an evening writing.
+    expect(zone.textContent).toMatch(/every listing/i);
+  });
+
+  it('is still reachable while suspended', () => {
+    // Erasure rights do not lapse on suspension (ADR 0024), and moving the link
+    // must not have quietly dropped it for suspended accounts.
+    render(<AccountLinks account={SUSPENDED} />);
+
+    expect(hrefOf(/delete your account/i)).toBe('/account/delete');
+  });
+});
