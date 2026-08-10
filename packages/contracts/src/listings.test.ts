@@ -4,11 +4,14 @@ import {
   LISTING_DESCRIPTION_MAX_LENGTH,
   LISTING_STATUSES,
   LISTING_TITLE_MAX_LENGTH,
+  MODERATION_STATES,
   MAX_REPLACEMENT_VALUE_MINOR,
   MIN_REPLACEMENT_VALUE_MINOR,
   canTransition,
   isPubliclyVisible,
+  moderationRequiresReason,
   parseListingDraft,
+  parseModerationDecision,
   transitionRefusal,
 } from './listings.js';
 import type { ListingStatus, ListingTransition } from './listings.js';
@@ -351,13 +354,87 @@ describe('what the public can see', () => {
     // a new state defaulting to *visible* is a listing shown against its
     // owner's wishes, and the difference must not be settled by whoever adds
     // the enum value.
-    const visible = LISTING_STATUSES.filter((status) => isPubliclyVisible(status));
+    const visible = LISTING_STATUSES.filter((status) =>
+      isPubliclyVisible(status, 'APPROVED'),
+    );
 
     expect(visible).toEqual(['PUBLISHED']);
   });
 
   it('hides a paused listing, which is the whole point of pausing', () => {
-    expect(isPubliclyVisible('PAUSED')).toBe(false);
+    expect(isPubliclyVisible('PAUSED', 'APPROVED')).toBe(false);
+  });
+
+  it('sweeps the moderation states too, for the same reason', () => {
+    const visible = MODERATION_STATES.filter((state) =>
+      isPubliclyVisible('PUBLISHED', state),
+    );
+
+    expect(visible).toEqual(['APPROVED']);
+  });
+
+  it('needs both authorities to agree, and neither can override the other', () => {
+    // The `&&`, asserted as a truth table rather than trusted. Each of the
+    // three ways to be invisible is a different bug if it ever returns true:
+    // showing a draft, showing something an owner hid, showing something we
+    // rejected.
+    expect(isPubliclyVisible('PUBLISHED', 'APPROVED')).toBe(true);
+    expect(isPubliclyVisible('PUBLISHED', 'REJECTED')).toBe(false);
+    expect(isPubliclyVisible('PAUSED', 'APPROVED')).toBe(false);
+    expect(isPubliclyVisible('DRAFT', 'APPROVED')).toBe(false);
+  });
+
+  it('hides a listing under review as well as one rejected', () => {
+    // Both hide it. They are separate states because they ask opposite things
+    // of the owner — wait, or fix it — not because they differ here.
+    expect(isPubliclyVisible('PUBLISHED', 'UNDER_REVIEW')).toBe(false);
+  });
+});
+
+describe('when a moderation decision owes a reason', () => {
+  it('demands one for every state that hides a listing', () => {
+    const hiding = MODERATION_STATES.filter((state) => moderationRequiresReason(state));
+
+    // Swept rather than listed, so a fourth state added later has to be
+    // considered here instead of silently defaulting to needing no reason —
+    // which is the direction that lets a listing vanish with no explanation.
+    expect(hiding).toEqual(['UNDER_REVIEW', 'REJECTED']);
+  });
+
+  it('asks for none when reinstating', () => {
+    // Not an oversight: putting somebody's listing back is not a decision that
+    // needs defending to them.
+    expect(moderationRequiresReason('APPROVED')).toBe(false);
+  });
+});
+
+describe('the moderation decision a caller submits', () => {
+  it('accepts a state with a reason', () => {
+    expect(
+      parseModerationDecision({ state: 'REJECTED', reason: 'Prohibited item' }),
+    ).toEqual({ state: 'REJECTED', reason: 'Prohibited item' });
+  });
+
+  it('turns a blank reason into no reason at all', () => {
+    // `"   "` satisfies "a string is present" and satisfies nobody reading it.
+    // One representation of absent, matching the database's own `btrim` check —
+    // two spellings is how a later query misses half the rows.
+    expect(
+      parseModerationDecision({ state: 'APPROVED', reason: '   ' }).reason,
+    ).toBeNull();
+  });
+
+  it('refuses a state outside the vocabulary', () => {
+    expect(() => parseModerationDecision({ state: 'BANNED' })).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('does not enforce the reason rule here, deliberately', () => {
+    // The shape check cannot express "required unless APPROVED" without becoming
+    // a discriminated union with two unrelated error shapes for one form. The
+    // rule lives in `moderationRequiresReason`, and the service raises on it.
+    expect(parseModerationDecision({ state: 'REJECTED' }).state).toBe('REJECTED');
   });
 });
 

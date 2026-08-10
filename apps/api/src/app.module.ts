@@ -45,6 +45,7 @@ import { PROFILES_SERVICE } from './profiles/profiles.tokens.js';
 import { PublicProfileController } from './profiles/public-profile.controller.js';
 import type { ProfilesService } from './profiles/profiles.service.js';
 import { AdminCategoriesController } from './catalogue/admin-categories.controller.js';
+import { AdminListingsController } from './catalogue/admin-listings.controller.js';
 import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
@@ -184,6 +185,7 @@ export class AppModule implements NestModule {
         AdminCategoriesController,
         AdminFeatureFlagsController,
         OwnerListingsController,
+        AdminListingsController,
         // Unguarded by design — BRD §2 gives visitors public profiles. It is a
         // separate controller so that decision is visible rather than looking
         // like a missing decorator. See PublicProfileController.

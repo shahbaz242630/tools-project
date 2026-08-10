@@ -1,5 +1,6 @@
 import {
   TRANSPORT_REQUIREMENT_LABELS,
+  moderationRequiresReason,
   offersTransportRequirement,
   publicationBlockers,
   transitionRefusal,
@@ -11,6 +12,7 @@ import type {
   ListingCollectionLocation,
   ListingStatus,
   ListingTransition,
+  ModerationState,
   PublicationBlocker,
   TransportRequirement,
 } from '@platform/contracts';
@@ -18,6 +20,7 @@ import { Paging, Time } from '@platform/core';
 import type { Logger } from '@platform/observability';
 import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
 import type { Actor } from '../audit/audit-log.js';
+import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
 import type { PublicationSwitch } from './publication-switch.js';
 import type { ListingRateCard } from '@platform/contracts';
@@ -173,6 +176,21 @@ export class ListingTransitionRefusedError extends Error {
   }
 }
 
+/**
+ * Raised when a moderation decision that hides a listing carries no reason
+ * (§9, ADR 0024, slice 2.8c-i).
+ *
+ * A 400 rather than a 422: the request body is genuinely missing a field, and
+ * supplying it is exactly what fixes it. That is the distinction
+ * `ListingNotPublishableError` draws from the other side.
+ */
+export class ModerationReasonRequiredError extends Error {
+  constructor(readonly state: ModerationState) {
+    super('A reason is required when a listing is taken out of public view');
+    this.name = 'ModerationReasonRequiredError';
+  }
+}
+
 export class ListingNotPublishableError extends Error {
   constructor(readonly blockers: readonly PublicationBlocker[]) {
     super(
@@ -231,6 +249,22 @@ export class ListingsService {
      * as a kill switch that silently does nothing.
      */
     private readonly publication: PublicationSwitch,
+    /**
+     * The audit trail, for the one operation here that is administrative
+     * (slice 2.8c-i, ADR 0041).
+     *
+     * **This service went eight slices without one, deliberately** — everything
+     * it did was an owner acting on their own listing, and `catalogue.service.ts`
+     * beside it has had an audit dependency since 2.1 because everything *it*
+     * does is administrative. Moderation is the first thing on this side of the
+     * line to cross over.
+     *
+     * Required rather than optional, for the reason every other dependency here
+     * is: an optional audit log is one a composition root forgets, and ADR 0017
+     * makes an unaudited administrative action a failure rather than a
+     * quiet success.
+     */
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -495,6 +529,80 @@ export class ListingsService {
   }
 
   /**
+   * Decide what the platform permits of a listing (§8.3, §9, ADR 0041).
+   *
+   * **The only write in this module performed by somebody who is not the
+   * owner**, and everything unusual about it follows from that:
+   *
+   * - There is no ownership filter to lean on. Every other write here puts the
+   *   owner in the `where` so a forgotten comparison cannot touch a stranger's
+   *   listing; a moderator's whole job is to touch strangers' listings, so
+   *   **the role and second factor at the guard are the entire control**.
+   * - **It is audited, and pausing is not.** An owner pausing their own listing
+   *   is not an administrative act; this is (§8.13). The distinction is who
+   *   performed it, which is the rule 2.8b settled and this slice inherits.
+   * - **The audit write is awaited and its failure propagates** (ADR 0017).
+   *   A listing taken down with no record of who did it or why is precisely the
+   *   decision somebody will need to answer for.
+   *
+   * **The reason is required for any state that hides a listing** and refused
+   * for none — `moderationRequiresReason` decides, the database enforces it as
+   * a backstop, and this raises `ModerationReasonRequiredError` before either.
+   *
+   * **It does not touch `status`.** An owner's intent is theirs; a moderator
+   * hides the listing without republishing or unpausing anything, which is the
+   * whole reason ADR 0041 gave moderation its own field.
+   *
+   * Returns null when no such listing exists, so the route answers 404.
+   */
+  async moderate(input: {
+    readonly listingId: string;
+    readonly state: ModerationState;
+    readonly reason: string | null;
+    readonly actor: Actor;
+  }): Promise<ListingRecord | null> {
+    const reason = input.reason?.trim() ?? '';
+
+    if (moderationRequiresReason(input.state) && reason === '') {
+      throw new ModerationReasonRequiredError(input.state);
+    }
+
+    const before = await this.store.findForModeration(input.listingId);
+    if (before === null) return null;
+
+    const after = await this.store.moderate({
+      listingId: input.listingId,
+      state: input.state,
+      // Empty becomes null rather than '', so "no reason" has one
+      // representation. The CHECK treats a blank string as absent too, and two
+      // spellings of the same thing is how a query later misses half the rows.
+      reason: reason === '' ? null : reason,
+      moderatorId: input.actor.userId,
+      decidedAt: Time.nowUtc(),
+    });
+
+    /* c8 ignore next 2 -- the row was read a statement ago; only a concurrent
+       delete could reach this, and nothing deletes a listing but erasure. */
+    if (after === null) return null;
+
+    await this.audit.record({
+      actor: input.actor,
+      action: 'listing.moderated',
+      targetType: 'listing',
+      targetId: after.id,
+      before: moderationAuditable(before),
+      after: moderationAuditable(after),
+      // Spread rather than `reason: undefined`, because `exactOptionalPropertyTypes`
+      // draws a real distinction here: an absent key means "this action owes no
+      // explanation", and a present `undefined` would be a reason somebody
+      // failed to supply.
+      ...(reason === '' ? {} : { reason }),
+    });
+
+    return after;
+  }
+
+  /**
    * The state machine, consulted in one place.
    *
    * Both transitions ask the same question of the same table in
@@ -561,4 +669,25 @@ export class ListingsService {
   async eraseFor(actor: Actor): Promise<void> {
     await this.store.deleteAllOwnedBy(actor.userId);
   }
+}
+
+/**
+ * What the audit trail digests about a moderation decision: the decision, and
+ * nothing else.
+ *
+ * **Narrow on purpose**, exactly as `auditable` in `catalogue.service.ts` is.
+ * The digest has to change when the decision changes and *only* then — feeding
+ * it the whole record would make an unrelated edit look like a moderation event,
+ * and would fold somebody's address into a hash retained for six years
+ * (ADR 0017).
+ *
+ * The title is not here either, tempting as it is for a human reading the trail.
+ * A listing renamed after being rejected would produce a differing digest for a
+ * decision nobody revisited.
+ */
+function moderationAuditable(listing: ListingRecord): Record<string, unknown> {
+  return {
+    moderationState: listing.moderationState,
+    moderationReason: listing.moderationReason,
+  };
 }

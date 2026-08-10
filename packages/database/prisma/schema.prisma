@@ -162,6 +162,13 @@ model User {
   /// What this person has put up for rent. `ON DELETE RESTRICT` — see `Listing`.
   listings Listing[]
 
+  /// Listings this administrator has moderated (ADR 0041). Declared because
+  /// Prisma requires both ends of a relation; nothing reads a moderator's
+  /// listings *through the user*, and if something ever needs to — "show me
+  /// everything this moderator decided" — that is a Phase 9 report and belongs
+  /// behind a port, not on this model.
+  moderatedListings Listing[] @relation("ListingModerator")
+
   /// Feature flags this account last switched. Declared because Prisma requires
   /// both ends; the feature-flags module reaches overrides through its own port
   /// and never through a user.
@@ -1032,6 +1039,43 @@ model Listing {
   /// migration nobody wants, and because a listing with no status is
   /// indistinguishable from one that is live.
   status String @db.Text
+
+  /// What the **platform** permits, as distinct from what the owner wants
+  /// (ADR 0041, slice 2.8c-i).
+  ///
+  /// `APPROVED`, `UNDER_REVIEW` or `REJECTED`. Text with the union in code, like
+  /// `status` beside it.
+  ///
+  /// **A second column rather than more values in `status`**, and the split is
+  /// the decision. `status` is written by the owner and expresses their intent;
+  /// this is written by an administrator and expresses ours. Folded together, a
+  /// rejection would overwrite the owner's intent and reinstatement would have
+  /// to guess what to restore — republishing a listing its owner had paused.
+  ///
+  /// A listing is public only when **both** agree, which `isPubliclyVisible` in
+  /// `@platform/contracts` is the single place to ask. A query filtering on
+  /// `status` alone now returns rejected listings.
+  ///
+  /// Defaults to `APPROVED` because §8.3 makes moderation something that flags
+  /// rather than a gate every listing queues at — and because a default of
+  /// "wait" with no queue behind it (Phase 9) would stop the platform dead.
+  moderationState String @default("APPROVED") @db.Text
+
+  /// Why, in the administrator's own words — and the subject reads it verbatim,
+  /// as ADR 0024 established for suspension.
+  ///
+  /// Nullable because `APPROVED` needs none. `moderation_hidden_has_a_reason`
+  /// makes it mandatory for every state that hides a listing, written as an
+  /// implication so a fourth state inherits the rule rather than slipping past
+  /// a list.
+  moderationReason String? @db.Text
+
+  /// Who decided, and when. Both null together or both set together
+  /// (`moderation_authorship_is_complete`), and both null for a listing nobody
+  /// has moderated — which distinguishes the default from a real decision.
+  moderatedById String?   @db.Uuid
+  moderatedBy   User?     @relation("ListingModerator", fields: [moderatedById], references: [id])
+  moderatedAt   DateTime? @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)

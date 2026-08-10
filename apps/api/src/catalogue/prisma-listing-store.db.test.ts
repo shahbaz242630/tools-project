@@ -28,6 +28,7 @@ import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { PrismaListingStore } from './prisma-listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
+import type { ModerationDecision } from './listing-store.js';
 import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
 
 /**
@@ -1540,5 +1541,165 @@ describe('pausing', () => {
     // The round trip, against a real database. Reversibility is the entire
     // reason archive was removed from the BRD rather than built beside this.
     expect(resumed?.status).toBe('PUBLISHED');
+  });
+});
+
+describe('moderation', () => {
+  const decision = (
+    listingId: string,
+    moderatorId: string,
+    over: Partial<ModerationDecision> = {},
+  ) => ({
+    listingId,
+    state: 'REJECTED' as const,
+    reason: 'The photographs show a different item',
+    moderatedById: moderatorId,
+    ...over,
+    moderatorId,
+    decidedAt: new Date('2026-08-10T12:00:00.000Z'),
+  });
+
+  it('defaults a new listing to approved, with nobody having decided it', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    // The column default, read back through the adapter. `APPROVED` is the
+    // absence of a decision rather than one somebody made — which is why the
+    // author and the reason are null beside it.
+    expect(created.moderationState).toBe('APPROVED');
+    expect(created.moderationReason).toBeNull();
+
+    const row = await client.listing.findUnique({ where: { id: created.id } });
+    expect(row?.moderatedById).toBeNull();
+    expect(row?.moderatedAt).toBeNull();
+  });
+
+  it('records the decision, its reason and its author', async () => {
+    const owner = await newUser();
+    const admin = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    const moderated = await store.moderate(decision(created.id, admin));
+
+    expect(moderated?.moderationState).toBe('REJECTED');
+    expect(moderated?.moderationReason).toBe('The photographs show a different item');
+
+    const row = await client.listing.findUnique({ where: { id: created.id } });
+    expect(row?.moderatedById).toBe(admin);
+    expect(row?.moderatedAt).toEqual(new Date('2026-08-10T12:00:00.000Z'));
+  });
+
+  it('leaves the owner’s status alone, which is the whole of ADR 0041', async () => {
+    const owner = await newUser();
+    const admin = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    await store.publish(created.id, owner);
+
+    await store.moderate(decision(created.id, admin));
+
+    // Against a real row rather than a double: with one field this would now
+    // read `REJECTED` and the owner's intent would be gone.
+    const row = await client.listing.findUnique({ where: { id: created.id } });
+    expect(row?.status).toBe('PUBLISHED');
+    expect(row?.moderationState).toBe('REJECTED');
+  });
+
+  it('clears the reason when a listing is put back', async () => {
+    const owner = await newUser();
+    const admin = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    await store.moderate(decision(created.id, admin));
+
+    const reinstated = await store.moderate(
+      decision(created.id, admin, { state: 'APPROVED', reason: null }),
+    );
+
+    expect(reinstated?.moderationState).toBe('APPROVED');
+    expect(reinstated?.moderationReason).toBeNull();
+  });
+
+  it('answers null for a listing that does not exist', async () => {
+    const admin = await newUser();
+
+    expect(
+      await store.moderate(decision('11111111-1111-4111-8111-111111111111', admin)),
+    ).toBeNull();
+  });
+
+  it('reads a listing that is not the caller’s, which is the point', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    // `findOwnedBy` would answer null for anybody but the owner. This is the
+    // one read in the module that deliberately does not, and the guard is what
+    // stands in front of it.
+    expect((await store.findForModeration(created.id))?.id).toBe(created.id);
+  });
+
+  it('refuses to hide a listing with no reason, in the database', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    // The service refuses first; this is the backstop, and it is what makes the
+    // rule true of any future writer that forgets to ask.
+    await expect(
+      client.$executeRawUnsafe(
+        `UPDATE listings SET "moderationState" = 'REJECTED' WHERE id = '${created.id}'::uuid`,
+      ),
+    ).rejects.toThrow(/moderation_hidden_has_a_reason/);
+  });
+
+  it('refuses a blank reason too, not merely a null one', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    // `"   "` satisfies NOT NULL and satisfies nobody reading it. The `btrim`
+    // in the constraint is what closes that, and it matches the contract's own
+    // trim so the two agree about what "absent" means.
+    await expect(
+      client.$executeRawUnsafe(
+        `UPDATE listings SET "moderationState" = 'REJECTED', "moderationReason" = '   ' WHERE id = '${created.id}'::uuid`,
+      ),
+    ).rejects.toThrow(/moderation_hidden_has_a_reason/);
+  });
+
+  it('refuses an author with no timestamp', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await expect(
+      client.$executeRawUnsafe(
+        `UPDATE listings SET "moderatedById" = '${owner}'::uuid WHERE id = '${created.id}'::uuid`,
+      ),
+    ).rejects.toThrow(/moderation_authorship_is_complete/);
+  });
+
+  it('refuses a state the vocabulary does not know, when read', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    // A reason is supplied because the setup could not proceed without one, and
+    // that is a free confirmation worth keeping: `moderation_hidden_has_a_reason`
+    // is written as "not APPROVED implies a reason" rather than naming the two
+    // hiding states, so **a state nobody has declared yet already inherits the
+    // rule**. The constraint refused this test's own first draft.
+    await client.$executeRawUnsafe(
+      `UPDATE listings SET "moderationState" = 'SHADOWBANNED', "moderationReason" = 'from a newer build' WHERE id = '${created.id}'::uuid`,
+    );
+
+    // `asModerationState` throws rather than defaulting, for `asStatus`' reason
+    // and one of its own: defaulting to APPROVED would make a listing somebody
+    // deliberately hid visible again, silently.
+    await expect(store.findForModeration(created.id)).rejects.toThrow(/moderation/i);
   });
 });

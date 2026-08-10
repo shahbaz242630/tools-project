@@ -115,7 +115,7 @@ beforeEach(async () => {
         // Sharing `store` so both surfaces talk about the same categories — a
         // category created through the admin routes here is one an owner could
         // then list in.
-        listings: createListingFakes(store).service,
+        listings: createListingFakes(store, audit).service,
       }),
     ],
   }).compile();

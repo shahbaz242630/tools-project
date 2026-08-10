@@ -5,6 +5,7 @@ import type {
   ListingAttributeValues,
   ListingCollectionLocation,
   ListingStatus,
+  ModerationState,
   TransportRequirement,
 } from '@platform/contracts';
 import type { ListingRateCard } from '@platform/contracts';
@@ -102,8 +103,43 @@ export interface ListingRecord {
    */
   readonly isLocated: boolean;
   readonly status: ListingStatus;
+  /**
+   * What the platform permits, beside what the owner wants (ADR 0041).
+   *
+   * On the record rather than fetched separately because every read that
+   * decides whether somebody may see this listing needs both, and a second
+   * query would be a second chance to forget one.
+   */
+  readonly moderationState: ModerationState;
+  /**
+   * Why it was hidden, in the administrator's words — null while `APPROVED`.
+   *
+   * **Carried on the owner's record deliberately.** ADR 0024 settled that a
+   * person reads the reason for a decision made about them, and a listing
+   * removed from public view with no explanation is the thing that makes
+   * somebody conclude the platform is arbitrary. Slice 2.8c-ii is what puts it
+   * in front of them.
+   */
+  readonly moderationReason: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/**
+ * One moderation decision, as the store is asked to write it.
+ *
+ * A named shape rather than four positional arguments, because three of them
+ * are strings and `moderate(id, reason, moderatorId, state)` is a bug nothing
+ * would catch — the compiler cannot tell a reason from an id.
+ */
+export interface ModerationDecision {
+  readonly listingId: string;
+  readonly state: ModerationState;
+  /** Null only where `moderationRequiresReason` says none is needed. */
+  readonly reason: string | null;
+  /** The administrator, by platform id. Never the Clerk id (ADR 0015). */
+  readonly moderatorId: string;
+  readonly decidedAt: Date;
 }
 
 /**
@@ -316,6 +352,36 @@ export interface ListingStore {
    * Resolves to null when no such listing belongs to this owner.
    */
   pause(id: string, ownerId: string): Promise<ListingRecord | null>;
+
+  /**
+   * Read a listing without knowing whose it is (slice 2.8c-i).
+   *
+   * **The first read in this module that is not owner-scoped, and that is the
+   * whole security note.** Every other read and write here puts the owner in the
+   * `where` precisely so a forgotten comparison cannot disclose or change
+   * somebody else's listing. A moderator acts on listings that are by definition
+   * not theirs, so that protection is unavailable and **the role check at the
+   * guard is the entire control**.
+   *
+   * Named `findForModeration` rather than `findById` for that reason. A method
+   * called `findById` is one somebody reaches for from an owner-facing service
+   * without noticing what it skips; this name does not fit that sentence.
+   */
+  findForModeration(id: string): Promise<ListingRecord | null>;
+
+  /**
+   * Set what the platform permits, and record who decided (ADR 0041).
+   *
+   * Not owner-scoped, for the reason above. **Idempotent**, as every transition
+   * here is: setting the state it is already in succeeds and rewrites the
+   * author and the timestamp, because a second moderator agreeing is a real
+   * decision and the trail should show the most recent one.
+   *
+   * The reason is the caller's to validate — `moderationRequiresReason` decides
+   * whether one is needed and the database enforces it as a last resort. This
+   * writes what it is given.
+   */
+  moderate(input: ModerationDecision): Promise<ListingRecord | null>;
 
   /**
    * Delete this owner's listings outright, and everything hanging off them.

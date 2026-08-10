@@ -127,7 +127,32 @@ export type AuditAction =
    * the state changed — before, after, who and why. It is the reason the audit
    * write is awaited and its failure propagates.
    */
-  | 'feature_flag.changed';
+  | 'feature_flag.changed'
+  /**
+   * An administrator decided what the platform permits of a listing
+   * (slice 2.8c-i, ADR 0041).
+   *
+   * **The first audited action whose target is neither a person nor
+   * configuration** — it targets a `listing`, somebody's property. That is why
+   * it is here and why pausing is not: slice 2.8b deliberately writes no entry
+   * when an *owner* pauses their own listing, because every audited action in
+   * this list is administrative (§8.13), about personal data (§10.1) or a
+   * configuration change (§8.2). The test is not what happened but **who did
+   * it**. The same act, performed on somebody else's listing by somebody with a
+   * role, is all three of the things an audit trail is for.
+   *
+   * One action rather than `listing.rejected` and `listing.reinstated`, because
+   * the before and after states travel in the digested state either side and
+   * splitting would put the same decision under two names — the argument
+   * `account.suspended`/`account.reinstated` did *not* take, and the difference
+   * is that those are two routes with two authorisation stories, while this is
+   * one route carrying a value.
+   *
+   * **Carries the reason**, which the subject reads (ADR 0024). A listing
+   * removed from public view with no explanation is what makes somebody
+   * conclude the platform is arbitrary.
+   */
+  | 'listing.moderated';
 
 /**
  * Who did it, and from where.
