@@ -75,6 +75,24 @@ export type PublishOutcome =
    */
   | { readonly kind: 'unavailable'; readonly reason: string };
 
+/**
+ * What pausing can answer (slice 2.8b).
+ *
+ * **`refused` exists because 409 already meant something else here**, and that
+ * is worth stating rather than leaving as a type. The shared `call` maps every
+ * 409 to `stale-category` — correct for creating a listing, where a conflict
+ * really does mean the category moved underneath the form — so a pause refused
+ * for being a draft would have told the owner *"the category was changed while
+ * this page was open"*: fluent, specific, and about something that did not
+ * happen.
+ *
+ * That is the H3a defect exactly, one status along: **a status code reused on
+ * the server is not handled until the client that reads it says which meaning it
+ * has.** The 503 got its own hook for the same reason and this one follows it.
+ */
+export type PauseOutcome =
+  ListingOutcome<OwnerListing> | { readonly kind: 'refused'; readonly reason: string };
+
 export interface FetchResponse {
   status: number;
   text: () => Promise<string>;
@@ -116,7 +134,7 @@ function readError(raw: string): { issues?: readonly string[]; message?: string 
   }
 }
 
-async function call<T, E422 = never, E503 = never>(
+async function call<T, E422 = never, E503 = never, E409 = never>(
   url: string,
   token: string | null,
   clientIp: string | null,
@@ -140,7 +158,16 @@ async function call<T, E422 = never, E503 = never>(
    * that reads it says so.**
    */
   on503?: (raw: string) => E503,
-): Promise<ListingOutcome<T> | E422 | E503> {
+  /**
+   * What a 409 means, for a route where it is not a stale category.
+   *
+   * The default below reads every 409 as "the configuration moved underneath
+   * this form", which is right for creating a listing and wrong for pausing
+   * one. Supplying this is how a caller says which conflict it is asking about;
+   * omitting it keeps the behaviour every existing caller already relies on.
+   */
+  on409?: (raw: string) => E409,
+): Promise<ListingOutcome<T> | E422 | E503 | E409> {
   if (token === null || token === '') return { kind: 'signed-out' };
 
   let response: FetchResponse;
@@ -180,7 +207,10 @@ async function call<T, E422 = never, E503 = never>(
   }
 
   if (response.status === 409) {
-    const { message } = readError(await response.text());
+    const raw409 = await response.text();
+    if (on409 !== undefined) return on409(raw409);
+
+    const { message } = readError(raw409);
     return {
       kind: 'stale-category',
       reason: message ?? 'the category was changed while this page was open',
@@ -278,6 +308,56 @@ export function publishListing(
     (raw) => ({ kind: 'not-ready', blockers: readBlockers(raw) }),
     (raw) => ({ kind: 'unavailable', reason: readUnavailableReason(raw) }),
   );
+}
+
+/**
+ * Take a listing out of public view (§8.3, slice 2.8b).
+ *
+ * `DELETE` on the same path `publishListing` posts to, because pausing is
+ * removing the publication rather than a separate thing done to a listing.
+ *
+ * **No `on503`.** The kill switch does not gate pausing — an owner must be able
+ * to withdraw their item during exactly the incident that switch exists for — so
+ * a 503 here would mean the API genuinely fell over, and the generic
+ * `unreachable` branch is the honest answer to that. Passing a hook that
+ * explained a deliberate refusal would invent one.
+ */
+export function pauseListing(
+  apiBaseUrl: string,
+  token: string | null,
+  id: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<PauseOutcome> {
+  return call(
+    new URL(listingPublicationPath(id), apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseOwnerListing,
+    { method: 'DELETE' },
+    undefined,
+    undefined,
+    (raw) => ({ kind: 'refused', reason: readRefusalReason(raw) }),
+  );
+}
+
+/**
+ * The API's sentence out of a 409 body.
+ *
+ * `readUnavailableReason`'s shape and its reasoning: the API is the only thing
+ * that knows which transition was refused and why, and a sentence maintained on
+ * this side would drift from it. The fallback is a whole sentence rather than a
+ * status code, because somebody who has just pressed Pause needs to know what
+ * happened to their listing.
+ */
+function readRefusalReason(raw: string): string {
+  const fallback =
+    'This listing cannot be paused from its current state. Reload the page to ' +
+    'see where it stands.';
+
+  const { message } = readError(raw);
+  return message !== undefined && message !== '' ? message : fallback;
 }
 
 /**

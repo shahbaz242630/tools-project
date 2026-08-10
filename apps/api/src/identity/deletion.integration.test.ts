@@ -1180,19 +1180,24 @@ describe('a listing address, in the personal-data paths', () => {
     ]);
   });
 
-  it('erases it when the account is deleted, and keeps the listing', async () => {
-    const listingId = await givenAListingWithAnAddress();
+  it('deletes the listing outright when the account is deleted', async () => {
+    await givenAListingWithAnAddress();
     const alice = await idOf('alice-token');
 
     await requestDeletion('alice-token');
 
-    const [listing] = listings.listings.all();
-    // The listing survives — from Phase 4 a booking references it — and only
-    // the precise half is gone.
-    expect(listing?.id).toBe(listingId);
-    expect(listing?.collectionLocation).toBeNull();
+    /*
+     * **This test asserted the opposite until 2.8b**, and the inversion is the
+     * whole change: the listing used to survive with its address removed,
+     * because from Phase 4 a booking references it. The product owner's decision
+     * of 10 August 2026 is that deleting an account means the listings go too,
+     * and §10.1 allows it precisely while nothing the platform must retain
+     * refers to them — which is true today and stops being true when bookings
+     * exist.
+     */
+    expect(listings.listings.all()).toEqual([]);
     expect(await listings.service.exportFor(alice)).toEqual({
-      listings: [expect.objectContaining({ collectionLocation: null }) as unknown],
+      listings: [],
       truncated: false,
     });
   });

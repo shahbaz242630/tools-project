@@ -11,6 +11,7 @@ import {
 import type {
   AttributeOption,
   CategoryAttribute,
+  ListingStatus,
   OwnerListing,
 } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
@@ -71,30 +72,67 @@ export default async function ListingPage({
   );
 }
 
+/**
+ * What state this listing is in, said in the owner's terms.
+ *
+ * Every case is spelled out and the fallthrough is `never`, so adding a status
+ * to the vocabulary fails the build here rather than silently reusing whichever
+ * sentence happened to be the else branch.
+ */
+function StatusLine({ status }: { readonly status: ListingStatus }) {
+  switch (status) {
+    case 'PUBLISHED':
+      return (
+        <>
+          <strong>Published.</strong> People can find this and book it. The map shows an
+          approximate point, never your address.
+        </>
+      );
+    case 'PAUSED':
+      return (
+        <>
+          <strong>Paused.</strong> Nobody can find this or book it while it is paused.
+          Everything you have written is kept, and you can put it back up whenever you
+          like.
+        </>
+      );
+    case 'DRAFT':
+      return (
+        <>
+          <strong>Draft.</strong> Nobody else can see this and nobody can book it.
+        </>
+      );
+    default: {
+      // Exhaustiveness, checked by the compiler rather than by review.
+      const unhandled: never = status;
+      return <>{String(unhandled)}</>;
+    }
+  }
+}
+
 function Listing({ listing }: { readonly listing: OwnerListing }) {
   return (
     <>
       <h1>{listing.title}</h1>
 
       {/*
-        **Derived from the status, not written as prose.** This said
-        "Draft. Nobody else can see this" unconditionally until slice 2.8a,
-        which was true for as long as `DRAFT` was the only status a listing
-        could have — and became a lie the moment publishing worked, while the
-        page below it correctly said "Published". Found by publishing one and
-        reading the whole page rather than the part that had just changed.
+        **Derived from the status, and exhaustively** — which is the second half
+        of a lesson this line has now taught twice.
+
+        Until 2.8a it said "Draft. Nobody else can see this" unconditionally,
+        true for as long as `DRAFT` was the only status and a lie the moment
+        publishing worked. 2.8a made it derived, but as a *binary* conditional —
+        so when 2.8b added `PAUSED`, a paused listing would have gone straight
+        back to announcing itself as a draft. Same defect, same line, one slice
+        later, because "derived from the status" was implemented as "is it
+        published".
+
+        `StatusLine` switches on every case and its default is a compile error,
+        so the next status cannot reach this page without somebody writing its
+        sentence.
       */}
       <p role="status">
-        {listing.status === 'PUBLISHED' ? (
-          <>
-            <strong>Published.</strong> People can find this and book it. The map shows
-            an approximate point, never your address.
-          </>
-        ) : (
-          <>
-            <strong>Draft.</strong> Nobody else can see this and nobody can book it.
-          </>
-        )}
+        <StatusLine status={listing.status} />
       </p>
 
       <dl>
@@ -301,8 +339,8 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
                 as the two-person-lift line above.
 
                 It matters to an owner because it is the difference between a
-                listing people can find nearby and one they cannot, and slice 2.8
-                will refuse to publish while it is true.
+                listing people can find nearby and one they cannot, and 2.8a's
+                publication gate refuses while it is true.
               */}
               {listing.isLocated ? null : (
                 <>

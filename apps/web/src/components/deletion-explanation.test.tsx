@@ -61,3 +61,33 @@ describe('DeletionExplanation', () => {
     expect(text).toMatch(/have to keep/i);
   });
 });
+
+/**
+ * What §10.1 requires this page to say, kept true (slice 2.8b).
+ *
+ * The point of this test is not that a sentence exists. It is that when what we
+ * retain changes, the explanation is forced to change with it — which is the
+ * reason this component was extracted in the first place.
+ */
+describe('listings, since they stopped surviving deletion', () => {
+  it('says listings are deleted, in the deleted list', () => {
+    render(<DeletionExplanation />);
+
+    const deleted = screen.getByRole('heading', { name: /what is deleted/i })
+      .parentElement as HTMLElement;
+
+    expect(deleted.textContent).toMatch(/every listing you have/i);
+  });
+
+  it('does not claim listings are retained', () => {
+    render(<DeletionExplanation />);
+
+    const retained = screen.getByRole('heading', { name: /what we have to keep/i })
+      .parentElement as HTMLElement;
+
+    // The failure this guards against is the copy being *added* to the wrong
+    // section, which would be worse than saying nothing: it would tell somebody
+    // their listings survive as we delete them.
+    expect(retained.textContent).not.toMatch(/listing/i);
+  });
+});

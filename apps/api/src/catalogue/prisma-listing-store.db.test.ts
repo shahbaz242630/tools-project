@@ -941,7 +941,7 @@ describe('the collection address', () => {
 });
 
 describe('erasing an owner', () => {
-  it('removes the precise half and keeps the listing', async () => {
+  it('deletes the listing outright, not just its address', async () => {
     const owner = await newUser();
     const category = await newCategory(owner);
 
@@ -949,19 +949,34 @@ describe('erasing an owner', () => {
       draft(owner, category.slug, { collectionLocation: ADDRESS }),
     );
 
-    await store.eraseLocationsFor(owner);
+    await store.deleteAllOwnedBy(owner);
 
-    const row = await client.listing.findUnique({
-      where: { id: created.id },
-      include: { location: true },
-    });
+    // **The row is gone**, which is the change 2.8b made. Until then this
+    // asserted the opposite — that the listing survived with its address
+    // removed — and that assertion is the reason this test is worth reading
+    // rather than skimming: it was correct, it was well argued, and the product
+    // owner decided otherwise on 10 August 2026.
+    expect(await client.listing.findUnique({ where: { id: created.id } })).toBeNull();
+    expect(await store.findOwnedBy(created.id, owner)).toBeNull();
+  });
 
-    // The listing survives — from Phase 4 a booking references it — and
-    // collapses to the coarseness it was always published at.
-    expect(row?.location).toBeNull();
-    expect(row?.outwardCode).toBe('BS7');
-    expect(row?.town).toBe('Bristol');
-    expect((await store.findOwnedBy(created.id, owner))?.collectionLocation).toBeNull();
+  it('takes the precise location with it, by cascade', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    await store.deleteAllOwnedBy(owner);
+
+    // The delete is one statement against `listings`, so this asserts the
+    // foreign key is doing the rest. If somebody ever changes that key away
+    // from `onDelete: Cascade`, the address survives its listing and this is
+    // the test that says so.
+    expect(
+      await client.listingLocation.findUnique({ where: { listingId: created.id } }),
+    ).toBeNull();
   });
 
   it('leaves another owner alone', async () => {
@@ -976,9 +991,12 @@ describe('erasing an owner', () => {
       draft(theirs, category.slug, { collectionLocation: ADDRESS }),
     );
 
-    await store.eraseLocationsFor(mine);
+    await store.deleteAllOwnedBy(mine);
 
-    expect((await store.findOwnedBy(ours.id, mine))?.collectionLocation).toBeNull();
+    // The one that matters most on a `deleteMany`: a missing owner filter here
+    // would delete the whole table, and every other assertion in this file
+    // would still pass.
+    expect(await store.findOwnedBy(ours.id, mine)).toBeNull();
     expect((await store.findOwnedBy(other.id, theirs))?.collectionLocation).toEqual(
       ADDRESS,
     );
@@ -990,8 +1008,8 @@ describe('erasing an owner', () => {
     // Idempotence is what `PersonalDataEraser` requires, and the case that
     // matters is a retry after a partial failure — which looks exactly like
     // this second call.
-    await expect(store.eraseLocationsFor(owner)).resolves.toBeUndefined();
-    await expect(store.eraseLocationsFor(owner)).resolves.toBeUndefined();
+    await expect(store.deleteAllOwnedBy(owner)).resolves.toBeUndefined();
+    await expect(store.deleteAllOwnedBy(owner)).resolves.toBeUndefined();
   });
 });
 
@@ -1240,15 +1258,16 @@ describe('the geocoded point', () => {
       }),
     );
 
-    await store.eraseLocationsFor(owner);
+    await store.deleteAllOwnedBy(owner);
 
     // The whole row goes, so the point goes with the street. A deletion that
-    // removed the address and left a coordinate on somebody house would be the
-    // erasure failing at exactly the thing it is for.
+    // removed the address and left a coordinate on somebody's house would be
+    // the erasure failing at exactly the thing it is for — and since 2.8b the
+    // listing goes too, so there is nothing left to read a coordinate from.
     expect(
       await client.listingLocation.findUnique({ where: { listingId: created.id } }),
     ).toBeNull();
-    expect((await store.findOwnedBy(created.id, owner))?.isLocated).toBe(false);
+    expect(await store.findOwnedBy(created.id, owner)).toBeNull();
   });
 });
 
@@ -1460,5 +1479,66 @@ describe('publishing', () => {
     // `asStatus` throws rather than defaulting: a row written by a newer build
     // read as DRAFT would hide a listing its owner believes is live.
     await expect(store.findOwnedBy(created.id, owner)).rejects.toThrow(/status/i);
+  });
+});
+
+describe('pausing', () => {
+  it('moves a published listing to paused and re-reads it', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    await store.publish(created.id, owner);
+
+    const paused = await store.pause(created.id, owner);
+
+    expect(paused?.status).toBe('PAUSED');
+    // Read back independently, for `publish`'s reason: the method re-reads
+    // rather than constructing a record, and this is what catches it inventing
+    // one.
+    expect((await store.findOwnedBy(created.id, owner))?.status).toBe('PAUSED');
+  });
+
+  it('is idempotent', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    await store.publish(created.id, owner);
+
+    await store.pause(created.id, owner);
+    const again = await store.pause(created.id, owner);
+
+    expect(again?.status).toBe('PAUSED');
+  });
+
+  it('will not pause a listing belonging to somebody else', async () => {
+    const owner = await newUser();
+    const stranger = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    await store.publish(created.id, owner);
+
+    expect(await store.pause(created.id, stranger)).toBeNull();
+    // And the row is untouched. A null return says the write was refused; only
+    // this says the listing is still live, which is what the owner cares about.
+    expect((await store.findOwnedBy(created.id, owner))?.status).toBe('PUBLISHED');
+  });
+
+  it('answers null for a listing that does not exist', async () => {
+    const owner = await newUser();
+    expect(await store.pause('11111111-1111-4111-8111-111111111111', owner)).toBeNull();
+  });
+
+  it('goes back to published, because pausing is reversible', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await store.publish(created.id, owner);
+    await store.pause(created.id, owner);
+    const resumed = await store.publish(created.id, owner);
+
+    // The round trip, against a real database. Reversibility is the entire
+    // reason archive was removed from the BRD rather than built beside this.
+    expect(resumed?.status).toBe('PUBLISHED');
   });
 });

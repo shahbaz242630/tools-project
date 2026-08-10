@@ -192,6 +192,28 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return this.findOwnedBy(id, ownerId);
   }
 
+  async pause(id: string, ownerId: string): Promise<ListingRecord | null> {
+    /*
+     * `publish`'s shape, deliberately identical — the owner inside the `where`
+     * so a forgotten comparison cannot change a stranger's listing, `updateMany`
+     * so the ownership check happens inside the statement rather than in a
+     * read-then-write two requests could interleave, and no `status` in the
+     * filter so that pausing twice is a success rather than a 404.
+     *
+     * Whether the transition is *legal* from the listing's current state is the
+     * service's question, not this one's. It reads the row first and refuses a
+     * draft; by the time this runs, the answer is yes.
+     */
+    const { count } = await this.prisma.listing.updateMany({
+      where: { id, ownerId },
+      data: { status: 'PAUSED' },
+    });
+
+    if (count === 0) return null;
+
+    return this.findOwnedBy(id, ownerId);
+  }
+
   async listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
     const listings = await this.prisma.listing.findMany({
       where: { ownerId },
@@ -210,24 +232,32 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
   }
 
   /**
-   * Erase every precise location this owner's listings hold.
+   * Delete every listing this owner has, and the locations that hang off them.
    *
    * **`deleteMany`, not `delete`**, because a missing row is not an error here:
-   * somebody who never gave an address is still entitled to erasure, and a retry
+   * somebody who never listed anything is still entitled to erasure, and a retry
    * after a partial failure has to be able to finish. That is what
    * `PersonalDataEraser` means by idempotent.
    *
-   * **The listings themselves are untouched, and the outward code and town stay
-   * on them.** A listing must outlive its owner's deletion — from Phase 4 a
-   * booking references it — and a district covering thousands of homes is not
-   * what §10.1 asks us to remove. What goes is the front door.
+   * **One statement, because `listing_locations` cascades.** Its foreign key is
+   * `onDelete: Cascade`, so the precise address goes with the listing rather
+   * than being deleted separately — and deleting it separately first would leave
+   * a window in which the listing exists with its location already gone.
    *
-   * Scoped by a relation filter rather than by reading the listing ids first,
-   * so there is no window in which a listing created between the two statements
-   * escapes the erasure.
+   * **This deletes rows that until 2.8b were deliberately kept.** The reasoning
+   * that kept them was Phase 4's: a booking will reference a listing, and a
+   * rental history that loses one side is not a history. That is still true and
+   * it is why the port's docblock says this method must change when the booking
+   * foreign key arrives. Today nothing references a listing, so §10.1's
+   * distinction between erasable personal data and retained transactional
+   * records puts a listing firmly on the erasable side, and the product owner's
+   * decision of 10 August 2026 is to erase it.
+   *
+   * Scoped by `ownerId` directly rather than by reading the ids first, so there
+   * is no window in which a listing created between two statements survives.
    */
-  async eraseLocationsFor(ownerId: string): Promise<void> {
-    await this.prisma.listingLocation.deleteMany({ where: { listing: { ownerId } } });
+  async deleteAllOwnedBy(ownerId: string): Promise<void> {
+    await this.prisma.listing.deleteMany({ where: { ownerId } });
   }
 
   async listOptions(limit: number): Promise<readonly CategoryOptionRecord[]> {

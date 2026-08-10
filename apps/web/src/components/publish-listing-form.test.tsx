@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../app/listings/[id]/actions', () => ({
   publishListingAction: vi.fn(),
+  pauseListingAction: vi.fn(),
 }));
 
 vi.mock('../app/listings/[id]/publication-state', async (importOriginal) => {
@@ -64,10 +65,13 @@ describe('a draft', () => {
 
 describe('a published listing', () => {
   /**
-   * No dead controls. A button that would always be refused — or worse, would
-   * silently succeed and change nothing — is worse than no button.
+   * **This block asserted the absence of a control until 2.8b.** It said "offers
+   * no control, because there is nothing left to do" and checked that the copy
+   * read "pausing and archiving arrive in a later slice". Both were correct and
+   * both are now wrong, which is what closing a gap looks like from the test
+   * side.
    */
-  it('offers no control, because there is nothing left to do', () => {
+  it('offers the pause control', () => {
     given({ status: 'idle', message: null, blockers: [] });
     render(
       <PublishListingForm
@@ -77,17 +81,23 @@ describe('a published listing', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: /publish/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /pause this listing/i })).toBeTruthy();
   });
 
-  /**
-   * **It does not repeat "this is published".** The status line at the top of
-   * the page owns that and says it first; this said it again in different words,
-   * which made the page state one fact twice as though they were two. Found by
-   * publishing a listing and reading the whole page rather than the part that
-   * had just changed.
-   */
-  it('says only what the status line cannot — that there is no way back yet', () => {
+  it('does not offer publish, which would be a control that changes nothing', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PUBLISHED"
+        publicationAvailable
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /publish this listing/i })).toBeNull();
+  });
+
+  it('says pausing is reversible, before the button rather than after it', () => {
     given({ status: 'idle', message: null, blockers: [] });
     const { container } = render(
       <PublishListingForm
@@ -97,8 +107,86 @@ describe('a published listing', () => {
       />,
     );
 
-    expect(container.textContent).toMatch(/pausing and archiving/i);
-    expect(container.textContent).not.toMatch(/^Published\./);
+    // The fear that stops somebody pressing a control like this is that it
+    // cannot be undone. Saying so is the whole job of that sentence.
+    expect(container.textContent).toMatch(/nothing is deleted/i);
+    expect(container.textContent).toMatch(/put it back/i);
+  });
+
+  /**
+   * The kill switch stops listings going public and has no business stopping one
+   * being taken down — an incident is when somebody most needs to.
+   */
+  it('stays live while publishing is switched off platform-wide', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PUBLISHED"
+        publicationAvailable={false}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /pause this listing/i });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('a paused listing', () => {
+  it('offers the way back, worded as resuming rather than publishing', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PAUSED"
+        publicationAvailable
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: /put this listing back up/i }),
+    ).toBeTruthy();
+  });
+
+  /**
+   * Resuming *is* publishing, so the kill switch reaches it. A resume button
+   * that stayed live during an incident would be a second door into public view
+   * past the switch that closed the first.
+   */
+  it('is disabled and explained when publishing is switched off', () => {
+    given({ status: 'idle', message: null, blockers: [] });
+    render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PAUSED"
+        publicationAvailable={false}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /put this listing back up/i });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('status').textContent).toMatch(/paused across the whole/i);
+  });
+
+  it('tells a refused owner their listing is still paused, not still a draft', () => {
+    given({
+      status: 'not-ready',
+      message: 'This listing is not ready to be published yet.',
+      blockers: [{ field: 'description', message: 'A description is needed.' }],
+    });
+    const { container } = render(
+      <PublishListingForm
+        listingId={LISTING_ID}
+        status="PAUSED"
+        publicationAvailable
+      />,
+    );
+
+    // The reassurance after a refusal has to describe the state the listing is
+    // actually in. "It is still a draft" to somebody looking at a paused listing
+    // is the 2.8a status-line bug wearing different clothes.
+    expect(container.textContent).toMatch(/still paused/i);
+    expect(container.textContent).not.toMatch(/still a draft/i);
   });
 });
 
