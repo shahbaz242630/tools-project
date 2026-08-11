@@ -8,6 +8,7 @@ import {
   listingPath,
   listingPublicationPath,
   parseCategoryOptions,
+  parseOwnedListings,
   parseOwnerListing,
 } from '@platform/contracts';
 import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
@@ -558,6 +559,145 @@ describe('reading a listing', () => {
     });
 
     expect(response.statusCode).toBe(404);
+  });
+});
+
+/**
+ * Slice 2.9a — the list an owner reads to find their own listings again.
+ *
+ * **Two things here cannot be proved anywhere else.** That one owner's list
+ * never contains another's row — a property of the query, not of anything the
+ * route says — and that the response carries the *summary* projection rather
+ * than the full one, which is the whole security argument for the slice: an
+ * index rendering no addresses must not return one per row.
+ */
+describe('listing everything an owner has', () => {
+  beforeEach(() => givenACategory());
+
+  async function listMine(token = 'alice-token') {
+    return app.inject({ method: 'GET', url: LISTINGS_PATH, headers: auth(token) });
+  }
+
+  it('refuses an anonymous caller', async () => {
+    expect((await app.inject({ method: 'GET', url: LISTINGS_PATH })).statusCode).toBe(
+      401,
+    );
+  });
+
+  it('gives somebody with no listings an empty list, not a 404', async () => {
+    const response = await listMine();
+
+    expect(response.statusCode).toBe(200);
+    const page = parseOwnedListings(response.json());
+    expect(page.listings).toEqual([]);
+    // The page distinguishes "you have listed nothing" from "we could not read
+    // your listings", and a 404 here would collapse the two into the second.
+    expect(page.truncated).toBe(false);
+  });
+
+  it('returns this owner’s listings and nobody else’s', async () => {
+    const mine = parseOwnerListing((await createListing('alice-token')).json());
+    await createListing('bob-token');
+
+    const page = parseOwnedListings((await listMine()).json());
+
+    expect(page.listings.map((listing) => listing.id)).toEqual([mine.id]);
+  });
+
+  it('newest first', async () => {
+    // Determinate here in a way the service test's fake is not: each request is
+    // its own transaction, so the timestamps genuinely differ.
+    const first = parseOwnerListing((await createListing()).json());
+    const second = parseOwnerListing((await createListing()).json());
+
+    const page = parseOwnedListings((await listMine()).json());
+
+    expect(page.listings.map((listing) => listing.id)).toEqual([second.id, first.id]);
+  });
+
+  /**
+   * **The reason this projection exists**, asserted against the wire rather than
+   * against a type.
+   *
+   * `OwnerListing` carries the decrypted collection address, and a list of
+   * twenty would carry twenty homes to render a page that shows none of them.
+   * TypeScript cannot catch a controller that returns the wrong mapper — both
+   * shapes serialise happily — so the assertion has to be about the JSON that
+   * actually left the process.
+   */
+  it('carries the summary projection, and no collection address', async () => {
+    await app.inject({
+      method: 'POST',
+      url: LISTINGS_PATH,
+      headers: auth('alice-token'),
+      payload: { ...DRAFT, collectionLocation: ADDRESS },
+    });
+
+    const body = (await listMine()).json() as { listings: Record<string, unknown>[] };
+    const [row] = body.listings;
+
+    expect(row).toBeDefined();
+    // Present, because the page renders them.
+    expect(row).toHaveProperty('title');
+    expect(row).toHaveProperty('status');
+    expect(row).toHaveProperty('moderationState');
+    expect(row).toHaveProperty('inclusiveDailyPrice');
+
+    // Absent, and each for its own reason (§8.4.1 for the first, weight for the
+    // rest). Asserted individually rather than by comparing key sets, so a field
+    // added later fails on the one line that names it.
+    expect(row).not.toHaveProperty('collectionLocation');
+    expect(row).not.toHaveProperty('categoryAttributes');
+    expect(row).not.toHaveProperty('description');
+    expect(row).not.toHaveProperty('rates');
+    expect(row).not.toHaveProperty('moderationReason');
+
+    // And the address really was stored — otherwise this test would pass just as
+    // well against a listing that never had one.
+    const full = parseOwnerListing(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingPath(String(row?.id)),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+    expect(full.collectionLocation?.postcode).toBe('BS7 8AA');
+  });
+
+  it('lets a suspended owner read it', async () => {
+    // ADR 0024's read half, and it matters more on this route than on the
+    // single-listing one: without it a suspended owner cannot *find* the
+    // listings they are still permitted to pause.
+    await createListing();
+    identity.users.suspend(await idOf('alice-token'), 'admin-id', 'Repeated no-shows');
+
+    expect((await listMine()).statusCode).toBe(200);
+  });
+
+  it('shows a listing the platform has hidden, with the state that says so', async () => {
+    // The 2.8c-ii defect, one surface along. A list that returned `status` alone
+    // would show *Published* against a listing nobody can see — and a table is
+    // where that is least likely to be noticed.
+    const created = parseOwnerListing((await createListing()).json());
+    // Through the store rather than the admin route: what is under test is the
+    // owner's list, and driving it through `/admin/listings` would drag the role
+    // guard and the second-factor claim into a test about a table.
+    await listings.listings.moderate({
+      listingId: created.id,
+      state: 'REJECTED',
+      reason: 'Not something we can allow on the platform',
+      moderatorId: await idOf('bob-token'),
+      decidedAt: new Date(),
+    });
+
+    const page = parseOwnedListings((await listMine()).json());
+
+    expect(page.listings[0]?.moderationState).toBe('REJECTED');
+    // The reason itself is deliberately not here — it is read on the listing's
+    // own page, where the explanation around it lives.
+    expect(page.listings[0]).not.toHaveProperty('moderationReason');
   });
 });
 

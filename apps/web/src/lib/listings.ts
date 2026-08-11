@@ -15,12 +15,14 @@ import {
   listingPath,
   listingPublicationPath,
   parseCategoryOptions,
+  parseOwnedListings,
   parseOwnerListing,
   parsePublicationRefusal,
 } from '@platform/contracts';
 import type {
   CategoryOption,
   ListingDraftInput,
+  OwnedListings,
   OwnerListing,
   PublicationBlocker,
 } from '@platform/contracts';
@@ -280,6 +282,33 @@ export function fetchListing(
     clientIp,
     fetchImpl,
     parseOwnerListing,
+  );
+}
+
+/**
+ * Everything this owner has listed (slice 2.9a).
+ *
+ * **`GET` on the same path `createListing` posts to**, which is why there is no
+ * new constant: one collection, two verbs. The projection differs — a summary
+ * per row rather than the whole listing — and `parseOwnedListings` is what says
+ * so on this side.
+ *
+ * The whole page is returned rather than only its rows, because `truncated` is
+ * something the reader has to be told. Handing back the array alone would drop
+ * it silently at the one boundary where the loss is invisible.
+ */
+export function fetchOwnedListings(
+  apiBaseUrl: string,
+  token: string | null,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<ListingOutcome<OwnedListings>> {
+  return call(
+    new URL(LISTINGS_PATH, apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseOwnedListings,
   );
 }
 

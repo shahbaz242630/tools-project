@@ -49,6 +49,7 @@ export default async function NewListingPage() {
       <Categories outcome={outcome} />
 
       <p>
+        <Link href="/listings">Your listings</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>
     </main>

@@ -6,7 +6,7 @@ import {
   isPubliclyVisible,
 } from '@platform/contracts';
 import type { ListingStatus, ModerationState, OwnerListing } from '@platform/contracts';
-import { ModerationNotice, StatusLine } from './listing-visibility';
+import { ModerationNotice, StatusLine, VisibilityLabel } from './listing-visibility';
 
 /**
  * What an owner is told about who can see their listing.
@@ -260,5 +260,82 @@ describe('the two authorities together', () => {
 
     expect([...all].filter((pair) => !covered.has(pair))).toEqual([]);
     expect(covered.size).toBe(all.length);
+  });
+});
+
+/**
+ * The same truth in a table cell (slice 2.9a).
+ *
+ * **Tested exhaustively over both vocabularies**, because this is the second
+ * rendering of listing state in the codebase and the file's whole history is
+ * about a sentence that was right for the states somebody thought about. A pair
+ * nobody enumerated is how the fourth defect arrives.
+ */
+describe('the visibility label', () => {
+  function labelFor(status: ListingStatus, moderationState: ModerationState): string {
+    const { container } = render(
+      <VisibilityLabel status={status} moderationState={moderationState} />,
+    );
+    return container.textContent ?? '';
+  }
+
+  it('calls a published, permitted listing live', () => {
+    expect(labelFor('PUBLISHED', 'APPROVED')).toContain('Live');
+  });
+
+  it('never calls anything live that nobody can see', () => {
+    // The rule, over every pair rather than the three somebody remembered. This
+    // is the assertion that would have caught each of the three defects above.
+    for (const status of LISTING_STATUSES) {
+      for (const moderation of MODERATION_STATES) {
+        if (isPubliclyVisible(status, moderation)) continue;
+
+        expect(labelFor(status, moderation)).not.toContain('Live');
+      }
+    }
+  });
+
+  it('says the platform is holding a published listing back', () => {
+    // **Not "Published"**, which is the 2.8c-ii defect: true about what the owner
+    // set, and read by them as "strangers can book this".
+    //
+    // In a cell, what the platform decided outranks what the owner set — the
+    // owner already knows they pressed Publish, and the refusal is the half they
+    // do not. The fuller sentence 2.8c-ii wrote, which keeps the owner's intent
+    // intact *and* explains the hold, is on the listing's own page; this links
+    // there.
+    expect(labelFor('PUBLISHED', 'REJECTED')).toBe('Refused — hidden');
+  });
+
+  it('distinguishes being reviewed from being refused', () => {
+    // Two states because they ask opposite things — wait, or fix it and come
+    // back (ADR 0041). A shared "hidden" label would make the distinction
+    // decorative.
+    expect(labelFor('PUBLISHED', 'UNDER_REVIEW')).not.toBe(
+      labelFor('PUBLISHED', 'REJECTED'),
+    );
+  });
+
+  it('reports a moderation decision on a listing the owner has not published', () => {
+    // A rejected *draft* is a real combination: the two authorities are
+    // independent, so moderation does not wait for publication. A cell reading
+    // "Draft" would hide the half its owner did not already know.
+    expect(labelFor('DRAFT', 'REJECTED')).toContain('Refused');
+    expect(labelFor('PAUSED', 'UNDER_REVIEW')).toContain('reviewed');
+  });
+
+  it('tells the two things the owner did apart', () => {
+    expect(labelFor('DRAFT', 'APPROVED')).toContain('Draft');
+    expect(labelFor('PAUSED', 'APPROVED')).toContain('Paused');
+  });
+
+  it('says something for every pair', () => {
+    // No empty cell, for any combination. A blank is the one output that tells
+    // an owner nothing and looks like a rendering fault rather than a state.
+    for (const status of LISTING_STATUSES) {
+      for (const moderation of MODERATION_STATES) {
+        expect(labelFor(status, moderation).trim().length).toBeGreaterThan(0);
+      }
+    }
   });
 });

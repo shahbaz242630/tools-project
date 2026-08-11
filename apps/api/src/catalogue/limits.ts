@@ -35,6 +35,32 @@
 export const EXPORTED_LISTING_LIMIT = 1000;
 
 /**
+ * How many listings an owner's own list returns (slice 2.9a).
+ *
+ * **A guardrail, not a page size, and choosing which of the two it is was the
+ * decision this slice had to make.** ADR 0035 draws the line by what the
+ * collection is: this one grows with how much somebody chooses to rent out,
+ * which is a collection users create, so a bound is not optional. But `limits.ts`
+ * also says a bound reached in normal use is *"a pagination feature wearing the
+ * wrong name"* — and a page size of twenty would be exactly that, shipping half
+ * a paginator with no way to reach row twenty-one.
+ *
+ * Two hundred is above any private owner and above any business we expect at
+ * launch, so in practice it is never met; and if it ever is, the page says so
+ * rather than quietly stopping. **When somebody real is cut by this, the answer
+ * is a cursor rather than a larger number** — `ListingStore.listOwnedBy` already
+ * records that the port should take one once a third caller wants a third
+ * answer, and this is the second.
+ *
+ * Deliberately its own constant rather than sharing `EXPORTED_LISTING_LIMIT`.
+ * They bound the same query for different readers: an export is a legal
+ * obligation answered once and read by a machine, and this is a page a person
+ * scrolls. Sharing the number would mean changing one surface silently changed
+ * the other.
+ */
+export const OWNED_LISTING_LIMIT = 200;
+
+/**
  * How many categories any read of the catalogue returns.
  *
  * The launch catalogue is one category. `reference-category-taxonomy.md` found

@@ -14,6 +14,7 @@ import {
   parseListingDraft,
   parseModerationDecision,
   parseModerationOutcome,
+  parseOwnedListings,
   transitionRefusal,
 } from './listings.js';
 import type { ListingStatus, ListingTransition } from './listings.js';
@@ -552,5 +553,62 @@ describe('the transitions', () => {
     // test but dropping the subject does.
     expect(refusal).toContain('This listing');
     expect(refusal).not.toContain('DRAFT');
+  });
+});
+
+describe('the list of an owner’s own listings', () => {
+  const ROW = {
+    id: '00000000-0000-4000-8000-000000000001',
+    title: 'Petrol hedge trimmer',
+    categoryName: 'Outdoor and gardening',
+    status: 'PUBLISHED',
+    moderationState: 'APPROVED',
+    isLocated: true,
+    inclusiveDailyPrice: null,
+    createdAt: '2026-08-11T09:00:00.000Z',
+    updatedAt: '2026-08-11T09:00:00.000Z',
+  };
+
+  it('reads a page of rows and whether it was cut', () => {
+    const page = parseOwnedListings({ listings: [ROW], truncated: false });
+
+    expect(page.listings).toHaveLength(1);
+    expect(page.listings[0]?.title).toBe('Petrol hedge trimmer');
+    expect(page.truncated).toBe(false);
+  });
+
+  it('reads an empty list as an empty list', () => {
+    // Not as an error, and not as null. Somebody who has listed nothing is the
+    // ordinary first case, and the page has copy for exactly it.
+    expect(parseOwnedListings({ listings: [], truncated: false }).listings).toEqual([]);
+  });
+
+  it('refuses a page that does not say whether it was cut', () => {
+    // `truncated` is required rather than defaulted, because a default of false
+    // is a claim: it would tell somebody they were looking at every listing they
+    // own, on the strength of a field the server forgot to send.
+    expect(() => parseOwnedListings({ listings: [ROW] })).toThrow();
+  });
+
+  it('refuses a moderation state it does not know', () => {
+    // The closed vocabulary, checked on the way in. A state this build cannot
+    // render must not reach the table as a string it would print raw.
+    expect(() =>
+      parseOwnedListings({
+        listings: [{ ...ROW, moderationState: 'QUARANTINED' }],
+        truncated: false,
+      }),
+    ).toThrow();
+  });
+
+  it('accepts a row whose price has not been set', () => {
+    // Null means "show no price", never "free" — an unpriced draft is the
+    // commonest row this page will ever render.
+    const page = parseOwnedListings({
+      listings: [{ ...ROW, inclusiveDailyPrice: null }],
+      truncated: false,
+    });
+
+    expect(page.listings[0]?.inclusiveDailyPrice).toBeNull();
   });
 });

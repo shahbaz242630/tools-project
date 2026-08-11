@@ -33,7 +33,14 @@ import { hasUnsafeCharacters, UNSAFE_CHARACTERS_MESSAGE } from './text.js';
 import { MAX_ADMIN_REASON_LENGTH, MIN_ADMIN_REASON_LENGTH } from './admin.js';
 import { parseWith } from './parse.js';
 
-/** Where an owner creates listings and lists their own. */
+/**
+ * Where an owner creates listings and lists their own.
+ *
+ * **One path, two verbs, two projections** (slice 2.9a). `POST` returns the
+ * listing that was written; `GET` returns a bounded list of
+ * {@link OwnerListingSummary}, which is deliberately a narrower shape than the
+ * one `GET /listings/:id` serves — see that type for what it leaves out and why.
+ */
 export const LISTINGS_PATH = '/listings';
 export const LISTINGS_ROUTE = '/listings';
 
@@ -766,6 +773,118 @@ const ownerListingSchema = z.object({
 
 export function parseOwnerListing(raw: unknown): OwnerListing {
   return parseWith(ownerListingSchema, 'The listing response', raw);
+}
+
+/**
+ * One of an owner's listings, as it appears in the list of all of them
+ * (slice 2.9a).
+ *
+ * **A narrower shape than {@link OwnerListing}, and the narrowing is the point
+ * rather than an optimisation.** The single-listing projection carries the
+ * decrypted collection address, because an owner reading their own listing typed
+ * it and needs to check it. An index renders none of that and would return one
+ * decrypted street address *per row* — twenty homes in one response to render a
+ * page that shows none of them. §8.4.1's rule is that precise location travels
+ * only where it is needed, and "needed" is a property of the surface, not of who
+ * is asking.
+ *
+ * Three other things are absent for the same reason — the shape is what the page
+ * renders, not a truncation somebody remembered to apply:
+ *
+ * - **`categoryAttributes`**, the whole pinned schema, which would repeat per row
+ *   and answers a question only the detail page asks.
+ * - **`description`**, up to two thousand characters that no list shows.
+ * - **`moderationReason`**, the moderator's words. `moderationState` is here
+ *   because an owner scanning their listings must see *that* one is being held
+ *   back; the reason itself is read on the listing's own page, where ADR 0024's
+ *   verbatim rule and the surrounding explanation live together. A refusal
+ *   reduced to one line in a table is the version most likely to be misread.
+ *
+ * **Two types rather than one with optional fields**, for the reason `profiles.ts`
+ * gives: an optional `collectionLocation?` compiles whether or not the API
+ * remembered to leave it out.
+ */
+export interface OwnerListingSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly categoryName: string;
+  /**
+   * What the owner wants, and what the platform permits (ADR 0041).
+   *
+   * **Both, because neither answers "can anybody see this" alone.** A list
+   * rendering `status` by itself would show *Published* against a listing the
+   * platform is hiding — the exact defect 2.8c-ii fixed on the detail page, and
+   * a list is where it would be least noticed. `isPubliclyVisible` takes both and
+   * is the only thing that should be asked.
+   */
+  readonly status: ListingStatus;
+  readonly moderationState: ModerationState;
+  /**
+   * Whether the address has been resolved to a point (slice 2.5b).
+   *
+   * Here, on a summary that drops far more than it keeps, because it is the one
+   * publication blocker invisible from anything else on the row: a listing can
+   * look complete and still be findable by nobody. It is also the only blocker an
+   * owner cannot fix by typing something — it needs the listing saved again.
+   */
+  readonly isLocated: boolean;
+  /**
+   * The inclusive daily price §3.4.4 requires, or null when nothing is priced.
+   *
+   * **Computed by the API, exactly as on the detail page**, and the rule matters
+   * more here rather than less: §3.4.4 names listing *cards* specifically, and a
+   * card is what this is. The bare rate is deliberately not on this shape at all,
+   * so the drip-pricing mistake is not one line away — it is unavailable.
+   */
+  readonly inclusiveDailyPrice: InclusiveDailyPrice | null;
+  /** ISO 8601 UTC. */
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * An owner's listings, and whether they are all of them.
+ *
+ * **`truncated` is not optional and not inferred** (ADR 0035). A page of rows
+ * that is exactly full is indistinguishable from a complete list of that length,
+ * so the server measures it and says. A list that quietly stops is one somebody
+ * reads as their whole record — which for a page about "everything you have
+ * listed" is the only failure that matters.
+ */
+export interface OwnedListings {
+  readonly listings: readonly OwnerListingSummary[];
+  readonly truncated: boolean;
+}
+
+const ownedListingsSchema = z.object({
+  listings: z.array(
+    z.object({
+      id: z.string().uuid(),
+      title: z.string(),
+      categoryName: z.string(),
+      status: listingStatusSchema,
+      moderationState: moderationStateSchema,
+      isLocated: z.boolean(),
+      inclusiveDailyPrice: inclusiveDailyPriceSchema.nullable(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+    }),
+  ),
+  truncated: z.boolean(),
+});
+
+/**
+ * Check the list on the way in.
+ *
+ * A plain `z.object` rather than `strictObject`, matching every other response
+ * parser here: an API that grows a field must not break a client that has not
+ * been redeployed. The narrowing this shape exists for is enforced on the server,
+ * where the projection is built — a client-side `strictObject` would turn a
+ * server mistake into a blank page rather than into a caught disclosure, and the
+ * disclosure would already have happened over the wire.
+ */
+export function parseOwnedListings(raw: unknown): OwnedListings {
+  return parseWith(ownedListingsSchema, 'The listings response', raw);
 }
 
 /**
