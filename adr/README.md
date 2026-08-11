@@ -70,3 +70,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0039](0039-the-deployment-stack-carries-a-database-it-never-runs.md)               | Keep a database in the deployment stack that no environment runs          | Accepted                                   |
 | [0040](0040-the-ci-deploy-key-cannot-open-a-shell.md)                               | Restrict the CI deploy key to a forced command                            | Accepted                                   |
 | [0041](0041-moderation-state-is-not-a-listing-status.md)                            | Keep moderation state in its own field, beside the owner's status         | Accepted                                   |
+| [0042](0042-a-listing-pins-its-questions-not-its-fees.md)                           | Pin a listing's questions, not its fees; re-pin by editing, not by asking | Accepted — supersedes 0029's open question |

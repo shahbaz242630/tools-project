@@ -1,8 +1,18 @@
 # 0034. Pricing is its own module, though §5.1 does not list one
 
-- **Status:** Accepted
+- **Status:** Accepted — one clause amended by [0042](0042-a-listing-pins-its-questions-not-its-fees.md)
 - **Date:** 2026-08-07
-- **Relates to:** BRD §5.1, §6.1, §3.4.4, §8.5.2, §14 Phase 2; ADR 0029, ADR 0033
+- **Relates to:** BRD §5.1, §6.1, §3.4.4, §8.5.2, §14 Phase 2; ADR 0029, ADR 0033, ADR 0042
+
+> **Amendment, 11 August 2026.** The decision below — that pricing is its own
+> module with no ports, no store and no routes — stands unchanged. What changed is
+> one phrase inside it: the module resolves a listing's rate card against the
+> category's **current** fee policy, not against _"its pinned category version's
+> fee policy"_ as written here. [ADR 0042](0042-a-listing-pins-its-questions-not-its-fees.md)
+> gives the reason: a listing is not a contract and must not carry a price that
+> can change when its owner edits the title. A **booking** pins the policy, and
+> that pin arrives in Phase 5. The "no ports" argument at the end of this ADR is
+> unaffected — both inputs are still in one query.
 
 ## Context
 
