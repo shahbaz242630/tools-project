@@ -97,10 +97,33 @@ export function FeePolicyEditor({
     <fieldset>
       <legend>Fees</legend>
 
+      {/*
+        **Rewritten in slice 2.7c, because the sentence here was true and
+        misleading** (ADR 0042). It said a change never re-prices an existing
+        *booking* — still true, and it invited the obvious inference that nothing
+        else moves either. Changing a rate now re-prices **every existing listing
+        in the category, immediately**, because a listing shows the price payable
+        today (§3.4.4) rather than the terms it was written under.
+
+        An administrator about to change a percentage is the one person who has to
+        know that, and this help text is the only place they will be told. The
+        warning is deliberately not softened into "may affect": it affects all of
+        them, on save, with nobody notified.
+      */}
+      <p>What the platform takes on every booking in this category.</p>
+
       <p>
-        What the platform takes on every booking in this category. Versioned with the
-        rest of the configuration, so a booking is always priced under the rates in
-        force when it was made — changing these never re-prices an existing booking.
+        <strong>
+          Changing a rate re-prices every listing in this category straight away.
+        </strong>{' '}
+        Owners are not told, and there is no email yet — they will simply see a
+        different total the next time they look. What owners set themselves, their own
+        rate, is never touched.
+      </p>
+
+      <p>
+        <strong>Bookings already made are not affected.</strong> A booking keeps the
+        rates that were in force when it was made, and no change here can reach one.
       </p>
 
       <p>

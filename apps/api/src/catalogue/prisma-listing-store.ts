@@ -373,9 +373,14 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         listing.categoryVersion.attributes,
         `the category version pinned by listing ${listing.id}`,
       ),
-      categoryFeePolicy: asFeePolicy(
-        listing.categoryVersion,
-        `the category version pinned by listing ${listing.id}`,
+      // **The category's current version, not the pinned one** (ADR 0042) — the
+      // one field on this record resolved from a different row than its
+      // neighbours. `versions` is ordered descending and taken one, so `[0]` is
+      // the latest; it cannot be empty, because a category with no version could
+      // not have been pinned by this listing in the first place.
+      currentFeePolicy: asFeePolicy(
+        latestVersionOf(listing),
+        `the current version of the category listed by ${listing.id}`,
       ),
       categoryTransportOptions: asTransportOptions(
         listing.categoryVersion.transportOptions,
@@ -462,7 +467,30 @@ const LATEST_VERSION = {
  * directly would work and would be a second path to the same fact.
  */
 const LISTING_CATEGORY = {
-  categoryVersion: { include: { category: true } },
+  /**
+   * The pinned version, **and the category's latest one beside it** (ADR 0042).
+   *
+   * Two versions of the same category arrive in one read because the record
+   * needs both and they answer different questions. The pinned version says what
+   * this listing's stored answers *mean*; the latest says what the platform
+   * charges *today*. Resolving them in one query rather than two is what stops
+   * the pair disagreeing — the same argument ADR 0034 makes for pricing having no
+   * store of its own.
+   *
+   * `take: 1` on a descending `versionNumber` is the current configuration:
+   * `category_versions` has a unique constraint on `(categoryId, versionNumber)`
+   * and a trigger refusing `UPDATE`, so "highest" is unambiguous and a btree
+   * scans backwards to find it.
+   */
+  categoryVersion: {
+    include: {
+      category: {
+        include: {
+          versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
+        },
+      },
+    },
+  },
   /**
    * The precise half of the location, joined **only here**.
    *
@@ -537,10 +565,37 @@ interface ListingRow {
   createdAt: Date;
   updatedAt: Date;
   categoryVersion: VersionRow & {
-    category: { slug: string };
+    category: {
+      slug: string;
+      /**
+       * The category's versions, ordered newest first and taken one — so this is
+       * the *current* configuration, which the fee policy is read from (ADR 0042).
+       *
+       * An array rather than a single field because that is the shape a Prisma
+       * `take: 1` include returns. `latestVersionOf` is the only thing that
+       * unwraps it, so no call site has to remember that `[0]` means "latest".
+       */
+      versions: VersionRow[];
+    };
   };
   /** Null for a draft that has not said where the item is. */
   location: LocationRow | null;
+}
+
+/**
+ * The category's configuration as it stands now, for the fee policy (ADR 0042).
+ *
+ * **Falls back to the pinned version rather than throwing**, and the fallback is
+ * unreachable: a listing has a composite foreign key to a version of this
+ * category, so the category has at least one version by construction, and the
+ * include asks for one. It is here because the alternative to a fallback is a
+ * non-null assertion or a throw, and of the three this is the only one where a
+ * database that somehow disagreed still serves the owner a price — computed from
+ * the terms their listing was written under, which is the safest wrong answer
+ * available.
+ */
+function latestVersionOf(listing: ListingRow): VersionRow {
+  return listing.categoryVersion.category.versions[0] ?? listing.categoryVersion;
 }
 
 /**
