@@ -237,6 +237,23 @@ async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<v
   );
 }
 
+/** Reprice the category, minting a version — what ADR 0042 makes visible. */
+async function reconfiguredWithFee(renterFeeBasisPoints: number): Promise<void> {
+  const author = await idOf('alice-token');
+  await listings.categories.addVersion(
+    'outdoor-gardening',
+    {
+      name: 'Outdoor and gardening',
+      riskLevel: 'medium',
+      reportableActivity: 'none',
+      attributes: SCHEMA,
+      transportOptions: [],
+      feePolicy: { ...FEE_POLICY, renterFeeBasisPoints },
+    },
+    author,
+  );
+}
+
 function createListing(token = 'alice-token', body: Record<string, unknown> = DRAFT) {
   return app.inject({
     method: 'POST',
@@ -1163,6 +1180,89 @@ describe('the rate card and the inclusive price', () => {
 
   const priced = (rates: Record<string, unknown>) => ({ ...DRAFT, rates });
 
+  /**
+   * Slice 2.7c, ADR 0042 — the behaviour the owner actually sees.
+   *
+   * The database test proves which *row* the policy is read from. This proves
+   * that the change reaches the response an owner reads, through the real
+   * controller and the real pricing service.
+   */
+  it('re-prices an existing listing when the category is repriced', async () => {
+    const created = parseOwnerListing(
+      (
+        await createListing(
+          'alice-token',
+          priced({
+            daily: { amount: 1_800, currency: 'GBP' },
+            weekend: null,
+            weekly: null,
+          }),
+        )
+      ).json(),
+    );
+
+    // 8% of £18.00 = £1.44.
+    expect(created.inclusiveDailyPrice?.total).toEqual({
+      amount: 1_944,
+      currency: 'GBP',
+    });
+
+    await reconfiguredWithFee(1_600);
+
+    const reread = parseOwnerListing(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingPath(created.id),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+
+    // 16% of £18.00 = £2.88. The owner's own rate is untouched — they set it and
+    // nobody else may — and what the renter pays has moved, because the fee is
+    // the platform's and is not per-listing.
+    expect(reread.rates.daily).toEqual({ amount: 1_800, currency: 'GBP' });
+    expect(reread.inclusiveDailyPrice?.total).toEqual({
+      amount: 2_088,
+      currency: 'GBP',
+    });
+
+    // And the pin has not moved, which is the half ADR 0029 still owns: the
+    // listing's stored answers are read against version 1 as they always were.
+    expect(reread.categoryVersionNumber).toBe(1);
+  });
+
+  it('re-prices it on the owner’s list as well as on its own page', async () => {
+    // Two mappers build two projections from one record, and a join wired for
+    // one of them is how two pages come to disagree about what something costs.
+    await createListing(
+      'alice-token',
+      priced({
+        daily: { amount: 1_800, currency: 'GBP' },
+        weekend: null,
+        weekly: null,
+      }),
+    );
+
+    await reconfiguredWithFee(1_600);
+
+    const page = parseOwnedListings(
+      (
+        await app.inject({
+          method: 'GET',
+          url: LISTINGS_PATH,
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+
+    expect(page.listings[0]?.inclusiveDailyPrice?.total).toEqual({
+      amount: 2_088,
+      currency: 'GBP',
+    });
+  });
+
   it('stores the rates and answers with an inclusive daily price', async () => {
     const response = await createListing(
       'alice-token',
@@ -1247,62 +1347,6 @@ describe('the rate card and the inclusive price', () => {
     );
 
     expect(response.statusCode).toBe(400);
-  });
-
-  /**
-   * **The property the whole slice turns on** (§8.2, ADR 0029, ADR 0033).
-   *
-   * A listing priced under version 1 keeps version 1's rates when the category
-   * is repriced. Reading against the current policy would silently re-price
-   * every existing listing the moment an administrator changed a percentage —
-   * and the owner would see a different number with nothing having happened to
-   * their listing.
-   */
-  it('prices against the pinned version, not the category as it stands now', async () => {
-    const created = parseOwnerListing(
-      (
-        await createListing(
-          'alice-token',
-          priced({
-            daily: { amount: 1_800, currency: 'GBP' },
-            weekend: null,
-            weekly: null,
-          }),
-        )
-      ).json(),
-    );
-    expect(created.inclusiveDailyPrice?.renterFee.amount).toBe(144);
-
-    // The category doubles its renter fee, minting version 2. The listing still
-    // points at version 1.
-    const author = await idOf('alice-token');
-    await listings.categories.addVersion(
-      'outdoor-gardening',
-      {
-        name: 'Outdoor and gardening',
-        riskLevel: 'medium',
-        reportableActivity: 'none',
-        attributes: SCHEMA,
-        transportOptions: [],
-        feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
-      },
-      author,
-    );
-
-    const reread = parseOwnerListing(
-      (
-        await app.inject({
-          method: 'GET',
-          url: listingPath(created.id),
-          headers: auth('alice-token'),
-        })
-      ).json(),
-    );
-
-    expect(reread.categoryVersionNumber).toBe(1);
-    // Still 8%, not 16%. £1.44, not £2.88.
-    expect(reread.inclusiveDailyPrice?.renterFee.amount).toBe(144);
-    expect(reread.inclusiveDailyPrice?.total.amount).toBe(1_944);
   });
 
   /**

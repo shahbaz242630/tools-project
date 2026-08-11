@@ -43,16 +43,35 @@ export interface ListingRecord {
    */
   readonly categoryAttributes: readonly CategoryAttribute[];
   /**
-   * The fee policy **as pinned**, read from the version this listing points at
-   * rather than from the category as it stands now (ADR 0029, ADR 0033).
+   * The fee policy **as it stands now** — read from the category's latest
+   * version, deliberately *not* from the one this listing pinned (ADR 0042).
    *
-   * It travels with the listing for the reason the attribute schema does: a
-   * price cannot be computed without it, and computing one against today's rates
-   * would show the owner a figure their listing's own terms do not produce.
-   * §8.2 is the rule — a booking retains the configuration it was made under —
-   * and this is the read that has to honour it.
+   * **Named `current` rather than `category…` because the field beside it is the
+   * opposite.** `categoryAttributes` two lines up is pinned and must be; this is
+   * not and must not be. Two fields resolved from two different versions of the
+   * same row is the sort of thing that reads as a bug unless the names say so.
+   *
+   * **This docblock used to argue the other case, fluently, and slice 2.7c
+   * replaced it.** It said the policy travels with the listing for the reason the
+   * schema does, citing §8.2's rule that a booking retains the terms it was made
+   * under. The rule is right and the inference was wrong: **a listing is not a
+   * booking.** A listing is an offer standing in a shop window, and §3.4.4 wants
+   * the price in that window to be the price payable today. It is the *booking*
+   * that retains terms, and the booking pins this in Phase 5.
+   *
+   * The practical consequence is what settled it. With the policy pinned, an
+   * owner editing their listing's title moved it to a newer version and silently
+   * changed what they are paid — a money consequence attached to an unrelated
+   * action, with no honest place to disclose it. ADR 0042 has the research: no
+   * marketplace does per-listing fee versioning, and the UK P2B Regulation makes
+   * a fee change an announcement with a notice period rather than a per-listing
+   * consent.
+   *
+   * **Every read must resolve this afresh.** It cannot be captured when the row
+   * is written, because the whole point is that it changes underneath a listing
+   * nobody has touched.
    */
-  readonly categoryFeePolicy: CategoryFeePolicy;
+  readonly currentFeePolicy: CategoryFeePolicy;
   /**
    * Which transport requirements the **pinned** version offers (ADR 0029,
    * ADR 0031).

@@ -1273,14 +1273,14 @@ describe('the geocoded point', () => {
 });
 
 /**
- * The rate card and the pinned fee policy, against a real database
- * (slice 2.7b, ADR 0029, ADR 0033).
+ * The rate card and the current fee policy, against a real database
+ * (slice 2.7b, rewritten by 2.7c — ADR 0042, ADR 0033).
  *
  * The integration test above proves the *controller* prices from
- * `listing.categoryFeePolicy`. It cannot prove where that value comes from,
- * because the in-memory double captures the policy when the listing is created
- * and so could never re-price one. Only here, where the adapter genuinely
- * re-reads the pinned version row on every read, is that a real assertion.
+ * `listing.currentFeePolicy`. It cannot prove which row that value comes from,
+ * and this is where the join is real: the adapter reads the category's latest
+ * version on every read, so a listing written months ago is priced under today's
+ * terms.
  */
 describe('the rate card', () => {
   it('round-trips all three rates', async () => {
@@ -1348,8 +1348,8 @@ describe('the rate card', () => {
   });
 });
 
-describe('the pinned fee policy', () => {
-  it('is read from the version the listing points at', async () => {
+describe('the current fee policy', () => {
+  it('is read from the category, and matches while nothing has changed', async () => {
     const owner = await newUser();
     const category = await newCategory(owner);
     const created = await store.createDraft(
@@ -1362,17 +1362,24 @@ describe('the pinned fee policy', () => {
       }),
     );
 
-    expect(created.categoryFeePolicy.renterFeeBasisPoints).toBe(800);
+    expect(created.currentFeePolicy.renterFeeBasisPoints).toBe(800);
   });
 
   /**
-   * **The guarantee §8.2 asks this table to provide, proved where it can fail.**
+   * **This test asserted the exact opposite until slice 2.7c**, and the inversion
+   * is the whole of ADR 0042 in one assertion.
    *
-   * The category is repriced, minting a new version. The listing still points at
-   * the old one, so its fee policy must not move — otherwise reconfiguring a
-   * category would silently re-price every listing already written under it.
+   * It used to be titled *"does not move when the category is repriced"* and it
+   * cited §8.2 — a booking retains the terms it was made under. The rule is real
+   * and the subject was wrong: **a listing is not a booking.** A listing is an
+   * offer, and §3.4.4 wants the price on an offer to be the price payable today.
+   * Pinning the policy to the listing also meant that editing a listing moved it
+   * to a newer version and silently changed what its owner is paid.
+   *
+   * §8.2's guarantee has not been dropped. It moves to the **booking**, which
+   * pins the policy at the moment it is made, in Phase 5.
    */
-  it('does not move when the category is repriced', async () => {
+  it('moves when the category is repriced, though the pin does not', async () => {
     const owner = await newUser();
     const category = await newCategory(owner);
     const created = await store.createDraft(
@@ -1400,14 +1407,73 @@ describe('the pinned fee policy', () => {
 
     const reread = await store.findOwnedBy(created.id, owner);
 
+    // **Both halves in one assertion pair, because the pair is the decision.**
+    // The pin has not moved — the listing's stored answers are still read against
+    // version 1, which is what keeps a stored `25` meaning 2.5 kg (ADR 0029) —
+    // and the fee policy has, because it is read from the category's latest.
     expect(reread?.categoryVersionNumber).toBe(1);
-    expect(reread?.categoryFeePolicy.renterFeeBasisPoints).toBe(800);
+    expect(reread?.currentFeePolicy.renterFeeBasisPoints).toBe(1_600);
 
-    // And the category itself has genuinely moved on, so the assertion above is
-    // about the pin rather than about a reconfiguration that did not happen.
-    expect(
-      (await categories.findBySlug(category.slug))?.feePolicy.renterFeeBasisPoints,
-    ).toBe(1_600);
+    // The attribute schema comes from the pinned version, not the latest, and
+    // that is asserted here rather than trusted: the two now come from different
+    // rows of the same table in one query, and the failure worth catching is the
+    // join being wired to the wrong one.
+    expect(reread?.categoryAttributes).toEqual(SCHEMA);
+  });
+
+  it('is the latest version even when several have been appended', async () => {
+    // `take: 1` on a descending order, exercised past the one-extra-version case
+    // — an `orderBy` accidentally ascending would pass with two versions and
+    // fail here.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    for (const rate of [900, 1_100, 1_300]) {
+      await categories.addVersion(
+        category.slug,
+        {
+          name: 'Outdoor and gardening',
+          riskLevel: 'medium',
+          reportableActivity: 'none',
+          attributes: SCHEMA,
+          transportOptions: [],
+          feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: rate },
+        },
+        owner,
+      );
+    }
+
+    const reread = await store.findOwnedBy(created.id, owner);
+
+    expect(reread?.currentFeePolicy.renterFeeBasisPoints).toBe(1_300);
+    expect(reread?.categoryVersionNumber).toBe(1);
+  });
+
+  it('prices every listing in a list from the current policy', async () => {
+    // `listOwnedBy` builds its records through the same mapper, and a join
+    // written for the single read but forgotten on the list is exactly the kind
+    // of drift that shows up as one page disagreeing with another.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    await store.createDraft(draft(owner, category.slug));
+
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+        feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+      },
+      owner,
+    );
+
+    const [listed] = await store.listOwnedBy(owner, 10);
+
+    expect(listed?.currentFeePolicy.renterFeeBasisPoints).toBe(1_600);
   });
 });
 

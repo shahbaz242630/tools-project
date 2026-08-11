@@ -272,10 +272,12 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       categoryName: category.name,
       categoryVersionNumber: category.versionNumber,
       categoryAttributes: category.attributes,
-      // The policy on the version being pinned, resolved from the same read as
-      // the schema — so a test cannot produce a listing priced under one
-      // version's rates while claiming another's.
-      categoryFeePolicy: category.feePolicy,
+      // A placeholder, overwritten by `hydrate` on the way out of every read
+      // (ADR 0042). It is stored at all only because `ListingRecord` requires
+      // the field; the value that matters is resolved when the listing is
+      // *read*, because a fee policy changes underneath a listing nobody has
+      // touched and a value captured here would freeze it.
+      currentFeePolicy: category.feePolicy,
       categoryTransportOptions: category.transportOptions,
       title: draft.title,
       description: draft.description,
@@ -308,17 +310,41 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     };
 
     this.listings.push(listing);
-    return listing;
+    return this.hydrate(listing);
   }
 
-  findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null> {
+  /**
+   * Attach the category's **current** fee policy (ADR 0042).
+   *
+   * **Every read goes through this, and that is the point of it existing rather
+   * than each read doing it.** The real adapter resolves the latest version in
+   * its `include`, so a double that returned a policy captured at creation would
+   * let a test prove the opposite of production: that reconfiguring a category's
+   * fees leaves an existing listing's price alone. It does not, deliberately.
+   *
+   * The stored record keeps its *pinned* attributes and transport options
+   * untouched, which is the other half of 0042 — the schema a value was written
+   * against must not move, and the price must.
+   */
+  private async hydrate(listing: ListingRecord): Promise<ListingRecord> {
+    const category = await this.categories.findBySlug(listing.categorySlug);
+
+    /* c8 ignore next -- unreachable: a listing cannot exist without its category,
+       and nothing deletes one. Mirrors `latestVersionOf`'s fallback in the real
+       adapter, which is unreachable for the same reason. */
+    if (category === null) return listing;
+
+    return { ...listing, currentFeePolicy: category.feePolicy };
+  }
+
+  async findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null> {
     const listing = this.listings.find(
       (candidate) => candidate.id === id && candidate.ownerId === ownerId,
     );
-    return Promise.resolve(listing ?? null);
+    return listing === undefined ? null : this.hydrate(listing);
   }
 
-  publish(id: string, ownerId: string): Promise<ListingRecord | null> {
+  async publish(id: string, ownerId: string): Promise<ListingRecord | null> {
     const index = this.listings.findIndex(
       (listing) => listing.id === id && listing.ownerId === ownerId,
     );
@@ -337,10 +363,10 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       updatedAt: Time.nowUtc(),
     };
     this.listings[index] = published;
-    return Promise.resolve(published);
+    return this.hydrate(published);
   }
 
-  pause(id: string, ownerId: string): Promise<ListingRecord | null> {
+  async pause(id: string, ownerId: string): Promise<ListingRecord | null> {
     const index = this.listings.findIndex(
       (listing) => listing.id === id && listing.ownerId === ownerId,
     );
@@ -364,10 +390,10 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       updatedAt: Time.nowUtc(),
     };
     this.listings[index] = paused;
-    return Promise.resolve(paused);
+    return this.hydrate(paused);
   }
 
-  listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
+  async listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
     // Newest first, matching the real store's `orderBy` and the index behind
     // it. A double that returned insertion order would let a test pass while
     // the dashboard in 2.9 showed the oldest listing at the top.
@@ -375,11 +401,14 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     // **The limit is applied after the sort**, as `take` is in the real query.
     // Slicing first would keep the oldest rows and drop the newest, which is
     // the opposite of what the export should cut.
-    return Promise.resolve(
+    return Promise.all(
       this.listings
         .filter((listing) => listing.ownerId === ownerId)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-        .slice(0, limit),
+        .slice(0, limit)
+        // Hydrated per row, so every listing on the dashboard is priced under
+        // the category's current policy rather than whichever one it pinned.
+        .map((listing) => this.hydrate(listing)),
     );
   }
 
@@ -392,15 +421,16 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
    * erasure test pass while the real system deleted rows, and the two would only
    * disagree in a db test nobody had thought to write.
    */
-  findForModeration(id: string): Promise<ListingRecord | null> {
+  async findForModeration(id: string): Promise<ListingRecord | null> {
     // No owner filter, exactly as the real one has none. A double that quietly
     // scoped by owner would let a moderation test pass while proving the
     // opposite of what it claims — that an administrator can reach a listing
     // that is not theirs.
-    return Promise.resolve(this.listings.find((listing) => listing.id === id) ?? null);
+    const listing = this.listings.find((candidate) => candidate.id === id);
+    return listing === undefined ? null : this.hydrate(listing);
   }
 
-  moderate(input: ModerationDecision): Promise<ListingRecord | null> {
+  async moderate(input: ModerationDecision): Promise<ListingRecord | null> {
     const index = this.listings.findIndex((listing) => listing.id === input.listingId);
     if (index === -1) return Promise.resolve(null);
 
@@ -418,7 +448,7 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       updatedAt: Time.nowUtc(),
     };
     this.listings[index] = moderated;
-    return Promise.resolve(moderated);
+    return this.hydrate(moderated);
   }
 
   deleteAllOwnedBy(ownerId: string): Promise<void> {

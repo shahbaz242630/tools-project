@@ -341,9 +341,9 @@ function toOwnerListingSummary(listing: ListingRecord): OwnerListingSummary {
     moderationState: listing.moderationState,
     isLocated: listing.isLocated,
     // Computed here, as it is on the single-listing projection, and against the
-    // **pinned** fee policy (ADR 0029). §3.4.4 names listing cards explicitly,
-    // and the bare rate is deliberately not on this shape at all.
-    inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.categoryFeePolicy),
+    // category's **current** fee policy (ADR 0042). §3.4.4 names listing cards
+    // explicitly, and the bare rate is deliberately not on this shape at all.
+    inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.currentFeePolicy),
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),
   };
@@ -405,11 +405,15 @@ function toOwnerListing(
      * rate on the response and the fee somewhere else, showing the wrong one is
      * a single careless line, and §3.4.4 prohibits exactly that.
      *
-     * Computed against the **pinned** version's fee policy, not the category's
-     * current one (ADR 0029). Reconfiguring a category must not silently re-price
-     * a listing that was written under different terms.
+     * Computed against the category's **current** fee policy, not the version
+     * this listing pinned (ADR 0042) — and this comment said the exact opposite
+     * until slice 2.7c. The rule it cited is real and belongs to a **booking**,
+     * which retains the terms it was made under; a listing is an offer, and
+     * §3.4.4 wants the price on an offer to be the price payable today. Pinning
+     * it here also meant an owner editing their title silently changed what they
+     * are paid, which is what settled it.
      */
-    inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.categoryFeePolicy),
+    inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.currentFeePolicy),
     status: listing.status,
     /*
      * **Both authorities, because visibility takes both** (ADR 0041, 2.8c-ii).
