@@ -393,8 +393,75 @@ describe('what an owner sees of a moderated listing', () => {
     });
 
     // Hiding it from the public must not hide it from its owner: they are the
-    // one person who has to be able to see what happened to it. What the page
-    // *tells* them is slice 2.8c-ii's.
+    // one person who has to be able to see what happened to it.
     expect(response.statusCode).toBe(200);
+  });
+
+  it('carries the decision and the reason into the owner’s own projection', async () => {
+    /*
+     * Slice 2.8c-ii, and the gap it closed. 2.8c-i added the state, the column,
+     * the constraint and the route, and stopped at what an *administrator* could
+     * do — `toOwnerListing` was never touched, so the platform could hide a
+     * listing while the only page its owner can open went on calling it published.
+     *
+     * Asserted against the **raw body** rather than the parsed object, for the
+     * reason `profiles.integration.test.ts` gives about leaks: parsing first would
+     * let a schema that has drifted silently supply or strip a field, and this
+     * test is precisely about whether the wire carries it.
+     */
+    const id = await givenAPublishedListing();
+    await moderate(id, {
+      state: 'REJECTED',
+      reason: 'Prohibited item, reported twice',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingPath(id),
+      headers: auth('alice-token'),
+    });
+
+    const body = response.json() as Record<string, unknown>;
+    expect(body.moderationState).toBe('REJECTED');
+    expect(body.moderationReason).toBe('Prohibited item, reported twice');
+
+    // What the owner set is untouched and still says so, which is the whole point
+    // of ADR 0041 and the thing the page has to be able to tell them apart.
+    expect(body.status).toBe('PUBLISHED');
+  });
+
+  it('tells the owner nothing is holding back a listing nobody has moderated', async () => {
+    // The default has to be distinguishable from a decision, on the wire as well
+    // as in the database: `APPROVED` with a null reason is "nobody has objected",
+    // not "somebody approved this".
+    const id = await givenAPublishedListing();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingPath(id),
+      headers: auth('alice-token'),
+    });
+
+    const body = response.json() as Record<string, unknown>;
+    expect(body.moderationState).toBe('APPROVED');
+    expect(body.moderationReason).toBeNull();
+  });
+
+  it('does not tell the owner who moderated their listing', async () => {
+    // The reason is owed to them; the moderator's identity is not — the same line
+    // drawn for a suspended account, where the subject reads the reason and never
+    // the administrator behind it.
+    const id = await givenAPublishedListing();
+    await moderate(id, { state: 'UNDER_REVIEW', reason: 'Checking the safety guard' });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingPath(id),
+      headers: auth('alice-token'),
+    });
+
+    const raw = JSON.stringify(response.json());
+    expect(raw).not.toContain('moderatedBy');
+    expect(raw).not.toContain('moderatedAt');
   });
 });

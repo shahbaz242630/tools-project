@@ -7,17 +7,18 @@ import { Money, Postcode, Scaled, Time } from '@platform/core';
 import {
   TRANSPORT_REQUIREMENT_HINTS,
   TRANSPORT_REQUIREMENT_LABELS,
+  isPubliclyVisible,
 } from '@platform/contracts';
 import type {
   AttributeOption,
   CategoryAttribute,
-  ListingStatus,
   OwnerListing,
 } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
+import { ModerationNotice, StatusLine } from '../../../components/listing-visibility';
 
 /** Never prerendered — it is somebody's own draft. */
 export const dynamic = 'force-dynamic';
@@ -72,68 +73,35 @@ export default async function ListingPage({
   );
 }
 
-/**
- * What state this listing is in, said in the owner's terms.
- *
- * Every case is spelled out and the fallthrough is `never`, so adding a status
- * to the vocabulary fails the build here rather than silently reusing whichever
- * sentence happened to be the else branch.
- */
-function StatusLine({ status }: { readonly status: ListingStatus }) {
-  switch (status) {
-    case 'PUBLISHED':
-      return (
-        <>
-          <strong>Published.</strong> People can find this and book it. The map shows an
-          approximate point, never your address.
-        </>
-      );
-    case 'PAUSED':
-      return (
-        <>
-          <strong>Paused.</strong> Nobody can find this or book it while it is paused.
-          Everything you have written is kept, and you can put it back up whenever you
-          like.
-        </>
-      );
-    case 'DRAFT':
-      return (
-        <>
-          <strong>Draft.</strong> Nobody else can see this and nobody can book it.
-        </>
-      );
-    default: {
-      // Exhaustiveness, checked by the compiler rather than by review.
-      const unhandled: never = status;
-      return <>{String(unhandled)}</>;
-    }
-  }
-}
-
 function Listing({ listing }: { readonly listing: OwnerListing }) {
   return (
     <>
       <h1>{listing.title}</h1>
 
-      {/*
-        **Derived from the status, and exhaustively** — which is the second half
-        of a lesson this line has now taught twice.
-
-        Until 2.8a it said "Draft. Nobody else can see this" unconditionally,
-        true for as long as `DRAFT` was the only status and a lie the moment
-        publishing worked. 2.8a made it derived, but as a *binary* conditional —
-        so when 2.8b added `PAUSED`, a paused listing would have gone straight
-        back to announcing itself as a draft. Same defect, same line, one slice
-        later, because "derived from the status" was implemented as "is it
-        published".
-
-        `StatusLine` switches on every case and its default is a compile error,
-        so the next status cannot reach this page without somebody writing its
-        sentence.
-      */}
       <p role="status">
-        <StatusLine status={listing.status} />
+        {/*
+          **`isPubliclyVisible` decides whether anybody can see this, and this
+          page does not** (ADR 0041). Its history — three separate defects on one
+          sentence — is written up in `listing-visibility.tsx`, which is where the
+          two components now live so that a test can hold them.
+
+          A `status === 'PUBLISHED'` written here would have been the fourth, and
+          the worst of them: it would tell an owner that strangers can book an item
+          the platform is refusing to show.
+
+          This is also the function's **first caller**. It was written in 2.8a and
+          widened in 2.8c-i with none, on the argument that a rule with one home is
+          cheaper to widen than a comparison with five. Using it here means this
+          page and Phase 3's search cannot come to disagree about what "visible"
+          means — they ask the same function.
+        */}
+        <StatusLine
+          status={listing.status}
+          visible={isPubliclyVisible(listing.status, listing.moderationState)}
+        />
       </p>
+
+      <ModerationNotice listing={listing} />
 
       <dl>
         <dt>Category</dt>

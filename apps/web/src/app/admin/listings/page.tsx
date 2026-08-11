@@ -63,11 +63,12 @@ export default function AdminListingsPage() {
         </p>
 
         <p role="note">
-          <strong>The owner is not told yet.</strong> The reason you give is stored and
-          recorded against you, but nothing shows it to them — so a listing you hide now
-          disappears from public view with no explanation reaching its owner. That is
-          the next slice. Bear it in mind before hiding anything belonging to somebody
-          real.
+          <strong>The owner reads what you write, on their own listing page</strong>{' '}
+          (slice 2.8c-ii). They see that the platform is holding the listing back, and
+          your reason <strong>exactly as you typed it</strong> — not a summary, and not
+          your name. Write it accordingly. They are <strong>not</strong> emailed about
+          it: notifications arrive in a later phase, so until then somebody only finds
+          out by opening the page.
         </p>
       </section>
 
