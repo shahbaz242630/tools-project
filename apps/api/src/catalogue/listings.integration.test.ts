@@ -588,6 +588,277 @@ describe('reading a listing', () => {
  * than the full one, which is the whole security argument for the slice: an
  * index rendering no addresses must not return one per row.
  */
+/**
+ * Slice 2.9b-i — rewriting a listing.
+ *
+ * **Two properties carry the slice**: that editing re-pins to the current version
+ * (ADR 0042) while leaving everything the edit does not carry alone, and that the
+ * things an edit *cannot* reach stay unreachable — the address, the status, the
+ * moderation state and the category.
+ */
+describe('editing a listing', () => {
+  beforeEach(() => givenACategory());
+
+  const EDIT = {
+    title: 'Petrol hedge trimmer, serviced',
+    description: 'Serviced last spring and sharpened.',
+    replacementValue: { amount: 30_000, currency: 'GBP' },
+    categoryVersionNumber: 1,
+    attributes: { power_source: 'cordless', weight_kg: '4.1' },
+    transportRequirement: null,
+    requiresTwoPersonLift: true,
+    rates: { daily: { amount: 2_000, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  function edit(
+    id: string,
+    token = 'alice-token',
+    body: Record<string, unknown> = EDIT,
+  ) {
+    return app.inject({
+      method: 'PUT',
+      url: listingPath(id),
+      headers: auth(token),
+      payload: body,
+    });
+  }
+
+  async function given(body: Record<string, unknown> = DRAFT) {
+    return parseOwnerListing((await createListing('alice-token', body)).json());
+  }
+
+  async function reread(id: string) {
+    return parseOwnerListing(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingPath(id),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+  }
+
+  it('rewrites what the owner wrote', async () => {
+    const created = await given();
+
+    const response = await edit(created.id);
+
+    expect(response.statusCode).toBe(200);
+    const updated = parseOwnerListing(response.json());
+    expect(updated.id).toBe(created.id);
+    expect(updated.title).toBe('Petrol hedge trimmer, serviced');
+    expect(updated.attributes.power_source).toBe('cordless');
+    // Scaled by the server against the pinned definition, never by the client
+    // (ADR 0029): "4.1" at one decimal place is 41.
+    expect(updated.attributes.weight_kg).toBe(41);
+    expect(updated.requiresTwoPersonLift).toBe(true);
+    expect(updated.rates.daily).toEqual({ amount: 2_000, currency: 'GBP' });
+  });
+
+  it('answers 404 for somebody else’s listing, not 403', async () => {
+    // 403 would confirm it exists, which is the whole thing ownership protects.
+    const created = await given();
+
+    expect((await edit(created.id, 'bob-token')).statusCode).toBe(404);
+  });
+
+  it('leaves the other owner’s listing untouched when it refuses', async () => {
+    // The refusal above must be a refusal to *write*, not merely a refusal to
+    // answer. Asserted from the owner's side, because that is where a silent
+    // write would show.
+    const created = await given();
+    await edit(created.id, 'bob-token');
+
+    expect((await reread(created.id)).title).toBe('Petrol hedge trimmer');
+  });
+
+  it('refuses a suspended owner', async () => {
+    // ADR 0024: a suspended account may read what we hold and may not write
+    // anything others would see. Editing a published listing is exactly that,
+    // which is why this sits with publishing rather than with pausing.
+    const created = await given();
+    identity.users.suspend(await idOf('alice-token'), 'admin-id', 'Repeated no-shows');
+
+    expect((await edit(created.id)).statusCode).toBe(403);
+  });
+
+  it('leaves the collection address alone', async () => {
+    /*
+     * **The most important assertion in this file.** An edit carries no address,
+     * and the failure worth catching is a store method that helpfully writes the
+     * columns it was not given — which would clear somebody's address, and their
+     * outward code with it, on a title change.
+     */
+    const created = await given({ ...DRAFT, collectionLocation: ADDRESS });
+    expect(created.collectionLocation?.postcode).toBe('BS7 8AA');
+
+    const updated = parseOwnerListing((await edit(created.id)).json());
+
+    expect(updated.collectionLocation?.postcode).toBe('BS7 8AA');
+    expect(updated.collectionLocation?.line1).toBe('12 Gloucester Road');
+  });
+
+  it('leaves the status alone, so editing does not unpublish', async () => {
+    // An owner fixing a typo on a live listing expects it to stay live. Status
+    // moves through its own transitions and nowhere else.
+    // The category offers no transport options by default, so publication does
+    // not require one (2.8a) — and the geocoder has to recognise the postcode,
+    // because a listing nothing can place is refused publication.
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+    const created = await given({
+      ...DRAFT,
+      description: 'Serviced last spring.',
+      collectionLocation: ADDRESS,
+      rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+    });
+    const published = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(created.id),
+      headers: auth('alice-token'),
+    });
+    expect(published.statusCode).toBe(201);
+
+    const updated = parseOwnerListing((await edit(created.id)).json());
+
+    expect(updated.status).toBe('PUBLISHED');
+  });
+
+  it('leaves the moderation state alone', async () => {
+    // Not the owner's to set (ADR 0041), and an edit that reset it would be a
+    // way to walk out of a refusal by changing a title.
+    const created = await given();
+    await listings.listings.moderate({
+      listingId: created.id,
+      state: 'REJECTED',
+      reason: 'Not something we can allow on the platform',
+      moderatorId: await idOf('bob-token'),
+      decidedAt: new Date(),
+    });
+
+    const updated = parseOwnerListing((await edit(created.id)).json());
+
+    expect(updated.moderationState).toBe('REJECTED');
+    expect(updated.moderationReason).toBe('Not something we can allow on the platform');
+  });
+
+  it('re-pins to the category’s current version', async () => {
+    /*
+     * **ADR 0042's fourth point, and the reason this slice exists at all.** The
+     * category is reconfigured; the listing is still on version 1; an edit brings
+     * it onto version 2. That is only honest because the form an owner is looking
+     * at is built from version 2 — which is what the page does.
+     */
+    const created = await given();
+    expect(created.categoryVersionNumber).toBe(1);
+
+    await reconfigured(SCHEMA);
+
+    const updated = parseOwnerListing(
+      (
+        await edit(created.id, 'alice-token', { ...EDIT, categoryVersionNumber: 2 })
+      ).json(),
+    );
+
+    expect(updated.categoryVersionNumber).toBe(2);
+  });
+
+  it('refuses an edit built from a version that has since been replaced', async () => {
+    /*
+     * The stale form, on a route that could not have one before ADR 0042: an edit
+     * used to revalidate against the version the listing had already pinned, a
+     * row a trigger refuses to update. Now the form is built from the *current*
+     * version, so it can be replaced while the page sits open — and accepting the
+     * answers anyway would validate them against one schema and pin another.
+     */
+    const created = await given();
+    await reconfigured(SCHEMA);
+
+    const response = await edit(created.id, 'alice-token', {
+      ...EDIT,
+      categoryVersionNumber: 1,
+    });
+
+    expect(response.statusCode).toBe(409);
+
+    // And nothing was written.
+    const after = await reread(created.id);
+    expect(after.title).toBe('Petrol hedge trimmer');
+    expect(after.categoryVersionNumber).toBe(1);
+  });
+
+  it('refuses an answer the category does not ask for', async () => {
+    const created = await given();
+
+    const response = await edit(created.id, 'alice-token', {
+      ...EDIT,
+      attributes: { ...EDIT.attributes, invented: 'nonsense' },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('takes no category, so a listing cannot be moved between categories', async () => {
+    // Not on the schema at all, so zod strips it. Asserted rather than assumed,
+    // because the failure would be silent: the listing would keep its category
+    // and the caller would believe it had changed.
+    const created = await given();
+
+    const updated = parseOwnerListing(
+      (
+        await edit(created.id, 'alice-token', {
+          ...EDIT,
+          categorySlug: 'something-else',
+        })
+      ).json(),
+    );
+
+    expect(updated.categorySlug).toBe('outdoor-gardening');
+  });
+
+  it('takes no collection address, so one cannot be set through this route', async () => {
+    // 2.9b-ii's, and stripped rather than accepted — a client that sent one and
+    // got a 200 would believe it had changed an address.
+    const created = await given();
+
+    const updated = parseOwnerListing(
+      (
+        await edit(created.id, 'alice-token', {
+          ...EDIT,
+          collectionLocation: ADDRESS,
+        })
+      ).json(),
+    );
+
+    expect(updated.collectionLocation).toBeNull();
+  });
+
+  it('refuses an anonymous caller', async () => {
+    const created = await given();
+
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: listingPath(created.id),
+          payload: EDIT,
+        })
+      ).statusCode,
+    ).toBe(401);
+  });
+
+  it('writes no audit entry, because an owner editing their own listing is not administrative', async () => {
+    // The rule 2.8b settled and 2.8c-i confirmed: the test is *who performed
+    // it*. 2.11's concierge edit is the one that will need an entry.
+    const created = await given();
+    const before = listings.audit.log.entries.length;
+
+    await edit(created.id);
+
+    expect(listings.audit.log.entries).toHaveLength(before);
+  });
+});
+
 describe('listing everything an owner has', () => {
   beforeEach(() => givenACategory());
 

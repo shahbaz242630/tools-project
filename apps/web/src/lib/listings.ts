@@ -22,6 +22,7 @@ import {
 import type {
   CategoryOption,
   ListingDraftInput,
+  ListingEditInput,
   OwnedListings,
   OwnerListing,
   PublicationBlocker,
@@ -309,6 +310,37 @@ export function fetchOwnedListings(
     clientIp,
     fetchImpl,
     parseOwnedListings,
+  );
+}
+
+/**
+ * Rewrite a listing (§8.3, slice 2.9b-i, ADR 0042).
+ *
+ * `PUT` on the listing's own path, with every field present — a partial is a
+ * shape where "absent" and "clear this" are the same value on the wire.
+ *
+ * **The 409 keeps its default meaning here, unlike `pauseListing`.** On this
+ * route a conflict really is a stale category: the form was built from the
+ * current configuration and an administrator replaced it while it sat open,
+ * which is exactly what `stale-category` says. That is a change from what an
+ * edit would have meant before ADR 0042, when a listing revalidated against a
+ * version a trigger refuses to update and so could not go stale at all.
+ */
+export function updateListing(
+  apiBaseUrl: string,
+  token: string | null,
+  id: string,
+  edit: ListingEditInput,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<ListingOutcome<OwnerListing>> {
+  return call(
+    new URL(listingPath(id), apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseOwnerListing,
+    { method: 'PUT', body: edit },
   );
 }
 

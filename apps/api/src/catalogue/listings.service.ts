@@ -85,6 +85,19 @@ export interface SubmittedListing {
 }
 
 /**
+ * What an owner submits when editing (slice 2.9b-i).
+ *
+ * `SubmittedListing` minus the two things an edit cannot carry — the category,
+ * which is fixed at creation, and the collection address, which is 2.9b-ii's.
+ * Expressed as an `Omit` rather than retyped, so a field added to the create
+ * shape has to be considered here rather than quietly diverging.
+ */
+export type SubmittedListingEdit = Omit<
+  SubmittedListing,
+  'ownerId' | 'categorySlug' | 'collectionLocation'
+>;
+
+/**
  * Raised when the category does not offer the transport requirement chosen.
  *
  * Its own error rather than an `AttributeValueIssue`, because it is not an
@@ -356,6 +369,92 @@ export class ListingsService {
       rates: submitted.rates,
       collectionLocation: submitted.collectionLocation,
       locatedPoint,
+      categoryVersionNumber: category.versionNumber,
+    });
+  }
+
+  /**
+   * Rewrite what an owner wrote about their item (slice 2.9b-i, ADR 0042).
+   *
+   * **The same three steps `createDraft` takes, in the same order and for the
+   * same reasons** — read the category's current configuration, refuse a stale
+   * form, validate against the version about to be pinned — and the only reason
+   * they are not shared code is that the category comes from a different place:
+   * a draft names one, an edit inherits the listing's.
+   *
+   * **The listing is read first, and by the store, so ownership is a query
+   * rather than a comparison.** A null here is both "no such listing" and "not
+   * yours", which the route answers 404 to without distinguishing.
+   *
+   * **Editing re-pins, and that is ADR 0042 rather than a shortcut.** The form
+   * an owner is looking at is built from the current configuration, so saving it
+   * brings the listing onto that configuration. Nothing is silent: the current
+   * questions are on screen, and publication still refuses a listing that has
+   * not answered the required ones. What must never happen — and does not —
+   * is a listing re-pinning without its owner having seen the new form.
+   *
+   * **No geocoding happens here**, unlike `createDraft`, because an edit carries
+   * no address (slice 2.9b-ii). That is worth stating rather than leaving as an
+   * absence: reusing the create path's `locator.locate` would draw a **fresh
+   * fuzz offset**, and an owner who saved three times would publish three points
+   * scattered around one true address — the averaging attack ADR 0032 and
+   * §8.4.1 exist to prevent. When 2.9b-ii adds the address, the offset must be
+   * preserved rather than redrawn.
+   *
+   * **Unaudited**, like every other owner action on their own listing. The test
+   * is who performed it (§8.13), and 2.11's concierge edit — an administrator
+   * acting on somebody else's behalf — is the one that will need its own method
+   * and its own entry.
+   */
+  async edit(
+    id: string,
+    ownerId: string,
+    submitted: SubmittedListingEdit,
+  ): Promise<ListingRecord | null> {
+    const listing = await this.store.findOwnedBy(id, ownerId);
+    if (listing === null) return null;
+
+    const category = await this.categories.findOption(listing.categorySlug);
+    /* c8 ignore next 2 -- unreachable: the listing holds a foreign key to a
+       version of this category, so the category exists. */
+    if (category === null) throw new UnknownCategoryError(listing.categorySlug);
+
+    if (category.versionNumber !== submitted.categoryVersionNumber) {
+      throw new CategoryChangedError(
+        listing.categorySlug,
+        submitted.categoryVersionNumber,
+        category.versionNumber,
+      );
+    }
+
+    // Against the **current** version's schema, which is the version about to be
+    // pinned — not against the one the listing is on. Validating against the old
+    // schema and then pinning the new one is the mismatch this whole ordering
+    // exists to prevent.
+    const values = validateAttributeValues(category.attributes, submitted.attributes);
+    if (!values.ok) throw new AttributeValuesInvalidError(values.issues);
+
+    if (
+      submitted.transportRequirement !== null &&
+      !offersTransportRequirement(
+        category.transportOptions,
+        submitted.transportRequirement,
+      )
+    ) {
+      throw new TransportRequirementNotOfferedError(
+        submitted.transportRequirement,
+        category.transportOptions,
+      );
+    }
+
+    return this.store.update(id, ownerId, {
+      title: submitted.title,
+      description: submitted.description,
+      replacementValue: submitted.replacementValue,
+      attributes: values.values,
+      transportRequirement: submitted.transportRequirement,
+      requiresTwoPersonLift: submitted.requiresTwoPersonLift,
+      rates: submitted.rates,
       categoryVersionNumber: category.versionNumber,
     });
   }

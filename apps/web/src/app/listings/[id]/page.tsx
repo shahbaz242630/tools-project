@@ -8,6 +8,7 @@ import {
   TRANSPORT_REQUIREMENT_HINTS,
   TRANSPORT_REQUIREMENT_LABELS,
   isPubliclyVisible,
+  listingPath,
 } from '@platform/contracts';
 import type {
   AttributeOption,
@@ -331,6 +332,16 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
         <dt>Saved</dt>
         <dd>{Time.formatLocal(Time.fromIsoUtc(listing.createdAt))}</dd>
       </dl>
+
+      {/*
+        **Above publication, deliberately** (slice 2.9b-i). The commonest reason
+        somebody is on this page is that publishing refused and named what is
+        missing; the control that fixes it should be the one they meet first,
+        rather than below the button that just said no.
+      */}
+      <p>
+        <Link href={`${listingPath(listing.id)}/edit`}>Edit this listing</Link>
+      </p>
 
       <PublishListingForm
         listingId={listing.id}

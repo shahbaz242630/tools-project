@@ -1,0 +1,174 @@
+'use server';
+
+import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { listingEditSchema, listingPath } from '@platform/contracts';
+import type { TransportRequirement } from '@platform/contracts';
+import { clientIpFrom } from '../../../../lib/client-ip';
+import { asSentences } from '../../../../lib/contract-issues';
+import { readRateCard } from '../../../../lib/rate-card';
+import { readReplacementValue } from '../../../../lib/replacement-value';
+import { readSubmittedAttributes } from '../../../../lib/submitted-attributes';
+import { updateListing } from '../../../../lib/listings';
+import { webEnv } from '../../../../lib/env';
+import type { ListingEditState } from './state';
+
+/**
+ * Saving an edit (slice 2.9b-i, ADR 0042).
+ *
+ * The create action's shape, minus the category and the address, and the
+ * parallels are deliberate: an owner correcting a listing meets the same
+ * validation, the same stale-category race and the same refusals as one writing
+ * a new one, so two actions explaining them differently would be two vocabularies
+ * for one thing.
+ *
+ * **The listing id is bound, not posted.** `editListingAction.bind(null, id)`
+ * makes it an argument the form cannot carry, where a hidden input would be a
+ * value a caller may change. The API refuses somebody else's listing regardless
+ * — ownership is in the query — so this is the second lock rather than the only
+ * one, which is the right way round.
+ */
+
+/** Whatever was chosen, unvalidated — the contract below is what decides. */
+function readTransportRequirement(form: FormData): TransportRequirement | null {
+  const chosen = String(form.get('transportRequirement') ?? '').trim();
+  return chosen === '' ? null : (chosen as TransportRequirement);
+}
+
+export async function editListingAction(
+  listingId: string,
+  previous: ListingEditState,
+  form: FormData,
+): Promise<ListingEditState> {
+  const title = String(form.get('title') ?? '').trim();
+  const description = String(form.get('description') ?? '');
+  const replacementValue = String(form.get('replacementValue') ?? '');
+  const dailyRate = String(form.get('dailyRate') ?? '');
+  const weekendRate = String(form.get('weekendRate') ?? '');
+  const weeklyRate = String(form.get('weeklyRate') ?? '');
+
+  /*
+   * **Spread over `previous` rather than over a blank initial state**, and this
+   * is the one place the edit action genuinely differs from the create action
+   * rather than merely being smaller.
+   *
+   * The create form falls back to `INITIAL_LISTING_STATE`, whose fields are all
+   * empty — correct there, because an empty create form is where somebody
+   * started. Here the fallback is the listing as it stands, so a field that
+   * somehow did not come back in the POST shows what is saved rather than
+   * blanking. `typed` still wins for everything that did arrive.
+   */
+  const typed = {
+    title,
+    description,
+    replacementValue,
+    dailyRate,
+    weekendRate,
+    weeklyRate,
+  };
+  const refused = (message: string): ListingEditState => ({
+    ...previous,
+    ...typed,
+    status: 'error',
+    message,
+  });
+
+  const attributes = readSubmittedAttributes(form.get('attributes'));
+  if (!attributes.ok) return refused(attributes.message);
+
+  const categoryVersionNumber = Number(form.get('categoryVersionNumber') ?? '');
+  if (!Number.isInteger(categoryVersionNumber) || categoryVersionNumber < 1) {
+    // Unreachable from the form, which renders it as a hidden input from the
+    // category the page read. Refused rather than defaulted, because the value
+    // it would default to is "whatever is current", which is precisely the
+    // assumption that makes the stale-form race invisible (ADR 0029).
+    return refused('This page is out of date. Reload it and try again.');
+  }
+
+  const value = readReplacementValue(replacementValue);
+  if (!value.ok) return refused(value.message);
+
+  const rates = readRateCard({
+    daily: dailyRate,
+    weekend: weekendRate,
+    weekly: weeklyRate,
+  });
+  if (!rates.ok) return refused(rates.message);
+
+  // Checked here *and* by the API, and the API's answer is the one that counts.
+  // This exists so that a round trip is not how somebody finds out their title
+  // is two characters short.
+  const parsed = listingEditSchema.safeParse({
+    title,
+    description,
+    replacementValue: value.value,
+    categoryVersionNumber,
+    attributes: attributes.value,
+    transportRequirement: readTransportRequirement(form),
+    requiresTwoPersonLift: form.get('requiresTwoPersonLift') === 'on',
+    rates: rates.value,
+  });
+  if (!parsed.success) return refused(asSentences(parsed.error.issues));
+
+  const outcome = await updateListing(
+    webEnv().API_BASE_URL,
+    await (await auth()).getToken(),
+    listingId,
+    parsed.data,
+    undefined,
+    clientIpFrom((await headers()).get('x-forwarded-for')),
+  );
+
+  switch (outcome.kind) {
+    case 'loaded':
+      // Outside the switch, because `redirect` throws a control-flow signal and
+      // must not sit inside a try/catch a later refactor might wrap this in.
+      break;
+
+    case 'invalid':
+      return refused(outcome.issues.join('; '));
+
+    case 'not-found':
+      // The listing, not the category — this route names one and carries no
+      // category at all. It is what a stranger's listing answers, and what a
+      // listing deleted in another tab answers.
+      return refused(
+        'That listing could not be found. It may have been deleted — check your ' +
+          'listings.',
+      );
+
+    case 'forbidden':
+      return refused(
+        'Your account cannot change listings at the moment. If it has been ' +
+          'suspended, the reason is on your account page.',
+      );
+
+    case 'signed-out':
+      return refused('Your session has expired. Sign in again.');
+
+    case 'stale-category':
+      /*
+       * **This case exists on an edit only because of ADR 0042.** Before it, an
+       * edit revalidated against the version the listing had already pinned — a
+       * row a trigger refuses to update, so it could not go stale and this
+       * branch would have been unreachable. Now editing brings the listing onto
+       * the *current* version, so the form can be built from configuration an
+       * administrator replaces while it sits open.
+       *
+       * Nothing they typed is wrong, which is why this does not read as a
+       * validation failure.
+       */
+      return refused(
+        'This category was changed while you were editing, so the details it asks ' +
+          'for may be different now. Reload the page and check the ' +
+          'category-specific fields — everything else you typed is still here.',
+      );
+
+    case 'unreachable':
+    case 'malformed':
+      return refused(`That did not save — ${outcome.reason}`);
+  }
+
+  redirect(listingPath(listingId));
+}

@@ -23,6 +23,7 @@ import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type {
   CategoryOptionRecord,
   CategoryOptionSource,
+  ListingEdit,
   ListingDraft,
   ListingRecord,
   ListingStore,
@@ -162,6 +163,97 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     });
 
     return listing === null ? null : this.toRecord(listing);
+  }
+
+  async update(
+    id: string,
+    ownerId: string,
+    edit: ListingEdit,
+  ): Promise<ListingRecord | null> {
+    /*
+     * **Ownership first, and read rather than written**, because the version
+     * this edit will pin has to be resolved from *this listing's* category —
+     * which is a fact about the row, not something the caller may supply. An
+     * edit carries no category at all (see `ListingEdit`), so there is nothing
+     * for a caller to point at another category with.
+     */
+    const existing = await this.prisma.listing.findFirst({
+      where: { id, ownerId },
+      // Through `categoryVersion`, because a listing has no direct relation to
+      // its category — the composite foreign key points at the *version*, and
+      // `categoryId` is the column that travels with it. The slug is wanted only
+      // for the refusal message.
+      select: {
+        categoryId: true,
+        categoryVersion: { select: { category: { select: { slug: true } } } },
+      },
+    });
+    if (existing === null) return null;
+
+    const current = await this.prisma.categoryVersion.findFirst({
+      where: { categoryId: existing.categoryId },
+      orderBy: { versionNumber: 'desc' },
+    });
+    /* c8 ignore next 2 -- unreachable: this listing holds a composite foreign key
+       to a version of this category, so at least one exists. */
+    if (current === null) return null;
+
+    // The same guard `createDraft` makes, and it is **not** redundant with the
+    // service's: between that read and this one a reconfiguration could land,
+    // and pinning then would store answers checked against a schema this row
+    // would no longer point at (ADR 0029, and ADR 0042 is what made an *edit*
+    // able to race at all — before it, an edit revalidated against a row a
+    // trigger refuses to update).
+    if (current.versionNumber !== edit.categoryVersionNumber) {
+      throw new CategoryChangedError(
+        existing.categoryVersion.category.slug,
+        edit.categoryVersionNumber,
+        current.versionNumber,
+      );
+    }
+
+    /*
+     * `updateMany` with the owner in the `where`, exactly as `publish` and
+     * `pause` do — the ownership check happens inside the statement rather than
+     * in a read-then-write two requests could interleave. The read above is for
+     * the *category*, not for permission, and doing it twice is what keeps the
+     * write itself safe.
+     *
+     * **`categoryVersionId` is written and `categoryId` is not.** The listing
+     * stays in its category; only which configuration it answers to moves. The
+     * composite foreign key means the pair still has to agree, and it does,
+     * because `current` was resolved from this listing's own `categoryId`.
+     *
+     * **Nothing here touches `location`, `outwardCode`, `town`, `status` or
+     * `moderationState`** — see `ListingStore.update` for why each is left
+     * alone. `outwardCode` and `town` are omitted rather than rewritten from an
+     * address this method was not given: they are derived from the postcode, and
+     * the postcode is 2.9b-ii's.
+     */
+    const { count } = await this.prisma.listing.updateMany({
+      where: { id, ownerId },
+      data: {
+        categoryVersionId: current.id,
+        title: edit.title,
+        description: edit.description,
+        replacementValueAmount: edit.replacementValue.amount,
+        replacementValueCurrency: edit.replacementValue.currency,
+        ...rateColumns(edit.rates),
+        attributes: edit.attributes,
+        transportRequirement: edit.transportRequirement,
+        requiresTwoPersonLift: edit.requiresTwoPersonLift,
+      },
+    });
+
+    /* c8 ignore next -- the row was read a statement ago and only a concurrent
+       erasure could remove it. */
+    if (count === 0) return null;
+
+    // Re-read rather than assembled from what was written: the row carries a
+    // fresh `updatedAt`, the newly pinned version's name and schema, and the
+    // category's current fee policy — inventing any of them here would be a
+    // second source of truth for what the caller is told.
+    return this.findOwnedBy(id, ownerId);
   }
 
   async publish(id: string, ownerId: string): Promise<ListingRecord | null> {
