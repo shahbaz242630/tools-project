@@ -266,6 +266,9 @@ async function bootstrap(): Promise<void> {
     // a listing operation can ask whether publishing is on and can never
     // *switch* it (BRD §5.1, `publication-switch.ts`).
     { isPublicationEnabled: () => featureFlags.isEnabled('listing.publication') },
+    // Moderation is the one administrative action this service performs
+    // (slice 2.8c-i, ADR 0041), and ADR 0017 makes an unaudited one a failure.
+    audit,
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(

@@ -90,6 +90,8 @@ export default async function FeatureFlagsPage() {
         {' · '}
         <Link href="/admin/users">Look up an account</Link>
         {' · '}
+        <Link href="/admin/listings">Listing moderation</Link>
+        {' · '}
         <Link href="/account">Back to your account</Link>
       </nav>
     </main>

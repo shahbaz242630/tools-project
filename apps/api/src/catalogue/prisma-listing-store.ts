@@ -5,10 +5,12 @@ import type {
   ListingAttributeValues,
   ListingCollectionLocation,
   ListingStatus,
+  ModerationState,
   TransportRequirement,
 } from '@platform/contracts';
 import {
   LISTING_STATUSES,
+  MODERATION_STATES,
   TRANSPORT_REQUIREMENTS,
   parseCategoryAttributes,
   parseCategoryTransportOptions,
@@ -24,6 +26,7 @@ import type {
   ListingDraft,
   ListingRecord,
   ListingStore,
+  ModerationDecision,
 } from './listing-store.js';
 
 /**
@@ -214,6 +217,59 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return this.findOwnedBy(id, ownerId);
   }
 
+  /**
+   * Read a listing without an owner filter (slice 2.8c-i).
+   *
+   * **Every other read here scopes by owner and this one deliberately cannot.**
+   * A moderator acts on listings that are not theirs, so the `where` that
+   * protects the rest of this adapter has nothing to contribute, and the role
+   * check at the guard is the whole control. The name is the warning.
+   */
+  async findForModeration(id: string): Promise<ListingRecord | null> {
+    const listing = await this.prisma.listing.findUnique({
+      where: { id },
+      include: LISTING_CATEGORY,
+    });
+
+    return listing === null ? null : this.toRecord(listing);
+  }
+
+  async moderate(input: ModerationDecision): Promise<ListingRecord | null> {
+    /*
+     * `update` rather than `updateMany`, and the difference from `publish` and
+     * `pause` is instructive. Those use `updateMany` because `ownerId` is not
+     * part of a unique filter and the ownership check has to happen inside the
+     * statement. Here there is no ownership to check, `id` *is* unique, and
+     * `update` says so — it throws on a missing row rather than reporting zero.
+     *
+     * The read below is what turns that into a null, so the route can answer
+     * 404 without the caller learning whether a listing exists. A moderator
+     * knowing that is harmless; the uniformity is not, because a route that
+     * behaves differently for a real id is a probe.
+     */
+    const existing = await this.prisma.listing.findUnique({
+      where: { id: input.listingId },
+      select: { id: true },
+    });
+    if (existing === null) return null;
+
+    await this.prisma.listing.update({
+      where: { id: input.listingId },
+      data: {
+        moderationState: input.state,
+        // Cleared when returning to `APPROVED`, so a reinstated listing does not
+        // keep the sentence that took it down. The database would allow the old
+        // reason to survive — the CHECK only constrains the hidden states — and
+        // a stale one is worse than none: 2.8c-ii shows it to the owner.
+        moderationReason: input.reason,
+        moderatedById: input.moderatorId,
+        moderatedAt: input.decidedAt,
+      },
+    });
+
+    return this.findForModeration(input.listingId);
+  }
+
   async listOwnedBy(ownerId: string, limit: number): Promise<readonly ListingRecord[]> {
     const listings = await this.prisma.listing.findMany({
       where: { ownerId },
@@ -342,6 +398,8 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       // is for them not to be on the record at all.
       isLocated: listing.location?.latitude != null,
       status: asStatus(listing.status),
+      moderationState: asModerationState(listing.moderationState),
+      moderationReason: listing.moderationReason,
       createdAt: listing.createdAt,
       updatedAt: listing.updatedAt,
     };
@@ -473,6 +531,9 @@ interface ListingRow {
   /** The publishable half. Null together with `town` (`location_is_complete`). */
   town: string | null;
   status: string;
+  /** Widened to `string` like `status`, and narrowed by `asModerationState`. */
+  moderationState: string;
+  moderationReason: string | null;
   createdAt: Date;
   updatedAt: Date;
   categoryVersion: VersionRow & {
@@ -706,4 +767,19 @@ function asStatus(value: string): ListingStatus {
     return value as ListingStatus;
   }
   throw new Error(`Unknown listing status in the database: ${value}`);
+}
+
+/**
+ * `asStatus` for the second authority, and it throws for the same reason.
+ *
+ * A row written by a newer build must not be read leniently. Defaulting an
+ * unrecognised value to `APPROVED` would be the worst possible guess — it would
+ * make a listing somebody had deliberately hidden visible again, silently, on a
+ * rolled-back deploy.
+ */
+function asModerationState(value: string): ModerationState {
+  if ((MODERATION_STATES as readonly string[]).includes(value)) {
+    return value as ModerationState;
+  }
+  throw new Error(`Unknown listing moderation state in the database: ${value}`);
 }

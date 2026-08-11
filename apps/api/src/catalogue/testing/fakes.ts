@@ -17,6 +17,7 @@
  * exactly as the real store issues no `UPDATE`.
  */
 
+import { DEFAULT_MODERATION_STATE } from '@platform/contracts';
 import { Time } from '@platform/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import type { RecordingLogger } from '@platform/observability/testing';
@@ -37,6 +38,7 @@ import type {
   ListingDraft,
   ListingRecord,
   ListingStore,
+  ModerationDecision,
 } from '../listing-store.js';
 import { ListingsService } from '../listings.service.js';
 import type {
@@ -296,6 +298,11 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       // something production cannot do.
       isLocated: draft.locatedPoint !== null,
       status: 'DRAFT',
+      // The column's default, mirrored here. A double that started listings at
+      // `UNDER_REVIEW` would make every publication test pass through a queue
+      // that does not exist (ADR 0041).
+      moderationState: DEFAULT_MODERATION_STATE,
+      moderationReason: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -385,6 +392,35 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
    * erasure test pass while the real system deleted rows, and the two would only
    * disagree in a db test nobody had thought to write.
    */
+  findForModeration(id: string): Promise<ListingRecord | null> {
+    // No owner filter, exactly as the real one has none. A double that quietly
+    // scoped by owner would let a moderation test pass while proving the
+    // opposite of what it claims — that an administrator can reach a listing
+    // that is not theirs.
+    return Promise.resolve(this.listings.find((listing) => listing.id === id) ?? null);
+  }
+
+  moderate(input: ModerationDecision): Promise<ListingRecord | null> {
+    const index = this.listings.findIndex((listing) => listing.id === input.listingId);
+    if (index === -1) return Promise.resolve(null);
+
+    const listing = this.listings[index];
+    /* c8 ignore next */
+    if (listing === undefined) return Promise.resolve(null);
+
+    const moderated: ListingRecord = {
+      ...listing,
+      moderationState: input.state,
+      // Replaced rather than merged, so returning to APPROVED clears the
+      // sentence that took the listing down — the real adapter's behaviour, and
+      // a stale reason is one 2.8c-ii would show to the owner.
+      moderationReason: input.reason,
+      updatedAt: Time.nowUtc(),
+    };
+    this.listings[index] = moderated;
+    return Promise.resolve(moderated);
+  }
+
   deleteAllOwnedBy(ownerId: string): Promise<void> {
     // Spliced in place rather than reassigned, because the array is `readonly`
     // — the field, not its contents — and because a test holding a reference to
@@ -426,6 +462,8 @@ export interface ListingFakes {
    * unrelated regressions.
    */
   readonly publication: SwitchableFlag;
+  /** For asserting the moderation entry, and that nothing else writes one. */
+  readonly audit: AuditFakes;
   readonly service: ListingsService;
 }
 
@@ -458,6 +496,13 @@ export class SwitchableFlag {
  */
 export function createListingFakes(
   categories: InMemoryCategoryStore = new InMemoryCategoryStore(),
+  /**
+   * Takes an existing audit fake for the reason it takes an existing category
+   * store: moderation writes an entry (ADR 0041), and an integration test
+   * asserting on the module's audit while this service wrote to its own would
+   * be looking at two disconnected trails and concluding nothing was recorded.
+   */
+  audit: AuditFakes = createAuditFakes(),
 ): ListingFakes {
   const listings = new InMemoryListingStore(categories);
   // A real `LocationService` over a fake geocoder, rather than a stub locator.
@@ -475,12 +520,14 @@ export function createListingFakes(
     geocoder,
     logger,
     publication,
+    audit,
     service: new ListingsService(
       listings,
       listings,
       { locate: (postcode) => location.locate(postcode) },
       logger.logger,
       publication,
+      audit.service,
     ),
   };
 }

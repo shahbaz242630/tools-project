@@ -72,6 +72,7 @@ export default async function ApprovalsPage() {
         <Link href="/admin/users">Look up an account</Link> ·{' '}
         <Link href="/admin/activity">Look up an account&rsquo;s activity</Link> ·{' '}
         <Link href="/admin/categories">Categories</Link> ·{' '}
+        <Link href="/admin/listings">Listing moderation</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>
     </main>

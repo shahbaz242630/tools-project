@@ -30,6 +30,7 @@ import {
 import type { CategoryTransportOption, TransportRequirement } from './transport.js';
 import type { ListingAttributeValues } from './attribute-values.js';
 import { hasUnsafeCharacters, UNSAFE_CHARACTERS_MESSAGE } from './text.js';
+import { MAX_ADMIN_REASON_LENGTH, MIN_ADMIN_REASON_LENGTH } from './admin.js';
 import { parseWith } from './parse.js';
 
 /** Where an owner creates listings and lists their own. */
@@ -82,6 +83,27 @@ export const LISTING_PUBLICATION_ROUTE = '/listings/:id/publication';
  */
 export const CATEGORY_OPTIONS_PATH = '/categories';
 export const CATEGORY_OPTIONS_ROUTE = '/categories';
+
+/**
+ * Where an administrator decides what the platform permits of a listing
+ * (§8.3, §9, ADR 0041, slice 2.8c-i).
+ *
+ * **Under `/admin`, not beside the owner's routes**, and the prefix is doing
+ * real work rather than tidying. Every other listing path is owner-scoped and
+ * answers 404 for somebody else's listing; this one is reached by role and
+ * deliberately reaches listings that are not the caller's. Two authorisation
+ * stories should not share a path prefix, because the next person adding a
+ * route copies whichever neighbour they land on.
+ *
+ * `PUT` rather than `POST`: the decision replaces whatever the previous one was,
+ * and re-sending the same decision is the same decision. Contrast
+ * `listingPublicationPath`, where `POST`/`DELETE` name two opposite transitions.
+ */
+export function adminListingModerationPath(id: string): string {
+  return `/admin/listings/${encodeURIComponent(id)}/moderation`;
+}
+
+export const ADMIN_LISTING_MODERATION_ROUTE = '/admin/listings/:id/moderation';
 
 export const LISTING_TITLE_MIN_LENGTH = 3;
 export const LISTING_TITLE_MAX_LENGTH = 100;
@@ -165,11 +187,17 @@ export const replacementValueSchema = boundedMoneySchema({
  * because every state is a case that search, booking, payouts and the owner
  * dashboard each handle forever. ADR 0027's rule, third application.
  *
- * `PAUSED` arrives in slice 2.8b and the moderation states in 2.8c. They are
- * deliberately absent rather than present-and-unreachable: a value nothing can
- * produce is one every consumer still has to handle, and the first person to see
- * it in a switch statement has no way to tell whether it is unimplemented or
- * unused.
+ * `PAUSED` arrived in slice 2.8b. A value nothing can produce is one every
+ * consumer still has to handle, and the first person to see it in a switch
+ * statement has no way to tell whether it is unimplemented or unused — so states
+ * arrive with the code that writes them.
+ *
+ * **The moderation states are not here, and this docblock used to say they would
+ * be** (ADR 0041). They are a second field, because this one answers *what the
+ * owner wants* and moderation answers *what the platform permits*. Every value
+ * below is written by the owner. Putting a moderator's decision among them would
+ * mean a rejection overwriting an owner's intent, and reinstatement having to
+ * guess what to restore.
  *
  * **There is no `ARCHIVED`, and its absence is a decision rather than a
  * deferral** (BRD amendment, 10 August 2026). Archive was specified in §8.3 and
@@ -185,7 +213,35 @@ export type ListingStatus = (typeof LISTING_STATUSES)[number];
 export const listingStatusSchema = z.enum(LISTING_STATUSES);
 
 /**
- * Whether a listing in this state is visible to anybody but its owner.
+ * What the platform permits, as distinct from what the owner wants (ADR 0041).
+ *
+ * A closed vocabulary in code for the same reason `LISTING_STATUSES` is: each
+ * value is a case that search, the owner dashboard and Phase 9's queue handle
+ * forever.
+ *
+ * - `APPROVED` — nothing is holding this back. **The default**, because §8.3
+ *   makes moderation something that *flags*, not a gate every listing waits at.
+ *   Requiring approval before anything could go live would be a review queue,
+ *   which is Phase 9's, and would stop the platform dead until somebody staffed
+ *   it.
+ * - `UNDER_REVIEW` — somebody is looking. Not visible while they do.
+ * - `REJECTED` — looked at and refused.
+ *
+ * **`UNDER_REVIEW` and `REJECTED` are deliberately different states**, though
+ * both hide a listing, because they ask opposite things of an owner: wait, or
+ * fix it and come back. A single "hidden" flag would guarantee the interface
+ * eventually tells somebody the wrong one.
+ */
+export const MODERATION_STATES = ['APPROVED', 'UNDER_REVIEW', 'REJECTED'] as const;
+export type ModerationState = (typeof MODERATION_STATES)[number];
+
+export const moderationStateSchema = z.enum(MODERATION_STATES);
+
+/** What a listing is in before anybody has looked at it (ADR 0041). */
+export const DEFAULT_MODERATION_STATE: ModerationState = 'APPROVED';
+
+/**
+ * Whether a listing is visible to anybody but its owner.
  *
  * One function rather than `=== 'PUBLISHED'` written in five places, for the
  * reason `activatesSellerReporting` exists: the rule was one state, and when
@@ -194,11 +250,120 @@ export const listingStatusSchema = z.enum(LISTING_STATUSES);
  * owner has hidden*. That is precisely what happened in 2.8b: this function was
  * the only edit needed, and it is the whole argument for it existing.
  *
+ * **It now takes both authorities** (ADR 0041): a listing is visible when its
+ * owner has published it **and** the platform permits it. The `&&` is the whole
+ * rule, so neither authority can override the other.
+ *
+ * **It still has no callers**, and that is worth saying plainly rather than
+ * implying the compiler has been policing anything. 2.10's public projection and
+ * Phase 3's search are the first two, and they are unwritten — which is exactly
+ * why the second parameter was added now. Widening the signature after those
+ * exist would be a retrofit across every reader; adding it while the only cost
+ * is this file is the whole reason 2.8a created the seam early.
+ *
  * **2.10's public projection and Phase 3's search must both read this**, never
- * compare the status themselves.
+ * compare either field themselves. A `where status = 'PUBLISHED'` is now a leak
+ * rather than merely a duplication: it returns rejected listings.
  */
-export function isPubliclyVisible(status: ListingStatus): boolean {
-  return status === 'PUBLISHED';
+export function isPubliclyVisible(
+  status: ListingStatus,
+  moderation: ModerationState,
+): boolean {
+  return status === 'PUBLISHED' && moderation === 'APPROVED';
+}
+
+/**
+ * Whether this moderation state is one an administrator must give a reason for.
+ *
+ * Every state that hides somebody's listing does. §9 requires administrative
+ * actions to carry a reason, and ADR 0024 established that the person reads it —
+ * a listing taken down with no explanation is the thing that makes people
+ * conclude a platform is arbitrary.
+ *
+ * `APPROVED` needs none: it is the default, and reinstating somebody is not a
+ * decision they need defending to them.
+ */
+export function moderationRequiresReason(state: ModerationState): boolean {
+  return state !== 'APPROVED';
+}
+
+/**
+ * The decision an administrator submits.
+ *
+ * **The reason is optional here and conditionally required by the service**,
+ * which is a split worth explaining. A schema cannot express "required unless
+ * the state is `APPROVED`" without becoming a discriminated union that produces
+ * two unrelated error shapes for one form. So the shape check lives here and the
+ * rule lives in `moderationRequiresReason`, next to the states it is about —
+ * with the database as the last line (`moderation_hidden_has_a_reason`).
+ */
+export const moderationDecisionSchema = z.object({
+  state: moderationStateSchema,
+  /**
+   * Trimmed, and empty becomes absent.
+   *
+   * A reason of `"   "` satisfies "a string is present" and satisfies nobody
+   * reading it, which is exactly the check the database's `btrim` makes too.
+   *
+   * **Anything that is not absent meets the administrative floor**
+   * (`MIN_ADMIN_REASON_LENGTH`), which this schema did not require when the
+   * route was first written — it accepted `"no"`. Every other reason an
+   * administrator gives on this platform clears the same bar, and this one is
+   * read by more people than most of them: ADR 0024 has the subject reading a
+   * suspension reason verbatim, and 2.8c-ii puts this one in front of the owner
+   * whose listing was hidden. A floor cannot make a reason good, and it does
+   * stop a mandatory field being satisfied by a keystroke.
+   *
+   * The two-step — absent *or* at least twelve characters — is why this is not
+   * simply `adminReasonSchema`. Approving needs no reason at all, so an empty
+   * box must mean "none given" rather than "twelve characters missing".
+   */
+  reason: z
+    .string()
+    .trim()
+    .max(MAX_ADMIN_REASON_LENGTH)
+    .transform((value) => (value === '' ? null : value))
+    .nullable()
+    .optional()
+    .refine(
+      (value) =>
+        value === null ||
+        value === undefined ||
+        value.length >= MIN_ADMIN_REASON_LENGTH,
+      { message: `must be at least ${String(MIN_ADMIN_REASON_LENGTH)} characters` },
+    ),
+});
+
+export type ModerationDecisionInput = z.infer<typeof moderationDecisionSchema>;
+
+export function parseModerationDecision(raw: unknown): ModerationDecisionInput {
+  return parseWith(moderationDecisionSchema, 'The moderation decision', raw);
+}
+
+/**
+ * What the route answers with: the decision, and deliberately not the listing.
+ *
+ * **A schema for two words, and it earns its keep by what it refuses.** The
+ * controller answers `{ moderationState }` because `OwnerListing` carries the
+ * collection address and §8.4.1 does not disclose that to a moderator — so the
+ * thing this parser must catch is the day somebody "helpfully" returns the
+ * record. A caller reading `body.moderationState` off an unvalidated response
+ * would accept that silently and the address would travel; `strictObject`
+ * fails, loudly, in the test that first sees it.
+ *
+ * The web app renders the state it gets back rather than the one it submitted,
+ * which is the same reasoning `publishListing` re-reads the listing: an
+ * interface that confirms what it *asked for* cannot report a decision the
+ * platform recorded differently.
+ */
+export const moderationOutcomeSchema = z.strictObject({
+  moderationState: moderationStateSchema,
+});
+
+export type ModerationOutcome = z.infer<typeof moderationOutcomeSchema>;
+
+export function parseModerationOutcome(raw: unknown): ModerationOutcome {
+  return parseWith(moderationOutcomeSchema, 'The moderation outcome', raw);
 }
 
 /**

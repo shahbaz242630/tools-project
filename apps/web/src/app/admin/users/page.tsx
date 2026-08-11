@@ -45,6 +45,7 @@ export default function AdminUsersPage() {
         <Link href="/admin/approvals">Role changes</Link> ·{' '}
         <Link href="/admin/feature-flags">Feature flags</Link> ·{' '}
         <Link href="/admin/categories">Categories</Link> ·{' '}
+        <Link href="/admin/listings">Listing moderation</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>
     </main>

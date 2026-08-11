@@ -69,3 +69,4 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0038](0038-three-tls-modes-not-libpqs-eight.md)                                    | Accept three Postgres TLS modes, not libpq's eight                        | Accepted                                   |
 | [0039](0039-the-deployment-stack-carries-a-database-it-never-runs.md)               | Keep a database in the deployment stack that no environment runs          | Accepted                                   |
 | [0040](0040-the-ci-deploy-key-cannot-open-a-shell.md)                               | Restrict the CI deploy key to a forced command                            | Accepted                                   |
+| [0041](0041-moderation-state-is-not-a-listing-status.md)                            | Keep moderation state in its own field, beside the owner's status         | Accepted                                   |

@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { ContractViolationError } from './parse.js';
+import { MIN_ADMIN_REASON_LENGTH } from './admin.js';
 import {
   LISTING_DESCRIPTION_MAX_LENGTH,
   LISTING_STATUSES,
   LISTING_TITLE_MAX_LENGTH,
+  MODERATION_STATES,
   MAX_REPLACEMENT_VALUE_MINOR,
   MIN_REPLACEMENT_VALUE_MINOR,
   canTransition,
   isPubliclyVisible,
+  moderationRequiresReason,
   parseListingDraft,
+  parseModerationDecision,
+  parseModerationOutcome,
   transitionRefusal,
 } from './listings.js';
 import type { ListingStatus, ListingTransition } from './listings.js';
@@ -351,13 +356,150 @@ describe('what the public can see', () => {
     // a new state defaulting to *visible* is a listing shown against its
     // owner's wishes, and the difference must not be settled by whoever adds
     // the enum value.
-    const visible = LISTING_STATUSES.filter((status) => isPubliclyVisible(status));
+    const visible = LISTING_STATUSES.filter((status) =>
+      isPubliclyVisible(status, 'APPROVED'),
+    );
 
     expect(visible).toEqual(['PUBLISHED']);
   });
 
   it('hides a paused listing, which is the whole point of pausing', () => {
-    expect(isPubliclyVisible('PAUSED')).toBe(false);
+    expect(isPubliclyVisible('PAUSED', 'APPROVED')).toBe(false);
+  });
+
+  it('sweeps the moderation states too, for the same reason', () => {
+    const visible = MODERATION_STATES.filter((state) =>
+      isPubliclyVisible('PUBLISHED', state),
+    );
+
+    expect(visible).toEqual(['APPROVED']);
+  });
+
+  it('needs both authorities to agree, and neither can override the other', () => {
+    // The `&&`, asserted as a truth table rather than trusted. Each of the
+    // three ways to be invisible is a different bug if it ever returns true:
+    // showing a draft, showing something an owner hid, showing something we
+    // rejected.
+    expect(isPubliclyVisible('PUBLISHED', 'APPROVED')).toBe(true);
+    expect(isPubliclyVisible('PUBLISHED', 'REJECTED')).toBe(false);
+    expect(isPubliclyVisible('PAUSED', 'APPROVED')).toBe(false);
+    expect(isPubliclyVisible('DRAFT', 'APPROVED')).toBe(false);
+  });
+
+  it('hides a listing under review as well as one rejected', () => {
+    // Both hide it. They are separate states because they ask opposite things
+    // of the owner — wait, or fix it — not because they differ here.
+    expect(isPubliclyVisible('PUBLISHED', 'UNDER_REVIEW')).toBe(false);
+  });
+});
+
+describe('when a moderation decision owes a reason', () => {
+  it('demands one for every state that hides a listing', () => {
+    const hiding = MODERATION_STATES.filter((state) => moderationRequiresReason(state));
+
+    // Swept rather than listed, so a fourth state added later has to be
+    // considered here instead of silently defaulting to needing no reason —
+    // which is the direction that lets a listing vanish with no explanation.
+    expect(hiding).toEqual(['UNDER_REVIEW', 'REJECTED']);
+  });
+
+  it('asks for none when reinstating', () => {
+    // Not an oversight: putting somebody's listing back is not a decision that
+    // needs defending to them.
+    expect(moderationRequiresReason('APPROVED')).toBe(false);
+  });
+});
+
+describe('the moderation decision a caller submits', () => {
+  it('accepts a state with a reason', () => {
+    expect(
+      parseModerationDecision({ state: 'REJECTED', reason: 'Prohibited item' }),
+    ).toEqual({ state: 'REJECTED', reason: 'Prohibited item' });
+  });
+
+  it('turns a blank reason into no reason at all', () => {
+    // `"   "` satisfies "a string is present" and satisfies nobody reading it.
+    // One representation of absent, matching the database's own `btrim` check —
+    // two spellings is how a later query misses half the rows.
+    expect(
+      parseModerationDecision({ state: 'APPROVED', reason: '   ' }).reason,
+    ).toBeNull();
+  });
+
+  it('refuses a state outside the vocabulary', () => {
+    expect(() => parseModerationDecision({ state: 'BANNED' })).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('does not enforce the reason rule here, deliberately', () => {
+    // The shape check cannot express "required unless APPROVED" without becoming
+    // a discriminated union with two unrelated error shapes for one form. The
+    // rule lives in `moderationRequiresReason`, and the service raises on it.
+    expect(parseModerationDecision({ state: 'REJECTED' }).state).toBe('REJECTED');
+  });
+
+  it('refuses a reason too short to be one', () => {
+    // *Whether* a reason is owed is the service's rule; whether a supplied one
+    // clears the administrative floor is a shape question and belongs here.
+    // Before this, the route accepted `"no"` — while suspension, role changes,
+    // account lookups and feature flags all held out for twelve characters.
+    expect(() => parseModerationDecision({ state: 'REJECTED', reason: 'no' })).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('accepts a reason of exactly the administrative minimum', () => {
+    // The boundary, in the direction that matters: an off-by-one here would
+    // refuse a reason the form's own `minLength` had just told somebody was
+    // long enough, and they would have no way to tell which of the two lied.
+    const reason = 'x'.repeat(MIN_ADMIN_REASON_LENGTH);
+
+    expect(parseModerationDecision({ state: 'REJECTED', reason }).reason).toBe(reason);
+  });
+
+  it('still takes an absent reason when reinstating, rather than demanding twelve characters', () => {
+    // The whole reason this is not `adminReasonSchema`. Approving owes no
+    // explanation, so an empty box has to mean "none given" — not "twelve
+    // characters missing", which is what a bare minimum length would say to
+    // somebody putting a listing back.
+    expect(
+      parseModerationDecision({ state: 'APPROVED', reason: '' }).reason,
+    ).toBeNull();
+  });
+});
+
+describe('the moderation outcome a caller reads back', () => {
+  it('accepts the decision', () => {
+    expect(parseModerationOutcome({ moderationState: 'UNDER_REVIEW' })).toEqual({
+      moderationState: 'UNDER_REVIEW',
+    });
+  });
+
+  it('refuses a state outside the vocabulary', () => {
+    expect(() => parseModerationOutcome({ moderationState: 'HIDDEN' })).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('refuses a response carrying anything else — including the listing', () => {
+    /*
+     * The test this parser exists for.
+     *
+     * The route answers with the decision alone because `OwnerListing` carries
+     * the collection address and §8.4.1 does not disclose that to a moderator.
+     * The failure mode is somebody later "improving" the controller to echo the
+     * record back: a caller reading `body.moderationState` off an unvalidated
+     * response would accept it silently, and a stranger's address would arrive
+     * as a side effect of pressing a button. `strictObject` makes that a test
+     * failure instead of a disclosure.
+     */
+    expect(() =>
+      parseModerationOutcome({
+        moderationState: 'REJECTED',
+        collectionLocation: { postcode: 'BS7 8AA' },
+      }),
+    ).toThrow(ContractViolationError);
   });
 });
 
