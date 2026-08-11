@@ -640,6 +640,34 @@ export interface OwnerListing {
   readonly inclusiveDailyPrice: InclusiveDailyPrice | null;
   readonly status: ListingStatus;
   /**
+   * What the platform permits, beside what the owner set (ADR 0041, slice 2.8c-ii).
+   *
+   * **Beside `status` and never folded into it**, which is the decision ADR 0041
+   * exists for: `status` is written only by the owner and this only by somebody
+   * else, so a refusal cannot overwrite an intent it would then have to guess at.
+   * The consequence for anything rendering this shape is that **neither field
+   * answers "can anybody see this" on its own** — `isPubliclyVisible` takes both,
+   * and it is the only thing that should be asked.
+   *
+   * Until this slice the owner's projection carried `status` alone, so the
+   * platform could hide a listing while the only page its owner can open went on
+   * saying it was published and bookable.
+   */
+  readonly moderationState: ModerationState;
+  /**
+   * Why, in the moderator's own words, or null when nothing is holding it back.
+   *
+   * **Shown to the owner verbatim** (ADR 0024's rule for a suspension: the subject
+   * reads what the administrator wrote). The moderation form promises exactly that
+   * to whoever types it, so paraphrasing it here would make that promise false.
+   *
+   * **The moderator's identity is deliberately absent.** The reason is owed to the
+   * owner; the name of the person who wrote it is not — the same line drawn for a
+   * suspended account, where the subject reads the reason and never the
+   * administrator.
+   */
+  readonly moderationReason: string | null;
+  /**
    * Whether the platform is accepting publications at all right now (slice H3b).
    *
    * **A platform-wide fact on a per-listing shape, and that is deliberate.** The
@@ -697,6 +725,40 @@ const ownerListingSchema = z.object({
   rates: listingRateCardSchema,
   inclusiveDailyPrice: inclusiveDailyPriceSchema.nullable(),
   status: listingStatusSchema,
+  /**
+   * What the platform permits, beside what the owner wanted (ADR 0041, 2.8c-ii).
+   *
+   * **The owner's own projection carries this, and until now it did not** — the
+   * state has existed since 2.8c-i and an owner had no way to learn it, so a
+   * listing could be hidden by a moderator while its page told them it was
+   * published and bookable. Two independent authorities, one of them invisible,
+   * is the most confusing state this product can be in.
+   *
+   * Required rather than optional, like `status`: a projection that can omit it
+   * is one where "absent" and "approved" are the same value on the wire, and the
+   * page could not tell a listing nobody has objected to from one whose state
+   * failed to serialise.
+   */
+  moderationState: moderationStateSchema,
+  /**
+   * The moderator's own words, **shown to the owner verbatim**.
+   *
+   * ADR 0024 settled this shape for suspension — the subject reads the
+   * administrator's reason as written — and the moderation form already promises
+   * it, telling whoever types it to *"write what you would say to them"*. A
+   * reason collected under that promise and then paraphrased, or withheld, would
+   * make the promise a lie.
+   *
+   * **The moderator's identity is deliberately not here.** The reason is owed to
+   * the owner; the name of the person who typed it is not, which is the same line
+   * `/admin/users` draws for a suspended account.
+   *
+   * Null when the state is `APPROVED`, and null is also what a listing nobody has
+   * ever looked at carries — the two are indistinguishable here on purpose,
+   * because §8.3 makes moderation something that flags rather than a queue every
+   * listing waits in.
+   */
+  moderationReason: z.string().nullable(),
   publicationAvailable: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),

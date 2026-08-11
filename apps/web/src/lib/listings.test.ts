@@ -39,6 +39,11 @@ const LISTING = {
   rates: { daily: null, weekend: null, weekly: null },
   inclusiveDailyPrice: null,
   status: 'DRAFT',
+  // Both authorities, because `OwnerListing` carries both from 2.8c-ii and the
+  // parse requires them. A fixture that omitted them would make "approved" and
+  // "the field failed to serialise" the same thing on the wire.
+  moderationState: 'APPROVED',
+  moderationReason: null,
   publicationAvailable: true,
   createdAt: '2026-08-04T09:00:00.000Z',
   updatedAt: '2026-08-04T09:00:00.000Z',
@@ -185,6 +190,49 @@ describe('createListing', () => {
       TOKEN,
       DRAFT,
       responds(201, JSON.stringify({ id: 'only-an-id' })),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('refuses a listing whose moderation state is missing rather than assuming approved', async () => {
+    /*
+     * Slice 2.8c-ii, and the failure mode worth guarding: an **older API** served
+     * to a newer web app.
+     *
+     * If the field were optional, a response without it would parse and default
+     * to nothing — and the page would call a listing published and bookable while
+     * the platform was hiding it, which is exactly the state this slice exists to
+     * end. Required means that mismatch surfaces as `malformed` on a page that
+     * says so, rather than as a confident lie.
+     */
+    const withoutModeration = Object.fromEntries(
+      Object.entries(LISTING).filter(([key]) => key !== 'moderationState'),
+    );
+
+    const outcome = await fetchListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(200, JSON.stringify(withoutModeration)),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('refuses a listing whose moderation reason is missing', async () => {
+    // Null is a value here and absence is not. A reason that failed to serialise
+    // would otherwise render as "no reason was recorded", which reads to the owner
+    // as the platform having hidden their listing without explanation.
+    const withoutReason = Object.fromEntries(
+      Object.entries(LISTING).filter(([key]) => key !== 'moderationReason'),
+    );
+
+    const outcome = await fetchListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      responds(200, JSON.stringify(withoutReason)),
     );
 
     expect(outcome.kind).toBe('malformed');

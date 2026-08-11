@@ -339,6 +339,21 @@ function toOwnerListing(
      */
     inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.categoryFeePolicy),
     status: listing.status,
+    /*
+     * **Both authorities, because visibility takes both** (ADR 0041, 2.8c-ii).
+     *
+     * These two lines are the whole of this slice's server half, and the reason
+     * they were missing is worth keeping: 2.8c-i added the state, the column, the
+     * constraint and the route, and stopped at the boundary of what an
+     * *administrator* could do. The owner's projection was never touched, so the
+     * platform could hide somebody's listing and the only page they can see went
+     * on calling it published.
+     *
+     * The reason travels **as written**. ADR 0024's rule for suspension, and the
+     * moderation form's own promise to whoever types it.
+     */
+    moderationState: listing.moderationState,
+    moderationReason: listing.moderationReason,
     publicationAvailable,
     createdAt: Time.toIsoUtc(listing.createdAt),
     updatedAt: Time.toIsoUtc(listing.updatedAt),
