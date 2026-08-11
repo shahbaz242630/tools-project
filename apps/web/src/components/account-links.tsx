@@ -63,6 +63,23 @@ export function AccountLinks({ account }: { account: MeResponse }) {
           </li>
         )}
 
+        {/*
+          **Kept while suspended, unlike the two above it, and the asymmetry is
+          ADR 0024 rather than an oversight.** A suspended account may read what
+          we hold about it and may not write anything others would see — and the
+          API agrees: `GET /listings` allows a suspended caller, as does pausing,
+          which is the one write that makes strangers see *less*. Dropping this
+          link would leave a suspended owner unable to find the listings they are
+          still permitted to take down.
+
+          Added in slice 2.9a. Until then this list was the only route to
+          anything a person owned, and it did not mention the listings — so an
+          owner's way back to their own item was the UUID in their history.
+        */}
+        <li>
+          <Link href="/listings">Your listings</Link>
+        </li>
+
         <li>
           <Link href="/account/activity">Account activity</Link>
         </li>

@@ -22,7 +22,12 @@ import {
   describeAttributeIssue,
   parseListingDraft,
 } from '@platform/contracts';
-import type { CategoryOption, OwnerListing } from '@platform/contracts';
+import type {
+  CategoryOption,
+  OwnedListings,
+  OwnerListing,
+  OwnerListingSummary,
+} from '@platform/contracts';
 import { Time } from '@platform/core';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
 import {
@@ -132,6 +137,38 @@ export class OwnerListingsController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Everything you have listed (slice 2.9a).
+   *
+   * **The projection is narrower than the one below serves for a single
+   * listing**, and that is the security half of this route rather than a
+   * rendering preference. `OwnerListing` carries the decrypted collection
+   * address; this list would otherwise return one street address per row to
+   * render a page that shows none. `toOwnerListingSummary` is a separate
+   * function for the same reason `ListingStore` has no `findById` — the narrow
+   * shape has to be the one that is *available*, not the one somebody remembers
+   * to build.
+   *
+   * **`@AllowsSuspended()`.** Reading what we hold about you survives suspension
+   * (ADR 0024), and this is the read that makes the rest reachable — a suspended
+   * owner who cannot find their own listings cannot pause one, which is a write
+   * ADR 0024 deliberately leaves open to them.
+   *
+   * No pagination parameter. The bound is `OWNED_LISTING_LIMIT` and the response
+   * says when it was reached; a `?limit=` a caller may set is one a caller may
+   * set to anything, and there is nothing yet for a second page to mean.
+   */
+  @Get(LISTINGS_ROUTE)
+  @AllowsSuspended()
+  async list(@CurrentUser() owner: MirroredUser): Promise<OwnedListings> {
+    const page = await this.listings.listOwned(owner.id);
+
+    return {
+      listings: page.items.map(toOwnerListingSummary),
+      truncated: page.truncated,
+    };
   }
 
   /**
@@ -275,6 +312,41 @@ function parse<T>(read: () => T): T {
     }
     throw error;
   }
+}
+
+/**
+ * The owner's projection, one row at a time (slice 2.9a).
+ *
+ * **Built field by field from the record rather than by deleting from
+ * `toOwnerListing`'s result**, which is the whole reason it is a separate
+ * function. A `delete summary.collectionLocation` — or a spread with an omission
+ * — is a line somebody removes while tidying, and what it removes is a
+ * disclosure. Listing the nine fields that belong here means a tenth arrives
+ * only when somebody types it.
+ *
+ * `publicationAvailable` is absent too, and that one is not about privacy: it is
+ * a platform-wide fact, identical on every row, and repeating it two hundred
+ * times would invite a list that renders it per listing as though it varied.
+ * The button it governs is on the listing's own page.
+ */
+function toOwnerListingSummary(listing: ListingRecord): OwnerListingSummary {
+  return {
+    id: listing.id,
+    title: listing.title,
+    categoryName: listing.categoryName,
+    status: listing.status,
+    // Both authorities travel, because `isPubliclyVisible` needs both and a list
+    // is where showing `status` alone would be least likely to be noticed
+    // (ADR 0041).
+    moderationState: listing.moderationState,
+    isLocated: listing.isLocated,
+    // Computed here, as it is on the single-listing projection, and against the
+    // **pinned** fee policy (ADR 0029). §3.4.4 names listing cards explicitly,
+    // and the bare rate is deliberately not on this shape at all.
+    inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.categoryFeePolicy),
+    createdAt: Time.toIsoUtc(listing.createdAt),
+    updatedAt: Time.toIsoUtc(listing.updatedAt),
+  };
 }
 
 /**

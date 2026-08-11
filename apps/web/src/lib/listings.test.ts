@@ -3,6 +3,7 @@ import {
   createListing,
   fetchCategoryOptions,
   fetchListing,
+  fetchOwnedListings,
   pauseListing,
   publishListing,
 } from './listings';
@@ -517,5 +518,78 @@ describe('the default meaning of a 409', () => {
     const outcome = await publishListing(API, TOKEN, LISTING.id, responds(409));
 
     expect(outcome.kind).toBe('stale-category');
+  });
+});
+
+describe('fetchOwnedListings', () => {
+  const ROW = {
+    id: LISTING.id,
+    title: 'Petrol hedge trimmer',
+    categoryName: 'Outdoor and gardening',
+    status: 'DRAFT',
+    moderationState: 'APPROVED',
+    isLocated: false,
+    inclusiveDailyPrice: null,
+    createdAt: '2026-08-04T09:00:00.000Z',
+    updatedAt: '2026-08-04T09:00:00.000Z',
+  };
+
+  it('GETs the collection and never reads from a cache', async () => {
+    const { calls, fetchImpl } = capturing(
+      200,
+      JSON.stringify({ listings: [ROW], truncated: false }),
+    );
+
+    await fetchOwnedListings(API, TOKEN, fetchImpl);
+
+    expect(calls[0]?.url).toBe(`${API}/listings`);
+    expect(calls[0]?.init?.method).toBe('GET');
+    // A listing somebody has just paused must not come back from a cache saying
+    // it is live.
+    expect(calls[0]?.init?.cache).toBe('no-store');
+  });
+
+  it('returns the page, including whether it was cut', async () => {
+    const outcome = await fetchOwnedListings(
+      API,
+      TOKEN,
+      responds(200, JSON.stringify({ listings: [ROW], truncated: true })),
+    );
+
+    expect(outcome.kind).toBe('loaded');
+    // The whole page rather than only its rows: `truncated` is the one thing the
+    // reader has to be told, and returning the array alone would drop it at the
+    // one boundary where the loss is invisible.
+    expect(outcome.kind === 'loaded' ? outcome.value.truncated : null).toBe(true);
+  });
+
+  it('reads an empty list as loaded, not as an error', async () => {
+    const outcome = await fetchOwnedListings(
+      API,
+      TOKEN,
+      responds(200, JSON.stringify({ listings: [], truncated: false })),
+    );
+
+    // "You have listed nothing" and "we could not read your listings" are
+    // different sentences, and this is the boundary where they would be merged.
+    expect(outcome).toEqual({
+      kind: 'loaded',
+      value: { listings: [], truncated: false },
+    });
+  });
+
+  it('reports an expired session rather than an empty list', async () => {
+    expect((await fetchOwnedListings(API, TOKEN, responds(401))).kind).toBe(
+      'signed-out',
+    );
+    expect((await fetchOwnedListings(API, null)).kind).toBe('signed-out');
+  });
+
+  it('reports a body it cannot read as malformed', async () => {
+    // Rather than as an empty list, which would tell an owner their listings
+    // were gone.
+    expect(
+      (await fetchOwnedListings(API, TOKEN, responds(200, '{"listings":"nope"}'))).kind,
+    ).toBe('malformed');
   });
 });

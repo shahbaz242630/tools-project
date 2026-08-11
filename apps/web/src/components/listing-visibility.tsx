@@ -14,7 +14,80 @@
  * directive would ship them to the browser for nothing.
  */
 
-import type { ListingStatus, OwnerListing } from '@platform/contracts';
+import { isPubliclyVisible } from '@platform/contracts';
+import type { ListingStatus, ModerationState, OwnerListing } from '@platform/contracts';
+
+/**
+ * The same truth as {@link StatusLine}, in the few words a table cell has
+ * (slice 2.9a).
+ *
+ * **Here rather than in the list component, because this file is where the
+ * vocabulary lives.** `StatusLine` produced the same defect three times — a
+ * sentence derived from one authority when the truth takes two — and a second
+ * rendering of listing state written somewhere else would be the fourth. Both
+ * now sit in one file, and a state added to either vocabulary is a compile error
+ * in both.
+ *
+ * **It takes the two fields and asks `isPubliclyVisible` itself**, where
+ * `StatusLine` takes a `visible` boolean its caller computed. That asymmetry is
+ * deliberate and this is the safer of the two: a caller that can pass a boolean
+ * is a caller that can pass `status === 'PUBLISHED'`, which is exactly the
+ * comparison ADR 0041 made into a leak. Nothing here can be handed a wrong
+ * answer, because it is not handed an answer at all.
+ *
+ * **Moderation is read before status**, which is the ordering decision worth
+ * knowing. A rejected *draft* is a real combination — moderation and publication
+ * are independent authorities — and a cell reading "Draft" would hide the more
+ * important half. What the platform has decided outranks what the owner set,
+ * because it is the part they did not already know.
+ */
+export function VisibilityLabel({
+  status,
+  moderationState,
+}: {
+  readonly status: ListingStatus;
+  readonly moderationState: ModerationState;
+}) {
+  // **The rule gates the claim, and nothing else may.** Every other branch below
+  // only explains why the answer was no, so no rewording of an explanation can
+  // ever put "anyone can find it" in front of a listing nobody can.
+  if (isPubliclyVisible(status, moderationState)) return <>Live — anyone can find it</>;
+
+  switch (moderationState) {
+    case 'UNDER_REVIEW':
+      return <>Being reviewed — hidden</>;
+    case 'REJECTED':
+      return <>Refused — hidden</>;
+    case 'APPROVED':
+      break;
+    default: {
+      const unhandled: never = moderationState;
+      return <>{String(unhandled)}</>;
+    }
+  }
+
+  // Approved, and still not visible — so this half is the owner's own doing.
+  switch (status) {
+    case 'PAUSED':
+      return <>Paused by you</>;
+    case 'DRAFT':
+      return <>Draft — only you</>;
+    /* c8 ignore next 8 -- unreachable by construction, and cased rather than
+       defaulted on purpose. A published listing that reached here would have to
+       be `APPROVED` (the switch above returned for everything else) and not
+       publicly visible, which `isPubliclyVisible` cannot say of that pair. It is
+       written out so a **fourth status** is a compile error here rather than a
+       blank cell, which is what a `default` would have given it. The first draft
+       of this component reached this line through a different route and rendered
+       dead copy nobody could ever be shown. */
+    case 'PUBLISHED':
+      return <>Published</>;
+    default: {
+      const unhandled: never = status;
+      return <>{String(unhandled)}</>;
+    }
+  }
+}
 
 export function StatusLine({
   status,

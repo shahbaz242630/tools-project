@@ -17,8 +17,13 @@ import type {
   TransportRequirement,
 } from '@platform/contracts';
 import { Paging, Time } from '@platform/core';
+import type { Page } from '@platform/core';
 import type { Logger } from '@platform/observability';
-import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
+import {
+  CATEGORY_LIST_LIMIT,
+  EXPORTED_LISTING_LIMIT,
+  OWNED_LISTING_LIMIT,
+} from './limits.js';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
@@ -364,6 +369,47 @@ export class ListingsService {
    */
   findOwned(id: string, ownerId: string): Promise<ListingRecord | null> {
     return this.store.findOwnedBy(id, ownerId);
+  }
+
+  /**
+   * Every listing this owner has, newest first (slice 2.9a).
+   *
+   * **The same store method the export uses, deliberately.** `listOwnedBy` was
+   * written for the data export and its docblock has said since slice H2 that
+   * the owner dashboard should reuse it rather than adding a second query that
+   * can drift in ordering — a dashboard showing the oldest listing at the top is
+   * the kind of defect that survives for months because nobody can say what the
+   * order was supposed to be.
+   *
+   * **The limit is this caller's own** (`OWNED_LISTING_LIMIT`), which is the
+   * whole reason that port takes a required one. The export's thousand is an
+   * answer to a legal question and would be a strange number for a page.
+   *
+   * Truncation is measured with the same probe-and-fit pair every bounded read
+   * here uses, and it is **returned rather than only logged**: the page has to
+   * be able to say so. A list that quietly stops is one somebody reads as their
+   * whole record.
+   */
+  async listOwned(ownerId: string): Promise<Page<ListingRecord>> {
+    const rows = await this.store.listOwnedBy(
+      ownerId,
+      Paging.probe(OWNED_LISTING_LIMIT),
+    );
+    const page = Paging.fitTo(rows, OWNED_LISTING_LIMIT);
+
+    if (page.truncated) {
+      // Logged as well as returned, for the reason `categoryOptions` logs: the
+      // owner learns their list was cut, and nobody operating the platform would
+      // otherwise know a guardrail had fired at all. This one is the milder of
+      // the two — the reader is told — so it records that the bound was reached
+      // rather than warning about something invisible.
+      this.logger.warn('owned listing list truncated', {
+        limit: OWNED_LISTING_LIMIT,
+        surface: 'owner-dashboard',
+      });
+    }
+
+    return page;
   }
 
   /**

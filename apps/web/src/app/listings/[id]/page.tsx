@@ -66,6 +66,10 @@ export default async function ListingPage({
       )}
 
       <p>
+        {/* Added in 2.9a. This page was previously reachable only by the
+            redirect that follows saving, and led nowhere but to creating
+            another — so the way back to a listing seen once was its UUID. */}
+        <Link href="/listings">All your listings</Link> ·{' '}
         <Link href="/listings/new">List another item</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>
