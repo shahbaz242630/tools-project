@@ -164,6 +164,18 @@ happens to values under keys the new schema lacks. Do not let it become a side
 effect of saving an edit — that is the silent orphaning this ADR rejected,
 arriving in the slice that was not looking for it.
 
+> **Answered on 11 August 2026 by [0042](0042-a-listing-pins-its-questions-not-its-fees.md),
+> and not in the direction this paragraph expected.** Re-pinning is **not** a
+> separate operation an owner performs: editing brings the listing onto the
+> current version, because the form they are looking at _is_ the current version.
+> That is not the silent orphaning warned against above — the current questions
+> are on screen and the publication gate enforces the required ones — and the
+> money consequence that made an explicit operation seem necessary is removed by
+> the same ADR, which reads the fee policy from the _current_ version rather than
+> the pinned one. What remains true, and 0042 restates it: **nothing may re-pin a
+> listing nobody touched.** No background job, no migration, no side effect of
+> publishing.
+
 If attribute values ever need range queries or facet aggregation at volume, the
 jsonb column may need GIN indexing or promotion to typed columns. The pinned-read
 rule above survives either; the storage shape is what changes.
