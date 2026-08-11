@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContractViolationError } from './parse.js';
+import { MIN_ADMIN_REASON_LENGTH } from './admin.js';
 import {
   LISTING_DESCRIPTION_MAX_LENGTH,
   LISTING_STATUSES,
@@ -12,6 +13,7 @@ import {
   moderationRequiresReason,
   parseListingDraft,
   parseModerationDecision,
+  parseModerationOutcome,
   transitionRefusal,
 } from './listings.js';
 import type { ListingStatus, ListingTransition } from './listings.js';
@@ -435,6 +437,69 @@ describe('the moderation decision a caller submits', () => {
     // a discriminated union with two unrelated error shapes for one form. The
     // rule lives in `moderationRequiresReason`, and the service raises on it.
     expect(parseModerationDecision({ state: 'REJECTED' }).state).toBe('REJECTED');
+  });
+
+  it('refuses a reason too short to be one', () => {
+    // *Whether* a reason is owed is the service's rule; whether a supplied one
+    // clears the administrative floor is a shape question and belongs here.
+    // Before this, the route accepted `"no"` — while suspension, role changes,
+    // account lookups and feature flags all held out for twelve characters.
+    expect(() => parseModerationDecision({ state: 'REJECTED', reason: 'no' })).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('accepts a reason of exactly the administrative minimum', () => {
+    // The boundary, in the direction that matters: an off-by-one here would
+    // refuse a reason the form's own `minLength` had just told somebody was
+    // long enough, and they would have no way to tell which of the two lied.
+    const reason = 'x'.repeat(MIN_ADMIN_REASON_LENGTH);
+
+    expect(parseModerationDecision({ state: 'REJECTED', reason }).reason).toBe(reason);
+  });
+
+  it('still takes an absent reason when reinstating, rather than demanding twelve characters', () => {
+    // The whole reason this is not `adminReasonSchema`. Approving owes no
+    // explanation, so an empty box has to mean "none given" — not "twelve
+    // characters missing", which is what a bare minimum length would say to
+    // somebody putting a listing back.
+    expect(
+      parseModerationDecision({ state: 'APPROVED', reason: '' }).reason,
+    ).toBeNull();
+  });
+});
+
+describe('the moderation outcome a caller reads back', () => {
+  it('accepts the decision', () => {
+    expect(parseModerationOutcome({ moderationState: 'UNDER_REVIEW' })).toEqual({
+      moderationState: 'UNDER_REVIEW',
+    });
+  });
+
+  it('refuses a state outside the vocabulary', () => {
+    expect(() => parseModerationOutcome({ moderationState: 'HIDDEN' })).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('refuses a response carrying anything else — including the listing', () => {
+    /*
+     * The test this parser exists for.
+     *
+     * The route answers with the decision alone because `OwnerListing` carries
+     * the collection address and §8.4.1 does not disclose that to a moderator.
+     * The failure mode is somebody later "improving" the controller to echo the
+     * record back: a caller reading `body.moderationState` off an unvalidated
+     * response would accept it silently, and a stranger's address would arrive
+     * as a side effect of pressing a button. `strictObject` makes that a test
+     * failure instead of a disclosure.
+     */
+    expect(() =>
+      parseModerationOutcome({
+        moderationState: 'REJECTED',
+        collectionLocation: { postcode: 'BS7 8AA' },
+      }),
+    ).toThrow(ContractViolationError);
   });
 });
 

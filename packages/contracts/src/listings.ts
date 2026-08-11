@@ -30,6 +30,7 @@ import {
 import type { CategoryTransportOption, TransportRequirement } from './transport.js';
 import type { ListingAttributeValues } from './attribute-values.js';
 import { hasUnsafeCharacters, UNSAFE_CHARACTERS_MESSAGE } from './text.js';
+import { MAX_ADMIN_REASON_LENGTH, MIN_ADMIN_REASON_LENGTH } from './admin.js';
 import { parseWith } from './parse.js';
 
 /** Where an owner creates listings and lists their own. */
@@ -303,20 +304,66 @@ export const moderationDecisionSchema = z.object({
    *
    * A reason of `"   "` satisfies "a string is present" and satisfies nobody
    * reading it, which is exactly the check the database's `btrim` makes too.
+   *
+   * **Anything that is not absent meets the administrative floor**
+   * (`MIN_ADMIN_REASON_LENGTH`), which this schema did not require when the
+   * route was first written — it accepted `"no"`. Every other reason an
+   * administrator gives on this platform clears the same bar, and this one is
+   * read by more people than most of them: ADR 0024 has the subject reading a
+   * suspension reason verbatim, and 2.8c-ii puts this one in front of the owner
+   * whose listing was hidden. A floor cannot make a reason good, and it does
+   * stop a mandatory field being satisfied by a keystroke.
+   *
+   * The two-step — absent *or* at least twelve characters — is why this is not
+   * simply `adminReasonSchema`. Approving needs no reason at all, so an empty
+   * box must mean "none given" rather than "twelve characters missing".
    */
   reason: z
     .string()
     .trim()
-    .max(500)
+    .max(MAX_ADMIN_REASON_LENGTH)
     .transform((value) => (value === '' ? null : value))
     .nullable()
-    .optional(),
+    .optional()
+    .refine(
+      (value) =>
+        value === null ||
+        value === undefined ||
+        value.length >= MIN_ADMIN_REASON_LENGTH,
+      { message: `must be at least ${String(MIN_ADMIN_REASON_LENGTH)} characters` },
+    ),
 });
 
 export type ModerationDecisionInput = z.infer<typeof moderationDecisionSchema>;
 
 export function parseModerationDecision(raw: unknown): ModerationDecisionInput {
   return parseWith(moderationDecisionSchema, 'The moderation decision', raw);
+}
+
+/**
+ * What the route answers with: the decision, and deliberately not the listing.
+ *
+ * **A schema for two words, and it earns its keep by what it refuses.** The
+ * controller answers `{ moderationState }` because `OwnerListing` carries the
+ * collection address and §8.4.1 does not disclose that to a moderator — so the
+ * thing this parser must catch is the day somebody "helpfully" returns the
+ * record. A caller reading `body.moderationState` off an unvalidated response
+ * would accept that silently and the address would travel; `strictObject`
+ * fails, loudly, in the test that first sees it.
+ *
+ * The web app renders the state it gets back rather than the one it submitted,
+ * which is the same reasoning `publishListing` re-reads the listing: an
+ * interface that confirms what it *asked for* cannot report a decision the
+ * platform recorded differently.
+ */
+export const moderationOutcomeSchema = z.strictObject({
+  moderationState: moderationStateSchema,
+});
+
+export type ModerationOutcome = z.infer<typeof moderationOutcomeSchema>;
+
+export function parseModerationOutcome(raw: unknown): ModerationOutcome {
+  return parseWith(moderationOutcomeSchema, 'The moderation outcome', raw);
 }
 
 /**

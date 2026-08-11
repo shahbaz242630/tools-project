@@ -322,6 +322,19 @@ describe('moderating a listing', () => {
     );
   });
 
+  it('refuses a reason below the floor every other administrative reason clears', async () => {
+    const id = await givenAPublishedListing();
+
+    // `MIN_ADMIN_REASON_LENGTH`, which this route did not honour when it was
+    // first written: `"no"` was accepted, while suspension, role changes,
+    // account lookups and feature flags all required twelve characters. The
+    // owner reads this one (2.8c-ii), so it holds to the same bar.
+    const response = await moderate(id, { state: 'REJECTED', reason: 'no' });
+
+    expect(response.statusCode).toBe(400);
+    expect(listings.listings.all()[0]?.moderationState).toBe('APPROVED');
+  });
+
   it('answers 404 for a listing that does not exist', async () => {
     const response = await moderate('11111111-1111-4111-8111-111111111111', {
       state: 'REJECTED',
