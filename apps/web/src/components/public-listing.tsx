@@ -97,6 +97,33 @@ export function PublicListingView({ listing }: { readonly listing: PublicListing
         <dt>Category</dt>
         <dd>{listing.categoryName}</dd>
 
+        {/*
+          **The consumer-law disclosure BRD §8.3 requires** (slice 2.13). A
+          renter has materially stronger rights against a business than against
+          a private individual, so they are entitled to know which before they
+          book — which is why this sits in the body of the page rather than in
+          small print at the bottom.
+
+          Rendered from the field rather than hardcoded, even though only
+          private owners can publish today. A constant sentence is one that goes
+          on being printed after it stops being true.
+        */}
+        <dt>Who you would be renting from</dt>
+        <dd>
+          {listing.ownerStatus === 'private_owner' ? (
+            <>
+              A private individual, lending their own item.
+              <br />
+              <small>
+                Not a business. Your rights differ from renting through a shop — we will
+                set out what that means before you book.
+              </small>
+            </>
+          ) : (
+            <>A business.</>
+          )}
+        </dd>
+
         {listing.description === '' ? null : (
           <>
             <dt>About this item</dt>

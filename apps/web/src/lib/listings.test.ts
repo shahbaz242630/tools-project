@@ -647,6 +647,9 @@ describe('fetchPublicListing', () => {
       minimumFeeApplied: false,
     },
     rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+    // §8.3's consumer-law disclosure. Required on the wire, so a response
+    // missing it is `malformed` rather than a page that quietly says "private".
+    ownerStatus: 'private_owner',
   };
 
   it('reads a listing with no token at all', async () => {

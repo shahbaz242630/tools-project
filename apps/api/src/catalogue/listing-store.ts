@@ -162,6 +162,17 @@ export interface ListingRecord {
  */
 export interface PublicListingRecord {
   readonly id: string;
+  /**
+   * Whose listing it is — **so the service can ask Profiles a question, and for
+   * nothing else** (slice 2.13).
+   *
+   * On the record and deliberately **not** on `PublicListing`. §8.3 requires the
+   * page to disclose whether the owner is a private individual or a business,
+   * which means somebody has to look the owner up; it does not require telling
+   * the internet who they are. The wire type has no owner field and the mapper
+   * has no line that could add one.
+   */
+  readonly ownerId: string;
   readonly categorySlug: string;
   readonly categoryName: string;
   /** The schema **as pinned**, so the stored answers can be read (ADR 0029). */

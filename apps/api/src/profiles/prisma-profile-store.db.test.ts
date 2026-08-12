@@ -43,6 +43,7 @@ const changes: ProfileChanges = {
     town: 'Bristol',
     postcode: 'BS7 8AA',
   },
+  ownerStatus: null,
 };
 
 async function newUser(): Promise<string> {
@@ -106,6 +107,12 @@ describe('save and find', () => {
         town: 'Bristol',
         postcode: 'BS7 8AA',
       },
+      // Null because `changes` does not declare one, which is the state every
+      // real account starts in (slice 2.13). `toEqual` rather than
+      // `toMatchObject` is what makes this assertion useful: a field added to
+      // `StoredProfile` and not to this expectation fails here, which is how a
+      // new personal-data field gets noticed at the store boundary.
+      ownerStatus: null,
       updatedAt: expect.any(Date),
     });
   });
@@ -224,6 +231,35 @@ describe('what is actually stored', () => {
 });
 
 describe('constraints', () => {
+  it('refuses an owner status the vocabulary does not know', async () => {
+    /*
+     * `owner_status_is_known`, watched failing (slice 2.13). Checked in the
+     * database as well as in code, unlike `listings.status`, because the value
+     * carries a **legal** meaning: a row written by a fixture script, a
+     * migration or a hand-edit that this build cannot interpret would have a
+     * public page state something untrue about somebody's capacity.
+     */
+    const userId = await newUser();
+    await store.save(userId, changes);
+
+    await expect(
+      client.$executeRawUnsafe(
+        `UPDATE profiles SET "ownerStatus" = 'sole_trader' WHERE "userId" = '${userId}'::uuid`,
+      ),
+    ).rejects.toThrow(/owner_status_is_known/);
+  });
+
+  it('permits null, which is what an unanswered declaration is', async () => {
+    // The state every existing row was in when the column arrived, and the one
+    // the publication gate refuses on. A NOT NULL here would have made the
+    // migration impossible without inventing an answer for everybody.
+    const userId = await newUser();
+
+    await expect(store.save(userId, changes)).resolves.toMatchObject({
+      ownerStatus: null,
+    });
+  });
+
   it('refuses a profile for an account that does not exist', async () => {
     // The foreign key. Without it a profile could outlive — or precede — the
     // account it belongs to, and every later join would need a null check.

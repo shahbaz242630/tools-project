@@ -29,6 +29,7 @@ const input: ProfileInput = {
     town: 'Bristol',
     postcode: 'BS7 8AA',
   },
+  ownerStatus: null,
 };
 
 let profiles: InMemoryProfileStore;
@@ -61,6 +62,7 @@ describe('findMine', () => {
         town: 'Bristol',
         postcode: 'BS7 8AA',
       },
+      ownerStatus: null,
     });
   });
 
@@ -87,11 +89,13 @@ describe('saveMine', () => {
       displayName: 'Sarah M.',
       phone: null,
       address: null,
+      ownerStatus: null,
     });
 
     await expect(service.findMine(ALICE_ID)).resolves.toMatchObject({
       phone: null,
       address: null,
+      ownerStatus: null,
     });
   });
 
@@ -100,12 +104,14 @@ describe('saveMine', () => {
       displayName: 'Sarah M.',
       phone: null,
       address: null,
+      ownerStatus: null,
     });
 
     expect(saved).toMatchObject({
       displayName: 'Sarah M.',
       phone: null,
       address: null,
+      ownerStatus: null,
     });
   });
 });
@@ -149,6 +155,7 @@ describe('findPublic', () => {
       displayName: 'Sarah M.',
       phone: null,
       address: null,
+      ownerStatus: null,
     });
 
     await expect(service.findPublic(ALICE_ID)).resolves.toMatchObject({

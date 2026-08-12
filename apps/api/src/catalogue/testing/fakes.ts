@@ -44,6 +44,7 @@ import type {
   PublicListingRecord,
 } from '../listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from '../listing-locator.js';
+import type { OwnerStatus } from '@platform/contracts';
 import { ListingsService } from '../listings.service.js';
 import type {
   CategoryConfiguration,
@@ -451,6 +452,7 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
 
     return {
       id: hydrated.id,
+      ownerId: hydrated.ownerId,
       categorySlug: hydrated.categorySlug,
       categoryName: hydrated.categoryName,
       categoryAttributes: hydrated.categoryAttributes,
@@ -692,6 +694,16 @@ export interface ListingFakes {
   readonly publication: SwitchableFlag;
   /** For asserting the moderation entry, and that nothing else writes one. */
   readonly audit: AuditFakes;
+  /**
+   * Who has declared themselves a private owner or a business (slice 2.13).
+   *
+   * **Defaults to everybody being a private owner**, for the reason
+   * `publication` defaults to on: every test written before 2.13 describes an
+   * ordinary person listing their own lawnmower, and a double that answered
+   * "has not declared" would have made one new blocker look like a hundred
+   * unrelated regressions. The tests that are about it say so.
+   */
+  readonly ownerStatuses: DeclaredOwnerStatuses;
   readonly service: ListingsService;
 }
 
@@ -711,6 +723,45 @@ export class SwitchableFlag {
 
   isPublicationEnabled(): Promise<boolean> {
     return Promise.resolve(this.enabled);
+  }
+}
+
+/**
+ * How each owner has declared themselves (slice 2.13).
+ *
+ * **Defaults to `private_owner`, and that is the one place in this file a
+ * default is the right call.** Every existing test in the suite predates the
+ * declaration and describes an ordinary person listing their own lawnmower; if
+ * this answered null they would all fail on a blocker they are not about, and
+ * the signal from the tests that *are* about it would be lost in the noise.
+ *
+ * The tests that care set it explicitly — including `hasNotDeclared`, which is
+ * the state every real new account starts in.
+ */
+export class DeclaredOwnerStatuses {
+  private readonly declared = new Map<string, OwnerStatus | null>();
+  private fallback: OwnerStatus | null = 'private_owner';
+
+  /** Everybody who has not been named individually has not answered. */
+  nobodyHasDeclared(): this {
+    this.fallback = null;
+    return this;
+  }
+
+  declares(userId: string, status: OwnerStatus): this {
+    this.declared.set(userId, status);
+    return this;
+  }
+
+  hasNotDeclared(userId: string): this {
+    this.declared.set(userId, null);
+    return this;
+  }
+
+  findOwnerStatus(userId: string): Promise<OwnerStatus | null> {
+    return Promise.resolve(
+      this.declared.has(userId) ? (this.declared.get(userId) ?? null) : this.fallback,
+    );
   }
 }
 
@@ -741,6 +792,7 @@ export function createListingFakes(
   const location = new LocationService(geocoder, logger.logger);
 
   const publication = new SwitchableFlag();
+  const ownerStatuses = new DeclaredOwnerStatuses();
 
   return {
     categories,
@@ -749,6 +801,7 @@ export function createListingFakes(
     logger,
     publication,
     audit,
+    ownerStatuses,
     service: new ListingsService(
       listings,
       listings,
@@ -762,6 +815,7 @@ export function createListingFakes(
       logger.logger,
       publication,
       audit.service,
+      ownerStatuses,
     ),
   };
 }

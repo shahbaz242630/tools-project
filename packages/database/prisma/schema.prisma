@@ -233,6 +233,30 @@ model Profile {
   /// must not be treated as a trust signal.
   phone String? @db.Text
 
+  /// Whether this person lists as themselves or as a business — BRD §8.3's
+  /// consumer-law disclosure (slice 2.13, ADR 0043).
+  ///
+  /// `private_owner` or `professional_trader`, and **NULL until they answer**.
+  /// No default, because the likely answer being the default is precisely what
+  /// would make it wrong rarely and silently — the platform would be answering
+  /// a legal question on somebody's behalf. Publication refuses a listing whose
+  /// owner has not answered.
+  ///
+  /// **On the person, not the listing.** §8.3's wording puts it on the listing
+  /// and ADR 0043 corrects that: it is a fact about who somebody is, and
+  /// per-listing would let one owner's adverts contradict each other about their
+  /// own legal capacity. Every marketplace holds it at the account.
+  ///
+  /// **Not `seller_tax_profiles`**, which answers HMRC's question about which
+  /// regime a return is filed under. A trader can be non-reportable and a
+  /// reportable seller can be private.
+  ///
+  /// `CHECK`ed in the database as well as in code (`owner_status_is_known`),
+  /// unlike `listings.status`. The value carries a legal meaning, so a row
+  /// written by a fixture script or a hand-edit that this build cannot interpret
+  /// would have a public page state something untrue about somebody's capacity.
+  ownerStatus String? @db.Text
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 

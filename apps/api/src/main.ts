@@ -281,6 +281,13 @@ async function bootstrap(): Promise<void> {
     // Moderation is the one administrative action this service performs
     // (slice 2.8c-i, ADR 0041), and ADR 0017 makes an unaudited one a failure.
     audit,
+    /*
+     * How a listing's owner lists, answered by Profiles (slice 2.13). One
+     * method, so Catalogue can ask the one question §8.3 makes it responsible
+     * for and cannot read a phone number or an address off a profile on the way
+     * past — the narrowing every port across this boundary makes.
+     */
+    { findOwnerStatus: (userId) => profiles.findOwnerStatus(userId) },
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(

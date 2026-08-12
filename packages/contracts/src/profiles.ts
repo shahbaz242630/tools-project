@@ -95,17 +95,56 @@ export const addressInputSchema = postalAddressSchema;
 export type AddressInput = z.infer<typeof addressInputSchema>;
 
 /**
+ * Whether somebody lists as themselves or as a business (BRD §8.3, slice 2.13).
+ *
+ * **A consumer-law disclosure, not a preference.** A renter has materially
+ * stronger rights against a trader than against a private individual, so they
+ * are entitled to know which they are dealing with *before* they book. That is
+ * the whole reason this exists, and it is why there is no default: an unanswered
+ * question must read as unanswered, never as "probably private".
+ *
+ * **It lives on the person, not on the listing**, which is where BRD §8.3 puts
+ * it and where the research says it belongs. Every marketplace holds it at the
+ * account — Vinted Pro badges every listing from a profile-level flag, eBay
+ * splits private from business at the account — because it is a fact about who
+ * somebody is, and per-listing lets one person's listings contradict each other.
+ * ADR 0043 records that, and §8.3 is amended to match.
+ *
+ * **Not the same question as `seller_tax_profiles`** (ADR 0028), which records
+ * which HMRC regime a return is filed under and whether that identity is
+ * verified. A trader can be non-reportable and a reportable seller can be
+ * private. Two questions, two homes, and `seller-tax-profile-is-inactive` stays
+ * untouched.
+ */
+export const OWNER_STATUSES = ['private_owner', 'professional_trader'] as const;
+export type OwnerStatus = (typeof OWNER_STATUSES)[number];
+export const ownerStatusSchema = z.enum(OWNER_STATUSES);
+
+/**
  * What a person may save about themselves.
  *
  * `displayName` is required because the row does not exist until there is one.
  * `phone` and `address` are nullable because BRD §8.1 requires contact details
  * before *listing or booking*, not before having an account — demanding them at
  * sign-up would block somebody who only wants to look around.
+ *
+ * `ownerStatus` is nullable for the same reason and answers to the same rule: it
+ * is required before *publishing a listing*, not before having a profile.
+ * Somebody who only ever rents is never asked, because the question is about
+ * being a supplier and they are not one.
  */
 export const profileInputSchema = z.object({
   displayName,
   phone: phone.nullable().default(null),
   address: addressInputSchema.nullable().default(null),
+  /**
+   * **Nullable and `.default(null)`, but never given a *value* by default.**
+   * The distinction matters: absent means "not answered", and the publication
+   * gate reads it as exactly that. Defaulting to `private_owner` would be the
+   * platform answering a legal question on somebody's behalf, which is the one
+   * thing 2.13 exists to stop.
+   */
+  ownerStatus: ownerStatusSchema.nullable().default(null),
 });
 export type ProfileInput = z.infer<typeof profileInputSchema>;
 
@@ -121,6 +160,8 @@ export const myProfileSchema = z.object({
       postcode: z.string(),
     })
     .nullable(),
+  /** Null until they have answered. See `OWNER_STATUSES`. */
+  ownerStatus: ownerStatusSchema.nullable(),
   updatedAt: z.iso.datetime(),
 });
 export type MyProfile = z.infer<typeof myProfileSchema>;

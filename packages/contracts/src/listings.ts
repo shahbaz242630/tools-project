@@ -24,6 +24,8 @@ import {
   postalAddressSchema,
 } from './address.js';
 import type { CoarseLocation, PostalAddress } from './address.js';
+import { ownerStatusSchema } from './profiles.js';
+import type { OwnerStatus } from './profiles.js';
 import { boundedMoneySchema, moneySchema } from './money.js';
 import { categoryAttributesSchema, categorySlugSchema } from './catalogue.js';
 import type { CategoryAttribute } from './catalogue.js';
@@ -906,6 +908,21 @@ export interface PublicListing {
   /** Inclusive of the mandatory renter fee (§3.4.4). Never null — see below. */
   readonly inclusiveDailyPrice: InclusiveDailyPrice;
   readonly rates: ListingRateCard;
+  /**
+   * Whether the owner lists as themselves or as a business (BRD §8.3, ADR 0043).
+   *
+   * **The consumer-law disclosure, and the one field here that exists for the
+   * reader rather than for the page.** A renter has materially stronger rights
+   * against a trader than against a private individual, so they are entitled to
+   * know which they are dealing with before they book.
+   *
+   * Always `private_owner` today, because a listing whose owner says otherwise
+   * is not publicly visible at all. Carried on the wire rather than assumed by
+   * the page **because a constant is a thing somebody has to remember stays
+   * constant** — the day traders are supported, the page renders the truth
+   * without being edited, instead of confidently rendering yesterday's.
+   */
+  readonly ownerStatus: OwnerStatus;
 }
 
 /**
@@ -962,6 +979,7 @@ export const publicListingSchema = z.object({
   inclusiveDailyPrice: inclusiveDailyPriceSchema,
   /** The full rate card, so a weekly rate can be shown as an alternative. */
   rates: listingRateCardSchema,
+  ownerStatus: ownerStatusSchema,
 });
 
 export function parsePublicListing(raw: unknown): PublicListing {

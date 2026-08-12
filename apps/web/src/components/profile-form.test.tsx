@@ -26,6 +26,7 @@ const PROFILE = {
     town: 'Bristol',
     postcode: 'BS7 8AA',
   },
+  ownerStatus: null,
   updatedAt: '2026-07-31T09:00:00.000Z',
 };
 
@@ -87,5 +88,67 @@ describe('ProfileForm', () => {
     // No dead controls: the button submits to a real action.
     render(<ProfileForm profile={null} />);
     expect(screen.getByRole('button', { name: /save profile/i })).toBeEnabled();
+  });
+});
+
+/**
+ * The private-owner or professional-trader declaration (slice 2.13, BRD §8.3).
+ *
+ * **Nothing here is a styling assertion.** The question is a legal one, the
+ * answer appears on a page strangers read, and the failure mode is a form that
+ * quietly answers it for somebody.
+ */
+describe('how you list', () => {
+  it('offers both answers and preselects neither', () => {
+    /*
+     * **The assertion this field exists for.** A default of "private" would be
+     * the platform answering a legal question on somebody's behalf — and
+     * because it is the likely answer it would be wrong rarely and invisibly,
+     * which is the worst frequency there is.
+     */
+    render(<ProfileForm profile={null} />);
+
+    const chosen = screen
+      .getAllByRole('radio')
+      .filter((radio) => (radio as HTMLInputElement).checked);
+
+    expect(screen.getByLabelText(/private individual/)).toBeTruthy();
+    expect(screen.getByLabelText(/a business/)).toBeTruthy();
+    expect(chosen).toHaveLength(0);
+  });
+
+  it('shows back what somebody already answered', () => {
+    render(<ProfileForm profile={{ ...PROFILE, ownerStatus: 'private_owner' }} />);
+
+    expect(
+      (screen.getByLabelText(/private individual/) as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+
+  it('shows back a business answer too, rather than resetting it', () => {
+    // Somebody who told us the truth and cannot publish must still see what
+    // they said. Silently clearing it would look like the platform disagreeing.
+    render(
+      <ProfileForm profile={{ ...PROFILE, ownerStatus: 'professional_trader' }} />,
+    );
+
+    expect((screen.getByLabelText(/a business/) as HTMLInputElement).checked).toBe(
+      true,
+    );
+  });
+
+  it('says why it is being asked', () => {
+    render(<ProfileForm profile={null} />);
+
+    expect(document.body.textContent).toContain('different legal rights');
+  });
+
+  it('warns that a business cannot publish, before they find out at publish', () => {
+    // Discovering the limit three screens later is the thing that makes people
+    // stop trusting a platform. It also says why we still want the answer.
+    render(<ProfileForm profile={null} />);
+
+    expect(document.body.textContent).toContain('only accept listings from private');
+    expect(document.body.textContent).toContain('demand for it');
   });
 });

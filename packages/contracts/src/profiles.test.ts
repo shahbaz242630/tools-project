@@ -33,6 +33,11 @@ describe('parseProfileInput', () => {
         town: 'Bristol',
         postcode: 'BS7 8AA',
       },
+      // Absent in, null out — the `.default(null)` on the input schema. Null
+      // means "has not answered", which the publication gate refuses on, so a
+      // profile saved without touching the question stays unable to publish
+      // rather than being quietly declared private (slice 2.13).
+      ownerStatus: null,
     });
   });
 
@@ -43,6 +48,7 @@ describe('parseProfileInput', () => {
       displayName: 'Sarah M.',
       phone: null,
       address: null,
+      ownerStatus: null,
     });
   });
 
@@ -209,6 +215,12 @@ describe('parseMyProfileResponse', () => {
         town: 'Bristol',
         postcode: 'BS7 8AA',
       },
+      // **Required on the response, unlike on the input**, and the asymmetry is
+      // the same one `moderationState` draws on `OwnerListing`: an older API
+      // served to a newer web app must surface as malformed rather than as a
+      // page confidently telling a renter this is a private individual because
+      // the field defaulted. Absent here is a contract violation.
+      ownerStatus: null,
       updatedAt: '2026-07-31T09:00:00.000Z',
     };
     expect(parseMyProfileResponse({ profile })).toEqual({ profile });

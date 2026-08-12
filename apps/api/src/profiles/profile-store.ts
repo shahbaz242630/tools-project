@@ -12,6 +12,8 @@
  * will eventually forget on one path.
  */
 
+import type { OwnerStatus } from '@platform/contracts';
+
 /** A postal address as the domain understands it — all of it, in clear. */
 export interface AddressDetail {
   readonly line1: string;
@@ -36,6 +38,15 @@ export interface StoredProfile {
   readonly displayName: string;
   readonly phone: string | null;
   readonly address: AddressDetail | null;
+  /**
+   * Whether they list as themselves or as a business — BRD §8.3's consumer-law
+   * disclosure (slice 2.13, ADR 0043).
+   *
+   * **Null means "has not answered", and never "probably private".** The
+   * publication gate reads it as unanswered and refuses; a default here would
+   * have the platform answering a legal question on somebody's behalf.
+   */
+  readonly ownerStatus: OwnerStatus | null;
   readonly updatedAt: Date;
 }
 
@@ -44,6 +55,14 @@ export interface ProfileChanges {
   readonly displayName: string;
   readonly phone: string | null;
   readonly address: AddressDetail | null;
+  /**
+   * Null clears the declaration, which is a real thing to want: somebody who
+   * answered "business", was told we cannot publish those, and wants to think
+   * again should not be stuck with the answer. It is not "leave it alone" — the
+   * form posts every field, as the listing edit does, for the reason
+   * `ListingEdit` gives about partials.
+   */
+  readonly ownerStatus: OwnerStatus | null;
 }
 
 /**

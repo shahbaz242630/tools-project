@@ -2813,3 +2813,182 @@ describe('the public listing page', () => {
     expect((await read(created.id)).statusCode).toBe(200);
   });
 });
+
+/**
+ * The private-owner or professional-trader declaration (slice 2.13, BRD §8.3).
+ *
+ * **A consumer-law disclosure, so the tests are about who is told what.** A
+ * renter has materially stronger rights against a trader than against a private
+ * individual, which is why the platform may not guess and may not publish a
+ * listing whose owner has not answered.
+ */
+describe('how an owner declares themselves', () => {
+  beforeEach(async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+  });
+
+  const READY_TO_PUBLISH = {
+    ...DRAFT,
+    description: 'Serviced last spring.',
+    attributes: { power_source: 'petrol', weight_kg: '5.2' },
+    transportRequirement: 'car_boot',
+    collectionLocation: ADDRESS,
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  async function publishAttempt(token = 'alice-token') {
+    const created = parseOwnerListing(
+      (await createListing(token, READY_TO_PUBLISH)).json(),
+    );
+    const response = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(created.id),
+      headers: auth(token),
+    });
+    return { created, response };
+  }
+
+  it('refuses to publish for somebody who has not answered', async () => {
+    /*
+     * **The gate, and the reason there is no default.** Every other field the
+     * completeness rules check is something the owner typed into the listing;
+     * this one is about them. Letting it through unanswered would mean
+     * publishing an advert that cannot say who the renter is dealing with.
+     */
+    listings.ownerStatuses.hasNotDeclared(await idOf('alice-token'));
+
+    const { response } = await publishAttempt();
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toMatchObject({
+      blockers: [{ field: 'ownerStatus' }],
+    });
+  });
+
+  it('tells them why it matters rather than just naming a field', async () => {
+    // 2.4b's rule about error copy, on a field whose whole purpose is legal:
+    // "ownerStatus is required" would be true and useless.
+    listings.ownerStatuses.hasNotDeclared(await idOf('alice-token'));
+
+    const { response } = await publishAttempt();
+    const [blocker] = (response.json() as { blockers: { message: string }[] }).blockers;
+
+    expect(blocker?.message).toContain('private individual or as a business');
+    expect(blocker?.message).toContain('different rights');
+  });
+
+  it('publishes for a declared private individual', async () => {
+    listings.ownerStatuses.declares(await idOf('alice-token'), 'private_owner');
+
+    expect((await publishAttempt()).response.statusCode).toBe(201);
+  });
+
+  it('refuses to publish for somebody who says they are a business', async () => {
+    // Peer-to-peer only, decided 12 August 2026. The listing itself is perfect;
+    // what refuses it is who they are, and the message has to say so or they
+    // will go looking through their own form for a mistake that is not there.
+    listings.ownerStatuses.declares(await idOf('alice-token'), 'professional_trader');
+
+    const { response } = await publishAttempt();
+    const [blocker] = (response.json() as { blockers: { message: string }[] }).blockers;
+
+    expect(response.statusCode).toBe(422);
+    expect(blocker?.message).toContain('list as a business');
+    expect(blocker?.message).toContain('nothing is wrong with the listing itself');
+  });
+
+  it('does not refuse a draft — the question is asked at publication', async () => {
+    // §8.3 keeps a draft permissive, and this is no different from an address
+    // or a price. Somebody writing their first listing should not be sent to
+    // their profile before they can save anything at all.
+    listings.ownerStatuses.hasNotDeclared(await idOf('alice-token'));
+
+    expect((await createListing('alice-token', READY_TO_PUBLISH)).statusCode).toBe(201);
+  });
+
+  describe('what the public page discloses', () => {
+    function read(id: string) {
+      return app.inject({ method: 'GET', url: publicListingPath(id) });
+    }
+
+    async function givenPublished() {
+      listings.ownerStatuses.declares(await idOf('alice-token'), 'private_owner');
+      const { created, response } = await publishAttempt();
+      expect(response.statusCode).toBe(201);
+      return created;
+    }
+
+    it('states that the owner is a private individual', async () => {
+      // The disclosure §8.3 actually asks for, carried on the wire rather than
+      // assumed by the page — see `publicListingSchema`.
+      const created = await givenPublished();
+
+      const listing = parsePublicListing((await read(created.id)).json());
+
+      expect(listing.ownerStatus).toBe('private_owner');
+    });
+
+    it('stops showing the listing if the owner later says they are a business', async () => {
+      /*
+       * **The hole this closes, and it is the reason the public read checks the
+       * declaration rather than trusting publication.** Completeness is settled
+       * once, at the moment of publishing, and never looked at again — so
+       * without this an owner could publish as a private individual, change
+       * their profile, and go on serving a disclosure that had become false.
+       *
+       * Making visibility depend on the declaration means the disclosure cannot
+       * go stale: change the answer and the listing leaves public view until it
+       * is changed back.
+       */
+      const created = await givenPublished();
+      expect((await read(created.id)).statusCode).toBe(200);
+
+      listings.ownerStatuses.declares(await idOf('alice-token'), 'professional_trader');
+
+      expect((await read(created.id)).statusCode).toBe(404);
+    });
+
+    it('stops showing it if the owner withdraws the declaration entirely', async () => {
+      // The positive test — `=== 'private_owner'` — rather than "not a trader".
+      // Written as the negative, this case would have slipped through.
+      const created = await givenPublished();
+
+      listings.ownerStatuses.hasNotDeclared(await idOf('alice-token'));
+
+      expect((await read(created.id)).statusCode).toBe(404);
+    });
+
+    it('says nothing about why it disappeared', async () => {
+      // Same uniform 404 as a paused or rejected listing. A stranger must not
+      // be able to learn that somebody runs a business from a status code.
+      const created = await givenPublished();
+      listings.ownerStatuses.declares(await idOf('alice-token'), 'professional_trader');
+
+      const body = JSON.stringify((await read(created.id)).json());
+
+      expect(body).not.toContain('business');
+      expect(body).not.toContain('professional_trader');
+    });
+
+    it('leaves the owner’s own view of the listing untouched', async () => {
+      // Their listing is still theirs and still says PUBLISHED — it is out of
+      // public view, not retracted. Anything else would be the platform
+      // silently unpublishing on their behalf.
+      const created = await givenPublished();
+      listings.ownerStatuses.declares(await idOf('alice-token'), 'professional_trader');
+
+      const mine = parseOwnerListing(
+        (
+          await app.inject({
+            method: 'GET',
+            url: listingPath(created.id),
+            headers: auth('alice-token'),
+          })
+        ).json(),
+      );
+
+      expect(mine.status).toBe('PUBLISHED');
+    });
+  });
+});

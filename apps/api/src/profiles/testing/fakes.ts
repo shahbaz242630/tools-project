@@ -76,6 +76,7 @@ export class InMemoryProfileStore implements ProfileStore {
       displayName: changes.displayName,
       phone: changes.phone,
       address: changes.address,
+      ownerStatus: changes.ownerStatus,
       updatedAt: Time.nowUtc(),
     };
 
