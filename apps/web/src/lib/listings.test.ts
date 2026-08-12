@@ -4,6 +4,7 @@ import {
   fetchCategoryOptions,
   fetchListing,
   fetchOwnedListings,
+  fetchPublicListing,
   pauseListing,
   publishListing,
   updateListing,
@@ -615,6 +616,118 @@ describe('updateListing', () => {
     expect(
       (await updateListing(API, TOKEN, LISTING.id, EDIT, responds(404))).kind,
     ).toBe('not-found');
+  });
+});
+
+/**
+ * The unauthenticated read (slice 2.10).
+ *
+ * **The test that matters is the first one.** Every other function in this file
+ * short-circuits to `signed-out` when the token is null, and that guard is
+ * exactly wrong here: a signed-out visitor is the expected caller. Routing this
+ * through `call` would have shown "your session has expired" to the public, and
+ * it would have looked like correct, careful code.
+ */
+describe('fetchPublicListing', () => {
+  const PUBLIC = {
+    id: LISTING.id,
+    title: 'Petrol hedge trimmer',
+    description: 'Serviced last spring.',
+    categorySlug: 'outdoor-gardening',
+    categoryName: 'Outdoor and gardening',
+    categoryAttributes: SCHEMA,
+    attributes: { weight_kg: 52 },
+    transportRequirement: 'car_boot',
+    requiresTwoPersonLift: false,
+    location: { outwardCode: 'BS7', town: 'Bristol' },
+    inclusiveDailyPrice: {
+      rate: { amount: 1_800, currency: 'GBP' },
+      renterFee: { amount: 144, currency: 'GBP' },
+      total: { amount: 1_944, currency: 'GBP' },
+      minimumFeeApplied: false,
+    },
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  it('reads a listing with no token at all', async () => {
+    const outcome = await fetchPublicListing(
+      API,
+      LISTING.id,
+      responds(200, JSON.stringify(PUBLIC)),
+    );
+
+    expect(outcome.kind).toBe('loaded');
+  });
+
+  it('sends no authorization header and no client IP', async () => {
+    /*
+     * The header would be empty anyway — there is no token — but sending the
+     * key at all invites somebody to populate it later. The client IP is absent
+     * for its own reason: ADR 0017 forwards it so an audit entry can record who
+     * acted, and nothing on this path is audited, so collecting it would be
+     * collecting for no purpose (§10, data minimisation).
+     */
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(PUBLIC));
+    await fetchPublicListing(API, LISTING.id, fetchImpl);
+
+    const headers = calls[0]?.init?.headers ?? {};
+    expect(Object.keys(headers)).toEqual([]);
+  });
+
+  it('asks the public path, not the owner’s', async () => {
+    // The two differ by a prefix and return different projections. A call to the
+    // owner's path with no token would 401, which is a confusing way to find out
+    // the URL was wrong.
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(PUBLIC));
+    await fetchPublicListing(API, LISTING.id, fetchImpl);
+
+    expect(calls[0]?.url).toContain('/public/listings/');
+  });
+
+  it('does not cache, so a paused listing stops being served', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(PUBLIC));
+    await fetchPublicListing(API, LISTING.id, fetchImpl);
+
+    expect(calls[0]?.init?.cache).toBe('no-store');
+  });
+
+  it('reads a 404 as not-found, whatever the reason behind it', async () => {
+    // Draft, paused, rejected, or no such listing. The API refuses to tell them
+    // apart and this refuses to guess.
+    expect((await fetchPublicListing(API, LISTING.id, responds(404))).kind).toBe(
+      'not-found',
+    );
+  });
+
+  it('refuses a response that does not match the projection', async () => {
+    /*
+     * **The projection is what keeps a street address off this page**, so a
+     * response this build cannot vouch for is not one to render. Rendering it
+     * anyway is how a field nobody reviewed reaches the internet — which is the
+     * same argument `fetchListing` makes about a missing moderation state, one
+     * audience wider.
+     */
+    const outcome = await fetchPublicListing(
+      API,
+      LISTING.id,
+      responds(200, JSON.stringify({ id: LISTING.id, title: 'Only a title' })),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('reports an unexpected status as unreachable rather than pretending', async () => {
+    expect((await fetchPublicListing(API, LISTING.id, responds(500))).kind).toBe(
+      'unreachable',
+    );
+  });
+
+  it('reports a transport failure as unreachable', async () => {
+    const outcome = await fetchPublicListing(API, LISTING.id, () =>
+      Promise.reject(new Error('socket hang up')),
+    );
+
+    expect(outcome).toEqual({ kind: 'unreachable', reason: 'socket hang up' });
   });
 });
 

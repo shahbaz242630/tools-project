@@ -17,8 +17,8 @@
  * exactly as the real store issues no `UPDATE`.
  */
 
-import { DEFAULT_MODERATION_STATE } from '@platform/contracts';
-import { Time } from '@platform/core';
+import { DEFAULT_MODERATION_STATE, isPubliclyVisible } from '@platform/contracts';
+import { Postcode, Time } from '@platform/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import type { RecordingLogger } from '@platform/observability/testing';
 import { LocationService } from '../../search-location/location.service.js';
@@ -41,6 +41,7 @@ import type {
   ListingRecord,
   ListingStore,
   ModerationDecision,
+  PublicListingRecord,
 } from '../listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from '../listing-locator.js';
 import { ListingsService } from '../listings.service.js';
@@ -420,6 +421,52 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       (candidate) => candidate.id === id && candidate.ownerId === ownerId,
     );
     return listing === undefined ? null : this.hydrate(listing);
+  }
+
+  /**
+   * The public read (slice 2.10).
+   *
+   * **The double calls `isPubliclyVisible` where the real store restates it in
+   * SQL**, and the asymmetry is deliberate rather than laziness. The adapter has
+   * to express the rule as two columns because Phase 3 needs an index; here
+   * there is no such constraint, so it uses the function — which means a test
+   * against this double is testing the *rule*, and the db test walking all nine
+   * status × moderation pairs is what proves the SQL agrees with it.
+   *
+   * **It builds `PublicListingRecord` field by field rather than spreading**,
+   * for the reason 2.9a built `OwnerListingSummary` that way: a spread with
+   * deletions is a projection that silently gains whatever the source record
+   * gains next, and what this one would gain is a decrypted street address.
+   */
+  async findPublished(id: string): Promise<PublicListingRecord | null> {
+    const listing = this.listings.find((candidate) => candidate.id === id);
+    if (listing === undefined) return null;
+    if (!isPubliclyVisible(listing.status, listing.moderationState)) return null;
+
+    const location = listing.collectionLocation;
+    /* c8 ignore next -- publication refuses a listing with no address. */
+    if (location === null) return null;
+
+    const hydrated = await this.hydrate(listing);
+
+    return {
+      id: hydrated.id,
+      categorySlug: hydrated.categorySlug,
+      categoryName: hydrated.categoryName,
+      categoryAttributes: hydrated.categoryAttributes,
+      currentFeePolicy: hydrated.currentFeePolicy,
+      title: hydrated.title,
+      description: hydrated.description,
+      rates: hydrated.rates,
+      attributes: { ...hydrated.attributes },
+      transportRequirement: hydrated.transportRequirement,
+      requiresTwoPersonLift: hydrated.requiresTwoPersonLift,
+      // Derived from the postcode exactly as the real adapter derives the
+      // column on write, so a test cannot pass with a district the production
+      // path would never have stored.
+      outwardCode: Postcode.outwardCode(location.postcode),
+      town: location.town,
+    };
   }
 
   async update(

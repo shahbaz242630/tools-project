@@ -18,8 +18,12 @@
 import { z } from 'zod';
 import { inclusiveDailyPriceSchema, listingRateCardSchema } from './pricing.js';
 import type { InclusiveDailyPrice, ListingRateCard } from './pricing.js';
-import { postalAddressResponseSchema, postalAddressSchema } from './address.js';
-import type { PostalAddress } from './address.js';
+import {
+  coarseLocationSchema,
+  postalAddressResponseSchema,
+  postalAddressSchema,
+} from './address.js';
+import type { CoarseLocation, PostalAddress } from './address.js';
 import { boundedMoneySchema, moneySchema } from './money.js';
 import { categoryAttributesSchema, categorySlugSchema } from './catalogue.js';
 import type { CategoryAttribute } from './catalogue.js';
@@ -80,6 +84,27 @@ export function listingPublicationPath(id: string): string {
 }
 
 export const LISTING_PUBLICATION_ROUTE = '/listings/:id/publication';
+
+/**
+ * One listing, as anyone may see it — the first unauthenticated read of a
+ * listing in the system (slice 2.10).
+ *
+ * **Under `/public/` on purpose.** Every path above is guarded, and a route that
+ * anybody on the internet may call is not something to leave looking like the
+ * others. The prefix is the same kind of signal `findForModeration`'s name is at
+ * the port level: it has to be typed deliberately, and it reads wrong anywhere it
+ * does not belong. 2.12's sitemap and Phase 3's search are the next two things
+ * that live here.
+ *
+ * **Addressed by id, and it will not always be.** §8.17 wants stable, crawlable
+ * slugs, which is slice 2.12; this is the shape that exists until then, and the
+ * id stays in whatever the slug becomes so that old links keep resolving.
+ */
+export function publicListingPath(id: string): string {
+  return `/public/listings/${encodeURIComponent(id)}`;
+}
+
+export const PUBLIC_LISTING_ROUTE = '/public/listings/:id';
 
 /**
  * Where any signed-in user reads the categories they could list in.
@@ -261,16 +286,22 @@ export const DEFAULT_MODERATION_STATE: ModerationState = 'APPROVED';
  * owner has published it **and** the platform permits it. The `&&` is the whole
  * rule, so neither authority can override the other.
  *
- * **It still has no callers**, and that is worth saying plainly rather than
- * implying the compiler has been policing anything. 2.10's public projection and
- * Phase 3's search are the first two, and they are unwritten — which is exactly
- * why the second parameter was added now. Widening the signature after those
- * exist would be a retrofit across every reader; adding it while the only cost
- * is this file is the whole reason 2.8a created the seam early.
+ * **Two callers now, and the docblock here claimed none until slice 2.10 came to
+ * add the second.** 2.8c-ii wired the first — the owner's own page, deciding
+ * whether to tell them strangers can see this — and this paragraph went on
+ * saying *"it still has no callers"* through two slices. Left as a note rather
+ * than silently corrected, because a docblock that describes the world at the
+ * moment it was written is the kind that rots without anything failing.
  *
- * **2.10's public projection and Phase 3's search must both read this**, never
- * compare either field themselves. A `where status = 'PUBLISHED'` is now a leak
- * rather than merely a duplication: it returns rejected listings.
+ * **Phase 3's search is the third, and it must read this too** — never compare
+ * either field itself. A `where status = 'PUBLISHED'` is a leak rather than
+ * merely a duplication: it returns rejected listings.
+ *
+ * **The store cannot call this inside a `where`**, which is the one place the
+ * rule is necessarily restated. `PrismaListingStore.findPublished` filters on
+ * both columns in SQL, because Phase 3 needs that filter to be indexable; what
+ * ties the two statements together is a db test that walks every status ×
+ * moderation pair and asserts exactly one of the nine comes back.
  */
 export function isPubliclyVisible(
   status: ListingStatus,
@@ -826,6 +857,115 @@ const ownerListingSchema = z.object({
 
 export function parseOwnerListing(raw: unknown): OwnerListing {
   return parseWith(ownerListingSchema, 'The listing response', raw);
+}
+
+/**
+ * One listing, as **anybody on the internet** may see it (slice 2.10).
+ *
+ * **Assume every field here is scraped and indexed the day it ships**, which is
+ * the sentence `publicProfileSchema` opens with and the reason this is a separate
+ * type rather than {@link OwnerListing} with fields removed. An optional
+ * `postcode?: string` compiles identically whether or not the API remembered to
+ * strip it, and both shapes serialise happily — so the check has to be a type
+ * error at the point of construction, and the test has to be against the wire.
+ *
+ * **What is deliberately absent, each for its own reason:**
+ *
+ * - **the street lines and the full postcode** (§8.4.1) — they live in
+ *   `listing_locations`, which the query behind this never joins. That is a
+ *   structural guarantee rather than a `select` somebody has to remember, and it
+ *   is the whole reason 2.5a split the address across two tables;
+ * - **the coordinates, true or fuzzed** — nothing on this page draws a map, and
+ *   a point that is not rendered is a point that cannot leak. Phase 3 publishes
+ *   *bucketed distances*, not positions, and will add them here deliberately;
+ * - **the owner's id and name** — a listing page is about an item. The owner's
+ *   public profile is its own resource with its own projection, and linking the
+ *   two is a decision for whichever slice needs it rather than a field that
+ *   arrived because it was in the record;
+ * - **the replacement value** — it is what the item would cost to replace, which
+ *   the renter has no use for until §8.7 turns it into a damage excess. Adding a
+ *   field is a line; removing one after 2.12 has published it in structured data
+ *   is not;
+ * - **`status` and `moderationState`** — a listing that is not publicly visible
+ *   is a 404, so every listing this type ever describes has the same value for
+ *   both. Sending them would be telling the internet about a moderation system.
+ */
+export interface PublicListing {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly categorySlug: string;
+  readonly categoryName: string;
+  /** The schema **as pinned**, so the answers below can be read (ADR 0029). */
+  readonly categoryAttributes: readonly CategoryAttribute[];
+  readonly attributes: ListingAttributeValues;
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
+  /** The district and the town, and nothing finer (§8.4.1). */
+  readonly location: CoarseLocation;
+  /** Inclusive of the mandatory renter fee (§3.4.4). Never null — see below. */
+  readonly inclusiveDailyPrice: InclusiveDailyPrice;
+  readonly rates: ListingRateCard;
+}
+
+/**
+ * The wire check on the above.
+ *
+ * **A schema beside an interface rather than `z.infer`**, which is the shape
+ * `OwnerListing` uses and the reason is the same: the API returns the interface,
+ * whose arrays are `readonly`, and the client parses with the schema. Deriving
+ * the type from the schema would make every projection mutable at the point of
+ * construction, which is the wrong default for something being handed to the
+ * internet.
+ */
+export const publicListingSchema = z.object({
+  id: z.uuid(),
+  title: z.string(),
+  description: z.string(),
+  categorySlug: z.string(),
+  categoryName: z.string(),
+  /**
+   * The schema **as the listing pinned it**, so the answers below can be read
+   * (ADR 0029).
+   *
+   * A stored `25` means nothing until something says it is a weight in kilograms
+   * at one decimal place, and `cordless` means nothing without the label it was
+   * chosen by. This is what lets the page render a category's own fields without
+   * knowing what any category contains — the exit gate of this phase, on a page
+   * a stranger reads.
+   */
+  categoryAttributes: categoryAttributesSchema,
+  attributes: z.record(z.string(), attributeValueSchema),
+  transportRequirement: transportRequirementSchema.nullable(),
+  requiresTwoPersonLift: z.boolean(),
+  /**
+   * The district and the town, and nothing finer (§8.4.1).
+   *
+   * `CoarseLocation` rather than `PostalAddress`, which is the difference between
+   * this type and the owner's one expressed in the type system. It is
+   * non-nullable because a listing cannot be published without a location at all
+   * — the completeness rules refuse it — so a public listing always has one.
+   */
+  location: coarseLocationSchema,
+  /**
+   * What a renter pays for one day, **inclusive of the mandatory fee** (§3.4.4).
+   *
+   * Non-nullable, unlike the owner's projection, and for the same reason the
+   * location is: publication refuses a listing with no daily rate, so every
+   * listing this type describes has a price. The nullability on `OwnerListing`
+   * exists to describe drafts, and there are no drafts here.
+   *
+   * **Drip pricing is a legal exposure rather than a UX preference** (DMCC), so
+   * the page renders `total` as the headline. The parts travel with it because
+   * being able to say *what* the fee is, is the other half of the same rule.
+   */
+  inclusiveDailyPrice: inclusiveDailyPriceSchema,
+  /** The full rate card, so a weekly rate can be shown as an alternative. */
+  rates: listingRateCardSchema,
+});
+
+export function parsePublicListing(raw: unknown): PublicListing {
+  return parseWith(publicListingSchema, 'The public listing response', raw);
 }
 
 /**

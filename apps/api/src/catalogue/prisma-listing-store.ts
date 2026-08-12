@@ -29,6 +29,7 @@ import type {
   ListingRecord,
   ListingStore,
   ModerationDecision,
+  PublicListingRecord,
 } from './listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from './listing-locator.js';
 
@@ -438,6 +439,64 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
   }
 
   /**
+   * One listing, for anybody on the internet (slice 2.10).
+   *
+   * **Three things here are the security of the slice**, and each is a
+   * structural choice rather than a careful one:
+   *
+   * 1. **`PUBLICLY_VISIBLE` is in the `where`, not checked afterwards.** The
+   *    rule is `isPubliclyVisible`, which cannot run inside a query — so it is
+   *    restated as two columns, with a db test over all nine status × moderation
+   *    pairs holding the two statements together. Filtering after the read would
+   *    also mean the row existed in memory on a public path, which is exactly
+   *    the shape that leaks when somebody later adds a log line.
+   * 2. **`location` is not in the include.** `LISTING_CATEGORY` joins it for the
+   *    owner's reads; this uses its own include that does not, so the encrypted
+   *    street lines are never fetched, never decrypted, and cannot be returned.
+   *    The docblock on that constant has said since 2.5b that the public
+   *    projection must not reuse it.
+   * 3. **`outwardCode` and `town` come off the `listings` row**, which has never
+   *    held anything finer than a postal district.
+   *
+   * A listing published without an outward code cannot exist — the completeness
+   * rules refuse it and `location_is_complete` refuses half of it — so the null
+   * check below is a type narrowing rather than a real branch, and it resolves
+   * to null rather than throwing because a public route should 404 on a row it
+   * cannot describe rather than 500.
+   */
+  async findPublished(id: string): Promise<PublicListingRecord | null> {
+    const listing = await this.prisma.listing.findFirst({
+      where: { id, ...PUBLICLY_VISIBLE },
+      include: PUBLIC_LISTING_CATEGORY,
+    });
+    if (listing === null) return null;
+
+    if (listing.outwardCode === null || listing.town === null) return null;
+
+    return {
+      id: listing.id,
+      categorySlug: listing.categoryVersion.category.slug,
+      categoryName: listing.categoryVersion.name,
+      categoryAttributes: asAttributes(
+        listing.categoryVersion.attributes,
+        `the category version pinned by listing ${listing.id}`,
+      ),
+      currentFeePolicy: asFeePolicy(
+        listing.categoryVersion.category.versions[0] ?? listing.categoryVersion,
+        `the current version of the category listed by ${listing.id}`,
+      ),
+      title: listing.title,
+      description: listing.description,
+      rates: asRateCard(listing),
+      attributes: asValues(listing.attributes, listing.id),
+      transportRequirement: asRequirement(listing.transportRequirement, listing.id),
+      requiresTwoPersonLift: listing.requiresTwoPersonLift,
+      outwardCode: listing.outwardCode,
+      town: listing.town,
+    };
+  }
+
+  /**
    * Read a listing without an owner filter (slice 2.8c-i).
    *
    * **Every other read here scopes by owner and this one deliberately cannot.**
@@ -683,6 +742,44 @@ interface EncryptedDetail {
 }
 
 const DRAFT: ListingStatus = 'DRAFT';
+
+/**
+ * What "anybody may see this" is, in two columns (slice 2.10).
+ *
+ * **The one restatement of `isPubliclyVisible` in the system**, and it exists
+ * because that function cannot run inside a `where` — Phase 3 filters on this
+ * across every listing on the platform and needs an index to do it.
+ *
+ * A named constant rather than the pair written inline, so that the next read
+ * which needs it (Phase 3's search, 2.12's sitemap) reuses this rather than
+ * writing `status: 'PUBLISHED'` and quietly serving rejected listings. That
+ * failure is the one `isPubliclyVisible`'s docblock warns about by name.
+ */
+const PUBLICLY_VISIBLE = {
+  status: 'PUBLISHED',
+  moderationState: 'APPROVED',
+} as const;
+
+/**
+ * The joins a **public** read needs, and pointedly not the ones an owner's does.
+ *
+ * `LISTING_CATEGORY` below includes `location: true`. This does not, and the
+ * omission is the point: the encrypted street lines are never fetched on this
+ * path, so no amount of carelessness downstream can return them. Two constants
+ * rather than one with a flag, for the reason there are two projections at all —
+ * a flag is something a call site can pass wrongly.
+ */
+const PUBLIC_LISTING_CATEGORY = {
+  categoryVersion: {
+    include: {
+      category: {
+        include: {
+          versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
+        },
+      },
+    },
+  },
+} as const;
 
 /** The current configuration: highest version number, one row. */
 const LATEST_VERSION = {

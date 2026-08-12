@@ -17,7 +17,9 @@ import {
   parseCategoryOptions,
   parseOwnedListings,
   parseOwnerListing,
+  parsePublicListing,
   parsePublicationRefusal,
+  publicListingPath,
 } from '@platform/contracts';
 import type {
   CategoryOption,
@@ -25,6 +27,7 @@ import type {
   ListingEditInput,
   OwnedListings,
   OwnerListing,
+  PublicListing,
   PublicationBlocker,
 } from '@platform/contracts';
 
@@ -115,6 +118,30 @@ export type PauseOutcome =
 export type EditOutcome =
   | ListingOutcome<OwnerListing>
   | { readonly kind: 'incomplete'; readonly blockers: readonly PublicationBlocker[] };
+
+/**
+ * What the public listing read can answer (slice 2.10).
+ *
+ * **Three kinds where the guarded reads have seven**, and the four that are
+ * missing are missing because they cannot happen. There is no session, so
+ * `signed-out` and `forbidden` are meaningless; there is no request body, so
+ * `invalid` is; there is no category being pinned, so `stale-category` is. A
+ * union carrying cases nothing produces is one whose reader cannot tell an
+ * unreachable branch from an unimplemented one — the same objection this file
+ * already makes to `PublishOutcome` living in the shared type.
+ *
+ * `not-found` is the interesting one: it is what a draft, a paused listing, a
+ * rejected listing and a nonexistent id all come back as, because the API
+ * refuses to distinguish them (§8.4.1 reasoning applied to existence rather than
+ * to location). The page renders Next's 404 for it and says nothing more.
+ */
+export type PublicOutcome<T> =
+  | { readonly kind: 'loaded'; readonly value: T }
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'unreachable'; readonly reason: string }
+  | { readonly kind: 'malformed'; readonly reason: string };
+
+export type PublicListingOutcome = PublicOutcome<PublicListing>;
 
 export interface FetchResponse {
   status: number;
@@ -304,6 +331,94 @@ export function fetchListing(
     fetchImpl,
     parseOwnerListing,
   );
+}
+
+/**
+ * One listing, as anybody may see it (slice 2.10).
+ *
+ * **It does not go through `call`, and the reason is the first line of that
+ * function**: `if (token === null) return { kind: 'signed-out' }`. That guard is
+ * correct for every other read here and is exactly wrong for this one — a
+ * signed-out visitor is the *expected* caller, and routing this through `call`
+ * would mean the public page rendered "your session has expired" to the public.
+ *
+ * Adding a "public" flag to `call` was the alternative and it is the worse one:
+ * a boolean that switches off an authentication check is a boolean somebody
+ * passes wrongly, and the failure would be silent in the safe-looking direction
+ * only until it wasn't. A separate function cannot be called with a token by
+ * accident, because it takes none.
+ *
+ * **No `x-client-ip` either.** ADR 0017 forwards it so the audit log can record
+ * who did something; nothing here is audited, nobody is identified, and sending
+ * a visitor's IP inward for a read that records nothing would be collecting it
+ * for no purpose — which is the data-minimisation principle §10 states.
+ */
+export function fetchPublicListing(
+  apiBaseUrl: string,
+  id: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+): Promise<PublicListingOutcome> {
+  return publicCall(
+    new URL(publicListingPath(id), apiBaseUrl).toString(),
+    fetchImpl,
+    parsePublicListing,
+  );
+}
+
+/**
+ * The unauthenticated read, with the four outcomes it can actually have.
+ *
+ * A sibling of `call` rather than a parameterisation of it — see
+ * `fetchPublicListing`. It is short because it has nothing to do: no token, no
+ * body, no 409, no 422, no 503.
+ */
+async function publicCall<T>(
+  url: string,
+  fetchImpl: FetchLike,
+  parse: (raw: unknown) => T,
+): Promise<PublicOutcome<T>> {
+  let response: FetchResponse;
+  try {
+    response = await fetchImpl(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(LISTINGS_TIMEOUT_MS),
+      headers: {},
+      // **`no-store`, on a page that is otherwise ideal to cache.** A listing
+      // paused or rejected a moment ago must stop being served, and a cached
+      // copy is a listing the platform has taken down and is still showing.
+      // Caching this is a real optimisation and it belongs with a real
+      // invalidation story, which is Phase 3's or 2.12's rather than a default
+      // inherited by accident.
+      cache: 'no-store',
+    });
+  } catch (error) {
+    return { kind: 'unreachable', reason: describe(error) };
+  }
+
+  // Draft, paused, rejected, or no such listing — all one answer, because the
+  // API refuses to tell them apart.
+  if (response.status === 404) return { kind: 'not-found' };
+
+  if (response.status < 200 || response.status >= 300) {
+    return { kind: 'unreachable', reason: `API answered ${String(response.status)}` };
+  }
+
+  let raw: string;
+  try {
+    raw = await response.text();
+  } catch (error) {
+    return { kind: 'unreachable', reason: describe(error) };
+  }
+
+  try {
+    return { kind: 'loaded', value: parse(JSON.parse(raw)) };
+  } catch (error) {
+    // **Refused rather than rendered.** The projection is what keeps a street
+    // address off this page, so a response that does not match it is one this
+    // build cannot vouch for — and rendering it anyway is how a field nobody
+    // reviewed reaches the internet.
+    return { kind: 'malformed', reason: describe(error) };
+  }
 }
 
 /**
