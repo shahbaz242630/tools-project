@@ -121,16 +121,6 @@ describe('what the form opens showing', () => {
     expect(hidden?.getAttribute('value')).toBe('3');
   });
 
-  it('says the collection address cannot be changed here', () => {
-    // Stated rather than left as a missing field: the create form asks for an
-    // address and this one does not, and an owner who noticed would reasonably
-    // conclude theirs had been lost.
-    render(<ListingEditForm listing={listing()} category={CATEGORY} />);
-
-    expect(document.body.textContent).toContain('cannot be changed here yet');
-    expect(document.body.textContent).toContain('unchanged');
-  });
-
   it('renders the category’s current fields, not the listing’s pinned ones', () => {
     // The listing's own `categoryAttributes` is empty in the fixture. If the form
     // read that, there would be no weight field at all — and saving would clear
@@ -138,5 +128,88 @@ describe('what the form opens showing', () => {
     render(<ListingEditForm listing={listing()} category={CATEGORY} />);
 
     expect(screen.getByLabelText(/Weight/)).toBeTruthy();
+  });
+});
+
+/**
+ * The collection address (slice 2.9b-ii).
+ *
+ * The fields the previous slice said in as many words could not be here. What
+ * these assert is the *opening* state, because that is where an edit form does
+ * its damage: four inputs that opened blank would post four blanks, and an owner
+ * who pressed Save to fix a typo in the title would have removed their address
+ * without touching it.
+ */
+describe('the collection address', () => {
+  const LOCATED: Partial<OwnerListing> = {
+    collectionLocation: {
+      line1: '12 Gloucester Road',
+      line2: 'Flat 2',
+      town: 'Bristol',
+      postcode: 'BS7 8AA',
+    },
+    isLocated: true,
+  };
+
+  it('opens filled in from the listing, not blank', () => {
+    render(<ListingEditForm listing={listing(LOCATED)} category={CATEGORY} />);
+
+    expect(value(/Address line 1/)).toBe('12 Gloucester Road');
+    expect(value(/Address line 2/)).toBe('Flat 2');
+    expect(value(/Town or city/)).toBe('Bristol');
+    expect(value(/Postcode/)).toBe('BS7 8AA');
+  });
+
+  it('shows an absent second line as empty rather than as “null”', () => {
+    // Stored null, rendered ''. The inverse of what `readCollectionLocation`
+    // does on the way back in, and getting it wrong would post the four
+    // characters `null` as somebody's address line.
+    render(
+      <ListingEditForm
+        listing={listing({
+          ...LOCATED,
+          collectionLocation: {
+            line1: '12 Gloucester Road',
+            line2: null,
+            town: 'Bristol',
+            postcode: 'BS7 8AA',
+          },
+        })}
+        category={CATEGORY}
+      />,
+    );
+
+    expect(value(/Address line 2/)).toBe('');
+  });
+
+  it('opens blank for a draft that has never given an address', () => {
+    render(<ListingEditForm listing={listing()} category={CATEGORY} />);
+
+    expect(value(/Address line 1/)).toBe('');
+    expect(value(/Postcode/)).toBe('');
+  });
+
+  it('tells a draft owner they may leave it blank', () => {
+    render(<ListingEditForm listing={listing()} category={CATEGORY} />);
+
+    expect(document.body.textContent).toContain('leave this blank for now');
+  });
+
+  it('tells a published owner to pause rather than empty it', () => {
+    /*
+     * The API refuses the save either way (422), so this copy is what stops the
+     * refusal being a surprise. It names pausing because that is the action that
+     * makes the change legitimate — the owner is not doing something wrong, they
+     * are doing it in the wrong order.
+     */
+    render(
+      <ListingEditForm
+        listing={listing({ ...LOCATED, status: 'PUBLISHED' })}
+        category={CATEGORY}
+      />,
+    );
+
+    expect(document.body.textContent).toContain('pause it instead');
+    expect(document.body.textContent).not.toContain('leave this blank for now');
   });
 });

@@ -1498,7 +1498,35 @@ describe('updating a listing', () => {
       weekend: null,
       weekly: null,
     },
+    /*
+     * **`cleared`, and it is doing something rather than nothing** (slice
+     * 2.9b-ii). Through 2.9b-i an edit carried no address at all and the store
+     * left the row alone; now every edit states what happens to it, so the
+     * default here has to be a real case. `cleared` is the honest one for these
+     * tests: the listings they build have no address, so removing one removes
+     * nothing and the assertions stay about titles, versions and status.
+     *
+     * The tests that are *about* the address override it, below.
+     */
+    collectionLocation: { kind: 'cleared' } as const,
     categoryVersionNumber: 1,
+  };
+
+  /** An address in Bristol, and the point postcodes.io would place it at. */
+  const BRISTOL: ListingCollectionLocation = {
+    line1: '12 Gloucester Road',
+    line2: null,
+    town: 'Bristol',
+    postcode: 'BS7 8AA',
+  };
+
+  const BRISTOL_POINT: LocatedListingPoint = {
+    latitude: 51.4779,
+    longitude: -2.5872,
+    fuzzBearingDegrees: 90,
+    fuzzDistanceMetres: 700,
+    fuzzedLatitude: 51.4779,
+    fuzzedLongitude: -2.5771,
   };
 
   it('writes what it is given', async () => {
@@ -1529,41 +1557,385 @@ describe('updating a listing', () => {
     expect(reread?.title).not.toBe('Renamed');
   });
 
-  it('leaves the collection address and its published half alone', async () => {
-    /*
-     * **The assertion this describe block exists for.** `outwardCode` and `town`
-     * live on `listings` beside every column the edit *does* write, so a
-     * `data:` object assembled from an edit that carries no address is one
-     * keystroke away from nulling them — and the `location_is_complete`
-     * constraint would happily accept both being null.
-     */
-    const owner = await newUser();
-    const category = await newCategory(owner);
-    const created = await store.createDraft(
-      draft(owner, category.slug, {
-        collectionLocation: {
-          line1: '12 Gloucester Road',
-          line2: null,
-          town: 'Bristol',
-          postcode: 'BS7 8AA',
+  /**
+   * The collection address, against a real database (slice 2.9b-ii).
+   *
+   * **Only this file can prove any of it.** The in-memory double keeps a record
+   * and a map; the real store keeps two tables, a derived pair of columns, two
+   * CHECK constraints and a trigger, and every defect worth catching here lives
+   * between them.
+   */
+  describe('the collection address', () => {
+    /** The private row as it actually sits in Postgres, coordinates and all. */
+    const locationRow = (listingId: string) =>
+      client.listingLocation.findUnique({
+        where: { listingId },
+        select: {
+          postcode: true,
+          latitude: true,
+          longitude: true,
+          fuzzBearingDegrees: true,
+          fuzzDistanceMetres: true,
+          fuzzedLatitude: true,
+          fuzzedLongitude: true,
         },
-      }),
-    );
+      });
 
-    await store.update(created.id, owner, EDIT);
+    /** The publishable pair, read from the column rather than the record. */
+    const publishedHalf = (listingId: string) =>
+      client.listing.findUniqueOrThrow({
+        where: { id: listingId },
+        select: { outwardCode: true, town: true },
+      });
 
-    const reread = await store.findOwnedBy(created.id, owner);
-    expect(reread?.collectionLocation?.postcode).toBe('BS7 8AA');
-    expect(reread?.collectionLocation?.line1).toBe('12 Gloucester Road');
+    const located = async (owner: string, slug: string) =>
+      store.createDraft(
+        draft(owner, slug, {
+          collectionLocation: BRISTOL,
+          locatedPoint: BRISTOL_POINT,
+        }),
+      );
 
-    // The publishable half, read straight from the row rather than through the
-    // record, because it is a separate column that the edit could have cleared.
-    const row = await client.listing.findUniqueOrThrow({
-      where: { id: created.id },
-      select: { outwardCode: true, town: true },
+    it('rewrites the lines and leaves the point untouched, for the same postcode', async () => {
+      /*
+       * **The assertion the slice exists for.** `address-only` must not so much
+       * as name the six coordinate columns: the stored fuzz offset is what makes
+       * a listing publish the same displaced point every time, and redrawing it
+       * across saves is the averaging attack §8.4.1 and ADR 0032 exist to stop.
+       */
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+      const before = await locationRow(created.id);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: {
+          kind: 'address-only',
+          location: { ...BRISTOL, line1: '12a Gloucester Road', line2: 'Flat 2' },
+        },
+      });
+
+      const after = await locationRow(created.id);
+      expect(after).toEqual(before);
+
+      const reread = await store.findOwnedBy(created.id, owner);
+      expect(reread?.collectionLocation?.line1).toBe('12a Gloucester Road');
+      expect(reread?.collectionLocation?.line2).toBe('Flat 2');
+      expect(reread?.isLocated).toBe(true);
     });
-    expect(row.outwardCode).toBe('BS7');
-    expect(row.town).toBe('Bristol');
+
+    it('keeps the published pair rather than nulling it', async () => {
+      /*
+       * `outwardCode` and `town` sit on `listings` beside every column an edit
+       * *does* write, so a `data:` object is one keystroke from nulling them —
+       * and `location_is_complete` would accept both being null quite happily,
+       * because the pair would still agree with itself.
+       */
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: { kind: 'address-only', location: BRISTOL },
+      });
+
+      expect(await publishedHalf(created.id)).toEqual({
+        outwardCode: 'BS7',
+        town: 'Bristol',
+      });
+    });
+
+    it('moves the point and the published pair to a new postcode', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: {
+          kind: 'relocated',
+          location: {
+            line1: '4 Mill Lane',
+            line2: null,
+            town: 'Bath',
+            postcode: 'BA1 1AA',
+          },
+          point: {
+            latitude: 51.3811,
+            longitude: -2.359,
+            // **The offset the listing already had**, which is what the service
+            // hands down. Asserting it survives here is what proves the adapter
+            // writes what it is given rather than inventing a displacement.
+            fuzzBearingDegrees: BRISTOL_POINT.fuzzBearingDegrees,
+            fuzzDistanceMetres: BRISTOL_POINT.fuzzDistanceMetres,
+            fuzzedLatitude: 51.3811,
+            fuzzedLongitude: -2.3489,
+          },
+        },
+      });
+
+      const row = await locationRow(created.id);
+      expect(row?.postcode).toBe('BA1 1AA');
+      expect(row?.latitude).toBeCloseTo(51.3811, 4);
+      expect(row?.fuzzBearingDegrees).toBe(BRISTOL_POINT.fuzzBearingDegrees);
+      expect(row?.fuzzDistanceMetres).toBe(BRISTOL_POINT.fuzzDistanceMetres);
+
+      expect(await publishedHalf(created.id)).toEqual({
+        outwardCode: 'BA1',
+        town: 'Bath',
+      });
+    });
+
+    it('moves the PostGIS geography with the fuzzed pair', async () => {
+      /*
+       * The trigger is `BEFORE INSERT OR UPDATE OF "fuzzedLatitude",
+       * "fuzzedLongitude"`, so it fires here only because `relocated` names those
+       * columns. A stale `fuzzedPoint` would be invisible until Phase 3's radius
+       * search returned a listing at the address it used to be at — which is a
+       * defect that would be found by a user, months from now.
+       *
+       * `ST_MakePoint` takes (longitude, latitude), which is the reverse of how
+       * the pair is written everywhere else and the easiest thing here to get
+       * wrong. `createDraft` has the same assertion for the insert path.
+       */
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: {
+          kind: 'relocated',
+          location: {
+            line1: '4 Mill Lane',
+            line2: null,
+            town: 'Bath',
+            postcode: 'BA1 1AA',
+          },
+          point: {
+            latitude: 51.3811,
+            longitude: -2.359,
+            fuzzBearingDegrees: 90,
+            fuzzDistanceMetres: 700,
+            fuzzedLatitude: 51.3811,
+            fuzzedLongitude: -2.3489,
+          },
+        },
+      });
+
+      const [point] = await client.$queryRaw<{ latitude: number; longitude: number }[]>`
+        SELECT ST_Y("fuzzedPoint"::geometry) AS latitude,
+               ST_X("fuzzedPoint"::geometry) AS longitude
+        FROM "listing_locations" WHERE "listingId" = ${created.id}::uuid
+      `;
+
+      expect(point?.latitude).toBeCloseTo(51.3811, 4);
+      expect(point?.longitude).toBeCloseTo(-2.3489, 4);
+    });
+
+    it('nulls all six coordinates when the new postcode cannot be placed', async () => {
+      /*
+       * The `update` branch writes the six explicitly rather than spreading an
+       * empty object, and this is why: an update that omits a column keeps what
+       * was there, so a spread would leave the listing published at the last
+       * place it was, under an address it has moved away from.
+       */
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: {
+          kind: 'relocated',
+          location: {
+            line1: '1 Nowhere Street',
+            line2: null,
+            town: 'Bath',
+            postcode: 'BA1 9ZZ',
+          },
+          point: null,
+        },
+      });
+
+      expect(await locationRow(created.id)).toEqual({
+        postcode: 'BA1 9ZZ',
+        latitude: null,
+        longitude: null,
+        fuzzBearingDegrees: null,
+        fuzzDistanceMetres: null,
+        fuzzedLatitude: null,
+        fuzzedLongitude: null,
+      });
+
+      const reread = await store.findOwnedBy(created.id, owner);
+      expect(reread?.isLocated).toBe(false);
+    });
+
+    it('gives an address to a listing that never had one', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await store.createDraft(draft(owner, category.slug));
+      expect(created.collectionLocation).toBeNull();
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: {
+          kind: 'relocated',
+          location: BRISTOL,
+          point: BRISTOL_POINT,
+        },
+      });
+
+      const reread = await store.findOwnedBy(created.id, owner);
+      expect(reread?.collectionLocation).toEqual(BRISTOL);
+      expect(reread?.isLocated).toBe(true);
+      expect(await publishedHalf(created.id)).toEqual({
+        outwardCode: 'BS7',
+        town: 'Bristol',
+      });
+    });
+
+    it('removes the row and the published pair when the address is cleared', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: { kind: 'cleared' },
+      });
+
+      expect(await locationRow(created.id)).toBeNull();
+      expect(await publishedHalf(created.id)).toEqual({
+        outwardCode: null,
+        town: null,
+      });
+    });
+
+    it('clears an address a listing never had, without complaining', async () => {
+      // `deleteMany`, not `delete`. The commonest edit in the system is one to a
+      // draft with no address by somebody who still has not given one, and
+      // `delete` would throw on it.
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await store.createDraft(draft(owner, category.slug));
+
+      await expect(
+        store.update(created.id, owner, {
+          ...EDIT,
+          collectionLocation: { kind: 'cleared' },
+        }),
+      ).resolves.not.toBeNull();
+    });
+
+    it('re-encrypts under the same listing id, so the lines still read back', async () => {
+      // The envelope binds the listing id as additional authenticated data, and
+      // an edit does not change the id — so this is really asserting that the
+      // rewrite went through `encrypt` at all rather than storing plaintext.
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await store.update(created.id, owner, {
+        ...EDIT,
+        collectionLocation: {
+          kind: 'address-only',
+          location: { ...BRISTOL, line1: 'Rear workshop, 12 Gloucester Road' },
+        },
+      });
+
+      const stored = await client.listingLocation.findUniqueOrThrow({
+        where: { listingId: created.id },
+        select: { encryptedDetail: true },
+      });
+      expect(stored.encryptedDetail).not.toContain('Gloucester');
+
+      const reread = await store.findOwnedBy(created.id, owner);
+      expect(reread?.collectionLocation?.line1).toBe(
+        'Rear workshop, 12 Gloucester Road',
+      );
+    });
+
+    it('writes neither table when the category has moved underneath the edit', async () => {
+      /*
+       * The two rows are written in one transaction, and the version guard runs
+       * before it opens. This proves the address survives a refusal — a listing
+       * whose address had been rewritten but whose title had not would be the
+       * worst outcome available, because nothing would ever say so.
+       */
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      await categories.addVersion(
+        category.slug,
+        {
+          name: 'Outdoor and gardening',
+          riskLevel: 'medium',
+          reportableActivity: 'none',
+          attributes: SCHEMA,
+          transportOptions: [],
+          feePolicy: FEE_POLICY,
+        },
+        owner,
+      );
+
+      await expect(
+        store.update(created.id, owner, {
+          ...EDIT,
+          collectionLocation: { kind: 'cleared' },
+        }),
+      ).rejects.toThrow(CategoryChangedError);
+
+      const reread = await store.findOwnedBy(created.id, owner);
+      expect(reread?.collectionLocation).toEqual(BRISTOL);
+      expect(await publishedHalf(created.id)).toEqual({
+        outwardCode: 'BS7',
+        town: 'Bristol',
+      });
+    });
+
+    it('returns the stored offset, and no coordinates with it', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await located(owner, category.slug);
+
+      const offset = await store.findFuzzOffset(created.id, owner);
+
+      expect(offset).toEqual({
+        bearingDegrees: BRISTOL_POINT.fuzzBearingDegrees,
+        distanceMetres: BRISTOL_POINT.fuzzDistanceMetres,
+      });
+      // The whole shape, not a property check: this is the one method that
+      // reaches into `listing_locations` for something other than the address,
+      // and a `select` widened later would show up right here.
+      expect(Object.keys(offset ?? {})).toEqual(['bearingDegrees', 'distanceMetres']);
+    });
+
+    it('has no offset for a listing whose postcode was never placed', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await store.createDraft(
+        draft(owner, category.slug, { collectionLocation: BRISTOL }),
+      );
+
+      // An address with no coordinates: the geocoder was down or did not know
+      // the postcode. There is no offset to honour, so the next save draws the
+      // listing's first — which is what `null` tells the service to do.
+      expect(await store.findFuzzOffset(created.id, owner)).toBeNull();
+    });
+
+    it('has no offset for somebody else’s listing', async () => {
+      const mine = await newUser();
+      const theirs = await newUser();
+      const category = await newCategory(mine);
+      const created = await located(mine, category.slug);
+
+      expect(await store.findFuzzOffset(created.id, theirs)).toBeNull();
+    });
   });
 
   it('leaves the status and the moderation decision alone', async () => {

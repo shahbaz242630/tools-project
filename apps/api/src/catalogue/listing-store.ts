@@ -10,7 +10,7 @@ import type {
 } from '@platform/contracts';
 import type { ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
-import type { LocatedListingPoint } from './listing-locator.js';
+import type { LocatedListingPoint, StoredFuzzOffset } from './listing-locator.js';
 
 /**
  * Listings, as the rest of the application sees them.
@@ -249,6 +249,60 @@ export interface ListingDraft {
 }
 
 /**
+ * What an edit does to a listing's collection address (slice 2.9b-ii).
+ *
+ * Three cases, and the one that carries the slice is the middle one.
+ */
+export type CollectionLocationEdit =
+  /**
+   * **The address is rewritten and the point is left exactly as it is.**
+   *
+   * Taken when the postcode has not changed and the listing is already located —
+   * somebody correcting a flat number, or saving a form they only came to for the
+   * title. The street lines and town are rewritten; the six coordinate columns
+   * are not read, not recomputed and not written.
+   *
+   * It is the case worth having for two reasons beyond saving a call to somebody
+   * else's service. A geocoder that is briefly down must not be able to strip the
+   * coordinates off a listing whose location nobody touched. And a point that is
+   * never recomputed is a point that cannot be recomputed *wrongly*.
+   */
+  | { readonly kind: 'address-only'; readonly location: ListingCollectionLocation }
+  /**
+   * **The address and the point are both rewritten.**
+   *
+   * Taken when the postcode changed, and also when it did not but the listing has
+   * no coordinates — which is the only retry 2.5b left for an address a provider
+   * outage could not place, and would be lost if this case keyed off the postcode
+   * alone.
+   *
+   * `point` is null when nothing could place the postcode, which nulls all six
+   * coordinate columns together. That is ordinary for a draft (§8.3) and is
+   * refused for a published listing before it ever reaches the store.
+   *
+   * **The offset inside `point` is the service's to get right, not the store's.**
+   * One offset per listing, drawn once and reused for ever including across a
+   * move (§8.4.1, ADR 0032). The store cannot check that and must not try — the
+   * fuzz maths lives in Search & Location (BRD §5.1). What the database checks is
+   * the narrower thing only it can see: all six columns set together, and the
+   * distance clearing the floor.
+   */
+  | {
+      readonly kind: 'relocated';
+      readonly location: ListingCollectionLocation;
+      readonly point: LocatedListingPoint | null;
+    }
+  /**
+   * **The address is removed entirely**, and the publishable pair with it.
+   *
+   * A real operation rather than a missing argument: the form posts back what it
+   * was given, so an empty address is somebody who emptied it. Whether they are
+   * *allowed* to is the service's question — a published listing may not be left
+   * with nowhere to collect from.
+   */
+  | { readonly kind: 'cleared' };
+
+/**
  * What an owner may rewrite about a listing they already have (slice 2.9b-i).
  *
  * **Deliberately not `Partial<ListingDraft>`.** A partial is a shape where
@@ -272,6 +326,20 @@ export interface ListingEdit {
   readonly transportRequirement: TransportRequirement | null;
   readonly requiresTwoPersonLift: boolean;
   readonly rates: ListingRateCard;
+  /**
+   * What this edit does to the collection address (slice 2.9b-ii).
+   *
+   * **One field of three shapes rather than an address beside a point**, and the
+   * reason is that the pair has a combination which must never be written: an
+   * address removed while its coordinates stay behind, or coordinates replaced
+   * while the address they belong to does not. Two nullable fields can express
+   * both; this cannot express either.
+   *
+   * It is also where the §8.4.1 rule is *visible* rather than implied. The
+   * adapter switches on three cases and writes each literally, so a reader can
+   * see that one of them deliberately does not touch the point.
+   */
+  readonly collectionLocation: CollectionLocationEdit;
   /**
    * The version the values above were validated against — a guard, not a choice,
    * exactly as on `ListingDraft`.
@@ -358,13 +426,20 @@ export interface ListingStore {
    * `categorySlug` is not on `ListingEdit` at all, and the composite foreign key
    * would refuse a version belonging to another category even if it were.
    *
-   * **It does not touch `listing_locations`.** Slice 2.9b-ii owns the collection
-   * address, because changing one means geocoding again and the fuzz offset must
-   * be preserved across edits rather than redrawn (ADR 0032, §8.4.1). Leaving the
-   * row alone is the behaviour, not an oversight — an edit that quietly cleared
-   * somebody's address would be the worst available bug in this method.
+   * **It writes `listing_locations` from 2.9b-ii**, and this docblock used to say
+   * the opposite — that leaving the row alone *was* the behaviour, because
+   * changing an address means geocoding again and the offset must survive. That
+   * is still the rule; what changed is where it is kept. The offset arrives
+   * already decided on `ListingEdit.locatedPoint`, so this method writes six
+   * numbers it does not interpret, and the guarantee lives one layer up where the
+   * fuzz maths does (BRD §5.1).
    *
-   * **It does not touch `status` or `moderationState`** either. Publishing and
+   * A null `collectionLocation` removes the row and the publishable pair with it.
+   * That is a real operation rather than a missing argument, and the service
+   * refuses it for a listing that is published — nowhere to collect from is not a
+   * state a live listing may be left in.
+   *
+   * **It does not touch `status` or `moderationState`.** Publishing and
    * pausing are their own transitions with their own preconditions, and
    * moderation is not the owner's (ADR 0041). Editing a published listing leaves
    * it published, which is what an owner correcting a typo expects.
@@ -378,6 +453,31 @@ export interface ListingStore {
    * `findOwnedBy` so a stranger cannot tell "not yours" from "does not exist".
    */
   update(id: string, ownerId: string, edit: ListingEdit): Promise<ListingRecord | null>;
+
+  /**
+   * This listing's stored fuzz offset, or null if it has never had one (slice
+   * 2.9b-ii).
+   *
+   * **Its own method rather than a field on `ListingRecord`, and that is the
+   * decision worth defending.** The record is what every controller maps to a
+   * response, and §8.4.1's rule is kept by there being nothing location-shaped on
+   * it beyond `isLocated` — a boolean chosen precisely so a projection cannot leak
+   * a point by forgetting a `select`. An offset is not a point and would leak
+   * nothing, but putting it there would make the record the place location data
+   * accumulates, and the next field added under the same argument might be one
+   * that matters. A method that has to be called on purpose is harder to include
+   * by accident.
+   *
+   * **Owner-scoped like every other read here**, even though the only caller has
+   * already proved ownership a statement earlier. The rule in this port is that a
+   * read takes an owner; an exception that is safe today is one somebody reuses
+   * tomorrow from a route that has proved nothing.
+   *
+   * Null covers both "no such listing" and "no coordinates yet", because the
+   * caller does the same thing with each: draw a new offset, since in both cases
+   * this listing has no point to be consistent with.
+   */
+  findFuzzOffset(id: string, ownerId: string): Promise<StoredFuzzOffset | null>;
 
   /**
    * This owner's listings, newest first, at most `limit` of them.

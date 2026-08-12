@@ -96,6 +96,26 @@ export type PublishOutcome =
 export type PauseOutcome =
   ListingOutcome<OwnerListing> | { readonly kind: 'refused'; readonly reason: string };
 
+/**
+ * What editing can answer (slice 2.9b-ii).
+ *
+ * **A second 422 in this file, and it is not `not-ready`.** Both carry the same
+ * `blockers`, because both are the completeness rules — but they are opposite
+ * situations and a form that showed the publish wording here would be actively
+ * misleading. `not-ready` is *"finish this and it can go live"*, said to somebody
+ * who asked to publish. This is *"it is live, and what you just saved would break
+ * it"*, said to somebody who was correcting a typo and emptied a field on the way
+ * past.
+ *
+ * `PublishOutcome` is deliberately not reused despite the identical payload. Two
+ * routes answering 422 for two reasons is the H3a lesson one status along: **a
+ * status code reused on the server is not handled until the client says which
+ * meaning it has.**
+ */
+export type EditOutcome =
+  | ListingOutcome<OwnerListing>
+  | { readonly kind: 'incomplete'; readonly blockers: readonly PublicationBlocker[] };
+
 export interface FetchResponse {
   status: number;
   text: () => Promise<string>;
@@ -333,7 +353,7 @@ export function updateListing(
   edit: ListingEditInput,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
   clientIp: string | null = null,
-): Promise<ListingOutcome<OwnerListing>> {
+): Promise<EditOutcome> {
   return call(
     new URL(listingPath(id), apiBaseUrl).toString(),
     token,
@@ -341,6 +361,10 @@ export function updateListing(
     fetchImpl,
     parseOwnerListing,
     { method: 'PUT', body: edit },
+    // The 422 hook, reading the same `blockers` array publishing does — the API
+    // answers both with one shape precisely so this parser is not written twice
+    // (slice 2.9b-ii).
+    (raw) => ({ kind: 'incomplete', blockers: readBlockers(raw) }),
   );
 }
 

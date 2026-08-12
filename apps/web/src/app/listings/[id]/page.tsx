@@ -329,8 +329,22 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
           )}
         </dd>
 
+        {/*
+          **`updatedAt`, and it was `createdAt` until slice 2.9b-ii.**
+
+          The label was accurate for as long as a listing was write-once: the two
+          timestamps were the same value, so either one was "when this was
+          saved". 2.9b-i and 2.9b-ii are what made them diverge, and the old field
+          then said something false in the one place it matters most — an owner
+          who changes their address, presses Save, and reads back a date from last
+          week concludes the save did not work, and does it again.
+
+          Found by walking the page rather than by a test, which is the argument
+          for walking the page: every assertion in this slice passed while this
+          line was wrong, because nothing knew what the date was *for*.
+        */}
         <dt>Saved</dt>
-        <dd>{Time.formatLocal(Time.fromIsoUtc(listing.createdAt))}</dd>
+        <dd>{Time.formatLocal(Time.fromIsoUtc(listing.updatedAt))}</dd>
       </dl>
 
       {/*

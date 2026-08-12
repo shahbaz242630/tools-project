@@ -553,10 +553,10 @@ export const listingDraftSchema = z.object({
 export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
 
 /**
- * Editing a listing (slice 2.9b-i, ADR 0042).
+ * Editing a listing (slices 2.9b-i and 2.9b-ii, ADR 0042).
  *
- * **Three fields from the draft are deliberately absent, and each absence is a
- * rule rather than an omission.**
+ * **One field from the draft is deliberately absent, and the absence is a rule
+ * rather than an omission.**
  *
  * `categorySlug` — **a listing's category is fixed at creation.** The create
  * form has said so since 2.4a, in as many words: *"changing the category later is
@@ -565,17 +565,26 @@ export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
  * the same thing by it, and there is no honest way to migrate answers to
  * questions that were never asked.
  *
- * `collectionLocation` — **slice 2.9b-ii**, and it is left out rather than
- * accepted-and-ignored so that a client cannot believe it changed an address.
- * The reason it is its own slice is `LocationService.locate`, which draws a fresh
- * random fuzz offset on every call: reuse it on an edit and an owner who saves
- * three times publishes three points scattered around one true address, which is
- * the averaging attack §8.4.1 and ADR 0032 exist to prevent. That needs the
- * offset preserved across edits, and it deserves its own slice rather than a
- * paragraph in this one.
+ * `status` and `moderationState` are not on the draft shape either, for their own
+ * reason: transitions have their own routes, and moderation is not the owner's to
+ * set at all (ADR 0041).
  *
- * `status` and `moderationState` — transitions have their own routes, and
- * moderation is not the owner's to set at all (ADR 0041).
+ * **`collectionLocation` was absent through 2.9b-i and arrives here in 2.9b-ii**,
+ * which is worth recording because the reason it waited is a security rule rather
+ * than a scheduling accident. `LocationService.locate` draws a fresh random fuzz
+ * offset on every call; reuse it on an edit and an owner who saves three times
+ * publishes three points scattered around one true address, which is the
+ * averaging attack §8.4.1 and ADR 0032 exist to prevent. The rule the API now
+ * holds is that **a listing's offset is drawn once and reused for ever**,
+ * including across a change to a different postcode — see `LocationService`.
+ * Nothing in this schema can express that, which is exactly why it needed a slice
+ * rather than a line.
+ *
+ * **Present-and-nullable, matching the draft**, so an owner may clear an address
+ * as well as change it. Whether clearing is *allowed right now* is a question
+ * about the listing rather than about the request — a published listing may not
+ * be left with nowhere to collect from — and it is answered by the completeness
+ * rules in `publication.ts`, with a 422, not by this schema.
  *
  * **`categoryVersionNumber` stays, and this is the field ADR 0042 changed the
  * meaning of.** Before 0042, an edit revalidated against the version the listing
@@ -588,7 +597,6 @@ export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
  */
 export const listingEditSchema = listingDraftSchema.omit({
   categorySlug: true,
-  collectionLocation: true,
 });
 
 export type ListingEditInput = z.infer<typeof listingEditSchema>;

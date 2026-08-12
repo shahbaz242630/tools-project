@@ -23,12 +23,14 @@ import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type {
   CategoryOptionRecord,
   CategoryOptionSource,
+  CollectionLocationEdit,
   ListingEdit,
   ListingDraft,
   ListingRecord,
   ListingStore,
   ModerationDecision,
 } from './listing-store.js';
+import type { LocatedListingPoint, StoredFuzzOffset } from './listing-locator.js';
 
 /**
  * Postgres-backed listings.
@@ -224,36 +226,162 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
      * composite foreign key means the pair still has to agree, and it does,
      * because `current` was resolved from this listing's own `categoryId`.
      *
-     * **Nothing here touches `location`, `outwardCode`, `town`, `status` or
-     * `moderationState`** — see `ListingStore.update` for why each is left
-     * alone. `outwardCode` and `town` are omitted rather than rewritten from an
-     * address this method was not given: they are derived from the postcode, and
-     * the postcode is 2.9b-ii's.
+     * **The two rows are written as one unit from 2.9b-ii**, for the reason
+     * `createDraft` gives: `listings.outwardCode` and `listing_locations.postcode`
+     * are one answer to one form, and a failure between the two writes leaves a
+     * listing advertising a district it has no address for. `location_is_complete`
+     * would not catch it — the pair it constrains would still agree with itself.
+     *
+     * **Nothing here touches `status` or `moderationState`** — see
+     * `ListingStore.update` for why each is left alone.
      */
-    const { count } = await this.prisma.listing.updateMany({
-      where: { id, ownerId },
-      data: {
-        categoryVersionId: current.id,
-        title: edit.title,
-        description: edit.description,
-        replacementValueAmount: edit.replacementValue.amount,
-        replacementValueCurrency: edit.replacementValue.currency,
-        ...rateColumns(edit.rates),
-        attributes: edit.attributes,
-        transportRequirement: edit.transportRequirement,
-        requiresTwoPersonLift: edit.requiresTwoPersonLift,
-      },
+    const written = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.listing.updateMany({
+        where: { id, ownerId },
+        data: {
+          categoryVersionId: current.id,
+          title: edit.title,
+          description: edit.description,
+          replacementValueAmount: edit.replacementValue.amount,
+          replacementValueCurrency: edit.replacementValue.currency,
+          ...rateColumns(edit.rates),
+          attributes: edit.attributes,
+          transportRequirement: edit.transportRequirement,
+          requiresTwoPersonLift: edit.requiresTwoPersonLift,
+          // The publishable half, derived on write from the postcode about to be
+          // stored beside it — `createDraft`'s rule, in the second of the two
+          // places that may write it.
+          ...publishableLocationColumns(edit.collectionLocation),
+        },
+      });
+
+      /* c8 ignore next -- the row was read a statement ago and only a concurrent
+         erasure could remove it. */
+      if (count === 0) return false;
+
+      await this.writeLocation(tx, id, edit.collectionLocation);
+      return true;
     });
 
-    /* c8 ignore next -- the row was read a statement ago and only a concurrent
-       erasure could remove it. */
-    if (count === 0) return null;
+    if (!written) return null;
 
     // Re-read rather than assembled from what was written: the row carries a
     // fresh `updatedAt`, the newly pinned version's name and schema, and the
     // category's current fee policy — inventing any of them here would be a
     // second source of truth for what the caller is told.
     return this.findOwnedBy(id, ownerId);
+  }
+
+  /**
+   * Write the private half of the address (slice 2.9b-ii).
+   *
+   * **One `switch`, three statements, and the middle case is the slice.** It
+   * rewrites the postcode and the envelope and **does not mention the six
+   * coordinate columns at all** — not "writes them back unchanged", does not
+   * mention them. That is what leaves the stored fuzz offset alone, and it is
+   * also what leaves `fuzzedPoint` alone: the trigger is `BEFORE INSERT OR UPDATE
+   * OF "fuzzedLatitude", "fuzzedLongitude"`, and Postgres fires an `UPDATE OF`
+   * trigger on any statement that *names* the column, whether or not the value
+   * changes. Naming them here would recompute a geography that is already right —
+   * harmless today, and exactly the kind of write somebody later "optimises" by
+   * supplying a value.
+   *
+   * `relocated` names them all six, so the trigger does fire and the published
+   * point moves with the address — including to `NULL` when nothing could place
+   * the postcode.
+   */
+  private async writeLocation(
+    tx: LocationWriter,
+    listingId: string,
+    edit: CollectionLocationEdit,
+  ): Promise<void> {
+    if (edit.kind === 'cleared') {
+      // `deleteMany` rather than `delete`, because there may be no row: a draft
+      // that never gave an address is being edited by somebody who still has not.
+      // `delete` would throw on the commonest possible no-op.
+      await tx.listingLocation.deleteMany({ where: { listingId } });
+      return;
+    }
+
+    const detail = this.encrypt(listingId, {
+      line1: edit.location.line1,
+      line2: edit.location.line2,
+    });
+
+    if (edit.kind === 'address-only') {
+      /*
+       * `update`, not `upsert`, and it is the one place here that will throw if
+       * the row is missing. It cannot be: this case is only ever chosen for a
+       * listing the service found already located, and a located listing has a
+       * row by construction. If that ever stopped being true, a throw inside this
+       * transaction rolls the whole edit back — which is the honest outcome, and
+       * strictly better than an `upsert` quietly creating a location row with no
+       * coordinates and calling the edit a success.
+       */
+      await tx.listingLocation.update({
+        where: { listingId },
+        data: { postcode: edit.location.postcode, encryptedDetail: detail },
+      });
+      return;
+    }
+
+    // `upsert`, because a listing that never had an address is being given one,
+    // and one that had an unplaceable postcode is being re-placed. Both arrive
+    // here and neither is exceptional.
+    await tx.listingLocation.upsert({
+      where: { listingId },
+      create: {
+        listingId,
+        postcode: edit.location.postcode,
+        encryptedDetail: detail,
+        // Spread, so a column added to `LocatedListingPoint` cannot be silently
+        // dropped — `createDraft`'s reasoning, and the `create` branch is the
+        // same write it performs.
+        ...(edit.point ?? {}),
+      },
+      update: {
+        postcode: edit.location.postcode,
+        encryptedDetail: detail,
+        // **Written explicitly rather than spread**, unlike the branch above, and
+        // the asymmetry is deliberate: an insert may omit a column and get NULL,
+        // an update that omits one leaves whatever was there. Spreading `{}` for
+        // an unplaceable postcode would keep the *old* coordinates under the
+        // *new* address — a listing published at the last place it was, with
+        // nothing to say so.
+        ...pointColumns(edit.point),
+      },
+    });
+  }
+
+  /**
+   * This listing's stored offset, and nothing else (slice 2.9b-ii).
+   *
+   * **The `select` is the control.** Two columns, neither of which is a
+   * coordinate: a bearing and a distance say a listing sits somewhere on a circle
+   * around a point this method does not return. Reading the row and picking two
+   * fields off it in TypeScript would work identically and would put the true
+   * latitude and longitude in a variable one careless `return` away from a
+   * response, which is the shape §8.4.1 exists to keep out of this module.
+   *
+   * Owner-scoped through the relation, matching every other read here.
+   */
+  async findFuzzOffset(id: string, ownerId: string): Promise<StoredFuzzOffset | null> {
+    const location = await this.prisma.listingLocation.findFirst({
+      where: { listingId: id, listing: { ownerId } },
+      select: { fuzzBearingDegrees: true, fuzzDistanceMetres: true },
+    });
+
+    // Both null together or both set — `location_is_geocoded_or_not` guarantees
+    // it — so one check answers for the pair. Null here means the listing has no
+    // point yet, which is the caller's signal to draw its first offset.
+    if (location?.fuzzBearingDegrees == null || location.fuzzDistanceMetres == null) {
+      return null;
+    }
+
+    return {
+      bearingDegrees: location.fuzzBearingDegrees,
+      distanceMetres: location.fuzzDistanceMetres,
+    };
   }
 
   async publish(id: string, ownerId: string): Promise<ListingRecord | null> {
@@ -531,6 +659,16 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
 }
 
 /**
+ * The slice of the client `writeLocation` needs.
+ *
+ * `Pick` of the real client rather than a hand-written interface, so the argument
+ * types stay whatever Prisma generates and cannot drift from the schema. Narrowed
+ * to one delegate because it is called with a **transaction** client and must not
+ * be able to reach for `$transaction` and open a second one inside the first.
+ */
+type LocationWriter = Pick<PrismaClient, 'listingLocation'>;
+
+/**
  * What goes inside the encrypted envelope.
  *
  * The identifying lines, and only those — the same split `PrismaProfileStore`
@@ -688,6 +826,56 @@ interface ListingRow {
  */
 function latestVersionOf(listing: ListingRow): VersionRow {
   return listing.categoryVersion.category.versions[0] ?? listing.categoryVersion;
+}
+
+/**
+ * The publishable half of an address, as the `listings` row holds it.
+ *
+ * Both columns or neither, which is `location_is_complete` restated in
+ * TypeScript. The outward code is derived from the postcode here rather than
+ * taken from the caller, because this and `createDraft` are the only two places
+ * the two can diverge, so they are the only two places that derive one from the
+ * other.
+ */
+function publishableLocationColumns(edit: CollectionLocationEdit): {
+  outwardCode: string | null;
+  town: string | null;
+} {
+  if (edit.kind === 'cleared') return { outwardCode: null, town: null };
+
+  return {
+    outwardCode: Postcode.outwardCode(edit.location.postcode),
+    town: edit.location.town,
+  };
+}
+
+/**
+ * The six coordinate columns, written out in full.
+ *
+ * **Always all six, never a spread of a possibly-empty object**, because this is
+ * only used on an `update` and an update that omits a column keeps whatever was
+ * there. Six explicit nulls are what "this address could not be placed" has to
+ * mean; five and an omission is a listing published somewhere it no longer is.
+ * `location_is_geocoded_or_not` refuses anything in between, so a mistake here
+ * fails loudly rather than shipping — but it would fail at the database, on
+ * somebody's save, which is later than it needs to.
+ */
+function pointColumns(point: LocatedListingPoint | null): {
+  latitude: number | null;
+  longitude: number | null;
+  fuzzBearingDegrees: number | null;
+  fuzzDistanceMetres: number | null;
+  fuzzedLatitude: number | null;
+  fuzzedLongitude: number | null;
+} {
+  return {
+    latitude: point?.latitude ?? null,
+    longitude: point?.longitude ?? null,
+    fuzzBearingDegrees: point?.fuzzBearingDegrees ?? null,
+    fuzzDistanceMetres: point?.fuzzDistanceMetres ?? null,
+    fuzzedLatitude: point?.fuzzedLatitude ?? null,
+    fuzzedLongitude: point?.fuzzedLongitude ?? null,
+  };
 }
 
 /**

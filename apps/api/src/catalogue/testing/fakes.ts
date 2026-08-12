@@ -35,12 +35,14 @@ import { CategoryChangedError, UnknownCategoryError } from '../listing-store.js'
 import type {
   CategoryOptionRecord,
   CategoryOptionSource,
+  CollectionLocationEdit,
   ListingDraft,
   ListingEdit,
   ListingRecord,
   ListingStore,
   ModerationDecision,
 } from '../listing-store.js';
+import type { LocatedListingPoint, StoredFuzzOffset } from '../listing-locator.js';
 import { ListingsService } from '../listings.service.js';
 import type {
   CategoryConfiguration,
@@ -243,6 +245,17 @@ export function createCatalogueFakes(): CatalogueFakes {
  */
 export class InMemoryListingStore implements ListingStore, CategoryOptionSource {
   private readonly listings: ListingRecord[] = [];
+  /**
+   * The fuzz offsets, beside the listings rather than on them (slice 2.9b-ii).
+   *
+   * **A second structure because `ListingRecord` deliberately has no room for
+   * one**, which is the real store's arrangement too: the offset lives in
+   * `listing_locations` and comes back only through `findFuzzOffset`. A double
+   * that hung it off the record would let a test reach it by a route production
+   * does not have, and the test asserting the offset survives an edit is the
+   * whole point of the slice — it has to go the way the service goes.
+   */
+  private readonly offsets = new Map<string, StoredFuzzOffset>();
   private nextId = 1;
 
   constructor(private readonly categories: InMemoryCategoryStore) {}
@@ -311,7 +324,71 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     };
 
     this.listings.push(listing);
+    this.rememberOffset(listing.id, draft.locatedPoint);
     return this.hydrate(listing);
+  }
+
+  /**
+   * Keep — or forget — a listing's offset, mirroring the six columns that hold it.
+   *
+   * All six together or none, which is `location_is_geocoded_or_not` restated: a
+   * point means an offset, and no point means no offset. A double that kept a
+   * stale offset after the coordinates went would let the service's "draw a new
+   * one only when there is none" branch pass a test it should fail.
+   */
+  private rememberOffset(listingId: string, point: LocatedListingPoint | null): void {
+    if (point === null) {
+      this.offsets.delete(listingId);
+      return;
+    }
+
+    this.offsets.set(listingId, {
+      bearingDegrees: point.fuzzBearingDegrees,
+      distanceMetres: point.fuzzDistanceMetres,
+    });
+  }
+
+  async findFuzzOffset(id: string, ownerId: string): Promise<StoredFuzzOffset | null> {
+    // Owner-scoped through the same read the real adapter joins through, so a
+    // test cannot pass by asking for a stranger's offset.
+    const listing = await this.findOwnedBy(id, ownerId);
+    if (listing === null) return null;
+
+    return this.offsets.get(id) ?? null;
+  }
+
+  /**
+   * What an edit does to the stored location, on the record and in the offsets
+   * (slice 2.9b-ii).
+   *
+   * The three cases the real adapter switches on, with the one that matters
+   * reproduced faithfully: **`address-only` does not touch the offset**, so a
+   * test that saves the same address twice and finds the offset changed is
+   * looking at a real defect rather than at this double.
+   */
+  private editedLocation(
+    listing: ListingRecord,
+    edit: CollectionLocationEdit,
+  ): Pick<ListingRecord, 'collectionLocation' | 'isLocated'> {
+    if (edit.kind === 'cleared') {
+      this.offsets.delete(listing.id);
+      return { collectionLocation: null, isLocated: false };
+    }
+
+    if (edit.kind === 'address-only') {
+      // The offset and `isLocated` are carried over deliberately — this case is
+      // only reached for a listing that is already located.
+      return {
+        collectionLocation: { ...edit.location },
+        isLocated: listing.isLocated,
+      };
+    }
+
+    this.rememberOffset(listing.id, edit.point);
+    return {
+      collectionLocation: { ...edit.location },
+      isLocated: edit.point !== null,
+    };
   }
 
   /**
@@ -391,9 +468,10 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       categoryName: category.name,
       categoryAttributes: category.attributes,
       categoryTransportOptions: category.transportOptions,
-      // **Deliberately carried over untouched**: the collection location, the
-      // status and the moderation state. A double that cleared any of them would
-      // hide the very defect the real method is written to avoid.
+      ...this.editedLocation(listing, edit.collectionLocation),
+      // **Deliberately carried over untouched**: the status and the moderation
+      // state. A double that cleared either would hide the very defect the real
+      // method is written to avoid.
       updatedAt: Time.nowUtc(),
     };
 
@@ -458,10 +536,26 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     // **The limit is applied after the sort**, as `take` is in the real query.
     // Slicing first would keep the oldest rows and drop the newest, which is
     // the opposite of what the export should cut.
+    //
+    // **The tiebreak is not decoration — it is the fix for a real flake.** Two
+    // listings created in the same millisecond compare equal on `createdAt`, and
+    // `Array.prototype.sort` is stable, so the *older* one stayed first and
+    // "newest first" failed. It fired roughly one run in eight, always on a
+    // diff that had nothing to do with it. Postgres does not have the problem
+    // because each request is its own transaction and `now()` differs; this
+    // double shares a process clock, so it needs the position it was inserted at
+    // to stand in for that.
+    const order = new Map(this.listings.map((listing, index) => [listing.id, index]));
+    const insertedAt = (listing: ListingRecord) => order.get(listing.id) ?? 0;
+
     return Promise.all(
       this.listings
         .filter((listing) => listing.ownerId === ownerId)
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .sort(
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            insertedAt(b) - insertedAt(a),
+        )
         .slice(0, limit)
         // Hydrated per row, so every listing on the dashboard is priced under
         // the category's current policy rather than whichever one it pinned.
@@ -611,7 +705,13 @@ export function createListingFakes(
     service: new ListingsService(
       listings,
       listings,
-      { locate: (postcode) => location.locate(postcode) },
+      {
+        locate: (postcode) => location.locate(postcode),
+        // Both methods wired, so a test exercising an edit goes through the real
+        // fuzz arithmetic rather than a stub that could not redraw an offset even
+        // if the service asked it to — which is the thing under test.
+        relocate: (postcode, offset) => location.relocate(postcode, offset),
+      },
       logger.logger,
       publication,
       audit.service,

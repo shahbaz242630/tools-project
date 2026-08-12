@@ -608,6 +608,16 @@ describe('editing a listing', () => {
     transportRequirement: null,
     requiresTwoPersonLift: true,
     rates: { daily: { amount: 2_000, currency: 'GBP' }, weekend: null, weekly: null },
+    /*
+     * **Null by default, and it now means "remove the address"** (slice
+     * 2.9b-ii). Through 2.9b-i an edit carried no address field at all and the
+     * store left the row alone; the field is present on every edit now, so the
+     * default has to be one of the real cases. Null matches `DRAFT`'s default,
+     * so the listings these tests build have no address before or after.
+     *
+     * The tests that are about the address override it, below.
+     */
+    collectionLocation: null,
   };
 
   function edit(
@@ -683,20 +693,26 @@ describe('editing a listing', () => {
     expect((await edit(created.id)).statusCode).toBe(403);
   });
 
-  it('leaves the collection address alone', async () => {
+  it('keeps the collection address when the edit sends it back unchanged', async () => {
     /*
-     * **The most important assertion in this file.** An edit carries no address,
-     * and the failure worth catching is a store method that helpfully writes the
-     * columns it was not given — which would clear somebody's address, and their
-     * outward code with it, on a title change.
+     * **What the form does on every save.** It posts back the address it was
+     * given, so an owner correcting a title sends the same four values and must
+     * get the same address back. The failure worth catching is a round trip that
+     * loses `line2`, or normalises the postcode into something else, or drops the
+     * lot because nothing changed.
      */
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
     const created = await given({ ...DRAFT, collectionLocation: ADDRESS });
     expect(created.collectionLocation?.postcode).toBe('BS7 8AA');
 
-    const updated = parseOwnerListing((await edit(created.id)).json());
+    const updated = parseOwnerListing(
+      (
+        await edit(created.id, 'alice-token', { ...EDIT, collectionLocation: ADDRESS })
+      ).json(),
+    );
 
-    expect(updated.collectionLocation?.postcode).toBe('BS7 8AA');
-    expect(updated.collectionLocation?.line1).toBe('12 Gloucester Road');
+    expect(updated.collectionLocation).toEqual(ADDRESS);
+    expect(updated.isLocated).toBe(true);
   });
 
   it('leaves the status alone, so editing does not unpublish', async () => {
@@ -719,7 +735,26 @@ describe('editing a listing', () => {
     });
     expect(published.statusCode).toBe(201);
 
-    const updated = parseOwnerListing((await edit(created.id)).json());
+    /*
+     * **The address and the rates are sent back**, which they were not when this
+     * test was written for 2.9b-i — an edit then carried no address, so `EDIT`'s
+     * defaults were harmless. From 2.9b-ii they are `null`, and a published
+     * listing may not be emptied: this test failed on exactly that when the
+     * guard landed, which is the guard doing its job on the first thing it met.
+     */
+    const updated = parseOwnerListing(
+      (
+        await edit(created.id, 'alice-token', {
+          ...EDIT,
+          collectionLocation: ADDRESS,
+          rates: {
+            daily: { amount: 1_800, currency: 'GBP' },
+            weekend: null,
+            weekly: null,
+          },
+        })
+      ).json(),
+    );
 
     expect(updated.status).toBe('PUBLISHED');
   });
@@ -816,21 +851,18 @@ describe('editing a listing', () => {
     expect(updated.categorySlug).toBe('outdoor-gardening');
   });
 
-  it('takes no collection address, so one cannot be set through this route', async () => {
-    // 2.9b-ii's, and stripped rather than accepted — a client that sent one and
-    // got a 200 would believe it had changed an address.
+  it('refuses an edit that carries no collection address field at all', async () => {
+    // Present-and-nullable, like the create shape: a caller that omitted it has
+    // forgotten it, and "leave the address alone" is not something this route
+    // can mean — an edit states what happens to every field it owns.
     const created = await given();
-
-    const updated = parseOwnerListing(
-      (
-        await edit(created.id, 'alice-token', {
-          ...EDIT,
-          collectionLocation: ADDRESS,
-        })
-      ).json(),
+    const withoutAddress = Object.fromEntries(
+      Object.entries(EDIT).filter(([key]) => key !== 'collectionLocation'),
     );
 
-    expect(updated.collectionLocation).toBeNull();
+    expect((await edit(created.id, 'alice-token', withoutAddress)).statusCode).toBe(
+      400,
+    );
   });
 
   it('refuses an anonymous caller', async () => {
@@ -856,6 +888,347 @@ describe('editing a listing', () => {
     await edit(created.id);
 
     expect(listings.audit.log.entries).toHaveLength(before);
+  });
+
+  /**
+   * Slice 2.9b-ii — changing where an item is collected from.
+   *
+   * **The whole slice is one rule**: a listing's fuzz offset is drawn once and
+   * reused for ever, including across a move (§8.4.1, ADR 0032). Everything else
+   * here is arranging for that to be observable, because the thing it prevents
+   * has no error, no constraint and no failing test of its own — an owner saving
+   * three times would simply publish three points around their house, and the
+   * mean of them is the house.
+   */
+  describe('the collection address', () => {
+    const BATH = {
+      line1: '4 Mill Lane',
+      line2: null,
+      town: 'Bath',
+      postcode: 'BA1 1AA',
+    };
+
+    /** The offset as it is stored, which is what the published point is made from. */
+    const offsetOf = async (id: string) =>
+      listings.listings.findFuzzOffset(id, await idOf('alice-token'));
+
+    /** A located listing in Bristol, which is where each of these starts. */
+    async function givenLocated() {
+      listings.geocoder.knows(FakeGeocoder.BS7_8AA).knows(FakeGeocoder.BA1_1AA);
+      const created = await given({ ...DRAFT, collectionLocation: ADDRESS });
+      expect(created.isLocated).toBe(true);
+      return created;
+    }
+
+    it('never redraws the fuzz offset, however many times the same address is saved', async () => {
+      /*
+       * **The assertion this slice exists for, and the one nothing else would
+       * catch.** Reusing the create path's `locate` here would draw a fresh
+       * offset per save. Nothing would fail: every individual point is a
+       * legitimate 500–1000 m displacement, the constraints all hold, and the
+       * listing looks correct on screen. What breaks is the *set* of them —
+       * average enough and the true point falls out.
+       */
+      const created = await givenLocated();
+      const first = await offsetOf(created.id);
+      expect(first).not.toBeNull();
+
+      for (const line1 of ['12 Gloucester Road', '12a Gloucester Road', 'The shed']) {
+        const response = await edit(created.id, 'alice-token', {
+          ...EDIT,
+          collectionLocation: { ...ADDRESS, line1 },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(await offsetOf(created.id)).toEqual(first);
+      }
+    });
+
+    it('does not even ask the geocoder when the postcode has not changed', async () => {
+      /*
+       * The offset assertion above would pass whether or not the geocoder was
+       * called, because `relocate` reuses the offset either way. This is the
+       * other half: a postcode that has not moved is not re-placed at all, so a
+       * provider outage cannot strip the coordinates off a listing whose location
+       * nobody touched — and an owner fixing a typo does not spend somebody
+       * else's service.
+       */
+      const created = await givenLocated();
+      const askedAtCreation = listings.geocoder.asked.length;
+
+      await edit(created.id, 'alice-token', {
+        ...EDIT,
+        collectionLocation: { ...ADDRESS, line1: 'Rear workshop' },
+      });
+
+      expect(listings.geocoder.asked).toHaveLength(askedAtCreation);
+    });
+
+    it('moves the listing to a new postcode, keeping the offset it already had', async () => {
+      /*
+       * **Reusing an offset across a real move discloses nothing** — two true
+       * points displaced identically leak only the distance between them, which
+       * an attacker watching the listing move already has. Redrawing on an
+       * *unchanged* address is what leaks. That asymmetry is the rule, and this
+       * is the case where the instinct runs the wrong way.
+       */
+      const created = await givenLocated();
+      const before = await offsetOf(created.id);
+
+      const updated = parseOwnerListing(
+        (
+          await edit(created.id, 'alice-token', { ...EDIT, collectionLocation: BATH })
+        ).json(),
+      );
+
+      expect(updated.collectionLocation).toEqual(BATH);
+      expect(updated.isLocated).toBe(true);
+      expect(await offsetOf(created.id)).toEqual(before);
+      expect(listings.geocoder.asked).toContain('BA1 1AA');
+    });
+
+    it('draws a first offset for a listing that has never been placed', async () => {
+      // The one case that legitimately draws. A draft with no address is being
+      // given one, so these coordinates are the first it has ever had — there is
+      // no earlier point for a new offset to be inconsistent with.
+      listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+      const created = await given();
+      expect(await offsetOf(created.id)).toBeNull();
+
+      await edit(created.id, 'alice-token', { ...EDIT, collectionLocation: ADDRESS });
+
+      expect(await offsetOf(created.id)).not.toBeNull();
+    });
+
+    it('places an address a previous save could not, which is the only retry there is', async () => {
+      /*
+       * A listing whose postcode was unplaceable has an address and no
+       * coordinates, and 2.5b left "save it again" as the only way to fix that.
+       * Keying the re-geocode off the postcode alone would have lost it — the
+       * postcode has not changed, so nothing would be re-placed, for ever.
+       */
+      const created = await given({ ...DRAFT, collectionLocation: ADDRESS });
+      expect(created.isLocated).toBe(false);
+
+      listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+      const updated = parseOwnerListing(
+        (
+          await edit(created.id, 'alice-token', {
+            ...EDIT,
+            collectionLocation: ADDRESS,
+          })
+        ).json(),
+      );
+
+      expect(updated.isLocated).toBe(true);
+    });
+
+    it('saves a draft whose new postcode cannot be placed', async () => {
+      // §8.3 keeps a draft permissive. The address is stored and the listing
+      // reads as not located, exactly as it would on creation.
+      const created = await givenLocated();
+
+      const updated = parseOwnerListing(
+        (
+          await edit(created.id, 'alice-token', {
+            ...EDIT,
+            collectionLocation: { ...BATH, postcode: 'BA1 9ZZ' },
+          })
+        ).json(),
+      );
+
+      expect(updated.collectionLocation?.postcode).toBe('BA1 9ZZ');
+      expect(updated.isLocated).toBe(false);
+    });
+
+    it('removes the address from a draft', async () => {
+      const created = await givenLocated();
+
+      const updated = parseOwnerListing(
+        (
+          await edit(created.id, 'alice-token', { ...EDIT, collectionLocation: null })
+        ).json(),
+      );
+
+      expect(updated.collectionLocation).toBeNull();
+      expect(updated.isLocated).toBe(false);
+    });
+  });
+
+  /**
+   * What a published listing may not be edited into (slice 2.9b-ii).
+   *
+   * **The guard that had to arrive with the address.** Publication checks
+   * completeness once, when the listing is published, and nothing re-checked it
+   * afterwards — so through 2.9b-i an owner could blank a published listing's
+   * description and the platform kept showing it. Adding the address would have
+   * made that materially worse: a live listing with nowhere to collect from, or
+   * one no search can find.
+   */
+  describe('editing a published listing', () => {
+    async function givenPublished() {
+      listings.geocoder.knows(FakeGeocoder.BS7_8AA).knows(FakeGeocoder.BA1_1AA);
+      const created = await given({
+        ...DRAFT,
+        collectionLocation: ADDRESS,
+        rates: {
+          daily: { amount: 1_800, currency: 'GBP' },
+          weekend: null,
+          weekly: null,
+        },
+      });
+      const published = await app.inject({
+        method: 'POST',
+        url: listingPublicationPath(created.id),
+        headers: auth('alice-token'),
+      });
+      expect(published.statusCode).toBe(201);
+      return created;
+    }
+
+    const PUBLISHED_EDIT = {
+      ...EDIT,
+      collectionLocation: ADDRESS,
+      rates: {
+        daily: { amount: 1_800, currency: 'GBP' },
+        weekend: null,
+        weekly: null,
+      },
+    };
+
+    it('allows an ordinary correction', async () => {
+      // The guard refuses *emptying*, not editing. A published listing being
+      // corrected is the commonest thing this route will ever do.
+      const created = await givenPublished();
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        title: 'Petrol hedge trimmer, freshly serviced',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(parseOwnerListing(response.json()).status).toBe('PUBLISHED');
+    });
+
+    it('refuses to leave it with nowhere to collect from', async () => {
+      const created = await givenPublished();
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        collectionLocation: null,
+      });
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json()).toMatchObject({
+        blockers: [{ field: 'collectionLocation' }],
+      });
+    });
+
+    it('writes nothing at all when it refuses, so the address survives', async () => {
+      /*
+       * The refusal happens before the store is reached, which matters more than
+       * the status code: a listing whose title had been rewritten but whose
+       * address had not would be half-saved, and nothing would ever say so.
+       */
+      const created = await givenPublished();
+
+      await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        title: 'A title that must not stick',
+        collectionLocation: null,
+      });
+
+      const after = await reread(created.id);
+      expect(after.title).toBe('Petrol hedge trimmer');
+      expect(after.collectionLocation).toEqual(ADDRESS);
+    });
+
+    it('refuses a move to a postcode nothing can place', async () => {
+      // A published listing with no point is invisible to search — worse than a
+      // refusal, because it looks fine to its owner. The old address survives,
+      // so the owner can read the postcode back and see what they typed.
+      const created = await givenPublished();
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        collectionLocation: {
+          line1: '1 Nowhere',
+          line2: null,
+          town: 'Bath',
+          postcode: 'BA1 9ZZ',
+        },
+      });
+
+      expect(response.statusCode).toBe(422);
+      expect((await reread(created.id)).collectionLocation).toEqual(ADDRESS);
+    });
+
+    it('refuses to blank the description, which 2.9b-i allowed', async () => {
+      /*
+       * **Not the address, and deliberately in scope.** The same hole, one field
+       * along: publication requires a description, and until this guard existed
+       * an edit could remove one from a live listing. Fixing only the address
+       * would have left the next person to find this one by accident.
+       */
+      const created = await givenPublished();
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        description: '',
+      });
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json()).toMatchObject({ blockers: [{ field: 'description' }] });
+    });
+
+    it('refuses to remove the price', async () => {
+      const created = await givenPublished();
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        rates: { daily: null, weekend: null, weekly: null },
+      });
+
+      expect(response.statusCode).toBe(422);
+    });
+
+    it('lets a paused listing be left incomplete, because nobody can see it', async () => {
+      /*
+       * The guard keys off `PUBLISHED` rather than "was ever published", and this
+       * is the case that shows why. A paused listing is in front of nobody, so
+       * there is nothing to protect — and `publish` re-runs the same rules before
+       * it can be resumed, which is what makes this safe rather than merely
+       * permissive.
+       */
+      const created = await givenPublished();
+      const paused = await app.inject({
+        method: 'DELETE',
+        url: listingPublicationPath(created.id),
+        headers: auth('alice-token'),
+      });
+      expect(paused.statusCode).toBe(200);
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        collectionLocation: null,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(parseOwnerListing(response.json()).collectionLocation).toBeNull();
+    });
+
+    it('says which listing it is talking about, and names pausing as the way out', async () => {
+      // The copy carries the whole difference from a publish refusal: this one is
+      // already live, and the owner is not being told to finish it.
+      const created = await givenPublished();
+
+      const response = await edit(created.id, 'alice-token', {
+        ...PUBLISHED_EDIT,
+        collectionLocation: null,
+      });
+
+      expect(response.json().message).toContain('published');
+      expect(response.json().message).toContain('pause');
+    });
   });
 });
 
