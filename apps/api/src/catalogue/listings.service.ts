@@ -266,11 +266,23 @@ export class PublishedListingIncompleteError extends Error {
  * a reason from somebody describing their own lawnmower would be the ritual that
  * makes the reasons which *do* matter look like paperwork.
  *
- * Slice 2.11 is where that changes. An administrator creating a listing on an
- * owner's behalf is an administrative action about another person's account, and
- * it must be audited **as that** rather than recorded as though the owner did
- * it. When that arrives it belongs in its own method here, not as a flag on
- * this one.
+ * **This used to say "slice 2.11 is where that changes", and 2.11 was deleted**
+ * — concierge listing creation, an administrator writing a listing on somebody
+ * else's behalf, removed from the BRD on 12 August 2026 because it assumes a
+ * person on a telephone and this platform has no support desk and will not be
+ * hiring one.
+ *
+ * The rule it was going to demonstrate still stands and is worth keeping here,
+ * because the next thing to cross this line will need it: **a write performed by
+ * one person about another person's listing is an administrative action (§8.13)
+ * and must be audited as the administrator's, never recorded as though the owner
+ * did it.** BRD §9 puts the hard edge on the same idea — *write-capable
+ * impersonation is prohibited at launch*.
+ *
+ * `moderate` below is the one method here that does cross it, and it is audited.
+ * Anything else that arrives belongs in its own method for the same reason,
+ * **not as a flag on an owner's one** — a boolean is how an unaudited path and
+ * an audited path come to share a body.
  */
 export class ListingsService {
   constructor(
@@ -446,9 +458,11 @@ export class ListingsService {
    * `publish` will refuse to resume it until it is complete.
    *
    * **Unaudited**, like every other owner action on their own listing. The test
-   * is who performed it (§8.13), and 2.11's concierge edit — an administrator
-   * acting on somebody else's behalf — is the one that will need its own method
-   * and its own entry.
+   * is who performed it (§8.13): there is no second party here, so there is
+   * nobody the entry would be *for*. An administrator editing somebody else's
+   * listing would be a different method with its own entry — and there is no
+   * such route, deliberately. Concierge creation was the slice that would have
+   * added one and it was deleted on 12 August 2026.
    */
   async edit(
     id: string,
