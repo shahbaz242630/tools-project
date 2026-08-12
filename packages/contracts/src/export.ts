@@ -34,7 +34,7 @@ export const ME_EXPORT_PATH = '/me/export';
  * Catalogue became the second module holding personal data; version 4 added
  * `listingsTruncated` in H2, when the listings read stopped being unbounded.
  */
-export const EXPORT_SCHEMA_VERSION = 4;
+export const EXPORT_SCHEMA_VERSION = 5;
 
 /** The account itself, as Identity & Access holds it. */
 export const exportedAccountSchema = z.object({
@@ -73,7 +73,22 @@ export type ExportedAccount = z.infer<typeof exportedAccountSchema>;
 export type ExportedActivity = z.infer<typeof exportedActivitySchema>;
 
 /**
- * The person's own activity, as the audit trail holds it.
+ * What happened around this person: what they did, **and what was done to
+ * them**.
+ *
+ * **The second half arrived in schema 5, and its absence was the defect.**
+ * Through schema 4 this section was assembled from the actor side of the audit
+ * trail alone, so an administrator reading somebody's account showed up on their
+ * activity page and was missing from the copy of their data they downloaded. The
+ * export is the artefact §10.1 makes a legal answer, so it was the wrong one of
+ * the two to be incomplete.
+ *
+ * **One list with an author rather than two sections.** Sign-ins are a section
+ * of their own because they carry a device and a place that no activity entry
+ * has; a disclosure carries exactly the same fields as an own action and differs
+ * only in who performed it. That is an attribute, not a kind — and two sections
+ * would have made the reader correlate them by timestamp to see their own story
+ * in order.
  *
  * Without the digests. They are keyed with a secret the reader does not have,
  * so they are meaningless to them — and Article 15 is about the personal data
@@ -84,6 +99,30 @@ export const exportedActivitySchema = z.array(
   z.object({
     action: z.string(),
     targetType: z.string(),
+    /**
+     * Who did it: the person themselves, an administrator, or the platform.
+     *
+     * The field that makes the rest of the row legible. *"Your account was
+     * read"* means something quite different depending on the answer, and
+     * without it a subject cannot tell their own actions from ours.
+     */
+    by: z.enum(['subject', 'administrator', 'system']),
+    /**
+     * Why, in the administrator's own words — null for anything the person did
+     * themselves, which owes no explanation.
+     *
+     * ADR 0024's rule, now in the export as well as on the screen: a person
+     * reads the reason for a decision made about them, verbatim. It is the most
+     * meaningful thing a disclosure carries and the export omitted it entirely
+     * until schema 5.
+     */
+    reason: z.string().nullable(),
+    /**
+     * **Always null unless `by` is `subject`.** On somebody else's action the
+     * address belongs to the administrator who acted, and it is not the
+     * subject's to see — the same withholding the activity page performs, and
+     * the type that enforces it is `ActivityRecord`.
+     */
     ipAddress: z.string().nullable(),
     createdAt: z.iso.datetime(),
   }),
@@ -200,6 +239,15 @@ export const dataExportSchema = z.object({
   account: exportedAccountSchema,
   profile: exportedProfileSchema,
   activity: exportedActivitySchema,
+  /**
+   * Whether `activity` was cut short (schema 5).
+   *
+   * The third section to declare it, after sign-ins and listings, and it became
+   * necessary when the section started carrying disclosures as well as own
+   * actions — twice as much competing for one bound. H2's rule: an export that
+   * truncates without saying so is one somebody reads as their whole record.
+   */
+  activityTruncated: z.boolean(),
   signIns: exportedSignInsSchema,
   listings: exportedListingsSchema,
 

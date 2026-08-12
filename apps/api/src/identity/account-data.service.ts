@@ -115,7 +115,11 @@ export class AccountDataService {
 
     const [profile, activity, signIns, listings] = await Promise.all([
       this.profileSource.exportFor(user.id),
-      this.audit.listForActor(user.id),
+      // **Both halves** — what they did and what was done to them (slice 1.12).
+      // Through schema 4 this was `listForActor` alone, and an administrator's
+      // read of the account was therefore on their screen and absent from their
+      // download. Both paths now share one composition so they cannot drift again.
+      this.audit.exportActivityFor(user.id),
       // One more than we will serve, so "there were more" is measured rather
       // than inferred from the page being full — a count that equals the limit
       // exactly is otherwise indistinguishable from a truncated one.
@@ -160,12 +164,18 @@ export class AccountDataService {
       // — it is recorded above, so it appears in the *next* export. Including
       // it would mean a document describing its own creation, which reads as a
       // bug to anyone comparing two exports.
-      activity: activity.map((entry) => ({
+      activity: activity.items.map((entry) => ({
         action: entry.action,
         targetType: entry.targetType,
+        // Who did it, and why if it was not them. `ActivityRecord` has already
+        // withheld the administrator's address and session on those rows, so
+        // there is nothing for this mapping to remember to strip.
+        by: entry.by,
+        reason: entry.reason,
         ipAddress: entry.ipAddress,
         createdAt: Time.toIsoUtc(entry.createdAt),
       })),
+      activityTruncated: activity.truncated,
 
       // A separate section rather than folded into `activity`, because they are
       // different kinds of record and flattening them would lose that. An

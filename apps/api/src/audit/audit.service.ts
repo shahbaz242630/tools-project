@@ -1,4 +1,5 @@
 import { Paging } from '@platform/core';
+import type { Page } from '@platform/core';
 import type {
   Actor,
   AuditAction,
@@ -33,6 +34,21 @@ export const DEFAULT_ACTIVITY_LIMIT = 50;
  * history into memory to render fifty rows.
  */
 export const MAX_ACTIVITY_LIMIT = 200;
+
+/**
+ * How much activity a **data export** carries (slice 1.12).
+ *
+ * **Deliberately far above `MAX_ACTIVITY_LIMIT`, and not sharing it.** That one
+ * bounds a page somebody scrolls; this bounds an answer to a subject access
+ * request, where the question is "everything you hold about me" and a screenful
+ * would be a wrong answer rather than a small one. `EXPORTED_LISTING_LIMIT` made
+ * the same distinction for the same reason.
+ *
+ * It is still a bound, because an unbounded read assembled synchronously is how
+ * one person's history becomes an outage — and it is probed and declared, so a
+ * cut is stated rather than inferred.
+ */
+export const EXPORTED_ACTIVITY_LIMIT = 1000;
 
 /**
  * Who did the thing, from the reader's point of view.
@@ -164,14 +180,55 @@ export class AuditService {
   ): Promise<readonly ActivityRecord[]> {
     const bounded = this.bound(limit);
 
+    return (await this.activityFor(userId, bounded)).slice(0, bounded);
+  }
+
+  /**
+   * The same activity, for the **data export** (slice 1.12).
+   *
+   * **A second caller of one composition, which is the whole point of this
+   * method existing.** Until 12 August 2026 the export assembled its own
+   * activity from `listForActor` alone, so an administrator's read of somebody's
+   * account appeared on their activity page and was **absent from the copy of
+   * their data they downloaded**. Two code paths answering one question, and the
+   * one that was wrong is the one §10.1 makes a legal artefact.
+   *
+   * The fix is not "add the missing query to the export" — that would leave two
+   * paths that can drift again. It is that both now go through `activityFor`,
+   * and the only difference is the bound.
+   *
+   * **Its own limit, and it probes.** An export is an answer to a legal question
+   * rather than a page, so it carries far more than the fifty a screen shows —
+   * and it reports being cut, because an export that truncates silently is one
+   * somebody reads as their whole record (slice H2).
+   */
+  async exportActivityFor(userId: string): Promise<Page<ActivityRecord>> {
+    const rows = await this.activityFor(userId, Paging.probe(EXPORTED_ACTIVITY_LIMIT));
+    return Paging.fitTo(rows, EXPORTED_ACTIVITY_LIMIT);
+  }
+
+  /**
+   * What happened around this person: what they did, and what was done to them.
+   *
+   * **The one place the two halves are put together.** A caller that composed
+   * them itself would be a caller that could compose them differently, which is
+   * exactly what went wrong between the activity page and the export.
+   *
+   * Unsorted by caller-visible bound — it fetches `limit` of each and returns
+   * everything merged and ordered, leaving the cut to whoever asked. The two
+   * public methods want different things from that: the page slices, the export
+   * measures.
+   */
+  private async activityFor(
+    userId: string,
+    limit: number,
+  ): Promise<readonly ActivityRecord[]> {
     const [own, disclosed] = await Promise.all([
-      this.log.listForActor(userId, bounded),
-      this.log.listForSubject(userId, bounded),
+      this.log.listForActor(userId, limit),
+      this.log.listForSubject(userId, limit),
     ]);
 
-    return [...own.map(asOwnAction), ...disclosed.map(asDisclosure)]
-      .sort(newestFirst)
-      .slice(0, bounded);
+    return [...own.map(asOwnAction), ...disclosed.map(asDisclosure)].sort(newestFirst);
   }
 
   /**
