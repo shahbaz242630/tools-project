@@ -47,6 +47,7 @@ import type { ProfilesService } from './profiles/profiles.service.js';
 import { AdminCategoriesController } from './catalogue/admin-categories.controller.js';
 import { AdminListingsController } from './catalogue/admin-listings.controller.js';
 import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
+import { PublicListingsController } from './catalogue/public-listings.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
 import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
@@ -186,10 +187,18 @@ export class AppModule implements NestModule {
         AdminFeatureFlagsController,
         OwnerListingsController,
         AdminListingsController,
-        // Unguarded by design — BRD §2 gives visitors public profiles. It is a
-        // separate controller so that decision is visible rather than looking
-        // like a missing decorator. See PublicProfileController.
+        // **Unguarded by design, both of them**, and kept together at the end of
+        // this list so the set is countable rather than scattered. BRD §2 gives
+        // visitors public profiles; §8.17 makes listing pages crawlable, which
+        // requires the same. Each is a separate controller so the decision is
+        // visible rather than looking like a missing decorator — see the
+        // docblock on either class.
+        //
+        // **Anything added here is world-readable.** Two entries is a number
+        // somebody can check by eye at review time; that is the whole reason
+        // they sit together.
         PublicProfileController,
+        PublicListingsController,
       ],
       providers: [
         ReadinessService,

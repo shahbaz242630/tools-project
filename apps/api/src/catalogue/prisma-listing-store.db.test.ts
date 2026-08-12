@@ -2311,3 +2311,151 @@ describe('moderation', () => {
     await expect(store.findForModeration(created.id)).rejects.toThrow(/moderation/i);
   });
 });
+
+/**
+ * The public read, against a real database (slice 2.10).
+ *
+ * **What only this file can prove** is the part the in-memory double cannot
+ * model: that the visibility rule is in the `where` rather than applied
+ * afterwards, and that the query never joins `listing_locations`. The double
+ * calls `isPubliclyVisible` directly, which is the right shape for it and is
+ * exactly why it cannot tell you whether the SQL agrees.
+ */
+describe('the public read', () => {
+  /** A listing complete enough to be published, with a real located address. */
+  async function givenListing(owner: string, slug: string) {
+    return store.createDraft(
+      draft(owner, slug, {
+        collectionLocation: {
+          line1: '12 Gloucester Road',
+          line2: 'Flat 2',
+          town: 'Bristol',
+          postcode: 'BS7 8AA',
+        },
+        locatedPoint: {
+          latitude: 51.470761,
+          longitude: -2.593052,
+          fuzzBearingDegrees: 138,
+          fuzzDistanceMetres: 514,
+          fuzzedLatitude: 51.467326,
+          fuzzedLongitude: -2.588,
+        },
+      }),
+    );
+  }
+
+  it('serves a listing that is published and approved', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await givenListing(owner, category.slug);
+    await store.publish(created.id, owner);
+
+    const listing = await store.findPublished(created.id);
+
+    expect(listing?.id).toBe(created.id);
+    expect(listing?.title).toBe('Petrol hedge trimmer');
+    expect(listing?.outwardCode).toBe('BS7');
+    expect(listing?.town).toBe('Bristol');
+  });
+
+  it('returns exactly one of the nine status and moderation pairs', async () => {
+    /*
+     * **The assertion that ties `PUBLICLY_VISIBLE` to `isPubliclyVisible`.** The
+     * adapter has to restate the rule as two columns because Phase 3 needs the
+     * filter to be indexable, and nothing but this makes the restatement agree
+     * with the function. A `where status = 'PUBLISHED'` alone would pass every
+     * other test in this file and serve listings a moderator rejected.
+     */
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const visible: string[] = [];
+
+    for (const status of ['DRAFT', 'PUBLISHED', 'PAUSED'] as const) {
+      for (const state of ['APPROVED', 'UNDER_REVIEW', 'REJECTED'] as const) {
+        const created = await givenListing(owner, category.slug);
+
+        // Written straight to the columns rather than through the transitions,
+        // so the pairs a legal sequence cannot reach are covered too — this is
+        // about what the *query* does, not about what the state machine allows.
+        await client.listing.update({
+          where: { id: created.id },
+          data: {
+            status,
+            moderationState: state,
+            moderationReason: state === 'APPROVED' ? null : 'Checking the serial',
+            ...(state === 'APPROVED'
+              ? {}
+              : { moderatedById: owner, moderatedAt: new Date() }),
+          },
+        });
+
+        if ((await store.findPublished(created.id)) !== null) {
+          visible.push(`${status}/${state}`);
+        }
+      }
+    }
+
+    expect(visible).toEqual(['PUBLISHED/APPROVED']);
+  });
+
+  it('resolves to null for a listing that does not exist', async () => {
+    expect(
+      await store.findPublished('11111111-1111-4111-8111-111111111111'),
+    ).toBeNull();
+  });
+
+  it('never reads the precise address, even to discard it', async () => {
+    /*
+     * **The structural guarantee, asserted structurally.** `PublicListingRecord`
+     * has no field a street line could occupy, so this cannot fail by returning
+     * one — what it catches is the weaker mistake of *fetching* it, which is how
+     * a later `console.log` or an error report ends up carrying an address.
+     *
+     * The encrypted envelope is the thing to look for: if the include ever
+     * gained `location: true`, the ciphertext would be in the object graph even
+     * though no field of the returned record references it.
+     */
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await givenListing(owner, category.slug);
+    await store.publish(created.id, owner);
+
+    const listing = await store.findPublished(created.id);
+
+    const serialised = JSON.stringify(listing);
+    expect(serialised).not.toContain('Gloucester');
+    expect(serialised).not.toContain('BS7 8AA');
+    // The true coordinates of BS7 8AA, and the fuzzed pair beside them. Neither
+    // belongs on a public path (§8.4.1) and neither is on this record.
+    expect(serialised).not.toContain('51.47');
+    expect(serialised).not.toContain('51.46');
+    expect(serialised).not.toContain('2.59');
+    expect(serialised).not.toContain('138');
+  });
+
+  it('prices from the category’s current version, not the pinned one', async () => {
+    // ADR 0042, on the read that feeds the shop window. The listing is not
+    // touched; the displayed fee policy moves under it.
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await givenListing(owner, category.slug);
+    await store.publish(created.id, owner);
+
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+        feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+      },
+      owner,
+    );
+
+    const listing = await store.findPublished(created.id);
+
+    expect(listing?.currentFeePolicy.renterFeeBasisPoints).toBe(1_600);
+  });
+});

@@ -36,6 +36,7 @@ import type {
   CollectionLocationEdit,
   ListingRecord,
   ListingStore,
+  PublicListingRecord,
 } from './listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 
@@ -601,6 +602,25 @@ export class ListingsService {
    */
   findOwned(id: string, ownerId: string): Promise<ListingRecord | null> {
     return this.store.findOwnedBy(id, ownerId);
+  }
+
+  /**
+   * One listing, as anybody may see it, or null (slice 2.10).
+   *
+   * **Two lines long and it is still the right place for this to exist.** The
+   * temptation is to have the controller call the store directly, since nothing
+   * is decided here — but a public route reaching past the application service
+   * into a repository is precisely the boundary BRD §5.1 draws, and the first
+   * thing that will want to sit here is Phase 3's "and what else is nearby".
+   *
+   * **No `isPubliclyVisible` check on the way out**, and its absence is
+   * deliberate rather than an omission: the store answers null for a listing
+   * that is not visible, so a check here would be a second statement of the rule
+   * that could disagree with the one that ran. The visibility decision has one
+   * home, and it is the query.
+   */
+  findPublic(id: string): Promise<PublicListingRecord | null> {
+    return this.store.findPublished(id);
   }
 
   /**

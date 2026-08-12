@@ -145,6 +145,47 @@ export interface ListingRecord {
 }
 
 /**
+ * A listing as a stranger sees it, at the store boundary (slice 2.10).
+ *
+ * **A separate record rather than `ListingRecord` narrowed at the controller**,
+ * and the difference is where the guarantee lives. `ListingRecord` carries
+ * `collectionLocation` decrypted, because an owner reading their own listing
+ * typed it; if the public route were served from that, the only thing standing
+ * between a street address and the internet would be a mapping function
+ * somebody has to keep correct. There is nothing to strip here, because the
+ * street lines were never read.
+ *
+ * `town` and `outwardCode` come from the `listings` row, which has never held
+ * anything finer than a postal district (§8.4.1, slice 2.5a). The query behind
+ * this does not join `listing_locations`, and that is a stronger promise than a
+ * `select` — a join that was never written cannot be forgotten.
+ */
+export interface PublicListingRecord {
+  readonly id: string;
+  readonly categorySlug: string;
+  readonly categoryName: string;
+  /** The schema **as pinned**, so the stored answers can be read (ADR 0029). */
+  readonly categoryAttributes: readonly CategoryAttribute[];
+  /**
+   * The fee policy **as it stands now** (ADR 0042), for the displayed price.
+   *
+   * Current rather than pinned for the reason `ListingRecord.currentFeePolicy`
+   * gives, and it matters more here: §3.4.4 wants the price in the shop window
+   * to be the price payable today, and this *is* the shop window.
+   */
+  readonly currentFeePolicy: CategoryFeePolicy;
+  readonly title: string;
+  readonly description: string;
+  readonly rates: ListingRateCard;
+  readonly attributes: ListingAttributeValues;
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
+  /** The publishable half of the address, and there is no other half here. */
+  readonly outwardCode: string;
+  readonly town: string;
+}
+
+/**
  * One moderation decision, as the store is asked to write it.
  *
  * A named shape rather than four positional arguments, because three of them
@@ -540,6 +581,33 @@ export interface ListingStore {
    * Resolves to null when no such listing belongs to this owner.
    */
   pause(id: string, ownerId: string): Promise<ListingRecord | null>;
+
+  /**
+   * One listing, as **anybody** may see it — or null (slice 2.10).
+   *
+   * **The only read here that is neither owner-scoped nor administrative**, and
+   * the one whose result reaches people who have not signed in. Two things
+   * follow from that, and both are this method's job rather than the caller's:
+   *
+   * **It returns null for a listing that is not publicly visible**, not the
+   * listing with a flag on it. A caller that received the row and had to decide
+   * would be a caller that could forget, and the thing it would disclose is a
+   * listing an owner paused or a moderator rejected. The route answers 404 to
+   * null, so "not visible" and "does not exist" are one answer — a stranger
+   * cannot use this to learn that a listing exists.
+   *
+   * **The visibility rule is `isPubliclyVisible`, restated in SQL here because
+   * it has to be indexable** (Phase 3 filters millions of rows on it, and a
+   * predicate in TypeScript cannot use an index). That restatement is the one
+   * duplication of the rule in the system, and what holds the two together is a
+   * db test walking all nine status × moderation pairs.
+   *
+   * **The projection is narrower than `ListingRecord` and that is structural.**
+   * It returns `PublicListingRecord`, which has no decrypted address on it at
+   * all, so the precise half cannot travel to a public route by a caller
+   * forgetting to strip it. The query does not join `listing_locations`.
+   */
+  findPublished(id: string): Promise<PublicListingRecord | null>;
 
   /**
    * Read a listing without knowing whose it is (slice 2.8c-i).

@@ -3,23 +3,20 @@ import { Fragment } from 'react';
 import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Money, Postcode, Scaled, Time } from '@platform/core';
+import { Money, Postcode, Time } from '@platform/core';
 import {
   TRANSPORT_REQUIREMENT_HINTS,
   TRANSPORT_REQUIREMENT_LABELS,
   isPubliclyVisible,
   listingPath,
 } from '@platform/contracts';
-import type {
-  AttributeOption,
-  CategoryAttribute,
-  OwnerListing,
-} from '@platform/contracts';
+import type { CategoryAttribute, OwnerListing } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
 import { ModerationNotice, StatusLine } from '../../../components/listing-visibility';
+import { AttributeValue } from '../../../components/attribute-value';
 
 /** Never prerendered — it is somebody's own draft. */
 export const dynamic = 'force-dynamic';
@@ -225,7 +222,7 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
           <Fragment key={attribute.key}>
             <dt>{attribute.label}</dt>
             <dd>
-              <AttributeValue
+              <OwnerAttributeValue
                 attribute={attribute}
                 value={listing.attributes[attribute.key]}
               />
@@ -390,15 +387,16 @@ function outwardCodeOf(postcode: string): string {
 }
 
 /**
- * One stored answer, rendered from its definition.
+ * One stored answer as its **owner** reads it, including the ones they have not
+ * given yet.
  *
- * A value cannot be read without the definition beside it: `25` is meaningless
- * until something says it is kilograms at one decimal place, and `cordless` is
- * meaningless without the label it was chosen by. Both come from the schema the
- * listing **pinned**, so an answer given last month is shown under the labels it
- * was given under rather than under whatever the category says today.
+ * **The rendering moved to `attribute-value.tsx` in slice 2.10**, when the
+ * public page needed it. What stayed here is the half that is owner-facing: the
+ * to-do sentence for an unanswered attribute, which must never appear on a page
+ * a stranger reads — a public listing enumerating what somebody has not filled
+ * in is a page about our form rather than about the item.
  */
-function AttributeValue({
+function OwnerAttributeValue({
   attribute,
   value,
 }: {
@@ -415,43 +413,7 @@ function AttributeValue({
     );
   }
 
-  switch (attribute.type) {
-    case 'text':
-      return <>{String(value)}</>;
-
-    case 'number':
-      // Formatted by the primitive that stored it, never by `toFixed` — which
-      // is banned (ADR 0002) and takes a float, the one thing this value has
-      // never been.
-      return typeof value === 'number' ? (
-        <>{Scaled.format(value, attribute.decimalPlaces, attribute.unit)}</>
-      ) : (
-        <>{String(value)}</>
-      );
-
-    case 'choice':
-      return <>{labelFor(attribute.options, value)}</>;
-
-    case 'choice-many':
-      return Array.isArray(value) ? (
-        <>{value.map((one) => labelFor(attribute.options, one)).join(', ')}</>
-      ) : (
-        <>{String(value)}</>
-      );
-  }
-}
-
-/**
- * The label an option was chosen by, falling back to the stored value.
- *
- * The fallback should be unreachable — a value is validated against these very
- * options before it is stored, and the schema shown here is the one it was
- * validated against. Showing the raw value rather than nothing means that if it
- * ever *is* reached, the page says something true instead of going blank.
- */
-function labelFor(options: readonly AttributeOption[], value: unknown): string {
-  const match = options.find((option) => option.value === value);
-  return match?.label ?? String(value);
+  return <AttributeValue attribute={attribute} value={value} />;
 }
 
 /**

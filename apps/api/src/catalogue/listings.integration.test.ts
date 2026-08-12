@@ -4,12 +4,16 @@ import { Test } from '@nestjs/testing';
 import {
   CATEGORY_OPTIONS_PATH,
   LISTINGS_PATH,
+  LISTING_STATUSES,
   ME_PATH,
+  MODERATION_STATES,
   listingPath,
   listingPublicationPath,
   parseCategoryOptions,
   parseOwnedListings,
   parseOwnerListing,
+  parsePublicListing,
+  publicListingPath,
 } from '@platform/contracts';
 import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
@@ -2583,5 +2587,227 @@ describe('pausing a listing', () => {
     // And the way back is shut, which is the half that proves the switch is
     // still doing its job rather than simply being ignored.
     expect((await publish(listing.id)).statusCode).toBe(503);
+  });
+});
+
+/**
+ * The public listing page's API (slice 2.10).
+ *
+ * **The first unauthenticated route that returns anything a user wrote**, and
+ * the tests here are almost entirely about what it *refuses* to say. Two
+ * disclosure rules meet on this route: §8.4.1 keeps the precise address off it,
+ * and the uniform 404 keeps the existence of a hidden listing off it. Neither
+ * has an error to fail with — a leak here is a 200 with a field too many.
+ */
+describe('the public listing page', () => {
+  beforeEach(async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+  });
+
+  /** A listing complete enough to publish, which is the only kind that shows. */
+  const PUBLISHABLE = {
+    ...DRAFT,
+    description: 'Serviced last spring.',
+    attributes: { power_source: 'petrol', weight_kg: '5.2' },
+    transportRequirement: 'car_boot',
+    collectionLocation: ADDRESS,
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  function read(id: string) {
+    // **No authorization header at all**, which is the point of the route. A
+    // test that passed a token would prove nothing about the case that matters.
+    return app.inject({ method: 'GET', url: publicListingPath(id) });
+  }
+
+  async function givenVisible() {
+    const created = parseOwnerListing(
+      (await createListing('alice-token', PUBLISHABLE)).json(),
+    );
+    const published = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(created.id),
+      headers: auth('alice-token'),
+    });
+    expect(published.statusCode).toBe(201);
+    return created;
+  }
+
+  it('serves a published listing to somebody with no session', async () => {
+    const created = await givenVisible();
+
+    const response = await read(created.id);
+
+    expect(response.statusCode).toBe(200);
+    const listing = parsePublicListing(response.json());
+    expect(listing.id).toBe(created.id);
+    expect(listing.title).toBe('Petrol hedge trimmer');
+  });
+
+  it('is visible for exactly one of the nine status and moderation pairs', async () => {
+    /*
+     * **The assertion that ties the SQL to the rule.** `isPubliclyVisible` is
+     * the rule and the adapter restates it as two columns, because Phase 3 needs
+     * that filter to be indexable. Nothing makes the two agree except this: all
+     * nine combinations, one 200.
+     *
+     * The shape is 2.9a's, which found a branch nothing could reach by testing
+     * every pair rather than the three anyone thinks of. Here the failure it
+     * guards is worse than a dead branch — `where status = 'PUBLISHED'` alone
+     * would serve listings a moderator has rejected, which is the exact
+     * sentence `isPubliclyVisible`'s docblock warns about.
+     */
+    const moderator = await idOf('bob-token');
+    const outcomes: string[] = [];
+
+    for (const status of LISTING_STATUSES) {
+      for (const state of MODERATION_STATES) {
+        const created = parseOwnerListing(
+          (await createListing('alice-token', PUBLISHABLE)).json(),
+        );
+
+        if (status !== 'DRAFT') {
+          await app.inject({
+            method: 'POST',
+            url: listingPublicationPath(created.id),
+            headers: auth('alice-token'),
+          });
+        }
+        if (status === 'PAUSED') {
+          await app.inject({
+            method: 'DELETE',
+            url: listingPublicationPath(created.id),
+            headers: auth('alice-token'),
+          });
+        }
+        if (state !== 'APPROVED') {
+          await listings.listings.moderate({
+            listingId: created.id,
+            state,
+            reason: 'Checking the serial number against the register',
+            moderatorId: moderator,
+            decidedAt: new Date(),
+          });
+        }
+
+        const response = await read(created.id);
+        if (response.statusCode === 200) outcomes.push(`${status}/${state}`);
+      }
+    }
+
+    expect(outcomes).toEqual(['PUBLISHED/APPROVED']);
+  });
+
+  it('answers 404 for a listing that does not exist', async () => {
+    expect((await read('11111111-1111-4111-8111-111111111111')).statusCode).toBe(404);
+  });
+
+  it('says nothing about why a hidden listing is hidden', async () => {
+    /*
+     * A body that named the moderation state would make this route an audit of
+     * our own decisions, readable by anybody with the id — including the person
+     * whose listing was rejected working out that a human looked at it.
+     */
+    const created = await givenVisible();
+    await listings.listings.moderate({
+      listingId: created.id,
+      state: 'REJECTED',
+      reason: 'Not something we can allow on the platform',
+      moderatorId: await idOf('bob-token'),
+      decidedAt: new Date(),
+    });
+
+    const response = await read(created.id);
+
+    expect(response.statusCode).toBe(404);
+    const body = JSON.stringify(response.json());
+    expect(body).not.toContain('REJECTED');
+    expect(body).not.toContain('Not something we can allow');
+  });
+
+  it('never sends the street lines, the full postcode or a coordinate', async () => {
+    /*
+     * **Asserted against the wire, not the type.** `PublicListing` and
+     * `OwnerListing` both serialise happily, so a route that returned the wrong
+     * one would typecheck at every layer and fail only here. `51.47` and `-2.59`
+     * are the real coordinates of BS7 8AA.
+     */
+    const created = await givenVisible();
+
+    const body = JSON.stringify((await read(created.id)).json());
+
+    expect(body).not.toContain('Gloucester');
+    expect(body).not.toContain('BS7 8AA');
+    expect(body).not.toContain('51.47');
+    expect(body).not.toContain('2.59');
+    // The district and the town are what it *does* carry.
+    expect(body).toContain('BS7');
+    expect(body).toContain('Bristol');
+  });
+
+  it('never sends the owner, the moderation state or the replacement value', async () => {
+    // Each absent for its own reason — see `publicListingSchema`. Asserted
+    // together because the failure is the same shape: a field that arrived
+    // because it was on the record rather than because the page needs it.
+    const created = await givenVisible();
+
+    const body = (await read(created.id)).json() as Record<string, unknown>;
+
+    expect(body).not.toHaveProperty('ownerId');
+    expect(body).not.toHaveProperty('status');
+    expect(body).not.toHaveProperty('moderationState');
+    expect(body).not.toHaveProperty('moderationReason');
+    expect(body).not.toHaveProperty('replacementValue');
+    expect(body).not.toHaveProperty('collectionLocation');
+    expect(body).not.toHaveProperty('isLocated');
+  });
+
+  it('prices from the category’s current version, not the one it pinned', async () => {
+    /*
+     * **ADR 0042 on the page it matters most.** §3.4.4 wants the price in the
+     * shop window to be the price payable today, and this *is* the shop window.
+     * The renter fee goes 8% → 16% and the displayed total must move, without
+     * anybody touching the listing — while the owner's own rate does not, since
+     * that is theirs and the fee is ours.
+     */
+    const created = await givenVisible();
+    const before = parsePublicListing((await read(created.id)).json());
+
+    await reconfiguredWithFee(1_600);
+
+    const after = parsePublicListing((await read(created.id)).json());
+
+    expect(after.inclusiveDailyPrice.rate).toEqual(before.inclusiveDailyPrice.rate);
+    expect(after.inclusiveDailyPrice.total.amount).toBeGreaterThan(
+      before.inclusiveDailyPrice.total.amount,
+    );
+  });
+
+  it('carries the pinned schema, so the answers can be read', async () => {
+    // The exit gate of this phase, on a page a stranger reads: the category's
+    // own fields travel with the listing, so nothing rendering them has to know
+    // what a category contains.
+    const created = await givenVisible();
+
+    const listing = parsePublicListing((await read(created.id)).json());
+
+    expect(listing.categoryAttributes.map((one) => one.key)).toContain('weight_kg');
+    // Scaled by the server against the pinned definition (ADR 0029): "5.2" at
+    // one decimal place is 52.
+    expect(listing.attributes.weight_kg).toBe(52);
+  });
+
+  it('serves a suspended owner’s listing, because a suspension is not a takedown', async () => {
+    /*
+     * ADR 0024 stops a suspended account *writing* things others would see. It
+     * does not retract what is already published — that is moderation's job, and
+     * conflating the two would mean suspending somebody silently unpublished
+     * their listings with no moderation record of it.
+     */
+    const created = await givenVisible();
+    identity.users.suspend(await idOf('alice-token'), 'admin-id', 'Repeated no-shows');
+
+    expect((await read(created.id)).statusCode).toBe(200);
   });
 });
