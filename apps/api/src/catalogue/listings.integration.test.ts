@@ -402,8 +402,9 @@ describe('creating a draft', () => {
   it('writes no audit entry, because this is not an administrative action', async () => {
     // §8.13 audits an actor doing something to somebody else, with a reason
     // that person can read. An owner describing their own lawnmower is neither,
-    // and a reason nobody reads devalues the ones that matter. 2.11's concierge
-    // creation is where an audited version belongs.
+    // and a reason nobody reads devalues the ones that matter. There is no
+    // route by which anybody else creates a listing — concierge creation was
+    // deleted from the BRD on 12 August 2026 — so this holds for every path.
     await createListing();
 
     expect(
@@ -885,7 +886,8 @@ describe('editing a listing', () => {
 
   it('writes no audit entry, because an owner editing their own listing is not administrative', async () => {
     // The rule 2.8b settled and 2.8c-i confirmed: the test is *who performed
-    // it*. 2.11's concierge edit is the one that will need an entry.
+    // it*. Moderation is the only write in this module performed by somebody
+    // who is not the owner, and it is audited.
     const created = await given();
     const before = listings.audit.log.entries.length;
 
