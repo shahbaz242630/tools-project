@@ -6,7 +6,9 @@ import { redirect } from 'next/navigation';
 import { listingEditSchema, listingPath } from '@platform/contracts';
 import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../../lib/client-ip';
+import { readCollectionLocation } from '../../../../lib/collection-location';
 import { asSentences } from '../../../../lib/contract-issues';
+import { describeIncompleteRefusal } from '../../../../lib/incomplete-refusal';
 import { readRateCard } from '../../../../lib/rate-card';
 import { readReplacementValue } from '../../../../lib/replacement-value';
 import { readSubmittedAttributes } from '../../../../lib/submitted-attributes';
@@ -47,6 +49,13 @@ export async function editListingAction(
   const dailyRate = String(form.get('dailyRate') ?? '');
   const weekendRate = String(form.get('weekendRate') ?? '');
   const weeklyRate = String(form.get('weeklyRate') ?? '');
+  // Untrimmed here and trimmed inside `readCollectionLocation`, matching the
+  // create action: the decision about what "blank" means belongs in one place,
+  // and it is not the same as "empty after trimming every field separately".
+  const line1 = String(form.get('line1') ?? '');
+  const line2 = String(form.get('line2') ?? '');
+  const town = String(form.get('town') ?? '');
+  const postcode = String(form.get('postcode') ?? '');
 
   /*
    * **Spread over `previous` rather than over a blank initial state**, and this
@@ -66,6 +75,10 @@ export async function editListingAction(
     dailyRate,
     weekendRate,
     weeklyRate,
+    line1,
+    line2,
+    town,
+    postcode,
   };
   const refused = (message: string): ListingEditState => ({
     ...previous,
@@ -96,6 +109,13 @@ export async function editListingAction(
   });
   if (!rates.ok) return refused(rates.message);
 
+  // All four blank is a real answer — the owner is removing the address — and a
+  // *partly* filled one is somebody mid-edit, refused rather than silently read
+  // as blank. The same rule the create form uses, and the same module, because
+  // two readings of "blank" is how one of them ends up discarding an address.
+  const location = readCollectionLocation({ line1, line2, town, postcode });
+  if (!location.ok) return refused(location.message);
+
   // Checked here *and* by the API, and the API's answer is the one that counts.
   // This exists so that a round trip is not how somebody finds out their title
   // is two characters short.
@@ -108,6 +128,7 @@ export async function editListingAction(
     transportRequirement: readTransportRequirement(form),
     requiresTwoPersonLift: form.get('requiresTwoPersonLift') === 'on',
     rates: rates.value,
+    collectionLocation: location.value,
   });
   if (!parsed.success) return refused(asSentences(parsed.error.issues));
 
@@ -164,6 +185,21 @@ export async function editListingAction(
           'for may be different now. Reload the page and check the ' +
           'category-specific fields — everything else you typed is still here.',
       );
+
+    case 'incomplete':
+      /*
+       * **The listing is published and this save would break it** (slice
+       * 2.9b-ii). Every other refusal here is about the request; this one is
+       * about what the listing would become, and the only two ways out are to put
+       * the missing thing back or to pause the listing first.
+       *
+       * The blockers are turned into their sentences rather than shown as a
+       * checklist, which the publish page does instead. The difference is that
+       * somebody publishing is working through a list on purpose, and somebody
+       * editing has hit one thing they did not expect — a list of one item
+       * rendered as a checklist reads like a form they have failed.
+       */
+      return refused(describeIncompleteRefusal(outcome.blockers));
 
     case 'unreachable':
     case 'malformed':

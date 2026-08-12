@@ -2,9 +2,11 @@
 
 import { useActionState, useEffect, useRef, useState } from 'react';
 import {
+  ADDRESS_LINE_MAX_LENGTH,
   LISTING_DESCRIPTION_MAX_LENGTH,
   LISTING_TITLE_MAX_LENGTH,
   LISTING_TITLE_MIN_LENGTH,
+  TOWN_MAX_LENGTH,
   readItemWeight,
 } from '@platform/contracts';
 import type {
@@ -24,11 +26,17 @@ import { toStoredAnswers } from '../lib/stored-answers';
  *
  * **A second form rather than `ListingForm` parameterised**, and the reason is
  * that the two collect different things rather than the same things differently.
- * This one has no category picker (a listing's category is fixed at creation, and
- * the create form has said so since 2.4a) and no address fields (2.9b-ii). A
- * shared component would carry two conditionals through every field it renders,
- * and the failure mode of getting one wrong is a control that silently does not
- * post.
+ * This one has no category picker — a listing's category is fixed at creation,
+ * and the create form has said so since 2.4a. A shared component would carry that
+ * conditional through every field it renders, and the failure mode of getting it
+ * wrong is a control that silently does not post.
+ *
+ * **The address fields arrived in 2.9b-ii** and are deliberately a copy rather
+ * than a shared component. They are eight lines of markup with different ids and
+ * different surrounding copy — the published listing here is told it may not
+ * empty them — and the thing worth sharing was never the inputs but
+ * `readCollectionLocation`, which decides what a blank address means and *is*
+ * shared, on the server, where getting it wrong would discard somebody's address.
  *
  * What they *do* share is shared: `AttributeFields` and `TransportField` are the
  * two pieces where drift would actually cost something, because those are the
@@ -222,16 +230,96 @@ export function ListingEditForm({
       </fieldset>
 
       {/*
-        **Said plainly rather than left as a missing field.** The create form asks
-        where the item is collected from and this one does not, and an owner who
-        noticed would reasonably conclude the address had been lost. It has not —
-        changing it needs the fuzz offset preserved rather than redrawn (§8.4.1),
-        which is its own slice.
+        **The fields 2.9b-i said could not be here** (slice 2.9b-ii). The
+        paragraph they replace told owners in as many words that the address was
+        unchangeable, which was honest and was the last thing on this form that
+        was not a real control.
+
+        The ids are prefixed `edit-`, like every other field here, so this form
+        and the create form can never collide if both are ever rendered on one
+        page — and so a test querying by id is unambiguous about which form it
+        found.
       */}
-      <p>
-        Where this is collected from cannot be changed here yet. Everything you set for
-        it is unchanged, and it stays exactly as it is when you save.
-      </p>
+      <fieldset>
+        <legend>Where it is collected from</legend>
+
+        <p id="edit-location-help">
+          Renters only ever see the <strong>district and town</strong> — “BS7, Bristol”
+          — which covers thousands of homes. Your full postcode and street are never
+          shown publicly and are given to a renter only once a booking reaches the point
+          of collection.
+        </p>
+
+        <p>
+          <label htmlFor="edit-line1">Address line 1</label>
+          <input
+            id="edit-line1"
+            name="line1"
+            type="text"
+            maxLength={ADDRESS_LINE_MAX_LENGTH}
+            autoComplete="address-line1"
+            defaultValue={state.line1}
+            aria-describedby="edit-location-help"
+          />
+        </p>
+
+        <p>
+          <label htmlFor="edit-line2">Address line 2</label>
+          <input
+            id="edit-line2"
+            name="line2"
+            type="text"
+            maxLength={ADDRESS_LINE_MAX_LENGTH}
+            autoComplete="address-line2"
+            defaultValue={state.line2}
+          />
+        </p>
+
+        <p>
+          <label htmlFor="edit-town">Town or city</label>
+          <input
+            id="edit-town"
+            name="town"
+            type="text"
+            maxLength={TOWN_MAX_LENGTH}
+            autoComplete="address-level2"
+            defaultValue={state.town}
+            aria-describedby="edit-town-help"
+          />
+        </p>
+        <p id="edit-town-help">This one is public, beside the postcode district.</p>
+
+        <p>
+          <label htmlFor="edit-postcode">Postcode</label>
+          <input
+            id="edit-postcode"
+            name="postcode"
+            type="text"
+            autoComplete="postal-code"
+            defaultValue={state.postcode}
+            placeholder="BS7 8AA"
+            aria-describedby="edit-postcode-help"
+          />
+        </p>
+        <p id="edit-postcode-help">
+          Only the first part — <strong>BS7</strong> — is ever published.
+        </p>
+
+        {/*
+          **Said because it is not obvious and the alternative is a nasty
+          surprise.** A published listing needs an address, so emptying these
+          fields is refused rather than silently taking the listing off the
+          market — and an owner who wants it off the market has a Pause button
+          for exactly that. A draft may be left blank, which is §8.3.
+        */}
+        <p>
+          {listing.status === 'PUBLISHED'
+            ? 'This listing is published, so it needs an address. To take it off ' +
+              'the market, pause it instead — you can put it back at any time.'
+            : 'You can leave this blank for now, but a listing needs it before it ' +
+              'can be published.'}
+        </p>
+      </fieldset>
 
       <p>
         <button type="submit" disabled={pending}>

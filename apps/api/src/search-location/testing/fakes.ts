@@ -25,6 +25,20 @@ export class FakeGeocoder implements PostcodeGeocoder {
     longitude: -2.593052,
   };
 
+  /**
+   * A second real one, twelve miles away, for the tests that move a listing
+   * (slice 2.9b-ii).
+   *
+   * Far enough apart that a published point computed from the wrong one is
+   * unmistakable — the fuzz is 500–1000 m and this is 19 km, so no offset can
+   * make Bath look like Bristol.
+   */
+  static readonly BA1_1AA: GeocodedPostcode = {
+    postcode: 'BA1 1AA',
+    latitude: 51.381428,
+    longitude: -2.35897,
+  };
+
   knows(located: GeocodedPostcode): this {
     this.known.set(located.postcode.toUpperCase(), located);
     return this;

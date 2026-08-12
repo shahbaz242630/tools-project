@@ -33,6 +33,7 @@ import type { MoneyValue } from '@platform/core';
 import type {
   CategoryOptionRecord,
   CategoryOptionSource,
+  CollectionLocationEdit,
   ListingRecord,
   ListingStore,
 } from './listing-store.js';
@@ -85,17 +86,19 @@ export interface SubmittedListing {
 }
 
 /**
- * What an owner submits when editing (slice 2.9b-i).
+ * What an owner submits when editing (slices 2.9b-i and 2.9b-ii).
  *
- * `SubmittedListing` minus the two things an edit cannot carry — the category,
- * which is fixed at creation, and the collection address, which is 2.9b-ii's.
- * Expressed as an `Omit` rather than retyped, so a field added to the create
- * shape has to be considered here rather than quietly diverging.
+ * `SubmittedListing` minus the one thing an edit cannot carry: the category,
+ * which is fixed at creation. Expressed as an `Omit` rather than retyped, so a
+ * field added to the create shape has to be considered here rather than quietly
+ * diverging.
+ *
+ * **`collectionLocation` was in that `Omit` through 2.9b-i and came out in
+ * 2.9b-ii.** It carries the address as typed, exactly as the create shape does;
+ * what happens to the *point* underneath it is decided by the service, because
+ * only the service can know whether this listing already has an offset to honour.
  */
-export type SubmittedListingEdit = Omit<
-  SubmittedListing,
-  'ownerId' | 'categorySlug' | 'collectionLocation'
->;
+export type SubmittedListingEdit = Omit<SubmittedListing, 'ownerId' | 'categorySlug'>;
 
 /**
  * Raised when the category does not offer the transport requirement chosen.
@@ -215,6 +218,40 @@ export class ListingNotPublishableError extends Error {
       `The listing is not ready to publish: ${String(blockers.length)} thing(s) missing`,
     );
     this.name = 'ListingNotPublishableError';
+  }
+}
+
+/**
+ * Raised when an edit would leave a **published** listing incomplete (slice
+ * 2.9b-ii).
+ *
+ * **The same rules as `ListingNotPublishableError` and a different error, because
+ * it is a different sentence.** That one means "you asked to publish this and it
+ * is not ready", and the reader is about to go and finish it. This means "it is
+ * already in front of strangers and what you just saved would break it", and the
+ * reader's next move is to put back whatever they removed — or to pause the
+ * listing first, which is what makes the removal legitimate.
+ *
+ * **Why the check exists at all.** Publication evaluates completeness once, at
+ * the moment of publishing. Nothing re-evaluated it afterwards, so through 2.9b-i
+ * an owner could blank a published listing's description or clear its rates and
+ * the platform would keep showing it. 2.9b-ii would have added the worst version
+ * of that — a live listing with nowhere to collect from, or one no search can
+ * find — so the guard lands here rather than being left for whoever noticed.
+ *
+ * **It is deliberately not a refusal to edit.** Every field can still be
+ * corrected; what is refused is *emptying* one that a published listing needs.
+ * An owner who genuinely wants the listing off the market pauses it, which is one
+ * reversible action away and is what pause is for.
+ */
+export class PublishedListingIncompleteError extends Error {
+  constructor(readonly blockers: readonly PublicationBlocker[]) {
+    super(
+      `A published listing cannot be left incomplete: ${String(
+        blockers.length,
+      )} thing(s) would be missing`,
+    );
+    this.name = 'PublishedListingIncompleteError';
   }
 }
 
@@ -393,13 +430,19 @@ export class ListingsService {
    * not answered the required ones. What must never happen — and does not —
    * is a listing re-pinning without its owner having seen the new form.
    *
-   * **No geocoding happens here**, unlike `createDraft`, because an edit carries
-   * no address (slice 2.9b-ii). That is worth stating rather than leaving as an
-   * absence: reusing the create path's `locator.locate` would draw a **fresh
-   * fuzz offset**, and an owner who saved three times would publish three points
-   * scattered around one true address — the averaging attack ADR 0032 and
-   * §8.4.1 exist to prevent. When 2.9b-ii adds the address, the offset must be
-   * preserved rather than redrawn.
+   * **Geocoding happens here from 2.9b-ii, and it is the one step that does not
+   * mirror `createDraft`.** Creation calls `locator.locate`, which draws a fresh
+   * fuzz offset; an edit must not, because an owner who saved three times would
+   * publish three points scattered around one true address and their mean is the
+   * address (§8.4.1, ADR 0032). `editedLocation` below decides which of the three
+   * things to do and is where that rule is kept.
+   *
+   * **A published listing may not be edited into an incomplete one.** The
+   * completeness rules run again when the listing is `PUBLISHED`, against the
+   * values about to be written and the version about to be pinned. See
+   * `PublishedListingIncompleteError`. A draft is left permissive, as §8.3
+   * requires, and a paused listing is too — it is not in front of anybody, and
+   * `publish` will refuse to resume it until it is complete.
    *
    * **Unaudited**, like every other owner action on their own listing. The test
    * is who performed it (§8.13), and 2.11's concierge edit — an administrator
@@ -447,6 +490,34 @@ export class ListingsService {
       );
     }
 
+    // **After every refusal above**, for `createDraft`'s reason: geocoding is a
+    // call to a third party, and spending it on an edit we are about to reject
+    // would make a validation error take as long as the provider does.
+    const location = await this.editedLocation(listing, ownerId, submitted);
+
+    /*
+     * **The completeness re-check, and only for a listing that is published.**
+     *
+     * It reads the values about to be written rather than the ones on the record,
+     * which is the whole point — the question is what the listing will be once
+     * this save lands, not what it is now. The category's attributes and options
+     * come from `category`, the version about to be pinned, for the same reason.
+     */
+    if (listing.status === 'PUBLISHED') {
+      const blockers = publicationBlockers({
+        description: submitted.description,
+        attributes: values.values,
+        categoryAttributes: category.attributes,
+        categoryTransportOptions: category.transportOptions,
+        transportRequirement: submitted.transportRequirement,
+        rates: submitted.rates,
+        hasCollectionLocation: location.kind !== 'cleared',
+        isLocated: willBeLocated(location),
+      });
+
+      if (blockers.length > 0) throw new PublishedListingIncompleteError(blockers);
+    }
+
     return this.store.update(id, ownerId, {
       title: submitted.title,
       description: submitted.description,
@@ -455,8 +526,70 @@ export class ListingsService {
       transportRequirement: submitted.transportRequirement,
       requiresTwoPersonLift: submitted.requiresTwoPersonLift,
       rates: submitted.rates,
+      collectionLocation: location,
       categoryVersionNumber: category.versionNumber,
     });
+  }
+
+  /**
+   * Decide what this edit does to the listing's location — **the slice's whole
+   * security argument, in one method** (slice 2.9b-ii, §8.4.1, ADR 0032).
+   *
+   * The rule it keeps: **a listing's fuzz offset is drawn once and reused for
+   * ever.** Redrawing it publishes a second point around the same address, and
+   * the mean of enough such points is the address. Nothing downstream would
+   * notice — no test, no constraint, no error — which is why the decision is
+   * concentrated here instead of being spread across the caller.
+   *
+   * Three outcomes, in the order they are decided:
+   *
+   * 1. **No address submitted → `cleared`.** Nothing to place.
+   * 2. **Same postcode, and the listing is already located → `address-only`.**
+   *    The lines and town are rewritten and the point is not touched. The
+   *    geocoder is not called at all, so an outage cannot strip the coordinates
+   *    off a listing whose location nobody changed.
+   * 3. **Anything else → `relocated`.** Either the postcode moved, or it did not
+   *    and there are no coordinates to keep — the second being the retry 2.5b
+   *    left for an address a provider outage could not place. The stored offset
+   *    is reused if there is one, and drawn only if there is not, which is the
+   *    single place `locate` and `relocate` are chosen between.
+   *
+   * **The postcodes are compared exactly, and the failure direction is safe.**
+   * Both sides are normalised by the contract before they are ever stored, so
+   * they agree or the postcode genuinely changed. If two spellings of one
+   * postcode ever did slip through, this would take case 3 and re-place the
+   * listing **with its existing offset** — the same published point, recomputed.
+   * Wasteful, not disclosing. There is no comparison result that redraws.
+   */
+  private async editedLocation(
+    listing: ListingRecord,
+    ownerId: string,
+    submitted: SubmittedListingEdit,
+  ): Promise<CollectionLocationEdit> {
+    const location = submitted.collectionLocation;
+    if (location === null) return { kind: 'cleared' };
+
+    if (
+      listing.collectionLocation?.postcode === location.postcode &&
+      listing.isLocated
+    ) {
+      return { kind: 'address-only', location };
+    }
+
+    /*
+     * Null means this listing has no coordinates yet — a draft that has never
+     * given an address, or one whose postcode nothing could place — and in both
+     * cases these coordinates are the first it will have, which is exactly what
+     * `locate` is for. Anything else is a listing that already publishes a point,
+     * and moving it must keep the offset that point was made with.
+     */
+    const offset = await this.store.findFuzzOffset(listing.id, ownerId);
+    const point =
+      offset === null
+        ? await this.locator.locate(location.postcode)
+        : await this.locator.relocate(location.postcode, offset);
+
+    return { kind: 'relocated', location, point };
   }
 
   /**
@@ -830,6 +963,26 @@ export class ListingsService {
  * A listing renamed after being rejected would produce a differing digest for a
  * decision nobody revisited.
  */
+/**
+ * Whether the listing will have coordinates once this edit lands.
+ *
+ * A `switch` over every case rather than `kind !== 'cleared'`, so that adding a
+ * fourth case is a compile error here instead of a listing that silently reads as
+ * located when it is not. `address-only` is only ever chosen for a listing that
+ * is already located, which is the one thing this function has to take on trust —
+ * `editedLocation` is a dozen lines away and is where that is decided.
+ */
+function willBeLocated(location: CollectionLocationEdit): boolean {
+  switch (location.kind) {
+    case 'cleared':
+      return false;
+    case 'address-only':
+      return true;
+    case 'relocated':
+      return location.point !== null;
+  }
+}
+
 function moderationAuditable(listing: ListingRecord): Record<string, unknown> {
   return {
     moderationState: listing.moderationState,

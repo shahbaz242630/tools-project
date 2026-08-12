@@ -6,6 +6,7 @@ import {
   fetchOwnedListings,
   pauseListing,
   publishListing,
+  updateListing,
 } from './listings';
 import type { FetchLike } from './listings';
 
@@ -506,6 +507,114 @@ describe('pauseListing', () => {
     expect((await pauseListing(API, TOKEN, LISTING.id, responds(404))).kind).toBe(
       'not-found',
     );
+  });
+});
+
+/**
+ * Editing, and the second 422 in this file (slice 2.9b-ii).
+ *
+ * **The status is publishing's and the meaning is the opposite**, which is why
+ * this module gives it its own kind rather than reusing `not-ready`. Publishing
+ * answers 422 to *"this is not finished"*; editing answers it to *"this is
+ * already live and your change would break it"*. A form that translated one as
+ * the other would tell somebody correcting a typo to go and finish their listing.
+ */
+describe('updateListing', () => {
+  const EDIT = {
+    title: 'Petrol hedge trimmer, serviced',
+    description: 'Serviced last spring.',
+    replacementValue: { amount: 24_999, currency: 'GBP' as const },
+    categoryVersionNumber: 1,
+    attributes: {},
+    transportRequirement: null,
+    requiresTwoPersonLift: false,
+    rates: { daily: null, weekend: null, weekly: null },
+    collectionLocation: null,
+  };
+
+  it('returns the updated listing', async () => {
+    const outcome = await updateListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      EDIT,
+      responds(200, JSON.stringify(LISTING)),
+    );
+
+    expect(outcome.kind).toBe('loaded');
+  });
+
+  it('sends PUT, carrying the whole listing rather than a patch', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(LISTING));
+    await updateListing(API, TOKEN, LISTING.id, EDIT, fetchImpl);
+
+    expect(calls[0]?.init?.method).toBe('PUT');
+    // The address is in the body even when null — "absent" and "clear this"
+    // being one value on the wire is exactly what a PATCH would have meant.
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      collectionLocation: null,
+    });
+  });
+
+  it('reads a 422 as the listing being left incomplete, with its blockers', async () => {
+    const outcome = await updateListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      EDIT,
+      responds(
+        422,
+        JSON.stringify({
+          message:
+            'This listing is published, and that change would leave it incomplete.',
+          blockers: [
+            {
+              field: 'collectionLocation',
+              message: 'It needs an address before it can be published.',
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'incomplete',
+      blockers: [
+        {
+          field: 'collectionLocation',
+          message: 'It needs an address before it can be published.',
+        },
+      ],
+    });
+  });
+
+  it('does not report an incomplete published listing as not-ready', async () => {
+    // The assertion the separate kind exists for. Both carry `blockers`, so a
+    // shared kind would compile perfectly and say the wrong thing on screen.
+    const outcome = await updateListing(
+      API,
+      TOKEN,
+      LISTING.id,
+      EDIT,
+      responds(422, JSON.stringify({ message: 'x', blockers: [] })),
+    );
+
+    expect(outcome.kind).not.toBe('not-ready');
+  });
+
+  it('still reads a 409 as a changed category', async () => {
+    // Unlike pausing, an edit's 409 really does mean the category moved
+    // underneath the form (ADR 0042), so the default mapping is correct here and
+    // this pins it against a later hook being added by copy-paste.
+    expect(
+      (await updateListing(API, TOKEN, LISTING.id, EDIT, responds(409))).kind,
+    ).toBe('stale-category');
+  });
+
+  it('still reads a 404 as not found', async () => {
+    expect(
+      (await updateListing(API, TOKEN, LISTING.id, EDIT, responds(404))).kind,
+    ).toBe('not-found');
   });
 });
 

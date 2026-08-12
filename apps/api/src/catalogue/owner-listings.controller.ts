@@ -36,6 +36,7 @@ import {
   ListingNotPublishableError,
   ListingTransitionRefusedError,
   PublicationSuspendedError,
+  PublishedListingIncompleteError,
 } from './listings.service.js';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
@@ -226,6 +227,7 @@ export class OwnerListingsController {
         transportRequirement: edit.transportRequirement,
         requiresTwoPersonLift: edit.requiresTwoPersonLift,
         rates: edit.rates,
+        collectionLocation: edit.collectionLocation,
         categoryVersionNumber: edit.categoryVersionNumber,
       });
       if (updated === null) throw new NotFoundException();
@@ -234,6 +236,27 @@ export class OwnerListingsController {
     } catch (error) {
       if (error instanceof CategoryChangedError) {
         throw new ConflictException({ message: error.message });
+      }
+      if (error instanceof PublishedListingIncompleteError) {
+        /*
+         * **422 with the same `blockers` shape publishing uses** (slice 2.9b-ii),
+         * so a client already rendering "what is left to do" needs no second
+         * code path. The *message* differs because the situation does: publishing
+         * says the listing is not ready yet, and this says it is already live and
+         * the save would break it.
+         *
+         * It names pausing, because that is the one action that makes the change
+         * legitimate rather than merely refused — an owner emptying the address of
+         * a listing they no longer want to rent out is not doing anything wrong,
+         * they are doing it in the wrong order.
+         */
+        throw new UnprocessableEntityException({
+          message:
+            'This listing is published, and that change would leave it ' +
+            'incomplete. Put back what is missing, or pause the listing first ' +
+            'and then make the change.',
+          blockers: error.blockers,
+        });
       }
       if (error instanceof TransportRequirementNotOfferedError) {
         throw new BadRequestException({

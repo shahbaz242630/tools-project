@@ -259,7 +259,19 @@ async function bootstrap(): Promise<void> {
   const listings = new ListingsService(
     listingStore,
     listingStore,
-    { locate: (postcode) => location.locate(postcode) },
+    /*
+     * The locator port, answered by Search & Location. **Two methods, and the
+     * pair is the §8.4.1 control** (slice 2.9b-ii): `locate` draws a listing's
+     * fuzz offset and `relocate` reuses one it already has. Catalogue chooses
+     * between them, because only Catalogue knows whether this listing has ever
+     * been placed — and the choice being explicit at the call site is what stops
+     * an edit quietly redrawing, which would leak the true address through the
+     * mean of the points it published.
+     */
+    {
+      locate: (postcode) => location.locate(postcode),
+      relocate: (postcode, offset) => location.relocate(postcode, offset),
+    },
     logger.child({ module: 'catalogue' }),
     // The port Catalogue declares, answered by the flags module — the same
     // shape as the locator above. One method rather than the whole service, so
