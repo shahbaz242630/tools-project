@@ -9,6 +9,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Put,
   ServiceUnavailableException,
   UnprocessableEntityException,
   UseGuards,
@@ -21,6 +22,7 @@ import {
   LISTING_ROUTE,
   describeAttributeIssue,
   parseListingDraft,
+  parseListingEdit,
 } from '@platform/contracts';
 import type {
   CategoryOption,
@@ -187,6 +189,66 @@ export class OwnerListingsController {
     if (listing === null) throw new NotFoundException();
 
     return toOwnerListing(listing, await this.listings.isPublicationAvailable());
+  }
+
+  /**
+   * Rewrite a listing (§8.3, slice 2.9b-i, ADR 0042).
+   *
+   * **`PUT`, not `PATCH`**, and the body carries every field. A partial is a
+   * shape where "absent" and "clear this" are the same value on the wire, and
+   * the field that would suffer is a description somebody spent an evening on.
+   *
+   * **Not `@AllowsSuspended()`.** ADR 0024's line is that a suspended account may
+   * read what we hold and may not write anything others would see. Editing a
+   * *published* listing changes what strangers see, so it sits with publishing
+   * rather than with pausing — the one write on this controller that makes others
+   * see *less* and is therefore allowed.
+   *
+   * The failure translations are `create`'s, deliberately: an owner correcting a
+   * listing meets the same category, the same schema and the same stale-form race
+   * as one writing a new one, and two routes explaining the same refusal
+   * differently is how a client comes to handle only one of them.
+   */
+  @Put(LISTING_ROUTE)
+  async update(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() owner: MirroredUser,
+  ): Promise<OwnerListing> {
+    const edit = parse(() => parseListingEdit(body));
+
+    try {
+      const updated = await this.listings.edit(id, owner.id, {
+        title: edit.title,
+        description: edit.description,
+        replacementValue: edit.replacementValue,
+        attributes: edit.attributes,
+        transportRequirement: edit.transportRequirement,
+        requiresTwoPersonLift: edit.requiresTwoPersonLift,
+        rates: edit.rates,
+        categoryVersionNumber: edit.categoryVersionNumber,
+      });
+      if (updated === null) throw new NotFoundException();
+
+      return toOwnerListing(updated, await this.listings.isPublicationAvailable());
+    } catch (error) {
+      if (error instanceof CategoryChangedError) {
+        throw new ConflictException({ message: error.message });
+      }
+      if (error instanceof TransportRequirementNotOfferedError) {
+        throw new BadRequestException({
+          message: 'That is not how items in this category are collected',
+          issues: [error.message],
+        });
+      }
+      if (error instanceof AttributeValuesInvalidError) {
+        throw new BadRequestException({
+          message: 'Some of the details for this category were not accepted',
+          issues: error.issues.map(describeAttributeIssue),
+        });
+      }
+      throw error;
+    }
   }
 
   /**

@@ -553,6 +553,51 @@ export const listingDraftSchema = z.object({
 export type ListingDraftInput = z.infer<typeof listingDraftSchema>;
 
 /**
+ * Editing a listing (slice 2.9b-i, ADR 0042).
+ *
+ * **Three fields from the draft are deliberately absent, and each absence is a
+ * rule rather than an omission.**
+ *
+ * `categorySlug` — **a listing's category is fixed at creation.** The create
+ * form has said so since 2.4a, in as many words: *"changing the category later is
+ * a new listing rather than an edit"*. Moving one would invalidate every stored
+ * answer at once, since two categories that share an attribute key rarely mean
+ * the same thing by it, and there is no honest way to migrate answers to
+ * questions that were never asked.
+ *
+ * `collectionLocation` — **slice 2.9b-ii**, and it is left out rather than
+ * accepted-and-ignored so that a client cannot believe it changed an address.
+ * The reason it is its own slice is `LocationService.locate`, which draws a fresh
+ * random fuzz offset on every call: reuse it on an edit and an owner who saves
+ * three times publishes three points scattered around one true address, which is
+ * the averaging attack §8.4.1 and ADR 0032 exist to prevent. That needs the
+ * offset preserved across edits, and it deserves its own slice rather than a
+ * paragraph in this one.
+ *
+ * `status` and `moderationState` — transitions have their own routes, and
+ * moderation is not the owner's to set at all (ADR 0041).
+ *
+ * **`categoryVersionNumber` stays, and this is the field ADR 0042 changed the
+ * meaning of.** Before 0042, an edit revalidated against the version the listing
+ * had already pinned — a row a trigger refuses to update, so it could not move
+ * and a staleness check would have been unreachable. Now editing brings the
+ * listing onto the *current* version, which means the form was rendered from
+ * configuration that can be replaced while it sits open. So the stale-form race
+ * is back, exactly as on create, and it is answered the same way: the number
+ * asserts what was on screen, and a mismatch is a 409.
+ */
+export const listingEditSchema = listingDraftSchema.omit({
+  categorySlug: true,
+  collectionLocation: true,
+});
+
+export type ListingEditInput = z.infer<typeof listingEditSchema>;
+
+export function parseListingEdit(raw: unknown): ListingEditInput {
+  return parseWith(listingEditSchema, 'The listing', raw);
+}
+
+/**
  * The listing's collection address, as its **owner** reads it back.
  *
  * They typed it, so they see it — the same rule `MyProfile` follows. This is the

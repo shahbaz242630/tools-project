@@ -36,6 +36,7 @@ import type {
   CategoryOptionRecord,
   CategoryOptionSource,
   ListingDraft,
+  ListingEdit,
   ListingRecord,
   ListingStore,
   ModerationDecision,
@@ -342,6 +343,62 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       (candidate) => candidate.id === id && candidate.ownerId === ownerId,
     );
     return listing === undefined ? null : this.hydrate(listing);
+  }
+
+  async update(
+    id: string,
+    ownerId: string,
+    edit: ListingEdit,
+  ): Promise<ListingRecord | null> {
+    const index = this.listings.findIndex(
+      (listing) => listing.id === id && listing.ownerId === ownerId,
+    );
+    if (index === -1) return null;
+
+    const listing = this.listings[index];
+    /* c8 ignore next */
+    if (listing === undefined) return null;
+
+    const category = await this.categories.findBySlug(listing.categorySlug);
+    /* c8 ignore next 2 -- unreachable: a listing cannot exist without its
+       category, and nothing deletes one. */
+    if (category === null) return null;
+
+    // **The staleness guard the real store makes inside its write**, mirrored
+    // for the reason this whole file exists: a double that skipped it would let
+    // a test pass for a state the adapter refuses.
+    if (category.versionNumber !== edit.categoryVersionNumber) {
+      throw new CategoryChangedError(
+        listing.categorySlug,
+        edit.categoryVersionNumber,
+        category.versionNumber,
+      );
+    }
+
+    const updated: ListingRecord = {
+      ...listing,
+      title: edit.title,
+      description: edit.description,
+      replacementValue: edit.replacementValue,
+      attributes: { ...edit.attributes },
+      transportRequirement: edit.transportRequirement,
+      requiresTwoPersonLift: edit.requiresTwoPersonLift,
+      rates: edit.rates,
+      // **Re-pinned**, which is ADR 0042's fourth point and the behaviour a test
+      // most needs this double to reproduce: the name and schema move with the
+      // version, so a listing edited after a rename reads under the new labels.
+      categoryVersionNumber: category.versionNumber,
+      categoryName: category.name,
+      categoryAttributes: category.attributes,
+      categoryTransportOptions: category.transportOptions,
+      // **Deliberately carried over untouched**: the collection location, the
+      // status and the moderation state. A double that cleared any of them would
+      // hide the very defect the real method is written to avoid.
+      updatedAt: Time.nowUtc(),
+    };
+
+    this.listings[index] = updated;
+    return this.hydrate(updated);
   }
 
   async publish(id: string, ownerId: string): Promise<ListingRecord | null> {

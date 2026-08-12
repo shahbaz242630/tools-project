@@ -1478,6 +1478,176 @@ describe('the current fee policy', () => {
 });
 
 /**
+ * Rewriting a listing, against a real database (slice 2.9b-i, ADR 0042).
+ *
+ * **What only this file can prove**: that the `UPDATE` touches the columns it is
+ * given and no others. The in-memory double spreads over a held record, so a
+ * store method that wrote `outwardCode: null` or dropped the location row would
+ * behave identically there and destroy an address here.
+ */
+describe('updating a listing', () => {
+  const EDIT = {
+    title: 'Renamed',
+    description: 'Rewritten.',
+    replacementValue: { amount: 30_000, currency: 'GBP' as const },
+    attributes: { power_source: 'cordless', weight_kg: 41 },
+    transportRequirement: null,
+    requiresTwoPersonLift: true,
+    rates: {
+      daily: { amount: 2_000, currency: 'GBP' as const },
+      weekend: null,
+      weekly: null,
+    },
+    categoryVersionNumber: 1,
+  };
+
+  it('writes what it is given', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    const updated = await store.update(created.id, owner, EDIT);
+
+    expect(updated?.title).toBe('Renamed');
+    expect(updated?.replacementValue).toEqual({ amount: 30_000, currency: 'GBP' });
+    expect(updated?.requiresTwoPersonLift).toBe(true);
+    expect(updated?.rates.daily).toEqual({ amount: 2_000, currency: 'GBP' });
+  });
+
+  it('resolves to null for somebody else’s listing, and writes nothing', async () => {
+    const mine = await newUser();
+    const theirs = await newUser();
+    const category = await newCategory(mine);
+    const created = await store.createDraft(draft(mine, category.slug));
+
+    expect(await store.update(created.id, theirs, EDIT)).toBeNull();
+
+    // The owner is inside the statement rather than a comparison beside it, so
+    // this is what proves the write did not happen rather than merely that the
+    // caller was told no.
+    const reread = await store.findOwnedBy(created.id, mine);
+    expect(reread?.title).not.toBe('Renamed');
+  });
+
+  it('leaves the collection address and its published half alone', async () => {
+    /*
+     * **The assertion this describe block exists for.** `outwardCode` and `town`
+     * live on `listings` beside every column the edit *does* write, so a
+     * `data:` object assembled from an edit that carries no address is one
+     * keystroke away from nulling them — and the `location_is_complete`
+     * constraint would happily accept both being null.
+     */
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, {
+        collectionLocation: {
+          line1: '12 Gloucester Road',
+          line2: null,
+          town: 'Bristol',
+          postcode: 'BS7 8AA',
+        },
+      }),
+    );
+
+    await store.update(created.id, owner, EDIT);
+
+    const reread = await store.findOwnedBy(created.id, owner);
+    expect(reread?.collectionLocation?.postcode).toBe('BS7 8AA');
+    expect(reread?.collectionLocation?.line1).toBe('12 Gloucester Road');
+
+    // The publishable half, read straight from the row rather than through the
+    // record, because it is a separate column that the edit could have cleared.
+    const row = await client.listing.findUniqueOrThrow({
+      where: { id: created.id },
+      select: { outwardCode: true, town: true },
+    });
+    expect(row.outwardCode).toBe('BS7');
+    expect(row.town).toBe('Bristol');
+  });
+
+  it('leaves the status and the moderation decision alone', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    await store.publish(created.id, owner);
+    await store.moderate({
+      listingId: created.id,
+      state: 'UNDER_REVIEW',
+      reason: 'Checking the serial number against the register',
+      moderatorId: owner,
+      decidedAt: new Date(),
+    });
+
+    await store.update(created.id, owner, EDIT);
+
+    const reread = await store.findOwnedBy(created.id, owner);
+    expect(reread?.status).toBe('PUBLISHED');
+    expect(reread?.moderationState).toBe('UNDER_REVIEW');
+  });
+
+  it('re-pins to the category’s current version, keeping the category', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+    expect(created.categoryVersionNumber).toBe(1);
+
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Renamed category',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+        feePolicy: FEE_POLICY,
+      },
+      owner,
+    );
+
+    const updated = await store.update(created.id, owner, {
+      ...EDIT,
+      categoryVersionNumber: 2,
+    });
+
+    expect(updated?.categoryVersionNumber).toBe(2);
+    // The composite foreign key means the category cannot change with it, and
+    // the name proves the join followed the new version rather than the old.
+    expect(updated?.categorySlug).toBe(category.slug);
+    expect(updated?.categoryName).toBe('Renamed category');
+  });
+
+  it('refuses an edit validated against a version that has been replaced', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(draft(owner, category.slug));
+
+    await categories.addVersion(
+      category.slug,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'medium',
+        reportableActivity: 'none',
+        attributes: SCHEMA,
+        transportOptions: [],
+        feePolicy: FEE_POLICY,
+      },
+      owner,
+    );
+
+    // The guard inside the write, which the service's own check cannot close:
+    // between its read and this one a reconfiguration can land.
+    await expect(store.update(created.id, owner, EDIT)).rejects.toThrow(
+      CategoryChangedError,
+    );
+
+    const reread = await store.findOwnedBy(created.id, owner);
+    expect(reread?.title).not.toBe('Renamed');
+    expect(reread?.categoryVersionNumber).toBe(1);
+  });
+});
+
+/**
  * The publication transition, against a real database (slice 2.8a).
  *
  * The service tests prove which listings *may* publish; these prove what the

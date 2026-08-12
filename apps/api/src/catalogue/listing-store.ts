@@ -249,6 +249,41 @@ export interface ListingDraft {
 }
 
 /**
+ * What an owner may rewrite about a listing they already have (slice 2.9b-i).
+ *
+ * **Deliberately not `Partial<ListingDraft>`.** A partial is a shape where
+ * "absent" and "clear this" are the same value on the wire, and the field that
+ * would suffer is the one somebody most regrets losing — a description they had
+ * written. Every field here is present on every edit, and the form sends back
+ * what it was given.
+ *
+ * `ownerId` is absent too, unlike `ListingDraft`: it is an argument to `update`
+ * rather than part of the payload, because it identifies *which row may be
+ * written* rather than what to write. A field on the object is one a caller could
+ * set to somebody else.
+ */
+export interface ListingEdit {
+  readonly title: string;
+  readonly description: string;
+  readonly replacementValue: MoneyValue;
+  /** Already validated against the schema on the version about to be pinned. */
+  readonly attributes: ListingAttributeValues;
+  /** Already checked against the options on the version about to be pinned. */
+  readonly transportRequirement: TransportRequirement | null;
+  readonly requiresTwoPersonLift: boolean;
+  readonly rates: ListingRateCard;
+  /**
+   * The version the values above were validated against — a guard, not a choice,
+   * exactly as on `ListingDraft`.
+   *
+   * The store pins whatever is current when it writes. If that is no longer this
+   * number, it refuses rather than writing answers checked against a schema that
+   * has been replaced.
+   */
+  readonly categoryVersionNumber: number;
+}
+
+/**
  * Raised when the category a draft names does not exist.
  *
  * Its own error rather than a null return, because the caller has to tell it
@@ -309,6 +344,40 @@ export interface ListingStore {
    * telling a stranger "that exists but is not yours" confirms it exists.
    */
   findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null>;
+
+  /**
+   * Rewrite what this owner wrote about their item (slice 2.9b-i, ADR 0042).
+   *
+   * **Re-pins to the category's current version as it writes**, which is the
+   * whole of ADR 0042's fourth point: an owner editing a listing is looking at a
+   * form built from the current configuration, so the listing comes onto it.
+   * Nothing is silent — the current questions are on screen, and the publication
+   * gate already refuses a listing that has not answered the required ones.
+   *
+   * It re-pins **within the same category** and cannot move between categories:
+   * `categorySlug` is not on `ListingEdit` at all, and the composite foreign key
+   * would refuse a version belonging to another category even if it were.
+   *
+   * **It does not touch `listing_locations`.** Slice 2.9b-ii owns the collection
+   * address, because changing one means geocoding again and the fuzz offset must
+   * be preserved across edits rather than redrawn (ADR 0032, §8.4.1). Leaving the
+   * row alone is the behaviour, not an oversight — an edit that quietly cleared
+   * somebody's address would be the worst available bug in this method.
+   *
+   * **It does not touch `status` or `moderationState`** either. Publishing and
+   * pausing are their own transitions with their own preconditions, and
+   * moderation is not the owner's (ADR 0041). Editing a published listing leaves
+   * it published, which is what an owner correcting a typo expects.
+   *
+   * Throws `CategoryChangedError` when the version it would pin is not the one
+   * the edit's values were validated against — the same guarantee `createDraft`
+   * makes, inside the same read that resolves the version, because only there can
+   * the window between the service's read and the write be closed.
+   *
+   * Resolves to null when no such listing belongs to this owner, matching
+   * `findOwnedBy` so a stranger cannot tell "not yours" from "does not exist".
+   */
+  update(id: string, ownerId: string, edit: ListingEdit): Promise<ListingRecord | null>;
 
   /**
    * This owner's listings, newest first, at most `limit` of them.
