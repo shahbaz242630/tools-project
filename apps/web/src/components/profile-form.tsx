@@ -140,6 +140,73 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
         </p>
       </fieldset>
 
+      {/*
+        **A legal question, asked plainly** (BRD §8.3, slice 2.13). A renter has
+        materially stronger rights against a business than against a private
+        individual, so they have to be told which they are dealing with before
+        they book — and the only way we can tell them truthfully is to ask.
+
+        **Nothing is pre-selected**, which is the rule 2.8c-i's moderation radios
+        established for a different reason and which applies twice over here: a
+        default would be the platform answering a legal question on somebody's
+        behalf, and because "private" is the likely answer it would be wrong
+        rarely and invisibly — the worst frequency there is.
+
+        The business option is offered rather than hidden even though we cannot
+        publish one. Hiding it would leave a business either lying or leaving
+        silently, and we would learn nothing; offering it means a real answer, an
+        honest refusal, and a recorded signal of demand for the day this is
+        reconsidered.
+      */}
+      <fieldset>
+        <legend>How you list</legend>
+
+        <p id="owner-status-help">
+          Renters have different legal rights depending on whether they rent from a
+          private individual or from a business, so we have to say which you are. You
+          cannot publish a listing until you have answered.
+        </p>
+
+        <p>
+          <label htmlFor="owner-status-private">
+            <input
+              id="owner-status-private"
+              name="ownerStatus"
+              type="radio"
+              value="private_owner"
+              defaultChecked={profile?.ownerStatus === 'private_owner'}
+              aria-describedby="owner-status-help"
+            />{' '}
+            I am a private individual, lending my own things
+          </label>
+        </p>
+
+        <p>
+          <label htmlFor="owner-status-trader">
+            <input
+              id="owner-status-trader"
+              name="ownerStatus"
+              type="radio"
+              value="professional_trader"
+              defaultChecked={profile?.ownerStatus === 'professional_trader'}
+            />{' '}
+            I am a business, or I do this as a trade
+          </label>
+        </p>
+
+        {/*
+          **Said here rather than discovered at publish.** Somebody who ticks
+          business and then finds out three screens later that they cannot list
+          has been wasted, and a platform that only mentions its limits when you
+          hit them is one people stop trusting.
+        */}
+        <p>
+          We only accept listings from private individuals at the moment. If you list as
+          a business you can still use the site, but you will not be able to publish —
+          tell us anyway, because it is how we find out there is demand for it.
+        </p>
+      </fieldset>
+
       <p>
         <button type="submit" disabled={pending}>
           {pending ? 'Saving…' : 'Save profile'}

@@ -30,6 +30,9 @@ describe('readProfileForm', () => {
           town: 'Bristol',
           postcode: 'BS7 8AA',
         },
+        // No radio picked, so nothing is posted and nothing is assumed — the
+        // state the publication gate refuses on (slice 2.13).
+        ownerStatus: null,
       },
     });
   });
@@ -51,7 +54,12 @@ describe('readProfileForm', () => {
 
     expect(result).toEqual({
       kind: 'ok',
-      input: { displayName: 'Sarah M.', phone: null, address: null },
+      input: {
+        displayName: 'Sarah M.',
+        phone: null,
+        address: null,
+        ownerStatus: null,
+      },
     });
   });
 

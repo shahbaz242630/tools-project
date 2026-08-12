@@ -3,6 +3,7 @@ import type {
   AdminProfile,
   ExportedProfile,
   MyProfile,
+  OwnerStatus,
   ProfileInput,
   PublicProfile,
 } from '@platform/contracts';
@@ -53,6 +54,7 @@ export class ProfilesService {
       displayName: input.displayName,
       phone: input.phone,
       address: input.address,
+      ownerStatus: input.ownerStatus,
     });
 
     // Awaited, and its failure is deliberately not caught. A profile saved with
@@ -177,6 +179,24 @@ export class ProfilesService {
    * most scraping, and the ids are UUIDs precisely so it cannot be done by
    * counting.
    */
+  /**
+   * How this person lists — themselves or as a business — or null if they have
+   * not said (slice 2.13, BRD §8.3).
+   *
+   * **Answers a port Catalogue declares** (`OwnerStatusSource`), so this module
+   * exposes one fact rather than handing another module a profile it could read
+   * a phone number off. The same narrowing `ProfileSummarySource` makes, for the
+   * same reason.
+   *
+   * Null for "has not answered" **and** for an account with no profile at all,
+   * deliberately conflated: both mean nobody has declared anything, and telling
+   * them apart would invite a branch that reads one of them as consent.
+   */
+  async findOwnerStatus(userId: string): Promise<OwnerStatus | null> {
+    const profile = await this.profiles.find(userId);
+    return profile?.ownerStatus ?? null;
+  }
+
   async findPublic(userId: string): Promise<PublicProfile | null> {
     // Account first. A profile row can outlive its owner's deletion — the
     // erasure slice that removes it is still to come — so checking the profile
@@ -217,6 +237,11 @@ function auditableState(profile: StoredProfile): unknown {
     displayName: profile.displayName,
     phone: profile.phone,
     address: profile.address,
+    // **Digested, unlike most things added to a record.** It is a legal
+    // declaration about who somebody is, so "when did they change it, and to
+    // what" is exactly the question an audit trail should be able to answer —
+    // and the one somebody would ask if a listing turned out to be a business's.
+    ownerStatus: profile.ownerStatus,
   };
 }
 
@@ -226,6 +251,7 @@ function toMyProfile(stored: StoredProfile): MyProfile {
     displayName: stored.displayName,
     phone: stored.phone,
     address: stored.address,
+    ownerStatus: stored.ownerStatus,
     updatedAt: stored.updatedAt.toISOString(),
   };
 }

@@ -62,6 +62,16 @@ export function readProfileForm(form: FormValues): FormResult {
         displayName: text(form, 'displayName'),
         phone: optional(form, 'phone'),
         address: anyAddress ? addressFields : null,
+        /*
+         * **Null when neither radio was picked**, which is what an unanswered
+         * question posts — a radio group with nothing selected sends no value
+         * at all. That is exactly the state the publication gate refuses on, so
+         * it must survive the round trip rather than being coerced into a
+         * default here. `parseProfileInput` refuses anything that is neither
+         * null nor one of the two known values, so a hand-crafted POST cannot
+         * invent a third.
+         */
+        ownerStatus: optional(form, 'ownerStatus'),
       }),
     };
   } catch (error) {

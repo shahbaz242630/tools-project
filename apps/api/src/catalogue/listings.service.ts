@@ -28,6 +28,8 @@ import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
 import type { PublicationSwitch } from './publication-switch.js';
+import type { OwnerStatusSource } from './owner-status-source.js';
+import type { OwnerStatus } from '@platform/contracts';
 import type { ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import type {
@@ -100,6 +102,25 @@ export interface SubmittedListing {
  * only the service can know whether this listing already has an offset to honour.
  */
 export type SubmittedListingEdit = Omit<SubmittedListing, 'ownerId' | 'categorySlug'>;
+
+/**
+ * A public listing and the disclosure that goes with it (slice 2.13).
+ *
+ * **Two values rather than one enriched record**, because they come from two
+ * modules and the seam should stay visible. The listing is Catalogue's; the
+ * status is the person's and is read through a port. Flattening them would make
+ * it look as though the store knew something about the owner, and the next
+ * person to add a field would put it in the wrong place.
+ *
+ * `ownerStatus` is non-nullable and is always `private_owner` today, because
+ * `findPublic` refuses to return anything else. It is carried rather than
+ * assumed for the reason a disclosure is carried at all: the day traders are
+ * supported, the page renders the truth without being edited.
+ */
+export interface PublicListingView {
+  readonly listing: PublicListingRecord;
+  readonly ownerStatus: OwnerStatus;
+}
 
 /**
  * Raised when the category does not offer the transport requirement chosen.
@@ -333,6 +354,18 @@ export class ListingsService {
      * quiet success.
      */
     private readonly audit: AuditService,
+    /**
+     * How a listing's owner lists — themselves or as a business (slice 2.13).
+     *
+     * A port this module declares and Profiles answers, the same shape as
+     * `locator` and `publication` above. Required rather than optional for the
+     * reason both of those are: an optional dependency is one several boot sites
+     * forget, and the failure here would be **a legal disclosure silently
+     * defaulting to absent**, which refuses every publication — loud — or, if
+     * somebody 'fixed' that by defaulting the other way, silently publishes
+     * traders as private individuals.
+     */
+    private readonly ownerStatuses: OwnerStatusSource,
   ) {}
 
   /**
@@ -528,6 +561,12 @@ export class ListingsService {
         rates: submitted.rates,
         hasCollectionLocation: location.kind !== 'cleared',
         isLocated: willBeLocated(location),
+        // Read here rather than carried on the record, because it is a fact
+        // about the person and not about the listing — and because reading it
+        // fresh means an owner who declares "business" stops being able to keep
+        // a published listing complete from that moment, rather than from
+        // whenever the listing was last written.
+        ownerStatus: await this.ownerStatuses.findOwnerStatus(ownerId),
       });
 
       if (blockers.length > 0) throw new PublishedListingIncompleteError(blockers);
@@ -632,9 +671,34 @@ export class ListingsService {
    * that is not visible, so a check here would be a second statement of the rule
    * that could disagree with the one that ran. The visibility decision has one
    * home, and it is the query.
+   *
+   * **The owner's declared status is read here and is a second visibility
+   * rule** (slice 2.13), which is worth its own paragraph because it closes a
+   * hole rather than merely adding a field. Publication settles completeness at
+   * the moment of publishing and never looks again — so somebody could publish
+   * as a private individual, then change their profile to say they list as a
+   * business, and their listing would keep serving a disclosure that had become
+   * untrue. Making public visibility *depend* on the declaration means the
+   * disclosure cannot go stale: change your answer, and the listing stops being
+   * public until you change it back.
+   *
+   * Returning null rather than an error keeps the route's one-answer rule
+   * intact — a stranger cannot tell this apart from a paused listing, and should
+   * not be able to.
    */
-  findPublic(id: string): Promise<PublicListingRecord | null> {
-    return this.store.findPublished(id);
+  async findPublic(id: string): Promise<PublicListingView | null> {
+    const listing = await this.store.findPublished(id);
+    if (listing === null) return null;
+
+    const ownerStatus = await this.ownerStatuses.findOwnerStatus(listing.ownerId);
+
+    // Not `!== 'professional_trader'`: an owner who has *never* declared must
+    // not be published either, and writing the negative would have let null
+    // through. The positive is the only form of this test that is safe as the
+    // vocabulary grows.
+    if (ownerStatus !== 'private_owner') return null;
+
+    return { listing, ownerStatus };
   }
 
   /**
@@ -798,6 +862,7 @@ export class ListingsService {
       rates: listing.rates,
       hasCollectionLocation: listing.collectionLocation !== null,
       isLocated: listing.isLocated,
+      ownerStatus: await this.ownerStatuses.findOwnerStatus(ownerId),
     });
 
     if (blockers.length > 0) throw new ListingNotPublishableError(blockers);

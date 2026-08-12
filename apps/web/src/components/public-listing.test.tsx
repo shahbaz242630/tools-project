@@ -66,6 +66,7 @@ function listing(over: Partial<PublicListing> = {}): PublicListing {
       weekend: null,
       weekly: null,
     },
+    ownerStatus: 'private_owner',
     ...over,
   };
 }
@@ -173,6 +174,43 @@ describe('the price', () => {
     render(<PublicListingView listing={listing()} />);
 
     expect(document.body.textContent).not.toContain('Longer hires');
+  });
+});
+
+describe('who you would be renting from', () => {
+  it('states that the owner is a private individual', () => {
+    // BRD §8.3's consumer-law disclosure, in the body of the page rather than
+    // in small print: a renter has materially stronger rights against a
+    // business, so they are entitled to know before they book.
+    render(<PublicListingView listing={listing()} />);
+
+    expect(document.body.textContent).toContain('A private individual');
+    expect(document.body.textContent).toContain('lending their own item');
+  });
+
+  it('says plainly that this is not a business', () => {
+    // The useful half. "Private individual" is the legal term and means
+    // little to somebody who has not met it; "not a business" is the fact they
+    // can act on.
+    render(<PublicListingView listing={listing()} />);
+
+    expect(document.body.textContent).toContain('Not a business');
+    expect(document.body.textContent).toContain('rights differ');
+  });
+
+  it('renders from the field rather than a fixed sentence', () => {
+    /*
+     * Only private owners can publish today, so this case is unreachable
+     * through the API — and asserted anyway, because the failure it guards is a
+     * hardcoded sentence going on being printed after it stops being true. The
+     * day traders are supported the page needs no edit.
+     */
+    render(
+      <PublicListingView listing={listing({ ownerStatus: 'professional_trader' })} />,
+    );
+
+    expect(document.body.textContent).toContain('A business');
+    expect(document.body.textContent).not.toContain('A private individual');
   });
 });
 

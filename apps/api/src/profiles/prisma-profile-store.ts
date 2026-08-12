@@ -1,4 +1,6 @@
 import { Postcode } from '@platform/core';
+import { OWNER_STATUSES } from '@platform/contracts';
+import type { OwnerStatus } from '@platform/contracts';
 import type { PrismaClient } from '@platform/database';
 import type { FieldEncryptor } from '../encryption/field-encryption.js';
 import { ProfileConflictError } from './profile-store.js';
@@ -50,6 +52,8 @@ interface ProfileRow {
   userId: string;
   displayName: string;
   phone: string | null;
+  /** Widened to `string`, and narrowed by `asOwnerStatus` on the way out. */
+  ownerStatus: string | null;
   updatedAt: Date;
 }
 
@@ -101,10 +105,15 @@ export class PrismaProfileStore implements ProfileStore {
             userId,
             displayName: changes.displayName,
             phone: changes.phone,
+            ownerStatus: changes.ownerStatus,
           },
           update: {
             displayName: changes.displayName,
             phone: changes.phone,
+            // Written on every save, including when it is null. The form posts
+            // the whole profile, so an absent answer means the person cleared
+            // it — the same reasoning the address delete below follows.
+            ownerStatus: changes.ownerStatus,
           },
         });
 
@@ -191,6 +200,7 @@ export class PrismaProfileStore implements ProfileStore {
       displayName: profile.displayName,
       phone: profile.phone,
       address: address === null ? null : this.decrypt(profile.userId, address),
+      ownerStatus: asOwnerStatus(profile.ownerStatus, profile.userId),
       updatedAt: profile.updatedAt,
     };
   }
@@ -207,4 +217,27 @@ export class PrismaProfileStore implements ProfileStore {
       postcode: address.postcode,
     };
   }
+}
+
+/**
+ * The declared status, narrowed on the way out.
+ *
+ * **Throws rather than reading leniently**, the treatment `asStatus` and
+ * `asModerationState` get in the catalogue and for a stronger reason. Falling
+ * back to `private_owner` would be the worst available guess: it is the answer a
+ * public page renders as a legal disclosure, so a value this build does not
+ * recognise — a row from a newer version, a fixture, a hand-edit — would have us
+ * telling a renter something untrue about who they are dealing with.
+ *
+ * Null is a real value and passes through: it means the person has not answered,
+ * which the publication gate refuses on.
+ */
+function asOwnerStatus(value: string | null, userId: string): OwnerStatus | null {
+  if (value === null) return null;
+  if ((OWNER_STATUSES as readonly string[]).includes(value)) {
+    return value as OwnerStatus;
+  }
+  throw new Error(
+    `Profile for ${userId} has an owner status this build does not know: ${value}`,
+  );
 }

@@ -4,7 +4,7 @@ import type { PublicListing } from '@platform/contracts';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
 import { LISTINGS_SERVICE } from './catalogue.tokens.js';
 import type { ListingsService } from './listings.service.js';
-import type { PublicListingRecord } from './listing-store.js';
+import type { PublicListingView } from './listings.service.js';
 
 /**
  * One listing, as anyone may see it (slice 2.10).
@@ -37,7 +37,7 @@ export class PublicListingsController {
 
   @Get(PUBLIC_LISTING_ROUTE)
   async find(@Param('id') id: string): Promise<PublicListing> {
-    const listing = await this.listings.findPublic(id);
+    const view = await this.listings.findPublic(id);
 
     /*
      * **One answer for four different situations**: no such listing, a draft, a
@@ -47,12 +47,17 @@ export class PublicListingsController {
      * of this route that cannot be used to audit our moderation decisions from
      * the outside.
      *
-     * The store returns null for all four, so there is nothing to get wrong
-     * here. That is the design rather than a convenience.
+     * **Five situations from 2.13**, and the fifth is the interesting one: an
+     * owner who has changed their profile to say they list as a business. Their
+     * listings stop being public immediately, because a disclosure that can go
+     * stale is worse than none — see `ListingsService.findPublic`.
+     *
+     * The service returns null for all of them, so there is nothing to get
+     * wrong here. That is the design rather than a convenience.
      */
-    if (listing === null) throw new NotFoundException();
+    if (view === null) throw new NotFoundException();
 
-    return toPublicListing(listing);
+    return toPublicListing(view);
   }
 }
 
@@ -71,7 +76,7 @@ export class PublicListingsController {
  * with no price is a broken invariant rather than a 404: answering "not found"
  * would hide it, and this is the sort of thing that should page somebody.
  */
-function toPublicListing(listing: PublicListingRecord): PublicListing {
+function toPublicListing({ listing, ownerStatus }: PublicListingView): PublicListing {
   const price = inclusiveDailyPrice(listing.rates, listing.currentFeePolicy);
 
   /* c8 ignore next 5 -- unreachable: publication refuses a listing with no
@@ -100,5 +105,15 @@ function toPublicListing(listing: PublicListingRecord): PublicListing {
     location: { outwardCode: listing.outwardCode, town: listing.town },
     inclusiveDailyPrice: price,
     rates: listing.rates,
+    /*
+     * **The consumer-law disclosure BRD §8.3 asks for** (slice 2.13). A renter
+     * has materially stronger rights against a trader than against a private
+     * individual, so they are entitled to know which before they book.
+     *
+     * Always `private_owner` today, because `findPublic` refuses to return
+     * anything else — and carried on the wire rather than assumed by the page
+     * precisely so that stops being a thing anybody has to remember.
+     */
+    ownerStatus,
   };
 }

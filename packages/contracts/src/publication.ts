@@ -26,6 +26,7 @@
 import { z } from 'zod';
 import { parseWith } from './parse.js';
 import type { CategoryAttribute } from './catalogue.js';
+import type { OwnerStatus } from './profiles.js';
 import type { ListingAttributeValues } from './attribute-values.js';
 import type { ListingRateCard } from './pricing.js';
 import type { CategoryTransportOption, TransportRequirement } from './transport.js';
@@ -60,6 +61,19 @@ export interface PublicationCandidate {
   readonly hasCollectionLocation: boolean;
   /** Whether the address resolved to a point. Never the coordinates (§8.4.1). */
   readonly isLocated: boolean;
+  /**
+   * How the **owner** lists — themselves or as a business — or null if they have
+   * not said (BRD §8.3, slice 2.13, ADR 0043).
+   *
+   * **The only field on this shape that is not a fact about the listing**, and
+   * that is worth flagging rather than hiding. Everything else here is
+   * something the owner types into the listing form; this is a property of the
+   * person, read through a port, and the same value gates every listing they
+   * have. It is here because publication is where a legal disclosure has to be
+   * settled — a listing must not go in front of a renter without one — and
+   * because the caller already assembles this object at exactly that moment.
+   */
+  readonly ownerStatus: OwnerStatus | null;
 }
 
 /**
@@ -180,6 +194,40 @@ export function publicationBlockers(
    * postcode on a map" is what happened and "no coordinates" is not something an
    * owner can act on.
    */
+  /*
+   * **Two messages from one field, because the two cases need opposite things
+   * from the reader** — the shape `hasCollectionLocation` and `isLocated`
+   * already use, one field along.
+   *
+   * Not answered: go and answer it, and the listing publishes.
+   * Answered "business": there is nothing to fix on this listing at all, and
+   * saying "not ready yet" without saying why would send somebody hunting
+   * through their own form for a field that is already correct.
+   *
+   * **A blocker rather than its own error**, unlike the platform-wide publishing
+   * switch. From the owner's point of view this genuinely is a reason their
+   * listing cannot go live, it is stable rather than temporary, and it belongs
+   * in the list beside everything else they need to resolve. The switch got its
+   * own status because it is about the platform and says nothing about them.
+   */
+  if (listing.ownerStatus === null) {
+    blockers.push({
+      field: 'ownerStatus',
+      message:
+        'Your profile has to say whether you are listing as a private ' +
+        'individual or as a business before anything can be published. Renters ' +
+        'have different rights depending on which, so they have to be told.',
+    });
+  } else if (listing.ownerStatus === 'professional_trader') {
+    blockers.push({
+      field: 'ownerStatus',
+      message:
+        'Your profile says you list as a business. We only accept listings ' +
+        'from private individuals at the moment, so this cannot be published — ' +
+        'nothing is wrong with the listing itself.',
+    });
+  }
+
   if (!listing.hasCollectionLocation) {
     blockers.push({
       field: 'collectionLocation',

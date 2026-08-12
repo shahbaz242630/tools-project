@@ -475,6 +475,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
 
     return {
       id: listing.id,
+      ownerId: listing.ownerId,
       categorySlug: listing.categoryVersion.category.slug,
       categoryName: listing.categoryVersion.name,
       categoryAttributes: asAttributes(

@@ -1,0 +1,75 @@
+-- Migration: profile_owner_status
+--
+-- Slice 2.13. A person says whether they list as themselves or as a business,
+-- and a renter is entitled to know which before they book (BRD §8.3).
+--
+-- Why this is on `profiles` and not on `listings`
+-- ----------------------------------------------
+-- BRD §8.3's wording is *"listings must declare private-owner or
+-- professional-trader status"*, and the placement is wrong — corrected by
+-- ADR 0043 and a §8.3 amendment of 12 August 2026. It is a fact about a person,
+-- not about an object, and every marketplace holds it at the account for that
+-- reason: Vinted Pro badges every listing from a profile-level flag, eBay splits
+-- private from business at the account.
+--
+-- Per-listing would let one person's listings contradict each other about who
+-- they are, which is worse than not asking — a renter reading two adverts from
+-- the same owner would have no way to know which disclosure was true.
+--
+-- Why it is not on `seller_tax_profiles`
+-- -------------------------------------
+-- That table (ADR 0028) records which HMRC reporting regime a return is filed
+-- under and whether the seller's identity is verified for it. This records who
+-- the counterparty is for consumer-law purposes. They correlate and they are not
+-- the same question: a trader can be non-reportable, and a reportable seller can
+-- be a private individual. Merging them would make one column answer to two
+-- statutes, and the first divergence would be silent.
+--
+-- Why there is no default
+-- ----------------------
+-- ADR 0025's rule, and it matters more here than usual. A default of
+-- `private_owner` would be the platform answering a legal question on somebody's
+-- behalf — and because it is the *likely* answer it would be wrong rarely and
+-- invisibly, which is the worst frequency. NULL means "has not answered", the
+-- publication gate reads it as exactly that, and nothing publishes until a human
+-- has said.
+--
+-- Data impact
+-- -----------
+-- Additive and nullable, so every existing row is valid the moment this runs and
+-- reads as not-answered. There are three profiles in development and none in any
+-- deployed environment.
+--
+-- **It does make existing listings unpublishable until their owner answers**,
+-- which is the intended behaviour and is worth stating: the local fixture owner
+-- must answer once before the published fixture can be republished. Already
+-- published listings are not retracted — publication is evaluated at the moment
+-- of publishing, and this adds no retrospective sweep.
+--
+-- Rollback
+-- --------
+-- `ALTER TABLE "profiles" DROP CONSTRAINT "owner_status_is_known";`
+-- `ALTER TABLE "profiles" DROP COLUMN "ownerStatus";`
+--
+-- Safe in both directions. Dropping loses every declaration, which would have to
+-- be collected again — no other table references it, so nothing breaks. An older
+-- build reaching a row with this column set ignores it, because the column is
+-- additive and the older Prisma client does not select it.
+
+-- AlterTable
+ALTER TABLE "profiles" ADD COLUMN "ownerStatus" TEXT;
+
+-- The closed vocabulary, in the database as well as in code.
+--
+-- `listings.status` and `moderationState` are checked in code only; this is
+-- checked here too, for `seller_tax_profiles`' reason one step along — the value
+-- carries a legal meaning, and a row written by a migration, a fixture script or
+-- a hand-edit that this build cannot interpret would make a listing page state
+-- something untrue about somebody's legal capacity. Cheap to say here, and it
+-- means the constraint holds for writers that are not this application.
+--
+-- NULL is permitted and is the state every existing row starts in.
+ALTER TABLE "profiles" ADD CONSTRAINT "owner_status_is_known" CHECK (
+  "ownerStatus" IS NULL
+  OR "ownerStatus" IN ('private_owner', 'professional_trader')
+);

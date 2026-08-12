@@ -15,6 +15,7 @@ const MY_PROFILE = {
     town: 'Bristol',
     postcode: 'BS7 8AA',
   },
+  ownerStatus: null,
   updatedAt: '2026-07-31T09:00:00.000Z',
 };
 
@@ -35,6 +36,7 @@ const INPUT: ProfileInput = {
     town: 'Bristol',
     postcode: 'BS7 8AA',
   },
+  ownerStatus: 'private_owner',
 };
 
 /** Answers once with the given status and body. */

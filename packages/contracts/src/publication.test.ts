@@ -61,6 +61,10 @@ const complete: PublicationCandidate = {
   rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
   hasCollectionLocation: true,
   isLocated: true,
+  // Declared, and declared private — the state an ordinary owner is in once
+  // they have answered (slice 2.13). Every fixture below inherits it, so the
+  // tests that predate the declaration keep describing what they were about.
+  ownerStatus: 'private_owner',
 };
 
 const fields = (listing: PublicationCandidate) =>
@@ -228,6 +232,7 @@ describe('the location', () => {
       ...complete,
       hasCollectionLocation: false,
       isLocated: false,
+      ownerStatus: 'private_owner',
     });
 
     expect(blockers).toHaveLength(1);
@@ -246,6 +251,7 @@ describe('the location', () => {
         ...complete,
         hasCollectionLocation: false,
         isLocated: false,
+        ownerStatus: 'private_owner',
       }),
     ).toHaveLength(1);
   });
@@ -267,6 +273,7 @@ describe('reporting more than one problem', () => {
         rates: { daily: null, weekend: null, weekly: null },
         hasCollectionLocation: false,
         isLocated: false,
+        ownerStatus: 'private_owner',
       }),
     ).toEqual([
       'description',
@@ -300,6 +307,7 @@ describe('reporting more than one problem', () => {
       rates: { daily: null, weekend: null, weekly: null },
       hasCollectionLocation: false,
       isLocated: false,
+      ownerStatus: 'private_owner',
     })) {
       // The convention `contract-issues.ts` enforces: a sentence stands alone.
       expect(blocker.message).toMatch(/^[A-Z]/);
