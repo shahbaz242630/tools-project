@@ -10,6 +10,7 @@ import type { VerifiedSession } from './session-verifier.js';
 import { InMemoryUserDirectory, InMemoryWebhookLedger } from './testing/fakes.js';
 import { UserConflictError } from './user-directory.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
+import type { AuditFakes } from '../audit/testing/fakes.js';
 import {
   RecordingEraser,
   StubDataSource,
@@ -604,6 +605,127 @@ describe('exportFor', () => {
     });
   });
 
+  /**
+   * What was done **to** the subject, in the file they download (slice 1.12).
+   *
+   * **This is the defect these tests exist for**, not a new feature. Through
+   * schema 4 the export read the actor side of the audit trail alone, so an
+   * administrator reading somebody's account appeared on their activity page and
+   * was missing from the copy of their data — and the export is the one §10.1
+   * makes a legal answer. It was found by reading the two code paths side by
+   * side, which is the only way it could have been found: both were correct on
+   * their own terms.
+   */
+  describe('what was done to them, not only what they did', () => {
+    /** An administrator reads the subject's account, with a reason. */
+    async function givenAnAdministratorLooked(subjectId: string, audit: AuditFakes) {
+      await audit.service.record({
+        actor: {
+          userId: '99999999-9999-4999-8999-999999999999',
+          ipAddress: '198.51.100.4',
+          sessionId: 'sess_admin',
+        },
+        action: 'admin.user_viewed',
+        targetType: 'user',
+        targetId: subjectId,
+        reason: 'Investigating a report about a listing',
+      });
+    }
+
+    it('carries a disclosure the subject did not perform', async () => {
+      const { id, audit, identity } = await provision();
+      await givenAnAdministratorLooked(id, audit);
+
+      const document = await identity.accountData.exportFor(ACTOR(id));
+
+      expect(
+        document?.activity.some((entry) => entry.action === 'admin.user_viewed'),
+      ).toBe(true);
+    });
+
+    it('names who did it, so the subject can tell it apart from their own actions', async () => {
+      const { id, audit, identity } = await provision();
+      await givenAnAdministratorLooked(id, audit);
+
+      const document = await identity.accountData.exportFor(ACTOR(id));
+      const disclosure = document?.activity.find(
+        (entry) => entry.action === 'admin.user_viewed',
+      );
+
+      expect(disclosure?.by).toBe('administrator');
+    });
+
+    it('carries the reason verbatim, which is the point of recording one', async () => {
+      // ADR 0024's rule, now in the export as well as on the screen. A
+      // disclosure without its reason tells somebody they were looked at and
+      // not why, which is the half that matters.
+      const { id, audit, identity } = await provision();
+      await givenAnAdministratorLooked(id, audit);
+
+      const document = await identity.accountData.exportFor(ACTOR(id));
+      const disclosure = document?.activity.find(
+        (entry) => entry.action === 'admin.user_viewed',
+      );
+
+      expect(disclosure?.reason).toBe('Investigating a report about a listing');
+    });
+
+    it('withholds the administrator’s IP address', async () => {
+      /*
+       * **The disclosure rule that runs the other way.** The subject is entitled
+       * to know they were looked at and why; the address the administrator was
+       * sitting at is not theirs to have. The activity page has withheld it
+       * since 1.8b-i and the export must not undo that — which it cannot,
+       * because `ActivityRecord` nulls it before the mapper ever sees it.
+       */
+      const { id, audit, identity } = await provision();
+      await givenAnAdministratorLooked(id, audit);
+
+      const document = await identity.accountData.exportFor(ACTOR(id));
+      const disclosure = document?.activity.find(
+        (entry) => entry.action === 'admin.user_viewed',
+      );
+
+      expect(disclosure?.ipAddress).toBeNull();
+      expect(JSON.stringify(document)).not.toContain('198.51.100.4');
+    });
+
+    it('still carries the subject’s own actions, with their own address', async () => {
+      /*
+       * The half that already worked, asserted so that fixing the missing half
+       * cannot quietly replace it — a regression that would read as a fix.
+       *
+       * **Exported twice on purpose.** The first export records itself and, as
+       * the mapper's docblock says, appears in the *next* one — so this is also
+       * the only test that demonstrates that behaviour rather than describing
+       * it, and it gives us an own action carrying a real address to contrast
+       * with the administrator's withheld one.
+       */
+      const { id, identity } = await provision();
+      await identity.accountData.exportFor(ACTOR(id));
+
+      const document = await identity.accountData.exportFor(ACTOR(id));
+      const own = document?.activity.find(
+        (entry) => entry.action === 'account.exported',
+      );
+
+      expect(own?.by).toBe('subject');
+      expect(own?.ipAddress).toBe('203.0.113.7');
+      expect(own?.reason).toBeNull();
+    });
+
+    it('says whether the activity was cut short', async () => {
+      // The third section to declare it, and it became necessary when this one
+      // started carrying twice as much. An export that truncates without saying
+      // so is one somebody reads as their whole record.
+      const { id, identity } = await provision();
+
+      const document = await identity.accountData.exportFor(ACTOR(id));
+
+      expect(document?.activityTruncated).toBe(false);
+    });
+  });
+
   it('carries a schema version and an export timestamp', async () => {
     // A person may keep this file for years. Without a version, an old export
     // is indistinguishable from a malformed one.
@@ -613,9 +735,11 @@ describe('exportFor', () => {
     // Literal rather than the constant: importing EXPORT_SCHEMA_VERSION here
     // would make this assert that a number equals itself, and pass through any
     // bump. Version 2 added `signIns` in slice 1.11a; version 3 added
-    // `listings` in 2.5a — and this line failing is how that bump announced
-    // itself, which is the whole reason it is a literal.
-    expect(document?.schemaVersion).toBe(4);
+    // `listings` in 2.5a; version 4 added `listingsTruncated` in H2; version 5
+    // added **disclosures** — what was done *to* the subject — plus the author,
+    // the reason and `activityTruncated`. Each of those bumps announced itself
+    // by failing this line, which is the whole reason it is a literal.
+    expect(document?.schemaVersion).toBe(5);
     expect(document?.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 

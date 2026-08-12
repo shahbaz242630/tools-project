@@ -15,6 +15,7 @@ const DOCUMENT = {
   },
   profile: null,
   activity: [],
+  activityTruncated: false,
   signIns: [],
   signInsTruncated: false,
   listingsTruncated: false,

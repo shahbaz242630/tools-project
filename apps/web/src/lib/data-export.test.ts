@@ -6,7 +6,7 @@ const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
 
 const DOCUMENT = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   exportedAt: '2026-07-31T09:00:00.000Z',
   account: {
     id: '11111111-1111-4111-8111-111111111111',
@@ -31,11 +31,24 @@ const DOCUMENT = {
     {
       action: 'account.provisioned',
       targetType: 'user',
+      by: 'subject',
       reason: null,
       ipAddress: '203.0.113.7',
       createdAt: '2026-07-15T09:00:00.000Z',
     },
+    {
+      // A disclosure — something done *to* them, which schema 5 added. The
+      // administrator's address is withheld, which is why `ipAddress` is null
+      // here and present above.
+      action: 'admin.user_viewed',
+      targetType: 'user',
+      by: 'administrator',
+      reason: 'Investigating a report about a listing',
+      ipAddress: null,
+      createdAt: '2026-07-16T09:00:00.000Z',
+    },
   ],
+  activityTruncated: false,
   signIns: [
     {
       event: 'started',
