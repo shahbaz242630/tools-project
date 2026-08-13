@@ -1,0 +1,23 @@
+/*
+ * The page-entry animation (slice D3).
+ *
+ * Opacity and transform only. Both are composited on the GPU, so this cannot
+ * cause layout or paint work on a page that may be rendering a table of listings
+ * at the same time.
+ */
+
+.enter {
+  animation: enter 250ms ease;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

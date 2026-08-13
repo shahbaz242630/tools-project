@@ -4,6 +4,7 @@ import { BRAND } from '@platform/config';
 import { Instrument_Sans } from 'next/font/google';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { RouteTransition } from '../components/route-transition';
 import { SiteFooter } from '../components/site-footer';
 import { SiteHeader } from '../components/site-header';
 import './globals.css';
@@ -35,12 +36,31 @@ const instrumentSans = Instrument_Sans({
 // From the one place the brand name lives (ADR 0005). When it is decided, this
 // follows automatically rather than needing a search across the codebase.
 //
-// No `description` yet, deliberately. A meta description that named the launch
-// category would hard-code exactly what the engine is built not to assume, and
-// inventing marketing copy for an unnamed product is worse than omitting it.
-// It belongs with the real landing page.
+/**
+ * **The description arrives with the landing page it describes** (slice D3). It
+ * was deliberately absent while there was nothing to describe, on the reasoning
+ * that inventing marketing copy for an unnamed product is worse than omitting
+ * it — that reasoning has now expired rather than been overruled.
+ *
+ * It names the launch category, which is a claim about what we sell today and
+ * not an assumption baked into the engine. Categories remain configuration
+ * (BRD §5); nothing reads this string.
+ *
+ * **There is no social card here, and that is a decision rather than an
+ * omission.** The design package ships one, and it reads *"Deposits held ·
+ * addresses private"* — the claim slice D3 removed from the landing copy,
+ * because we never hold a deposit (BRD §8.7.2 authorises a hold on the renter's
+ * own card). A social card is the version of a page that gets screenshotted,
+ * cached and indexed, so it is the worst possible place to keep a claim we have
+ * just corrected everywhere else. It needs regenerating, and it is inert until a
+ * domain exists anyway: Open Graph images must be absolute URLs, so without
+ * `metadataBase` Next can only point at localhost.
+ */
 export const metadata: Metadata = {
   title: BRAND.name,
+  description:
+    'Rent tools and garden equipment by the day from people near you. ' +
+    'Addresses stay private until a booking is agreed.',
 };
 
 export const viewport: Viewport = {
@@ -85,8 +105,13 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           <SiteHeader signedIn={userId !== null} email={sessionClaims?.email ?? null} />
 
           {/* The skip target is here rather than on each page's `<main>`, so no
-              page has to remember to carry an id for the link to work. */}
-          <div id="content">{children}</div>
+              page has to remember to carry an id for the link to work. It stays
+              on the outer element: the transition below remounts its child on
+              every navigation, and an id that comes and goes is one the skip
+              link would intermittently fail to find. */}
+          <div id="content">
+            <RouteTransition>{children}</RouteTransition>
+          </div>
 
           <SiteFooter />
         </ClerkProvider>

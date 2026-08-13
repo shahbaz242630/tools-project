@@ -1,0 +1,252 @@
+/*
+ * The landing page (slice D3).
+ *
+ * Breakpoints are the ones documented in `globals.css`: 1079px is the top of the
+ * compressed band, 744px is where mobile patterns start.
+ */
+
+/*
+ * The design's widest container. Set as the custom property `main` already reads
+ * rather than as a `max-width`, so the page keeps the one rule about how wide
+ * content is instead of introducing a second.
+ */
+.page {
+  --page-width: 1160px;
+
+  padding-top: 24px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Hero --------------------------------------------------------------- */
+
+.hero {
+  padding: 68px 0 56px;
+  text-align: center;
+}
+
+/*
+ * 78px in the design, and it does not survive a phone: at 375px it wraps
+ * "Borrow" and "better." onto two lines with the full stop stranded. `clamp`
+ * holds the design's size on a desktop and the design's *mobile* size (44px) at
+ * the bottom, with the middle interpolated rather than stepped.
+ */
+.headline {
+  margin: 0 0 22px;
+  font-size: clamp(2.75rem, 7vw, 4.875rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.04;
+}
+
+/* The one piece of colour in the hero, and it is a full stop. */
+.stop {
+  color: var(--accent);
+}
+
+.lede {
+  max-width: 46ch;
+  margin: 0 auto 24px;
+  color: var(--ink-secondary);
+  font-size: 17.5px;
+  line-height: 1.6;
+}
+
+/*
+ * The honesty line. Given the card treatment rather than small print, because
+ * small print is what you use when you would rather somebody did not read it.
+ */
+.notice {
+  max-width: 52ch;
+  margin: 0 auto 28px;
+  padding: 14px 20px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.cta {
+  display: inline-block;
+  padding: 13px 28px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--ground);
+  font-size: 14.5px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.cta:hover {
+  background: var(--accent-hover);
+  color: var(--ground);
+}
+
+.strapline {
+  margin: 20px 0 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+/* ---- How it works -------------------------------------------------------- */
+
+/*
+ * No top margin, unlike the design's spacing. The handoff puts a four-card
+ * "Near you" grid between the hero and this rule; without it — search is Phase 3
+ * — that margin plus the hero's own padding leaves a void that reads as a
+ * section which failed to load. The margin comes back with the grid.
+ */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 56px;
+  padding: 64px 0;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.stepNumber {
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1;
+}
+
+.step h3 {
+  margin: 0 0 6px;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.step p {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ---- Privacy ------------------------------------------------------------- */
+
+.privacy {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 72px;
+  padding: 72px 0;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.privacyHeading {
+  margin: 0;
+  font-size: clamp(1.875rem, 4vw, 2.75rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.privacyList {
+  display: flex;
+  flex-direction: column;
+}
+
+.privacyItem {
+  padding: 22px 0;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.privacyItem:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.privacyItem:last-child {
+  padding-bottom: 0;
+}
+
+.privacyItem h3 {
+  margin: 0 0 5px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.privacyItem p {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+
+/* ---- Owner panel --------------------------------------------------------- */
+
+.owner {
+  padding: 64px 48px;
+  margin-bottom: 32px;
+  border-radius: 20px;
+  background: var(--accent-tint-soft);
+  text-align: center;
+}
+
+.ownerHeading {
+  margin: 0 0 14px;
+  font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.ownerLede {
+  max-width: 44ch;
+  margin: 0 auto 30px;
+  color: var(--ink-secondary);
+  font-size: 15.5px;
+  line-height: 1.6;
+}
+
+/* ---- Compressed and mobile ----------------------------------------------- */
+
+@media (width <= 1079px) {
+  .steps {
+    gap: 36px;
+  }
+
+  .privacy {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+}
+
+@media (width <= 744px) {
+  .hero {
+    padding: 40px 0 48px;
+  }
+
+  /* Single column, which is what the design's 375px frame does. Three steps
+     side by side at 375px gives each of them about a hundred pixels. */
+  .steps {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 48px 0;
+  }
+
+  .owner {
+    padding: 44px 24px;
+  }
+
+  /* Full-width buttons on a phone, per the handoff's form rule — a centred pill
+     is harder to hit than a bar, and this is the only action on the page. */
+  .cta {
+    display: block;
+    padding: 15px 28px;
+  }
+}

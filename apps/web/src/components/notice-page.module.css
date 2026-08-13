@@ -1,0 +1,72 @@
+/*
+ * The centred notice page behind 404 and the error boundary (slice D3).
+ */
+
+.page {
+  --page-width: 560px;
+
+  padding-top: 96px;
+  text-align: center;
+}
+
+/*
+ * Monospace, and the one place in the application that uses it. The handoff
+ * reserves it for exactly this — a machine-ish label above a human sentence —
+ * and `ui-monospace` rather than a webfont, because loading a second family for
+ * six characters on a page nobody wants to be on is a poor trade.
+ */
+.overline {
+  margin: 0 0 14px;
+  color: var(--ink-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.heading {
+  margin: 0 0 12px;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.body {
+  max-width: 44ch;
+  margin: 0 auto 28px;
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.secondary {
+  display: inline-block;
+  padding: 13px 26px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.secondary:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+@media (width <= 744px) {
+  .page {
+    padding-top: 56px;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+}
