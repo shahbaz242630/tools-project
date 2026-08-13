@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 /**
@@ -15,7 +16,7 @@ vi.mock('../app/account/profile/actions', () => ({
   saveProfileAction: vi.fn(),
 }));
 
-const { ProfileForm } = await import('./profile-form');
+const { ProfileForm, DistrictPreview } = await import('./profile-form');
 
 const PROFILE = {
   displayName: 'Sarah M.',
@@ -88,6 +89,62 @@ describe('ProfileForm', () => {
     // No dead controls: the button submits to a real action.
     render(<ProfileForm profile={null} />);
     expect(screen.getByRole('button', { name: /save profile/i })).toBeEnabled();
+  });
+});
+
+/**
+ * The live district preview (slice D5).
+ *
+ * **The most reassuring thing on the page**, because it turns "only the first
+ * part is published" from a promise into something somebody can watch happen
+ * while they type. That makes it worth testing as behaviour rather than as copy.
+ */
+describe('the district preview', () => {
+  it('explains the rule before anything is typed', () => {
+    render(<DistrictPreview postcode="" />);
+    expect(document.body.textContent).toContain('the part before the space');
+  });
+
+  it('shows the actual district once the postcode is valid', () => {
+    render(<DistrictPreview postcode="BS7 8AA" />);
+
+    expect(document.body.textContent).toContain('BS7');
+    // The whole point: the half that stays private must not appear in a sentence
+    // about what is published.
+    expect(document.body.textContent).not.toContain('8AA');
+  });
+
+  it.each([
+    ['half-typed', 'SW1'],
+    ['nonsense', 'not a postcode'],
+    ['only whitespace', '   '],
+  ])('falls back to the rule for %s rather than showing an error', (_case, typed) => {
+    /*
+     * "SW1" on the way to "SW11 4AB" is not a mistake, and telling somebody off
+     * mid-word is the fastest way to make a form feel hostile. It is also why
+     * validity is checked before `Postcode.outwardCode`, which throws.
+     */
+    render(<DistrictPreview postcode={typed} />);
+    expect(document.body.textContent).toContain('the part before the space');
+  });
+
+  it('updates as somebody types into the real field', async () => {
+    const user = userEvent.setup();
+    render(<ProfileForm profile={null} />);
+
+    await user.type(screen.getByLabelText(/postcode/i), 'BS7 8AA');
+
+    expect(screen.getByText(/only the district/i).textContent).toContain('BS7');
+  });
+
+  it('is announced rather than only shown', () => {
+    // A line whose whole purpose is that it changes while you type is useless to
+    // somebody who is never told it changed.
+    render(<ProfileForm profile={null} />);
+    expect(screen.getByText(/only the district/i)).toHaveAttribute(
+      'aria-live',
+      'polite',
+    );
   });
 });
 

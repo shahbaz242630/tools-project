@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 import {
   DISPLAY_NAME_MAX_LENGTH,
   DISPLAY_NAME_MIN_LENGTH,
@@ -8,9 +8,11 @@ import {
   TOWN_MAX_LENGTH,
 } from '@platform/contracts';
 import type { MyProfile } from '@platform/contracts';
+import { Postcode } from '@platform/core';
 import { saveProfileAction } from '../app/account/profile/actions';
 import { INITIAL_PROFILE_FORM_STATE } from '../app/account/profile/state';
 import { ProfileFormStatus } from './profile-form-status';
+import styles from './profile-form.module.css';
 
 /**
  * The profile form.
@@ -26,6 +28,12 @@ import { ProfileFormStatus } from './profile-form-status';
  * silently is asking for trust it has not earned. The labels are also the only
  * place a person learns that their full postcode stays private while its
  * district does not.
+ *
+ * **Slice D5 gave that idea a shape**: three cards, one per audience, each
+ * badged with who sees it. The `<fieldset>`/`<legend>` structure underneath is
+ * unchanged — the legend is what associates the label with the whole group for a
+ * screen reader, and it is the only element that does, so it is styled as a pill
+ * rather than replaced by a heading.
  */
 export function ProfileForm({ profile }: { profile: MyProfile | null }) {
   const [state, action, pending] = useActionState(
@@ -33,14 +41,31 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
     INITIAL_PROFILE_FORM_STATE,
   );
 
+  /*
+   * **Tracked for the preview only; the input stays uncontrolled.** The design
+   * shows the district live in the help text — the single most reassuring thing
+   * on this page, because it turns "only the first part is published" from a
+   * promise into something you can watch happen while you type.
+   *
+   * `defaultValue` plus `onChange` rather than `value` plus `onChange`: making
+   * this a controlled input would put React between somebody and their own
+   * keyboard for no benefit, and this codebase has been bitten before by
+   * controlled inputs behaving differently under automation than under fingers.
+   */
+  const [postcode, setPostcode] = useState(profile?.address?.postcode ?? '');
+
   return (
     <form action={action}>
       <ProfileFormStatus state={state} />
 
-      <fieldset>
-        <legend>Public — anyone can see this</legend>
+      <fieldset className={styles.card}>
+        <legend className={styles.legend}>
+          <span className={`${styles.badge} ${styles.badgePublic}`}>
+            Public — anyone can see this
+          </span>
+        </legend>
 
-        <p>
+        <div className={styles.field}>
           <label htmlFor="displayName">Display name</label>
           <input
             id="displayName"
@@ -55,23 +80,27 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             // rules, because anything a browser enforces a client can skip.
             aria-describedby="displayName-help"
           />
-        </p>
-        <p id="displayName-help">
-          Shown on your profile and beside anything you list. Many people use a first
-          name and an initial.
-        </p>
+          <p id="displayName-help" className={styles.help}>
+            Shown on your profile and beside anything you list. Many people use a first
+            name and an initial.
+          </p>
+        </div>
       </fieldset>
 
-      <fieldset>
-        <legend>Private — shared only when you agree a rental</legend>
+      <fieldset className={styles.card}>
+        <legend className={styles.legend}>
+          <span className={styles.badge}>
+            Private — shared only when you agree a rental
+          </span>
+        </legend>
 
-        <p>
+        <p className={styles.intro}>
           Nobody sees these until you and the other person have agreed a booking. Your
           address is never shown in full: your profile shows only the first part of your
           postcode, which covers thousands of homes.
         </p>
 
-        <p>
+        <div className={styles.field}>
           <label htmlFor="phone">Phone number</label>
           <input
             id="phone"
@@ -81,10 +110,12 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             defaultValue={profile?.phone ?? ''}
             aria-describedby="phone-help"
           />
-        </p>
-        <p id="phone-help">UK numbers only, for now.</p>
+          <p id="phone-help" className={styles.help}>
+            UK numbers only, for now.
+          </p>
+        </div>
 
-        <p>
+        <div className={styles.field}>
           <label htmlFor="line1">Address line 1</label>
           <input
             id="line1"
@@ -94,9 +125,9 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             maxLength={ADDRESS_LINE_MAX_LENGTH}
             defaultValue={profile?.address?.line1 ?? ''}
           />
-        </p>
+        </div>
 
-        <p>
+        <div className={styles.field}>
           <label htmlFor="line2">Address line 2</label>
           <input
             id="line2"
@@ -106,9 +137,9 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             maxLength={ADDRESS_LINE_MAX_LENGTH}
             defaultValue={profile?.address?.line2 ?? ''}
           />
-        </p>
+        </div>
 
-        <p>
+        <div className={styles.field}>
           <label htmlFor="town">Town or city</label>
           <input
             id="town"
@@ -119,12 +150,13 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             defaultValue={profile?.address?.town ?? ''}
             aria-describedby="town-help"
           />
-        </p>
-        <p id="town-help">
-          This one is public — it appears on your profile beside your postcode district.
-        </p>
+          <p id="town-help" className={styles.help}>
+            This one is public — it appears on your profile beside your postcode
+            district.
+          </p>
+        </div>
 
-        <p>
+        <div className={styles.field}>
           <label htmlFor="postcode">Postcode</label>
           <input
             id="postcode"
@@ -132,12 +164,20 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             type="text"
             autoComplete="postal-code"
             defaultValue={profile?.address?.postcode ?? ''}
+            onChange={(event) => setPostcode(event.target.value)}
             aria-describedby="postcode-help"
           />
-        </p>
-        <p id="postcode-help">
-          Only the district — the part before the space — is ever shown publicly.
-        </p>
+          {/*
+            **`aria-live` so the change is announced, not only seen.** The whole
+            point of this line is that it moves while you type; somebody using a
+            screen reader gets nothing from a change they are not told about.
+            `polite` rather than `assertive`, because it must not interrupt the
+            typing that caused it.
+          */}
+          <p id="postcode-help" className={styles.help} aria-live="polite">
+            <DistrictPreview postcode={postcode} />
+          </p>
+        </div>
       </fieldset>
 
       {/*
@@ -158,41 +198,43 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
         honest refusal, and a recorded signal of demand for the day this is
         reconsidered.
       */}
-      <fieldset>
-        <legend>How you list</legend>
+      <fieldset className={styles.card}>
+        <legend className={styles.legend}>
+          <span className={styles.badge}>How you list</span>
+        </legend>
 
-        <p id="owner-status-help">
+        <p id="owner-status-help" className={styles.intro}>
           Renters have different legal rights depending on whether they rent from a
           private individual or from a business, so we have to say which you are. You
           cannot publish a listing until you have answered.
         </p>
 
-        <p>
-          <label htmlFor="owner-status-private">
+        <div className={styles.choices}>
+          <label htmlFor="owner-status-private" className={styles.choice}>
             <input
               id="owner-status-private"
               name="ownerStatus"
               type="radio"
+              className={styles.radio}
               value="private_owner"
               defaultChecked={profile?.ownerStatus === 'private_owner'}
               aria-describedby="owner-status-help"
-            />{' '}
+            />
             I am a private individual, lending my own things
           </label>
-        </p>
 
-        <p>
-          <label htmlFor="owner-status-trader">
+          <label htmlFor="owner-status-trader" className={styles.choice}>
             <input
               id="owner-status-trader"
               name="ownerStatus"
               type="radio"
+              className={styles.radio}
               value="professional_trader"
               defaultChecked={profile?.ownerStatus === 'professional_trader'}
-            />{' '}
+            />
             I am a business, or I do this as a trade
           </label>
-        </p>
+        </div>
 
         {/*
           **Said here rather than discovered at publish.** Somebody who ticks
@@ -200,18 +242,46 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
           has been wasted, and a platform that only mentions its limits when you
           hit them is one people stop trusting.
         */}
-        <p>
+        <p className={styles.help}>
           We only accept listings from private individuals at the moment. If you list as
           a business you can still use the site, but you will not be able to publish —
           tell us anyway, because it is how we find out there is demand for it.
         </p>
       </fieldset>
 
-      <p>
+      <div className={styles.actions}>
         <button type="submit" disabled={pending}>
           {pending ? 'Saving…' : 'Save profile'}
         </button>
-      </p>
+      </div>
     </form>
   );
+}
+
+/**
+ * The part of a postcode that gets published, shown while it is typed.
+ *
+ * **Three states, and the middle one is the reason this is a component.** With
+ * nothing typed it explains the rule; with a valid postcode it shows the actual
+ * district; with something half-typed it goes back to explaining rather than
+ * flashing an error, because "SW1" on the way to "SW11 4AB" is not a mistake and
+ * telling somebody off mid-word is the fastest way to make a form feel hostile.
+ *
+ * `Postcode.outwardCode` throws on anything it does not recognise, so validity
+ * is checked first — the same pairing `AccountHeader` uses.
+ */
+export function DistrictPreview({ postcode }: { readonly postcode: string }) {
+  const typed = postcode.trim();
+
+  if (typed !== '' && Postcode.isValid(typed)) {
+    return (
+      <>
+        Only the district —{' '}
+        <span className={styles.district}>{Postcode.outwardCode(typed)}</span> — is ever
+        shown publicly.
+      </>
+    );
+  }
+
+  return <>Only the district — the part before the space — is ever shown publicly.</>;
 }
