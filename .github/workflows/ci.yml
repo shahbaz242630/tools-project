@@ -683,7 +683,31 @@ jobs:
 
           # The brand name comes from packages/config. Asserting it proves the
           # page rendered from our code rather than a proxy placeholder.
-          if ! grep -q 'Rental Marketplace' /tmp/home.html; then
+          #
+          # **Read from that file rather than written out here.** ADR 0005 puts
+          # the trading name in exactly one module so that choosing it is a
+          # one-line change; a literal in this job was a second home for it, and
+          # it did what a second home always does — the name changed and this
+          # step failed, on a pull request that had nothing to do with the
+          # deployment.
+          #
+          # Parsed with sed rather than executed, because this job has no
+          # dependencies installed and no built packages: it drives containers.
+          # `name:` wins when it is a literal, which is what a decided name looks
+          # like; otherwise it references the placeholder, which is today.
+          BRAND_NAME=$(sed -n "s/^  name: '\(.*\)',$/\1/p" packages/config/src/brand.ts)
+          if [ -z "$BRAND_NAME" ]; then
+            BRAND_NAME=$(sed -n \
+              "s/^export const BRAND_PLACEHOLDER = '\(.*\)';$/\1/p" \
+              packages/config/src/brand.ts)
+          fi
+          if [ -z "$BRAND_NAME" ]; then
+            echo "::error::could not read the brand name from packages/config/src/brand.ts"
+            exit 1
+          fi
+          echo "expecting the brand name: ${BRAND_NAME}"
+
+          if ! grep -qF "$BRAND_NAME" /tmp/home.html; then
             echo "::error::the home page did not render the brand name"
             head -c 500 /tmp/home.html
             exit 1
