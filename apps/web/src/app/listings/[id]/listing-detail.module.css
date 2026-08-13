@@ -1,0 +1,156 @@
+/*
+ * The owner's view of one listing (slice D6).
+ *
+ * Beside the page rather than in `components/`, because everything here is
+ * layout for this one route. The two blocks that carry meaning — the status line
+ * and the moderation notice — are styled in `listing-visibility.module.css`,
+ * with the components a test can reach.
+ */
+
+.page {
+  /* The design's width for an owner's listing, wider than a form and narrower
+     than a table. */
+  --page-width: 720px;
+}
+
+.title {
+  margin-bottom: 16px;
+}
+
+/*
+ * What the owner set, reported back to them. Neutral on purpose — the tinted
+ * treatment is reserved for the moderation notice, which is somebody *else*
+ * acting on their listing (ADR 0041 keeps those two authorities apart, and
+ * giving them the same card would undo that where it is read).
+ *
+ * Here rather than in `listing-visibility.module.css` because this element is
+ * the page's, not the component's: `StatusLine` renders the sentence, the page
+ * renders the box around it.
+ */
+.status {
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  line-height: 1.6;
+}
+
+/*
+ * The fact grid, at the 190px the handoff specifies.
+ *
+ * **Applied to the `<dl>` itself rather than to a wrapper per pair.** This list
+ * is written as bare `dt`/`dd` siblings, which is the older of the two
+ * conventions in this codebase — `globals.css` grids the newer
+ * `dl > div > dt + dd` shape. Gridding the list directly gets the same result
+ * without touching thirty lines of JSX to insert wrappers, and a `<dl>` of
+ * alternating terms and definitions is exactly what a two-column grid is for.
+ */
+.facts {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+  gap: 0;
+  padding: 4px 26px;
+  margin: 0 0 20px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.facts dt {
+  padding: 14px 20px 14px 0;
+  border-top: 1px solid var(--line-row);
+  color: var(--ink-label);
+  font-size: var(--text-label);
+  font-weight: 500;
+}
+
+.facts dd {
+  padding: 14px 0;
+  border-top: 1px solid var(--line-row);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* The first pair carries no rule above it. `:first-of-type` on each, because
+   the two elements alternate and neither is simply the grid's first child. */
+.facts dt:first-of-type,
+.facts dt:first-of-type + dd {
+  border-top: 0;
+}
+
+/* ---- Actions ------------------------------------------------------------- */
+
+/*
+ * Publish, pause, put back up — and Edit. Grouped so they read as one row of
+ * choices rather than as a link that happens to sit above a button.
+ *
+ * **Edit comes first**, which slice 2.9b-i decided and this keeps: the commonest
+ * reason somebody is on this page is that publishing refused and named what was
+ * missing, so the control that fixes it should be the one they meet first.
+ */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.edit {
+  display: inline-block;
+  padding: 13px 26px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.edit:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+/* The publish/pause form sits in the same row rather than below it. */
+.actions form {
+  display: contents;
+}
+
+.footnote {
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+@media (width <= 744px) {
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 4px 20px;
+  }
+
+  .facts dt {
+    padding: 14px 0 0;
+  }
+
+  .facts dt:first-of-type + dd {
+    border-top: 0;
+  }
+
+  .facts dd {
+    padding: 2px 0 14px;
+    border-top: 0;
+  }
+
+  /* Full-width, stacked — the handoff's mobile rule for this page. */
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .edit {
+    text-align: center;
+  }
+}

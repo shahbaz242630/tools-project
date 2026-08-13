@@ -16,6 +16,7 @@
 
 import { isPubliclyVisible } from '@platform/contracts';
 import type { ListingStatus, ModerationState, OwnerListing } from '@platform/contracts';
+import styles from './listing-visibility.module.css';
 
 /**
  * The same truth as {@link StatusLine}, in the few words a table cell has
@@ -51,13 +52,17 @@ export function VisibilityLabel({
   // **The rule gates the claim, and nothing else may.** Every other branch below
   // only explains why the answer was no, so no rewording of an explanation can
   // ever put "anyone can find it" in front of a listing nobody can.
-  if (isPubliclyVisible(status, moderationState)) return <>Live — anyone can find it</>;
+  if (isPubliclyVisible(status, moderationState)) {
+    // Green, per the design — and the words stay, because colour must never be
+    // the only thing carrying the state (WCAG 1.4.1).
+    return <span className={styles.live}>Live — anyone can find it</span>;
+  }
 
   switch (moderationState) {
     case 'UNDER_REVIEW':
       return <>Being reviewed — hidden</>;
     case 'REJECTED':
-      return <>Refused — hidden</>;
+      return <span className={styles.refused}>Refused — hidden</span>;
     case 'APPROVED':
       break;
     default: {
@@ -81,7 +86,7 @@ export function VisibilityLabel({
        of this component reached this line through a different route and rendered
        dead copy nobody could ever be shown. */
     case 'PUBLISHED':
-      return <>Published</>;
+      return <span className={styles.live}>Published</span>;
     default: {
       const unhandled: never = status;
       return <>{String(unhandled)}</>;
@@ -174,8 +179,8 @@ export function ModerationNotice({ listing }: { readonly listing: OwnerListing }
      * not earning. The status line above is `role="status"` — it changes when they
      * act, so it is polite; this changes when *somebody else* acts.
      */
-    <section aria-labelledby="moderation" role="alert">
-      <h2 id="moderation">
+    <section className={styles.notice} aria-labelledby="moderation" role="alert">
+      <h2 id="moderation" className={styles.noticeHeading}>
         {reviewing ? 'This listing is being reviewed' : 'This listing was not allowed'}
       </h2>
 
@@ -216,7 +221,7 @@ export function ModerationNotice({ listing }: { readonly listing: OwnerListing }
       ) : (
         <>
           <p>{reviewing ? 'Why it is being reviewed:' : 'Why it was refused:'}</p>
-          <blockquote>{listing.moderationReason}</blockquote>
+          <blockquote className={styles.reason}>{listing.moderationReason}</blockquote>
         </>
       )}
 
