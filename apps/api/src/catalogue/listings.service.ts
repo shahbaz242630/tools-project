@@ -8,12 +8,14 @@ import {
 } from '@platform/contracts';
 import type {
   AttributeValueIssue,
+  DistanceBucket,
   ExportedListingsSection,
   ListingCollectionLocation,
   ListingStatus,
   ListingTransition,
   ModerationState,
   PublicationBlocker,
+  SearchRadiusMiles,
   TransportRequirement,
 } from '@platform/contracts';
 import { Paging, Time } from '@platform/core';
@@ -23,10 +25,12 @@ import {
   CATEGORY_LIST_LIMIT,
   EXPORTED_LISTING_LIMIT,
   OWNED_LISTING_LIMIT,
+  SEARCH_RESULT_LIMIT,
 } from './limits.js';
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
+import type { ListingProximity } from './listing-proximity.js';
 import type { PublicationSwitch } from './publication-switch.js';
 import type { OwnerStatusSource } from './owner-status-source.js';
 import type { OwnerStatus } from '@platform/contracts';
@@ -39,6 +43,7 @@ import type {
   ListingRecord,
   ListingStore,
   PublicListingRecord,
+  PublicListingSummaryRecord,
 } from './listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 
@@ -120,6 +125,36 @@ export type SubmittedListingEdit = Omit<SubmittedListing, 'ownerId' | 'categoryS
 export interface PublicListingView {
   readonly listing: PublicListingRecord;
   readonly ownerStatus: OwnerStatus;
+}
+
+/**
+ * One search result: a listing, its disclosure, and how far away it is
+ * (slice 3.1a).
+ *
+ * **Three values rather than an enriched record**, extending the reason
+ * `PublicListingView` gives to a third source. The listing is Catalogue's, the
+ * status is the person's, and the distance is neither — it is a fact about this
+ * listing *and the origin this searcher chose*, which is why it cannot be a
+ * field on anything the store returns.
+ */
+export interface NearbyListingView {
+  readonly listing: PublicListingSummaryRecord;
+  readonly ownerStatus: OwnerStatus;
+  readonly distance: DistanceBucket;
+}
+
+/**
+ * A page of search results, and whether there were more.
+ *
+ * `truncated` comes from the proximity query rather than from counting what
+ * survived the visibility filter, and that is the honest reading: it answers
+ * "were there more listings inside this radius", which is the question the
+ * page's control acts on. A listing dropped by the owner's declaration is not a
+ * page boundary.
+ */
+export interface NearbySearchResults {
+  readonly results: readonly NearbyListingView[];
+  readonly truncated: boolean;
 }
 
 /**
@@ -366,6 +401,21 @@ export class ListingsService {
      * traders as private individuals.
      */
     private readonly ownerStatuses: OwnerStatusSource,
+    /**
+     * Which listings are near a postcode (slice 3.1a, ADR 0044).
+     *
+     * The second port this module declares for Search & Location to answer, and
+     * deliberately not a method on `locator`: that one is about **a listing's**
+     * location and is used only on write paths, this one is about a search and
+     * is the only public read in the module that touches geography. One port per
+     * question keeps the write path unable to reach the search, and the search
+     * unable to reach a coordinate.
+     *
+     * Required rather than optional, for the reason every dependency here is:
+     * an optional one is what several boot sites forget, and the failure would
+     * arrive as a search that silently finds nothing.
+     */
+    private readonly proximity: ListingProximity,
   ) {}
 
   /**
@@ -699,6 +749,83 @@ export class ListingsService {
     if (ownerStatus !== 'private_owner') return null;
 
     return { listing, ownerStatus };
+  }
+
+  /**
+   * Listings near a postcode, nearest first (slice 3.1a, BRD §8.4).
+   *
+   * **Four steps, and the order of the last two is the security of the method.**
+   * Proximity gives ids in distance order; the store hydrates them, re-applying
+   * the two visibility columns; the owner's declaration is checked; and only
+   * then is anything paired with its distance. Checking the declaration *after*
+   * hydration rather than inside the geo query is ADR 0044's asymmetry — the
+   * third authority lives in another module's table, and it excludes almost
+   * nothing, so reading it there would buy a boundary crossing for nothing.
+   *
+   * **Null means the origin could not be placed**, not that nothing was found.
+   * Both an unrecognised postcode and a geocoder that is briefly down arrive as
+   * null, exactly as they do on the write path — and the caller collapses them,
+   * because a searcher is owed one answer rather than a diagnosis of our
+   * provider.
+   *
+   * **The order comes from `page.matches` and is not recomputed.** Exact
+   * distances do not cross the proximity boundary (§8.4.1), so this method
+   * *cannot* re-sort even if somebody wanted it to — which is why it walks the
+   * matches and looks each listing up, rather than mapping over what the store
+   * returned.
+   *
+   * **Owner statuses are deduplicated and resolved together.** It is still one
+   * query per distinct owner, which is an N+1 in the strict sense and is left
+   * standing deliberately: the fix is a batch method on `OwnerStatusSource`, and
+   * a port method added for a page size we have never served would be
+   * speculation. It is recorded as a known limitation rather than forgotten.
+   */
+  async searchNearby(
+    originPostcode: string,
+    radiusMiles: SearchRadiusMiles,
+  ): Promise<NearbySearchResults | null> {
+    const page = await this.proximity.findWithin(
+      originPostcode,
+      radiusMiles,
+      SEARCH_RESULT_LIMIT,
+    );
+    if (page === null) return null;
+
+    const summaries = await this.store.findPublishedSummaries(
+      page.matches.map((match) => match.listingId),
+    );
+    const byId = new Map(summaries.map((summary) => [summary.id, summary]));
+
+    const ownerIds = [...new Set(summaries.map((summary) => summary.ownerId))];
+    const ownerStatuses = new Map(
+      await Promise.all(
+        ownerIds.map(
+          async (ownerId) =>
+            [ownerId, await this.ownerStatuses.findOwnerStatus(ownerId)] as const,
+        ),
+      ),
+    );
+
+    const results: NearbyListingView[] = [];
+
+    for (const match of page.matches) {
+      const listing = byId.get(match.listingId);
+      // Absent means it stopped being visible between the two queries — a
+      // moderator acting in the milliseconds between them. Dropped silently,
+      // for the reason `findPublic` returns null: a searcher must not be able
+      // to tell a moderated listing from one that was never there.
+      if (listing === undefined) continue;
+
+      const ownerStatus = ownerStatuses.get(listing.ownerId) ?? null;
+      // Not `!== 'professional_trader'`, for the reason `findPublic` gives: an
+      // owner who has never declared must not be published either, and the
+      // negative would have let null through.
+      if (ownerStatus !== 'private_owner') continue;
+
+      results.push({ listing, ownerStatus, distance: match.distance });
+    }
+
+    return { results, truncated: page.truncated };
   }
 
   /**

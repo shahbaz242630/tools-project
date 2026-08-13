@@ -197,6 +197,38 @@ export interface PublicListingRecord {
 }
 
 /**
+ * A listing as it appears in a list of search results (slice 3.1a).
+ *
+ * **Narrower again than `PublicListingRecord`, and built field by field.** The
+ * detail projection is already the narrowest view of a listing in the system, so
+ * reusing it and dropping two fields at the controller is the obvious move — and
+ * it is how a results page comes to carry two thousand characters of description
+ * per row, and the whole pinned attribute schema twenty-four times over. What a
+ * card renders is a name, a category, a district, a price and a distance.
+ *
+ * `ownerId` is here for the reason it is on `PublicListingRecord`: so the
+ * service can ask Profiles a question about the owner, and for nothing else. It
+ * is not on the wire type.
+ *
+ * There is deliberately no `distance` field. Distance is not a property of a
+ * listing — it is a property of a listing *and an origin somebody chose* — and
+ * putting it on a record the store returns would mean the store had to know
+ * about searching. The service pairs the two.
+ */
+export interface PublicListingSummaryRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly categoryName: string;
+  /** The fee policy **as it stands now** (ADR 0042), for the displayed price. */
+  readonly currentFeePolicy: CategoryFeePolicy;
+  readonly title: string;
+  readonly rates: ListingRateCard;
+  /** The publishable half of the address, and there is no other half here. */
+  readonly outwardCode: string;
+  readonly town: string;
+}
+
+/**
  * One moderation decision, as the store is asked to write it.
  *
  * A named shape rather than four positional arguments, because three of them
@@ -619,6 +651,35 @@ export interface ListingStore {
    * forgetting to strip it. The query does not join `listing_locations`.
    */
   findPublished(id: string): Promise<PublicListingRecord | null>;
+
+  /**
+   * Several listings at once, as anybody may see them — for search (slice 3.1a).
+   *
+   * **The visibility predicate is applied here too, and that is not belt and
+   * braces for its own sake.** The ids arrive from `ListingProximity`, which
+   * filters on the same two columns inside its own SQL (ADR 0044) — so this
+   * repeats a check that has already passed. It repeats it because the two
+   * queries are not one transaction: a moderator can reject a listing in the
+   * milliseconds between them, and the alternative to re-checking is serving
+   * that listing because a different query said so a moment earlier. It is also
+   * what stops this method becoming an unscoped bulk read that some later route
+   * calls with ids from anywhere.
+   *
+   * **Returns what it found, in no promised order, and silently omits the
+   * rest.** Both halves are deliberate. Order belongs to the caller, which has
+   * the distances this method cannot see. Omission rather than nulls or an error
+   * is right because a missing row means the listing stopped being visible
+   * between the two queries, which is not exceptional and is not the caller's to
+   * distinguish — it is the same "one answer for every reason" rule
+   * `findPublished` follows.
+   *
+   * **Bounded by the caller's `ids`**, so there is no `limit` argument: the
+   * bound was applied by the query that produced them (ADR 0035). A caller
+   * handing this an unbounded list has already lost the argument upstream.
+   */
+  findPublishedSummaries(
+    ids: readonly string[],
+  ): Promise<readonly PublicListingSummaryRecord[]>;
 
   /**
    * Read a listing without knowing whose it is (slice 2.8c-i).

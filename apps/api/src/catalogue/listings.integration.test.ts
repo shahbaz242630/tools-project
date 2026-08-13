@@ -13,13 +13,17 @@ import {
   parseOwnedListings,
   parseOwnerListing,
   parsePublicListing,
+  parsePublicListingSearchResults,
   publicListingPath,
+  publicListingSearchPath,
 } from '@platform/contracts';
 import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import { FakeGeocoder } from '../search-location/testing/fakes.js';
+import { milesToMetres } from '../search-location/distance-bucket.js';
+import { SEARCH_RESULT_LIMIT } from './limits.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
@@ -2989,6 +2993,275 @@ describe('how an owner declares themselves', () => {
       );
 
       expect(mine.status).toBe('PUBLISHED');
+    });
+  });
+});
+
+describe('searching for listings near a postcode', () => {
+  beforeEach(async () => {
+    await givenACategory('outdoor-gardening', SCHEMA, TRANSPORT);
+    listings.geocoder.knows(FakeGeocoder.BS7_8AA);
+  });
+
+  const PUBLISHABLE = {
+    ...DRAFT,
+    description: 'Serviced last spring.',
+    attributes: { power_source: 'petrol', weight_kg: '5.2' },
+    transportRequirement: 'car_boot',
+    collectionLocation: ADDRESS,
+    rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+  };
+
+  function search(postcode = 'BS7 8AA', radiusMiles = 5) {
+    // **No authorization header**, which is the whole point of the route. A
+    // test that passed a token would prove nothing about the case that matters.
+    return app.inject({
+      method: 'GET',
+      url: publicListingSearchPath(postcode, radiusMiles as 5 | 10 | 20 | 50 | 100),
+    });
+  }
+
+  /** A published listing, placed a given distance from wherever a search starts. */
+  async function givenAListing(metresAway: number, token = 'alice-token') {
+    const created = parseOwnerListing((await createListing(token, PUBLISHABLE)).json());
+    const published = await app.inject({
+      method: 'POST',
+      url: listingPublicationPath(created.id),
+      headers: auth(token),
+    });
+    expect(published.statusCode).toBe(201);
+    listings.proximity.places(created.id, metresAway);
+    return created;
+  }
+
+  it('returns a listing inside the radius, to somebody with no session', async () => {
+    const created = await givenAListing(3_000);
+
+    const response = await search();
+
+    expect(response.statusCode).toBe(200);
+    const results = parsePublicListingSearchResults(response.json());
+    expect(results.results.map((result) => result.id)).toEqual([created.id]);
+  });
+
+  it('leaves out a listing outside the radius', async () => {
+    await givenAListing(milesToMetres(8));
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    expect(results.results).toEqual([]);
+  });
+
+  it('finds it again at a wider radius, which is what the empty state offers', async () => {
+    const created = await givenAListing(milesToMetres(8));
+
+    const results = parsePublicListingSearchResults(
+      (await search('BS7 8AA', 10)).json(),
+    );
+
+    expect(results.results.map((result) => result.id)).toEqual([created.id]);
+  });
+
+  it('says which radius it answered, so a defaulted search is not misread', async () => {
+    await givenAListing(3_000);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/public/listings?postcode=BS7%208AA',
+    });
+
+    expect(parsePublicListingSearchResults(response.json()).radiusMiles).toBe(5);
+  });
+
+  it('orders results nearest first', async () => {
+    const far = await givenAListing(6_000);
+    const near = await givenAListing(800);
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    expect(results.results.map((result) => result.id)).toEqual([near.id, far.id]);
+  });
+
+  it('shows a coarse distance and never an exact one', async () => {
+    await givenAListing(800);
+    await givenAListing(5_000);
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    expect(results.results.map((result) => result.distance)).toEqual([
+      { kind: 'under_a_mile' },
+      { kind: 'approximate', miles: 3 },
+    ]);
+  });
+
+  it('carries the inclusive price rather than the bare rate (§3.4.4)', async () => {
+    await givenAListing(800);
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    // 1800 + 8% = 1944, and the card has nowhere to put the 1800 on its own.
+    expect(results.results[0]?.inclusiveDailyPrice.total.amount).toBe(1_944);
+  });
+
+  it('discloses whether the owner is a private individual (§8.3)', async () => {
+    await givenAListing(800);
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    expect(results.results[0]?.ownerStatus).toBe('private_owner');
+  });
+
+  describe('what a search must never return', () => {
+    it('leaves out a listing its owner never published', async () => {
+      const created = parseOwnerListing(
+        (await createListing('alice-token', PUBLISHABLE)).json(),
+      );
+      // Placed as if it were nearby — which is exactly the state ADR 0044's
+      // re-check exists for: proximity says yes, visibility says no, and the
+      // store is what has to refuse.
+      listings.proximity.places(created.id, 800);
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toEqual([]);
+    });
+
+    it('leaves out a listing a moderator has rejected', async () => {
+      const created = await givenAListing(800);
+      await listings.listings.moderate({
+        listingId: created.id,
+        state: 'REJECTED',
+        reason: 'Prohibited item',
+        moderatorId: await idOf('bob-token'),
+        decidedAt: new Date(),
+      });
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toEqual([]);
+    });
+
+    it('leaves out a listing whose owner now says they are a business', async () => {
+      // The third visibility authority (ADR 0043), applied on hydration rather
+      // than in the geo query (ADR 0044). It has to work, or a legal disclosure
+      // that has gone stale goes on being served from a results page.
+      await givenAListing(800);
+      listings.ownerStatuses.declares(await idOf('alice-token'), 'professional_trader');
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toEqual([]);
+    });
+
+    it('leaves out a listing whose owner has never declared', async () => {
+      await givenAListing(800);
+      listings.ownerStatuses.hasNotDeclared(await idOf('alice-token'));
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toEqual([]);
+    });
+
+    /*
+     * **2.10's disclosure test, applied to a collection.** A results page is the
+     * version of this data that gets scraped hardest, so the assertion is
+     * against the whole serialised response rather than against named fields: a
+     * field added to the projection by somebody in a hurry fails here.
+     */
+    it('discloses no street line, no full postcode and no coordinate', async () => {
+      await givenAListing(800);
+
+      const body = JSON.stringify((await search()).json());
+
+      expect(body).toContain('BS7');
+      expect(body).toContain('Bristol');
+      expect(body).not.toContain(ADDRESS.line1);
+      expect(body).not.toContain(ADDRESS.postcode);
+      expect(body).not.toContain('latitude');
+      expect(body).not.toContain('longitude');
+      expect(body).not.toContain(String(FakeGeocoder.BS7_8AA.latitude));
+      expect(body).not.toContain(String(FakeGeocoder.BS7_8AA.longitude));
+    });
+
+    it('says nothing about moderation, drafts, the owner or the description', async () => {
+      await givenAListing(800);
+
+      const body = JSON.stringify((await search()).json());
+
+      expect(body).not.toContain('moderationState');
+      expect(body).not.toContain('ownerId');
+      expect(body).not.toContain('Serviced last spring.');
+    });
+  });
+
+  describe('what it refuses', () => {
+    it('rejects a malformed postcode rather than reporting an empty area', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=not-a-postcode',
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('rejects a radius that is not one of the five', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=BS7%208AA&radiusMiles=7',
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('rejects a missing postcode', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/public/listings?radiusMiles=5',
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe('an origin nothing can place', () => {
+    it('is an empty page rather than an error', async () => {
+      // A valid postcode the geocoder does not recognise, or a geocoder that is
+      // briefly down. Neither is the searcher's fault and neither is a 5xx.
+      await givenAListing(800);
+      listings.proximity.cannotPlace('BS7 8AA');
+
+      const response = await search();
+
+      expect(response.statusCode).toBe(200);
+      const results = parsePublicListingSearchResults(response.json());
+      expect(results.results).toEqual([]);
+      expect(results.truncated).toBe(false);
+    });
+  });
+
+  describe('when there are more than fit on a page', () => {
+    it('says so rather than stopping quietly', async () => {
+      // One more than the page size, which is the only case where a full page
+      // and a complete set are indistinguishable without being told.
+      for (let index = 0; index <= SEARCH_RESULT_LIMIT; index += 1) {
+        await givenAListing(100 + index);
+      }
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toHaveLength(SEARCH_RESULT_LIMIT);
+      expect(results.truncated).toBe(true);
+    });
+
+    it('does not claim truncation on an exactly full page', async () => {
+      for (let index = 0; index < SEARCH_RESULT_LIMIT; index += 1) {
+        await givenAListing(100 + index);
+      }
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toHaveLength(SEARCH_RESULT_LIMIT);
+      expect(results.truncated).toBe(false);
     });
   });
 });

@@ -22,7 +22,10 @@ import { Postcode, Time } from '@platform/core';
 import { createRecordingLogger } from '@platform/observability/testing';
 import type { RecordingLogger } from '@platform/observability/testing';
 import { LocationService } from '../../search-location/location.service.js';
-import { FakeGeocoder } from '../../search-location/testing/fakes.js';
+import {
+  FakeGeocoder,
+  FakeListingSearch,
+} from '../../search-location/testing/fakes.js';
 import type {
   CategoryAttribute,
   CategoryFeePolicy,
@@ -42,6 +45,7 @@ import type {
   ListingStore,
   ModerationDecision,
   PublicListingRecord,
+  PublicListingSummaryRecord,
 } from '../listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from '../listing-locator.js';
 import type { OwnerStatus } from '@platform/contracts';
@@ -471,6 +475,49 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     };
   }
 
+  /**
+   * The bulk public read search hydrates from (slice 3.1a).
+   *
+   * **It applies `isPubliclyVisible` again**, exactly as the real adapter
+   * repeats `PUBLICLY_VISIBLE` — the ids came from a different query, and a
+   * double that trusted them would let a test pass for a listing the production
+   * path would have dropped.
+   *
+   * **Returns in no particular order, and a test relying on one is testing this
+   * file rather than the system.** The service is what orders results, from
+   * distances this method cannot see.
+   */
+  async findPublishedSummaries(
+    ids: readonly string[],
+  ): Promise<readonly PublicListingSummaryRecord[]> {
+    const wanted = new Set(ids);
+    const summaries: PublicListingSummaryRecord[] = [];
+
+    for (const listing of this.listings) {
+      if (!wanted.has(listing.id)) continue;
+      if (!isPubliclyVisible(listing.status, listing.moderationState)) continue;
+
+      const location = listing.collectionLocation;
+      /* c8 ignore next -- publication refuses a listing with no address. */
+      if (location === null) continue;
+
+      const hydrated = await this.hydrate(listing);
+
+      summaries.push({
+        id: hydrated.id,
+        ownerId: hydrated.ownerId,
+        categoryName: hydrated.categoryName,
+        currentFeePolicy: hydrated.currentFeePolicy,
+        title: hydrated.title,
+        rates: hydrated.rates,
+        outwardCode: Postcode.outwardCode(location.postcode),
+        town: location.town,
+      });
+    }
+
+    return summaries;
+  }
+
   async update(
     id: string,
     ownerId: string,
@@ -704,6 +751,18 @@ export interface ListingFakes {
    * unrelated regressions. The tests that are about it say so.
    */
   readonly ownerStatuses: DeclaredOwnerStatuses;
+  /**
+   * Which listings are near the origin (slice 3.1a).
+   *
+   * **Defaults to empty rather than to "everything is nearby"**, which is the
+   * opposite default to `publication` and `ownerStatuses` above — and the
+   * asymmetry is right. Those two stand in for facts that are true of an
+   * ordinary platform, so defaulting them to permissive keeps old tests
+   * describing an ordinary platform. This one stands in for geography, and there
+   * is no ordinary answer: a test that has not placed a listing has not said
+   * where anything is, and should see nothing rather than everything.
+   */
+  readonly proximity: FakeListingSearch;
   readonly service: ListingsService;
 }
 
@@ -793,6 +852,7 @@ export function createListingFakes(
 
   const publication = new SwitchableFlag();
   const ownerStatuses = new DeclaredOwnerStatuses();
+  const proximity = new FakeListingSearch();
 
   return {
     categories,
@@ -802,6 +862,7 @@ export function createListingFakes(
     publication,
     audit,
     ownerStatuses,
+    proximity,
     service: new ListingsService(
       listings,
       listings,
@@ -816,6 +877,7 @@ export function createListingFakes(
       publication,
       audit.service,
       ownerStatuses,
+      proximity,
     ),
   };
 }
