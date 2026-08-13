@@ -1,28 +1,554 @@
-/* Deliberately minimal. Visual design is a later slice with a real brand
-   behind it; anything more here would be invented and thrown away. This is
-   only enough that the scaffold is legible and readable on a phone. */
+/*
+ * The design system (slice D1).
+ *
+ * Replaces the deliberately-minimal scaffold stylesheet. The values come from
+ * the visual design handoff of 13 August 2026; three of them were corrected
+ * before being adopted and those corrections are marked below with the measured
+ * contrast ratio, because "the designer said so" is not a reason to ship text
+ * nobody can read.
+ *
+ * **Almost everything here styles a plain HTML element rather than a class.**
+ * The twenty-nine components in `components/` were written as semantic markup
+ * with no styling at all — real `<button>`, `<label>`, `<dl>`, `<table>` — and
+ * that is what makes it possible to give the whole application a visual identity
+ * without editing them. Anything genuinely bespoke gets a CSS Module beside its
+ * component; this file is only what is true everywhere.
+ *
+ * No CSS framework and no styling dependency. Next compiles this and CSS Modules
+ * natively, and the repository rule is to ask before adding a dependency that
+ * duplicates something we already have.
+ */
 
 :root {
-  color-scheme: light dark;
+  /*
+   * Light only, and this is a decision rather than an omission. The design is a
+   * single warm-neutral palette with no dark counterpart, and `light dark` here
+   * previously told the browser we handled both — so a visitor with a dark OS
+   * got browser-inverted form controls on a page that stayed cream.
+   */
+  color-scheme: light;
+
+  /* ---- Ground and surfaces ------------------------------------------ */
+  --ground: #faf9f7;
+  --surface: #ffffff;
+  --surface-sunken: #f6f4f1;
+  --surface-raised: #fbfaf8;
+
+  /* ---- Ink ----------------------------------------------------------- */
+  --ink: #1c1b19;
+  --ink-secondary: #5c5954;
+  --ink-label: #4a4844;
+
+  /*
+   * The first handoff specified `#8f8b84` for 12.5px helper text, card place
+   * lines and table headers — 3.22:1 on the page ground, below the 4.5:1 WCAG
+   * 2.2 AA needs for text that size. It was measured, sent back, and the revised
+   * handoff of 13 August adopts this value: 5.04:1 on the page, 5.30:1 on white,
+   * 4.83:1 on the sunken fill. It passes on every ground this app uses.
+   *
+   * **One muted grey, where the handoff has two.** Its revised `faint #757168`
+   * is 4.62:1 on the page but **4.43:1 on the sunken fill** — a hair under AA on
+   * the ground the no-photo caption actually sits on. The two greys are 0.4:1
+   * apart, which is a hierarchy nobody can see, so carrying the second would buy
+   * an accessibility footnote and no visual distinction. If a third text weight
+   * is ever genuinely needed, it should differ in size or weight rather than in
+   * four points of lightness.
+   */
+  --ink-muted: #6f6b64;
+
+  /* ---- Lines ---------------------------------------------------------- */
+
+  /*
+   * Decorative hairlines: card edges, row dividers, section rules. WCAG 1.4.11
+   * does not apply to these — they are not how a control is identified — so the
+   * handoff's values are kept exactly, and they are what give the design its
+   * air.
+   */
+  --line-hairline: #eceae5;
+  --line-row: #f1efeb;
+
+  /*
+   * **Kept separate from the hairlines, and this is the one value where we
+   * differ from the handoff.** The first version drew input borders in
+   * `#e5e2dc` — 1.23:1 against white. An input on a white card whose only
+   * affordance is its border is a WCAG 1.4.11 failure: the rule wants 3:1 for
+   * the visual information that identifies a control.
+   *
+   * The revised handoff offers two and asks us to pick: `#c9c5bd`, which is
+   * 1.72:1 and still fails, or `#918d85`, which passes at 3.14:1 on the page but
+   * lands on **3.01:1** on the sunken fill. `#8a867f` is the same colour family
+   * with room to breathe — 3.30:1 on the worst ground here — so a later tweak to
+   * a background cannot quietly drop the whole application under the bar.
+   *
+   * Splitting control boundaries from decorative ones is what keeps the design
+   * looking like itself: cards and dividers stay whisper-light, and only the
+   * things you can actually operate get an edge you can actually see.
+   */
+  --line-control: #8a867f;
+
+  /* ---- Accent --------------------------------------------------------- */
+  --accent: oklch(0.4 0.09 255);
+  --accent-hover: oklch(0.34 0.09 255);
+  --accent-tint: oklch(0.93 0.03 255);
+  --accent-tint-soft: oklch(0.955 0.015 255);
+  --accent-wash: oklch(0.975 0.008 255);
+  --accent-avatar: oklch(0.9 0.04 255);
+  --accent-focus: oklch(0.55 0.09 255);
+
+  /* ---- Danger, success ------------------------------------------------ */
+  --danger: #9a3b2e;
+  --danger-tint: #faf1ef;
+  --danger-line: #eed7d2;
+
+  --success: oklch(0.45 0.1 155);
+  --success-dot: oklch(0.6 0.13 155);
+  --success-tint: oklch(0.95 0.03 155);
+  --success-ink: oklch(0.35 0.06 155);
+
+  /* ---- Shape ---------------------------------------------------------- */
+  --radius-card: 16px;
+  --radius-control: 10px;
+  --radius-pill: 99px;
+
+  --shadow-card: 0 8px 28px rgb(28 27 25 / 6%);
+  --shadow-menu: 0 12px 36px rgb(28 27 25 / 12%);
+
+  /* ---- Type ------------------------------------------------------------ */
+
+  /*
+   * `--font-instrument-sans` is published by `next/font` in the root layout,
+   * which self-hosts the file. The fallback chain matters more than it looks:
+   * if the font ever fails to load, the page must still be legible rather than
+   * falling back to a serif nobody chose.
+   */
+  --font-sans: var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --text-body: 14.5px;
+  --text-helper: 12.5px;
+  --text-label: 13px;
+
+  /* ---- Layout ---------------------------------------------------------- */
+
+  /*
+   * How wide the content column is. Overridden per route — the handoff wants
+   * 560–600px for forms, 720px for an owner's listing, 1000px for tables and
+   * 1160px for the landing and browse pages — by setting `--page-width` on the
+   * page's own wrapper. The default is the form width, which is what most of
+   * this application is.
+   */
+  --page-width: 600px;
+  --page-gutter: 20px;
+
+  /* ---- The no-photo treatment ------------------------------------------ */
+
+  /*
+   * What a listing looks like before it has a photograph — which is every
+   * listing today, because media is slice 2.6 and blocked on the domain. The
+   * handoff is explicit that this is a designed state rather than a fallback:
+   * a tinted block carrying the item's initial and the words "No photo yet",
+   * never a camera icon and never a grey rectangle.
+   */
+  --photo-empty: #f1efeb;
+  --photo-empty-glyph: #d8d4cc;
+}
+
+/*
+ * **Breakpoints, as literals, and there is no way round that** — CSS custom
+ * properties cannot be used in a media query, so these three numbers are the one
+ * part of the design system that has to be repeated by hand. They are written
+ * here so that every repetition can be checked against one place:
+ *
+ *   >= 1080px   desktop, as designed
+ *   745-1079px  compressed — grids drop a column, the hero shrinks, nav unchanged
+ *   <= 744px    mobile patterns — single column, sheet nav, 44px touch targets
+ */
+
+/* ---- Reset ------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  padding: 1.5rem;
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
-  max-width: 40rem;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.6;
+
+  /* The design is a UK marketplace read mostly on phones. Stop iOS inflating
+     text in landscape, which silently breaks the type scale below. */
+  text-size-adjust: 100%;
 }
 
-dl > div {
-  display: flex;
-  gap: 0.5rem;
+/*
+ * Every route's content column. `main` rather than a class, because each page
+ * already renders one and this way no page has to be edited to be laid out.
+ */
+main {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 40px var(--page-gutter) 72px;
 }
 
-dt {
+/* ---- Typography -------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  margin: 0 0 12px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: 34px;
+}
+
+h2 {
+  font-size: 24px;
+  letter-spacing: -0.015em;
+}
+
+h3 {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0 0 14px;
+  text-wrap: pretty;
+}
+
+small {
+  display: inline-block;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+strong {
   font-weight: 600;
 }
 
+code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-sunken);
+  font-family: ui-monospace, monospace;
+  font-size: 0.92em;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-color: color-mix(in oklch, var(--accent) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--accent-hover);
+  text-decoration-color: currentcolor;
+}
+
+/*
+ * One visible focus ring for everything, and it is deliberately not subtle. The
+ * first handoff specified a focus treatment for text inputs only; a keyboard
+ * user needs one on every link, button, radio and summary too, and the browser
+ * default is the first thing a `border: none` rule removes by accident. The
+ * revised handoff agrees and specifies exactly this.
+ *
+ * No `border-radius` here: the outline already follows the element's own radius
+ * in every current browser, and setting one would square off the ring on the
+ * pill-shaped buttons this design is mostly made of.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Description lists ------------------------------------------------- */
+
+/*
+ * The label/value grid the handoff asks for on the owner's listing (190px) and
+ * the public one (200px). Built with `grid` rather than the previous flex row so
+ * long values wrap under their own column instead of against the label.
+ *
+ * The wrapping `<div>` per pair is this codebase's existing convention and the
+ * only markup that makes a `<dl>` addressable — `dt`/`dd` siblings cannot be
+ * grouped otherwise.
+ */
+dl {
+  margin: 0 0 20px;
+}
+
+dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+  gap: 4px 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line-row);
+}
+
+dl > div:first-child {
+  border-top: 0;
+}
+
+dt {
+  color: var(--ink-label);
+  font-size: var(--text-label);
+  font-weight: 500;
+}
+
+/* The scaffold appended a colon to every term. The design uses a two-column
+   grid instead, where a colon is noise. */
 dt::after {
-  content: ':';
+  content: none;
+}
+
+dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+/* Stacked label-over-value on mobile, which is what the handoff specifies for
+   both fact grids — a 190px label column on a 375px phone leaves 145px for the
+   value, which is where addresses go to die. */
+@media (width <= 744px) {
+  dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
+/* ---- Tables ------------------------------------------------------------ */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+th {
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--line-hairline);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line-row);
+  vertical-align: top;
+}
+
+/* ---- Forms ------------------------------------------------------------- */
+
+fieldset {
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--ink-label);
+  font-size: var(--text-label);
+  font-weight: 500;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: 1.4;
+}
+
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent-focus);
+
+  /* The ring is drawn on the border, so the shared outline above would double
+     it. Kept as an outline of the same colour rather than removed, because
+     Windows high-contrast mode ignores borders and honours outlines. */
+  outline: 1px solid var(--accent-focus);
+  outline-offset: 0;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-muted);
+}
+
+/* Checkboxes and radios are not full-width fields. */
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  margin-right: 8px;
+  accent-color: var(--accent);
+}
+
+/* A checkbox's label sits beside it, not above it. */
+label:has(> input[type='checkbox']),
+label:has(> input[type='radio']) {
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 400;
+}
+
+/* ---- Buttons ----------------------------------------------------------- */
+
+/*
+ * Primary by default. Every form in this application submits with a plain
+ * `<button>`, and the common case should be the one that needs no class.
+ */
+button {
+  padding: 13px 26px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--ground);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+button:disabled {
+  background: var(--surface-sunken);
+  border-color: var(--line-hairline);
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
+/*
+ * The secondary and destructive variants. Two classes rather than two
+ * components: the elements are already `<button>`, and a wrapper component would
+ * mean editing every form to change how one looks.
+ */
+.button-secondary {
+  background: var(--surface);
+  border-color: var(--line-control);
+  color: var(--ink);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.button-danger {
+  background: var(--danger);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--danger) 85%, black);
+}
+
+/* ---- The repeated shapes ------------------------------------------------ */
+
+/*
+ * Three shapes carry most of the design, and they are classes because they are
+ * choices a page makes rather than facts about an element.
+ */
+.card {
+  padding: 26px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--ink-label);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.badge-accent {
+  background: var(--accent-tint);
+  color: var(--accent-hover);
+}
+
+.badge-success {
+  background: var(--success-tint);
+  color: var(--success-ink);
+}
+
+.badge-danger {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/* A status dot, used beside a live/ready label. */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--success-dot);
+}
+
+/* ---- Motion ------------------------------------------------------------- */
+
+/*
+ * Everything above animates only colour, and briefly. This is here so the rule
+ * exists before the slices that add movement — the route transition and the
+ * avatar menu — rather than being remembered afterwards.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

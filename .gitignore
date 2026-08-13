@@ -56,6 +56,10 @@ coverage/
 .nyc_output/
 playwright-report/
 test-results/
+# Screenshots and page snapshots written by the Playwright MCP server while a
+# design slice is being checked in a browser. It writes into the repository root
+# because that is the only directory it is allowed to write to.
+.playwright-mcp/
 *.log
 npm-debug.log*
 pnpm-debug.log*

@@ -25,7 +25,12 @@ export default async function StatusPage() {
         Live, read from the API on each request. Nothing here is cached or hard-coded.
       </p>
 
-      <StatusReport outcome={outcome} />
+      {/* The design's one shape for this page: a white card holding the rows.
+          The class is from `globals.css` rather than a module, because a card is
+          the same card everywhere. */}
+      <div className="card">
+        <StatusReport outcome={outcome} />
+      </div>
 
       <p>
         <Link href="/">Back</Link>

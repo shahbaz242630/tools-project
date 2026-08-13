@@ -1,0 +1,55 @@
+/*
+ * The readiness rows (slice D1).
+ *
+ * The first CSS Module in the application, and the pattern the design slices
+ * repeat: tokens and element styling live in `globals.css`, and anything that is
+ * true of exactly one component lives beside it. Class names never appear in
+ * this component's tests — they query by role and text — so renaming anything
+ * here cannot break the suite.
+ */
+
+.rows {
+  margin: 0;
+}
+
+/*
+ * A dependency and its state, on one line. Overrides the two-column label grid
+ * `globals.css` gives every `<dl>`: these are short pairs where a 190px label
+ * column would leave "ok" stranded a third of the way across a card.
+ */
+.rows > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line-row);
+}
+
+.rows > div:first-child {
+  border-top: 0;
+}
+
+.state {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink-secondary);
+}
+
+/*
+ * The dot repeats what the word beside it already says, and that is deliberate:
+ * WCAG 1.4.1 forbids colour as the only carrier of meaning, so the state stays
+ * spelled out and the dot is what makes a healthy stack readable at a glance.
+ */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  flex: none;
+}
+
+.ok {
+  background: var(--success-dot);
+}
