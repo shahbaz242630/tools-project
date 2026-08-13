@@ -1,0 +1,242 @@
+/*
+ * The avatar dropdown and the mobile sheet (slice D2).
+ *
+ * The breakpoint literals here are the ones documented in `globals.css`: 744px
+ * is where the design switches to mobile patterns. CSS custom properties cannot
+ * be used in a media query, so the number is repeated by hand.
+ *
+ * **Every button in here says `background-color: transparent`, never
+ * `background: none`.** `globals.css` styles the bare `button` element as the
+ * primary accent pill, because that is what most buttons in this application
+ * are; anything else has to turn it off. `background: none` looks like it does
+ * that and does not survive compilation as a background-*colour* reset — the
+ * hamburger rendered as a filled blue pill with every other property in this
+ * file applying correctly, which is a confusing thing to debug from a
+ * screenshot. Reset the property you actually mean.
+ */
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Desktop: the avatar and its dropdown ------------------------------- */
+
+.account {
+  position: relative;
+  display: flex;
+}
+
+.avatar,
+.avatarStatic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent-avatar);
+  color: var(--accent-hover);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.avatar {
+  cursor: pointer;
+}
+
+.avatar:hover {
+  background: var(--accent-tint);
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 20;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid var(--line-hairline);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+}
+
+.menuRow,
+.signOut {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 9px;
+  background-color: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 400;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menuRow:hover {
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+/*
+ * Sign out is the one destructive-looking row, which is the design's choice and
+ * a good one: it is the only item here that ends what you were doing.
+ */
+.signOut {
+  margin-top: 4px;
+  border-top: 1px solid var(--line-row);
+  border-radius: 0 0 9px 9px;
+  color: var(--danger);
+}
+
+.signOut:hover {
+  background: var(--danger-tint);
+}
+
+/* The dropdown is desktop-only; below the breakpoint the sheet carries the same
+   links, so showing both would put two menus on one bar. */
+@media (width <= 744px) {
+  .account {
+    display: none;
+  }
+}
+
+/* ---- Mobile: the hamburger and its sheet -------------------------------- */
+
+.mobile {
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (width <= 744px) {
+  .mobile {
+    display: flex;
+  }
+}
+
+/*
+ * 44px, which is the floor the design sets for every touch target and is also
+ * the smallest thing most people can hit reliably while holding a phone.
+ */
+.hamburger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background-color: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.hamburger:hover {
+  background: var(--surface-sunken);
+}
+
+/* Three bars from one element: the middle is the box, the outer two are its
+   pseudo-elements. */
+.bars,
+.bars::before,
+.bars::after {
+  display: block;
+  width: 18px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.bars {
+  position: relative;
+}
+
+.bars::before,
+.bars::after {
+  position: absolute;
+  content: '';
+}
+
+.bars::before {
+  top: -6px;
+}
+
+.bars::after {
+  top: 6px;
+}
+
+/*
+ * A sheet under the bar rather than a full-screen overlay, which is what the
+ * design specifies — the page stays visible behind it, so opening the menu never
+ * feels like leaving where you were.
+ */
+.sheet {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 8px var(--page-gutter) 20px;
+  border-bottom: 1px solid var(--line-hairline);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+}
+
+.sheetRow,
+.sheetSignOut {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-row);
+  background-color: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sheetSignOut {
+  width: 100%;
+  color: var(--danger);
+}
+
+.sheetPill {
+  margin-top: 16px;
+  padding: 14px 20px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--ground);
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+}
+
+.sheetPill:hover {
+  background: var(--accent-hover);
+  color: var(--ground);
+}
