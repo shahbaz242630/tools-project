@@ -19,6 +19,7 @@ import { editStateFrom } from '../app/listings/[id]/edit/state';
 import { AttributeFields, toSubmittedAttributes } from './attribute-fields';
 import type { AttributeAnswers } from './attribute-fields';
 import { TransportField } from './transport-field';
+import group from './form-card.module.css';
 import { toStoredAnswers } from '../lib/stored-answers';
 
 /**
@@ -100,7 +101,7 @@ export function ListingEditForm({
   return (
     <form action={action}>
       {state.message === null ? null : (
-        <p role="alert" ref={alert} tabIndex={-1}>
+        <p role="alert" ref={alert} tabIndex={-1} className={group.problem}>
           {state.message}
         </p>
       )}
@@ -117,50 +118,56 @@ export function ListingEditForm({
         value={category.versionNumber}
       />
 
-      <p>
-        <label htmlFor="edit-title">Title</label>
-        <input
-          id="edit-title"
-          name="title"
-          type="text"
-          required
-          minLength={LISTING_TITLE_MIN_LENGTH}
-          maxLength={LISTING_TITLE_MAX_LENGTH}
-          defaultValue={state.title}
-        />
-      </p>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>The item</span>
+        </legend>
 
-      <p>
-        <label htmlFor="edit-description">Description</label>
-        <textarea
-          id="edit-description"
-          name="description"
-          rows={5}
-          maxLength={LISTING_DESCRIPTION_MAX_LENGTH}
-          defaultValue={state.description}
-          aria-describedby="edit-description-help"
-        />
-      </p>
-      <p id="edit-description-help">
-        It has to say something before this listing can be published.
-      </p>
+        <div className={group.field}>
+          <label htmlFor="edit-title">Title</label>
+          <input
+            id="edit-title"
+            name="title"
+            type="text"
+            required
+            minLength={LISTING_TITLE_MIN_LENGTH}
+            maxLength={LISTING_TITLE_MAX_LENGTH}
+            defaultValue={state.title}
+          />
+        </div>
 
-      <p>
-        <label htmlFor="edit-replacement-value">Replacement value (£)</label>
-        <input
-          id="edit-replacement-value"
-          name="replacementValue"
-          type="text"
-          inputMode="decimal"
-          required
-          defaultValue={state.replacementValue}
-          aria-describedby="edit-replacement-value-help"
-        />
-      </p>
-      <p id="edit-replacement-value-help">
-        What it would cost to replace if it were damaged beyond repair. This is not the
-        rental price.
-      </p>
+        <div className={group.field}>
+          <label htmlFor="edit-description">Description</label>
+          <textarea
+            id="edit-description"
+            name="description"
+            rows={5}
+            maxLength={LISTING_DESCRIPTION_MAX_LENGTH}
+            defaultValue={state.description}
+            aria-describedby="edit-description-help"
+          />
+          <p id="edit-description-help" className={group.help}>
+            It has to say something before this listing can be published.
+          </p>
+        </div>
+
+        <div className={group.field}>
+          <label htmlFor="edit-replacement-value">Replacement value (£)</label>
+          <input
+            id="edit-replacement-value"
+            name="replacementValue"
+            type="text"
+            inputMode="decimal"
+            required
+            defaultValue={state.replacementValue}
+            aria-describedby="edit-replacement-value-help"
+          />
+          <p id="edit-replacement-value-help" className={group.help}>
+            What it would cost to replace if it were damaged beyond repair. This is not
+            the rental price.
+          </p>
+        </div>
+      </fieldset>
 
       <AttributeFields
         attributes={category.attributes}
@@ -191,8 +198,10 @@ export function ListingEditForm({
         idPrefix="edit-transport"
       />
 
-      <fieldset>
-        <legend>What it costs to rent</legend>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>What it costs to rent</span>
+        </legend>
         <p>
           <label htmlFor="edit-daily-rate">Daily rate (£)</label>
           <input
@@ -240,10 +249,12 @@ export function ListingEditForm({
         page — and so a test querying by id is unambiguous about which form it
         found.
       */}
-      <fieldset>
-        <legend>Where it is collected from</legend>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>Where it is collected from</span>
+        </legend>
 
-        <p id="edit-location-help">
+        <p id="edit-location-help" className={group.help}>
           Renters only ever see the <strong>district and town</strong> — “BS7, Bristol”
           — which covers thousands of homes. Your full postcode and street are never
           shown publicly and are given to a renter only once a booking reaches the point
@@ -287,7 +298,9 @@ export function ListingEditForm({
             aria-describedby="edit-town-help"
           />
         </p>
-        <p id="edit-town-help">This one is public, beside the postcode district.</p>
+        <p id="edit-town-help" className={group.help}>
+          This one is public, beside the postcode district.
+        </p>
 
         <p>
           <label htmlFor="edit-postcode">Postcode</label>
@@ -301,7 +314,7 @@ export function ListingEditForm({
             aria-describedby="edit-postcode-help"
           />
         </p>
-        <p id="edit-postcode-help">
+        <p id="edit-postcode-help" className={group.help}>
           Only the first part — <strong>BS7</strong> — is ever published.
         </p>
 

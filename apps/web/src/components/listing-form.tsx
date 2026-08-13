@@ -16,6 +16,7 @@ import { AttributeFields, toSubmittedAttributes } from './attribute-fields';
 import type { AttributeAnswers } from './attribute-fields';
 import { ResetSafeSelect } from './reset-safe-select';
 import { TransportField } from './transport-field';
+import group from './form-card.module.css';
 
 /**
  * Creating a draft listing.
@@ -100,14 +101,19 @@ export function ListingForm({
       {state.message === null ? null : (
         // `tabIndex={-1}` makes it focusable without putting it in the tab
         // order — it is a message, not a control.
-        <p role="alert" ref={alert} tabIndex={-1}>
+        <p role="alert" ref={alert} tabIndex={-1} className={group.problem}>
           {state.message}
         </p>
       )}
 
-      <p>
-        <label htmlFor="listing-category">Category</label>
-        {/*
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>The item</span>
+        </legend>
+
+        <div className={group.field}>
+          <label htmlFor="listing-category">Category</label>
+          {/*
           `ResetSafeSelect`, not a bare `<select value=…>`. React's post-action
           form reset leaves a controlled select showing its first option while
           React still holds the real one — and here that meant "Choose a
@@ -115,100 +121,103 @@ export function ListingForm({
           hidden version number still set. Read that component before changing
           this back.
         */}
-        <ResetSafeSelect
-          id="listing-category"
-          name="categorySlug"
-          required
-          value={slug}
-          describedBy="listing-category-help"
-          onChange={(next) => {
-            setSlug(next);
-            // Answers are keyed by attribute key, and two categories that share
-            // a key rarely mean the same thing by it — one category's "petrol"
-            // is not necessarily on another's list. Carrying them across would
-            // submit answers to questions that were never asked, so switching
-            // category starts the category's own fields empty.
-            setAnswers({});
-            // Cleared for a sharper reason than the answers: two categories
-            // offer different transport options, so a choice carried across
-            // could be one the new category does not offer — which the API
-            // would refuse, about a field the owner never touched.
-            setTransport(null);
-          }}
-        >
-          <option value="">Choose a category</option>
-          {categories.map((category) => (
-            <option key={category.slug} value={category.slug}>
-              {category.name}
-            </option>
-          ))}
-        </ResetSafeSelect>
-      </p>
-      <p id="listing-category-help">
-        The category decides which details you are asked for and which rules apply. It
-        is recorded as it stands today, so changing the category later is a new listing
-        rather than an edit.
-      </p>
+          <ResetSafeSelect
+            id="listing-category"
+            name="categorySlug"
+            required
+            value={slug}
+            describedBy="listing-category-help"
+            onChange={(next) => {
+              setSlug(next);
+              // Answers are keyed by attribute key, and two categories that share
+              // a key rarely mean the same thing by it — one category's "petrol"
+              // is not necessarily on another's list. Carrying them across would
+              // submit answers to questions that were never asked, so switching
+              // category starts the category's own fields empty.
+              setAnswers({});
+              // Cleared for a sharper reason than the answers: two categories
+              // offer different transport options, so a choice carried across
+              // could be one the new category does not offer — which the API
+              // would refuse, about a field the owner never touched.
+              setTransport(null);
+            }}
+          >
+            <option value="">Choose a category</option>
+            {categories.map((category) => (
+              <option key={category.slug} value={category.slug}>
+                {category.name}
+              </option>
+            ))}
+          </ResetSafeSelect>
+          <p id="listing-category-help" className={group.help}>
+            The category decides which details you are asked for and which rules apply.
+            It is recorded as it stands today, so changing the category later is a new
+            listing rather than an edit.
+          </p>
+        </div>
 
-      <p>
-        <label htmlFor="listing-title">Title</label>
-        <input
-          id="listing-title"
-          name="title"
-          type="text"
-          required
-          minLength={LISTING_TITLE_MIN_LENGTH}
-          maxLength={LISTING_TITLE_MAX_LENGTH}
-          defaultValue={state.title}
-          placeholder="Petrol hedge trimmer"
-        />
-      </p>
+        <div className={group.field}>
+          <label htmlFor="listing-title">Title</label>
+          <input
+            id="listing-title"
+            name="title"
+            type="text"
+            required
+            minLength={LISTING_TITLE_MIN_LENGTH}
+            maxLength={LISTING_TITLE_MAX_LENGTH}
+            defaultValue={state.title}
+            placeholder="Petrol hedge trimmer"
+          />
+        </div>
 
-      <p>
-        <label htmlFor="listing-description">Description</label>
-        <textarea
-          id="listing-description"
-          name="description"
-          rows={5}
-          maxLength={LISTING_DESCRIPTION_MAX_LENGTH}
-          defaultValue={state.description}
-          aria-describedby="listing-description-help"
-        />
-      </p>
-      <p id="listing-description-help">
-        Optional while this is a draft — you can come back to it. It has to say
-        something before the listing can be published.
-      </p>
+        <div className={group.field}>
+          <label htmlFor="listing-description">Description</label>
+          <textarea
+            id="listing-description"
+            name="description"
+            rows={5}
+            maxLength={LISTING_DESCRIPTION_MAX_LENGTH}
+            defaultValue={state.description}
+            aria-describedby="listing-description-help"
+          />
+          <p id="listing-description-help" className={group.help}>
+            Optional while this is a draft — you can come back to it. It has to say
+            something before the listing can be published.
+          </p>
+        </div>
 
-      <p>
-        <label htmlFor="listing-value">Replacement value (£)</label>
-        {/*
+        <div className={group.field}>
+          <label htmlFor="listing-value">Replacement value (£)</label>
+          {/*
           `type="text"` with a numeric input mode, not `type="number"`.
           A number input hands back a JavaScript number, and a float is exactly
           what must never touch money (ADR 0002) — the string goes to
           `Money.fromMajor`, which is the only conversion allowed to see it.
         */}
-        <input
-          id="listing-value"
-          name="replacementValue"
-          type="text"
-          inputMode="decimal"
-          required
-          defaultValue={state.replacementValue}
-          placeholder="249.99"
-          aria-describedby="listing-value-help"
-        />
-      </p>
-      <p id="listing-value-help">
-        What it would cost you to replace this item today, in pounds. It is not the
-        rental price — it is what a damage claim would be measured against, so an
-        inflated figure is not in your interest either.
-      </p>
+          <input
+            id="listing-value"
+            name="replacementValue"
+            type="text"
+            inputMode="decimal"
+            required
+            defaultValue={state.replacementValue}
+            placeholder="249.99"
+            aria-describedby="listing-value-help"
+          />
+          <p id="listing-value-help" className={group.help}>
+            What it would cost you to replace this item today, in pounds. It is not the
+            rental price — it is what a damage claim would be measured against, so an
+            inflated figure is not in your interest either.
+          </p>
+        </div>
+      </fieldset>
 
-      <fieldset>
-        <legend>What it costs to rent</legend>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>What it costs to rent</span>
+        </legend>
 
-        <p>
+        <p className={group.intro}>
           Leave any of these blank for now — a draft does not have to be priced. You
           will need a <strong>daily rate</strong> before you can publish.
         </p>
@@ -230,7 +239,7 @@ export function ListingForm({
             aria-describedby="listing-daily-rate-help"
           />
         </p>
-        <p id="listing-daily-rate-help">
+        <p id="listing-daily-rate-help" className={group.help}>
           What one day costs. Renters see this with our fee already added, because the
           law requires the price shown to be the price paid — you will see both figures
           once you save.
@@ -248,7 +257,7 @@ export function ListingForm({
             aria-describedby="listing-weekend-rate-help"
           />
         </p>
-        <p id="listing-weekend-rate-help">
+        <p id="listing-weekend-rate-help" className={group.help}>
           Friday to Sunday as one charge. Optional, and it needs a daily rate beside it.
         </p>
 
@@ -264,7 +273,7 @@ export function ListingForm({
             aria-describedby="listing-weekly-rate-help"
           />
         </p>
-        <p id="listing-weekly-rate-help">
+        <p id="listing-weekly-rate-help" className={group.help}>
           Seven days as one charge. Optional, and it needs a daily rate beside it.
         </p>
       </fieldset>
@@ -273,7 +282,9 @@ export function ListingForm({
         // No dead controls: until a category is chosen there are no
         // category-specific fields to show, and inventing empty ones would ask
         // questions nobody has posed.
-        <p>Choose a category above to see the details it asks for.</p>
+        <p className={group.placeholder}>
+          Choose a category above to see the details it asks for.
+        </p>
       ) : (
         <>
           {/*
@@ -339,10 +350,12 @@ export function ListingForm({
         the explanation of what gets published needs to be read before it is
         filled in — not scrolled past on the way to the title.
       */}
-      <fieldset>
-        <legend>Where it is collected from</legend>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>Where it is collected from</span>
+        </legend>
 
-        <p id="listing-location-help">
+        <p id="listing-location-help" className={group.help}>
           Renters only ever see the <strong>district and town</strong> — “BS7, Bristol”
           — which covers thousands of homes. Your full postcode and street are never
           shown publicly and are given to a renter only once a booking reaches the point
@@ -387,7 +400,9 @@ export function ListingForm({
             aria-describedby="listing-town-help"
           />
         </p>
-        <p id="listing-town-help">This one is public, beside the postcode district.</p>
+        <p id="listing-town-help" className={group.help}>
+          This one is public, beside the postcode district.
+        </p>
 
         <p>
           <label htmlFor="listing-postcode">Postcode</label>
@@ -401,7 +416,7 @@ export function ListingForm({
             aria-describedby="listing-postcode-help"
           />
         </p>
-        <p id="listing-postcode-help">
+        <p id="listing-postcode-help" className={group.help}>
           Only the first part — <strong>BS7</strong> — is ever published.
         </p>
       </fieldset>

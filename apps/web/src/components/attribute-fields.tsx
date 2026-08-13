@@ -6,6 +6,7 @@ import {
   type CategoryAttribute,
 } from '@platform/contracts';
 import { ResetSafeSelect } from './reset-safe-select';
+import group from './form-card.module.css';
 
 /**
  * The fields a category asks for, drawn from its configuration.
@@ -76,12 +77,18 @@ export function AttributeFields({
     // Not an error and not an empty box. A category with no attributes is a
     // legitimate configuration — it is what every category had before slice 2.2
     // — and saying so is better than a heading with nothing under it.
-    return <p>This category asks for no extra details beyond the ones above.</p>;
+    return (
+      <p className={group.placeholder}>
+        This category asks for no extra details beyond the ones above.
+      </p>
+    );
   }
 
   return (
-    <fieldset>
-      <legend>Details for this category</legend>
+    <fieldset className={group.card}>
+      <legend className={group.legend}>
+        <span className={group.badge}>Details for this category</span>
+      </legend>
 
       <p>
         These come from the category and may change if it is reconfigured.{' '}

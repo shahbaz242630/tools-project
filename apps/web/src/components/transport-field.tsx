@@ -6,6 +6,7 @@ import {
   suggestTransportRequirement,
 } from '@platform/contracts';
 import { ResetSafeSelect } from './reset-safe-select';
+import group from './form-card.module.css';
 import type {
   CategoryTransportOption,
   ItemWeight,
@@ -70,10 +71,12 @@ export function TransportField({
   const id = (field: string) => `${idPrefix}-${field}`;
 
   return (
-    <fieldset>
-      <legend>Getting it home</legend>
+    <fieldset className={group.card}>
+      <legend className={group.legend}>
+        <span className={group.badge}>Getting it home</span>
+      </legend>
 
-      <p id={id('help')}>
+      <p id={id('help')} className={group.intro}>
         Whoever rents this has to come and collect it. Saying what that takes is what
         stops somebody arriving in a hatchback for something that needs a van.
       </p>

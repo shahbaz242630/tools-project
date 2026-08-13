@@ -12,6 +12,7 @@ import { Postcode } from '@platform/core';
 import { saveProfileAction } from '../app/account/profile/actions';
 import { INITIAL_PROFILE_FORM_STATE } from '../app/account/profile/state';
 import { ProfileFormStatus } from './profile-form-status';
+import group from './form-card.module.css';
 import styles from './profile-form.module.css';
 
 /**
@@ -58,14 +59,14 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
     <form action={action}>
       <ProfileFormStatus state={state} />
 
-      <fieldset className={styles.card}>
-        <legend className={styles.legend}>
-          <span className={`${styles.badge} ${styles.badgePublic}`}>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={`${group.badge} ${group.badgePublic}`}>
             Public — anyone can see this
           </span>
         </legend>
 
-        <div className={styles.field}>
+        <div className={group.field}>
           <label htmlFor="displayName">Display name</label>
           <input
             id="displayName"
@@ -80,27 +81,27 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             // rules, because anything a browser enforces a client can skip.
             aria-describedby="displayName-help"
           />
-          <p id="displayName-help" className={styles.help}>
+          <p id="displayName-help" className={group.help}>
             Shown on your profile and beside anything you list. Many people use a first
             name and an initial.
           </p>
         </div>
       </fieldset>
 
-      <fieldset className={styles.card}>
-        <legend className={styles.legend}>
-          <span className={styles.badge}>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>
             Private — shared only when you agree a rental
           </span>
         </legend>
 
-        <p className={styles.intro}>
+        <p className={group.intro}>
           Nobody sees these until you and the other person have agreed a booking. Your
           address is never shown in full: your profile shows only the first part of your
           postcode, which covers thousands of homes.
         </p>
 
-        <div className={styles.field}>
+        <div className={group.field}>
           <label htmlFor="phone">Phone number</label>
           <input
             id="phone"
@@ -110,12 +111,12 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             defaultValue={profile?.phone ?? ''}
             aria-describedby="phone-help"
           />
-          <p id="phone-help" className={styles.help}>
+          <p id="phone-help" className={group.help}>
             UK numbers only, for now.
           </p>
         </div>
 
-        <div className={styles.field}>
+        <div className={group.field}>
           <label htmlFor="line1">Address line 1</label>
           <input
             id="line1"
@@ -127,7 +128,7 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
           />
         </div>
 
-        <div className={styles.field}>
+        <div className={group.field}>
           <label htmlFor="line2">Address line 2</label>
           <input
             id="line2"
@@ -139,7 +140,7 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
           />
         </div>
 
-        <div className={styles.field}>
+        <div className={group.field}>
           <label htmlFor="town">Town or city</label>
           <input
             id="town"
@@ -150,13 +151,13 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             defaultValue={profile?.address?.town ?? ''}
             aria-describedby="town-help"
           />
-          <p id="town-help" className={styles.help}>
+          <p id="town-help" className={group.help}>
             This one is public — it appears on your profile beside your postcode
             district.
           </p>
         </div>
 
-        <div className={styles.field}>
+        <div className={group.field}>
           <label htmlFor="postcode">Postcode</label>
           <input
             id="postcode"
@@ -174,7 +175,7 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             `polite` rather than `assertive`, because it must not interrupt the
             typing that caused it.
           */}
-          <p id="postcode-help" className={styles.help} aria-live="polite">
+          <p id="postcode-help" className={group.help} aria-live="polite">
             <DistrictPreview postcode={postcode} />
           </p>
         </div>
@@ -198,24 +199,24 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
         honest refusal, and a recorded signal of demand for the day this is
         reconsidered.
       */}
-      <fieldset className={styles.card}>
-        <legend className={styles.legend}>
-          <span className={styles.badge}>How you list</span>
+      <fieldset className={group.card}>
+        <legend className={group.legend}>
+          <span className={group.badge}>How you list</span>
         </legend>
 
-        <p id="owner-status-help" className={styles.intro}>
+        <p id="owner-status-help" className={group.intro}>
           Renters have different legal rights depending on whether they rent from a
           private individual or from a business, so we have to say which you are. You
           cannot publish a listing until you have answered.
         </p>
 
-        <div className={styles.choices}>
-          <label htmlFor="owner-status-private" className={styles.choice}>
+        <div className={group.choices}>
+          <label htmlFor="owner-status-private" className={group.choice}>
             <input
               id="owner-status-private"
               name="ownerStatus"
               type="radio"
-              className={styles.radio}
+              className={group.radio}
               value="private_owner"
               defaultChecked={profile?.ownerStatus === 'private_owner'}
               aria-describedby="owner-status-help"
@@ -223,12 +224,12 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
             I am a private individual, lending my own things
           </label>
 
-          <label htmlFor="owner-status-trader" className={styles.choice}>
+          <label htmlFor="owner-status-trader" className={group.choice}>
             <input
               id="owner-status-trader"
               name="ownerStatus"
               type="radio"
-              className={styles.radio}
+              className={group.radio}
               value="professional_trader"
               defaultChecked={profile?.ownerStatus === 'professional_trader'}
             />
@@ -242,14 +243,14 @@ export function ProfileForm({ profile }: { profile: MyProfile | null }) {
           has been wasted, and a platform that only mentions its limits when you
           hit them is one people stop trusting.
         */}
-        <p className={styles.help}>
+        <p className={group.help}>
           We only accept listings from private individuals at the moment. If you list as
           a business you can still use the site, but you will not be able to publish —
           tell us anyway, because it is how we find out there is demand for it.
         </p>
       </fieldset>
 
-      <div className={styles.actions}>
+      <div className={group.actions}>
         <button type="submit" disabled={pending}>
           {pending ? 'Saving…' : 'Save profile'}
         </button>
