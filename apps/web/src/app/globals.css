@@ -194,6 +194,44 @@ main {
   padding: 40px var(--page-gutter) 72px;
 }
 
+/*
+ * The first focusable element on the page, and invisible until it is focused.
+ *
+ * Positioned rather than hidden: `display: none` and `visibility: hidden` both
+ * remove an element from the focus order, which would make the link unreachable
+ * by the one input method it exists for.
+ */
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 30;
+  padding: 10px 18px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--ground);
+  font-size: var(--text-body);
+  font-weight: 500;
+  text-decoration: none;
+
+  /* Off-screen until focused. `translateY` rather than a negative `top`, so the
+     element keeps its size and the focus ring is drawn where it lands. */
+  transform: translateY(-200%);
+}
+
+.skip-link:focus-visible {
+  color: var(--ground);
+  transform: translateY(0);
+}
+
+/*
+ * The header is sticky, so an in-page anchor would otherwise land its target
+ * underneath the bar. 72px of bar plus a little air.
+ */
+:target {
+  scroll-margin-top: 88px;
+}
+
 /* ---- Typography -------------------------------------------------------- */
 
 h1,
@@ -431,8 +469,19 @@ label:has(> input[type='radio']) {
 /*
  * Primary by default. Every form in this application submits with a plain
  * `<button>`, and the common case should be the one that needs no class.
+ *
+ * **Wrapped in `:where()`, which makes the whole block weigh nothing.** A bare
+ * `button` selector is one point of specificity, and one point is enough to beat
+ * nothing — but it is a fight every component that wants a different-looking
+ * button has to win, in a file that cannot see it. Slice D2's hamburger lost
+ * exactly that fight while every other property in its module applied, which is
+ * a confusing thing to debug from a screenshot: a 44px transparent square that
+ * rendered as a blue pill.
+ *
+ * At zero specificity, any single class beats this, which is what a default
+ * should mean. The variants below stay classes and therefore still win.
  */
-button {
+:where(button) {
   padding: 13px 26px;
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
@@ -446,11 +495,11 @@ button {
   transition: background-color 120ms ease;
 }
 
-button:hover:not(:disabled) {
+:where(button:hover:not(:disabled)) {
   background: var(--accent-hover);
 }
 
-button:disabled {
+:where(button:disabled) {
   background: var(--surface-sunken);
   border-color: var(--line-hairline);
   color: var(--ink-muted);

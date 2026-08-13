@@ -1,15 +1,11 @@
-import {
-  ClerkProvider,
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-} from '@clerk/nextjs';
+import { ClerkProvider } from '@clerk/nextjs';
+import { auth } from '@clerk/nextjs/server';
 import { BRAND } from '@platform/config';
 import { Instrument_Sans } from 'next/font/google';
-import Link from 'next/link';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { SiteFooter } from '../components/site-footer';
+import { SiteHeader } from '../components/site-header';
 import './globals.css';
 
 /**
@@ -52,7 +48,21 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  /*
+   * **The layout reads the session; the header is handed the answer.** Every
+   * route in this application is already server-rendered on demand — Clerk's
+   * `Show` is a server component and the middleware makes it so — which means
+   * asking here costs nothing that was not already being paid, and it buys a
+   * navigation that works before hydration and with JavaScript off.
+   *
+   * `email` is the custom session claim ADR 0015 configures, and it is used for
+   * exactly one thing: the letter in the avatar. It degrades to a placeholder
+   * rather than throwing, because an instance missing the claim should fail at
+   * the API — loudly, where identity is decided — and not by breaking a header.
+   */
+  const { userId, sessionClaims } = await auth();
+
   // en-GB, not en. Affects hyphenation, spellcheck and how a screen reader
   // pronounces the page — and this is a UK-only marketplace.
   return (
@@ -62,22 +72,23 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             wrapping the document element puts them outside <body> where the
             browser relocates them and hydration then disagrees with the server. */}
         <ClerkProvider>
-          {/* Deliberately unstyled, like the rest of the scaffold. There is no
-              brand yet (ADR 0005), and inventing a visual identity for an
-              unnamed product produces work that is thrown away twice. */}
-          <header>
-            <nav aria-label="Account">
-              <Show when="signed-out">
-                <SignInButton />
-                <SignUpButton />
-              </Show>
-              <Show when="signed-in">
-                <Link href="/account">Account</Link>
-                <UserButton />
-              </Show>
-            </nav>
-          </header>
-          {children}
+          {/*
+            First focusable thing on the page, and invisible until it has focus.
+            Without it a keyboard user crosses the whole header on every single
+            navigation to reach the content — which on this site is a wordmark,
+            two links and a menu, on every page, forever.
+          */}
+          <a href="#content" className="skip-link">
+            Skip to content
+          </a>
+
+          <SiteHeader signedIn={userId !== null} email={sessionClaims?.email ?? null} />
+
+          {/* The skip target is here rather than on each page's `<main>`, so no
+              page has to remember to carry an id for the link to work. */}
+          <div id="content">{children}</div>
+
+          <SiteFooter />
         </ClerkProvider>
       </body>
     </html>
