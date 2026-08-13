@@ -1,0 +1,11 @@
+/*
+ * The public listing page (slice D8).
+ *
+ * **`--page-width` on `<main>`**, which is the element `globals.css` reads it
+ * on. Wider than the form default because this page is two columns: the item on
+ * the left and the price, place and counterparty on the right.
+ */
+
+.page {
+  --page-width: 1080px;
+}

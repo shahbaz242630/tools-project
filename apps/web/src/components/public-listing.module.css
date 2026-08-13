@@ -1,0 +1,290 @@
+/*
+ * The listing as a stranger sees it (slice D8).
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`; 1079px is the top
+ * of the compressed band.
+ */
+
+/*
+ * **The DOM order is the mobile order, and the desktop is done by placement.**
+ * The handoff puts the price card directly under the photo on a phone, and in a
+ * sticky right-hand column on a desktop. Ordering it with `order` sent the whole
+ * aside above the photo — a visitor met a price before they knew what it was
+ * for. Writing the markup in reading order and placing it explicitly on wide
+ * screens gets both, with one price on the page either way.
+ */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 24px 40px;
+  align-items: start;
+}
+
+.media {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.header {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.aside {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+}
+
+.body {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+/* ---- Left column --------------------------------------------------------- */
+
+/*
+ * **The no-photo block, and it is a designed state rather than a fallback.**
+ * Every listing is in it today — media is slice 2.6, blocked on the domain — so
+ * this is what the page normally looks like, not an edge case. The handoff is
+ * explicit: a tinted block carrying the item's initial and the words "No photo
+ * yet", never a camera icon and never a grey rectangle.
+ */
+.media {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-card);
+  background: var(--photo-empty);
+}
+
+.photoInitial {
+  color: var(--photo-empty-glyph);
+  font-size: 96px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.photoCaption {
+  margin-top: 12px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+.title {
+  margin-bottom: 6px;
+  font-size: 30px;
+}
+
+.category {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+.section {
+  padding-top: 22px;
+  margin-top: 22px;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.sectionHeading {
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.body {
+  margin: 0;
+  color: var(--ink-secondary);
+  line-height: 1.7;
+}
+
+/*
+ * The attribute rows, at the 200px the handoff specifies for this page — wider
+ * than the owner's 190px because these labels are the category's own words and
+ * nobody has vetted their length.
+ */
+.attributes {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  margin: 0;
+}
+
+.attributes dt {
+  padding: 12px 20px 12px 0;
+  border-top: 1px solid var(--line-row);
+  color: var(--ink-label);
+  font-size: var(--text-label);
+  font-weight: 500;
+}
+
+.attributes dd {
+  padding: 12px 0;
+  border-top: 1px solid var(--line-row);
+  margin: 0;
+}
+
+.attributes dt:first-of-type,
+.attributes dt:first-of-type + dd {
+  border-top: 0;
+}
+
+/* ---- Right column -------------------------------------------------------- */
+
+/*
+ * Sticky, so the price stays with somebody as they read down the item. `top`
+ * clears the 72px header the page already has.
+ */
+.aside {
+  position: sticky;
+  top: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* `.body` is a grid item as well as a block; its own children keep the section
+   rules that separate them. */
+.body > :first-child {
+  margin-top: 0;
+}
+
+.card {
+  padding: 22px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+/*
+ * **The inclusive total is the headline and the bare rate never appears on its
+ * own** (§3.4.4). The size difference is doing legal work as well as visual: the
+ * DMCC regime prohibits drip pricing rather than discouraging it, and the figure
+ * a renter reads first has to be the one they would pay.
+ */
+.price {
+  margin-bottom: 4px;
+  color: var(--ink-secondary);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.priceAmount {
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.breakdown {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/*
+ * The refundable damage security, shown separately and never folded into the
+ * headline — also §3.4.4, and the reason this is a bordered aside rather than
+ * another muted line.
+ */
+.hold {
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line-row);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/*
+ * **Not a disabled "Book now".** BRD §15 forbids a control that does not do what
+ * it says, and booking is Phase 4; a greyed-out button would tell a visitor the
+ * platform does something it does not. This says so instead.
+ */
+.notOpen {
+  padding: 14px 16px;
+  margin-top: 16px;
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+.cardHeading {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+}
+
+.cardBody {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.cardNote {
+  margin: 8px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/* ---- Compressed and mobile ----------------------------------------------- */
+
+@media (width <= 1079px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 28px;
+  }
+}
+
+/*
+ * **One column, and the price card moves directly under the photo** — the
+ * handoff's rule for this page, and the right one: on a phone the sticky column
+ * would either cover the item or sit below everything it is meant to price.
+ *
+ * `order` rather than a second copy of the markup, so there is still exactly one
+ * price on the page.
+ */
+@media (width <= 744px) {
+  /*
+   * One column, in DOM order: photo, title, price, then the item's details —
+   * which is exactly the handoff's mobile frame. Nothing is reordered, because
+   * the markup was written this way round.
+   */
+  .layout {
+    display: block;
+  }
+
+  .aside {
+    position: static;
+    margin: 20px 0;
+  }
+
+  .attributes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .attributes dt {
+    padding: 12px 0 0;
+  }
+
+  .attributes dt:first-of-type + dd {
+    border-top: 0;
+  }
+
+  .attributes dd {
+    padding: 2px 0 12px;
+    border-top: 0;
+  }
+
+  .photoInitial {
+    font-size: 72px;
+  }
+}
