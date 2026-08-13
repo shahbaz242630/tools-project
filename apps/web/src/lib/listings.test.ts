@@ -4,6 +4,7 @@ import {
   fetchCategoryOptions,
   fetchListing,
   fetchOwnedListings,
+  fetchListingSearch,
   fetchPublicListing,
   pauseListing,
   publishListing,
@@ -816,5 +817,113 @@ describe('fetchOwnedListings', () => {
     expect(
       (await fetchOwnedListings(API, TOKEN, responds(200, '{"listings":"nope"}'))).kind,
     ).toBe('malformed');
+  });
+});
+
+describe('fetchListingSearch', () => {
+  const RESULTS = {
+    results: [
+      {
+        id: LISTING.id,
+        title: 'Petrol hedge trimmer',
+        categoryName: 'Outdoor and gardening',
+        location: { outwardCode: 'BS7', town: 'Bristol' },
+        inclusiveDailyPrice: {
+          rate: { amount: 1_800, currency: 'GBP' },
+          renterFee: { amount: 144, currency: 'GBP' },
+          total: { amount: 1_944, currency: 'GBP' },
+          minimumFeeApplied: false,
+        },
+        distance: { kind: 'under_a_mile' },
+        ownerStatus: 'private_owner',
+      },
+    ],
+    truncated: false,
+    radiusMiles: 5,
+  };
+
+  it('reads a page of results with no token at all', async () => {
+    const outcome = await fetchListingSearch(
+      API,
+      'BS7 8AA',
+      5,
+      responds(200, JSON.stringify(RESULTS)),
+    );
+
+    expect(outcome.kind).toBe('loaded');
+  });
+
+  it('sends no authorization header and no client IP', async () => {
+    // Same reasoning as `fetchPublicListing`, and it matters more here: this is
+    // the route somebody hits repeatedly while narrowing a search.
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
+    await fetchListingSearch(API, 'BS7 8AA', 5, fetchImpl);
+
+    expect(Object.keys(calls[0]?.init?.headers ?? {})).toEqual([]);
+  });
+
+  it('builds the query string with the contract’s own parameter names', async () => {
+    /*
+     * The path comes from `publicListingSearchPath`, so the string this sends
+     * and the one the API parses are assembled by the same function. Writing it
+     * by hand here is how a page comes to disagree with the server about a
+     * parameter name — and the failure is an empty page rather than an error.
+     */
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
+    await fetchListingSearch(API, 'BS7 8AA', 20, fetchImpl);
+
+    expect(calls[0]?.url).toContain(
+      '/public/listings?postcode=BS7%208AA&radiusMiles=20',
+    );
+  });
+
+  it('does not cache, so a listing taken down stops appearing', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
+    await fetchListingSearch(API, 'BS7 8AA', 5, fetchImpl);
+
+    expect(calls[0]?.init?.cache).toBe('no-store');
+  });
+
+  it('reads an empty page as loaded, not as nothing found', async () => {
+    // The distinction the page depends on: "we looked and there was nothing"
+    // must not arrive looking like "we could not look".
+    const outcome = await fetchListingSearch(
+      API,
+      'BS7 8AA',
+      5,
+      responds(200, JSON.stringify({ ...RESULTS, results: [] })),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'loaded',
+      value: { results: [], truncated: false, radiusMiles: 5 },
+    });
+  });
+
+  it('refuses a response that does not match the projection', async () => {
+    // A results page is the version of this data that gets scraped hardest, so
+    // a shape this build cannot vouch for is not one to render.
+    const outcome = await fetchListingSearch(
+      API,
+      'BS7 8AA',
+      5,
+      responds(
+        200,
+        JSON.stringify({ results: [{ id: LISTING.id }], truncated: false }),
+      ),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('reads a 400 as unreachable rather than as an empty area', async () => {
+    /*
+     * The page validates before calling, so a 400 means the two disagree about
+     * what is valid. Reporting "nothing near you" would be telling somebody
+     * their area is empty when we never managed to look.
+     */
+    const outcome = await fetchListingSearch(API, 'BS7 8AA', 5, responds(400));
+
+    expect(outcome.kind).toBe('unreachable');
   });
 });

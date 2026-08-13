@@ -1,5 +1,6 @@
 import { BRAND } from '@platform/config';
 import Link from 'next/link';
+import { BROWSE_PATH } from '../lib/page-paths';
 import { AccountMenu, MobileMenu } from './site-menu';
 import styles from './site-header.module.css';
 
@@ -16,11 +17,15 @@ import styles from './site-header.module.css';
  * fetches its own auth state cannot be rendered in a test without standing up an
  * identity provider.
  *
- * **Two links the design specifies are deliberately absent.** *Browse* points at
- * search, which is Phase 3, and *How it works* is an anchor into the landing
- * page, which is slice D3. BRD §15 forbids a control that does not do what it
- * says, and a nav item that 404s is worse than one that is not there yet. Both
- * arrive with the things they point at.
+ * **Browse arrived in slice 3.1b, and it arrived because the page did.** It was
+ * absent from D2 through 3.1a on the rule BRD §15 states — a control must do
+ * what it says, and a nav item that 404s is worse than one that is not there.
+ * That rule is why it is here now rather than why it was missing: `/browse`
+ * exists, so the link does.
+ *
+ * **One link the design specifies is still absent.** *How it works* is an anchor
+ * into a section of the landing page that has not been written. It arrives with
+ * the thing it points at, the same way this one did.
  */
 export function SiteHeader({
   signedIn,
@@ -43,6 +48,16 @@ export function SiteHeader({
         </Link>
 
         <nav className={styles.nav} aria-label="Main">
+          {/*
+            **Before the sign-in and listing controls, and shown to everybody.**
+            Renting is the demand side and this application has been entirely
+            supply-side until now; the first thing a stranger should be offered
+            is the thing they came for, not an invitation to sign up.
+          */}
+          <Link href={BROWSE_PATH} className={styles.link}>
+            Browse
+          </Link>
+
           {signedIn ? (
             <>
               <Link href="/listings/new" className={styles.link}>

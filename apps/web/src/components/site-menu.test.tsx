@@ -158,6 +158,27 @@ describe('MobileMenu', () => {
     );
   });
 
+  it.each([
+    ['signed out', false, null] as const,
+    ['signed in', true, 'sam@example.co.uk'] as const,
+  ])('offers Browse to somebody %s (3.1b)', async (_who, signedIn, email) => {
+    /*
+     * **The sheet is the only navigation a phone has**, so a link that is in the
+     * header and not in here is a link that does not exist on a phone — the
+     * failure this file already exists to catch, arriving for a different
+     * reason. Renting needs no session, so both branches carry it.
+     */
+    const user = userEvent.setup();
+    render(<MobileMenu signedIn={signedIn} email={email} />);
+
+    await user.click(screen.getByRole('button', { name: 'Menu' }));
+
+    expect(screen.getByRole('link', { name: 'Browse' })).toHaveAttribute(
+      'href',
+      '/browse',
+    );
+  });
+
   it('does not offer a signed-out visitor a way to sign out', async () => {
     const user = userEvent.setup();
     render(<MobileMenu signedIn={false} email={null} />);

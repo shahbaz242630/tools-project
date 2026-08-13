@@ -18,8 +18,10 @@ import {
   parseOwnedListings,
   parseOwnerListing,
   parsePublicListing,
+  parsePublicListingSearchResults,
   parsePublicationRefusal,
   publicListingPath,
+  publicListingSearchPath,
 } from '@platform/contracts';
 import type {
   CategoryOption,
@@ -28,7 +30,9 @@ import type {
   OwnedListings,
   OwnerListing,
   PublicListing,
+  PublicListingSearchResults,
   PublicationBlocker,
+  SearchRadiusMiles,
 } from '@platform/contracts';
 
 export const LISTINGS_TIMEOUT_MS = 5_000;
@@ -142,6 +146,18 @@ export type PublicOutcome<T> =
   | { readonly kind: 'malformed'; readonly reason: string };
 
 export type PublicListingOutcome = PublicOutcome<PublicListing>;
+
+/**
+ * A page of search results, or why there is not one (slice 3.1b).
+ *
+ * **`not-found` is unreachable on this one and that is deliberate**, rather than
+ * a narrower type. The search route answers 200 with an empty list for every
+ * "nothing here" — an unknown postcode, a provider outage, a genuinely empty
+ * radius — so 404 never arrives. Sharing `PublicOutcome` keeps one shape for
+ * every unauthenticated read; the page simply never reaches that branch, and
+ * says so where it handles the others.
+ */
+export type ListingSearchOutcome = PublicOutcome<PublicListingSearchResults>;
 
 export interface FetchResponse {
   status: number;
@@ -362,6 +378,36 @@ export function fetchPublicListing(
     new URL(publicListingPath(id), apiBaseUrl).toString(),
     fetchImpl,
     parsePublicListing,
+  );
+}
+
+/**
+ * Listings near a postcode (slice 3.1b).
+ *
+ * **The unauthenticated sibling of `fetchOwnedListings`**, and it carries no
+ * token and no `x-client-ip` for the reason `fetchPublicListing` gives: nobody
+ * is identified, nothing is audited, and forwarding a visitor's IP for a read
+ * that records nothing would be collecting it for no purpose (§10).
+ *
+ * **The path is built by the contract**, so the query string this sends and the
+ * one the API parses are assembled by the same function. A page hand-writing
+ * `?postcode=…&radius=…` is a page that can disagree with the server about a
+ * parameter name and get an empty result instead of an error.
+ *
+ * The caller is expected to have parsed the postcode and radius already — see
+ * the page — so this takes a `SearchRadiusMiles` rather than a number, and a
+ * radius the BRD does not name cannot reach it.
+ */
+export function fetchListingSearch(
+  apiBaseUrl: string,
+  postcode: string,
+  radiusMiles: SearchRadiusMiles,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+): Promise<ListingSearchOutcome> {
+  return publicCall(
+    new URL(publicListingSearchPath(postcode, radiusMiles), apiBaseUrl).toString(),
+    fetchImpl,
+    parsePublicListingSearchResults,
   );
 }
 

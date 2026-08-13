@@ -38,17 +38,36 @@ describe('SiteHeader', () => {
 
   it('links nothing that does not exist yet', () => {
     /*
-     * The design's header carries Browse and How it works. Browse is search,
-     * which is Phase 3; How it works is an anchor into the landing page, which
-     * is slice D3. BRD §15 forbids a control that does not do what it says, and
-     * this is the assertion that stops one being added back from the mockup
-     * before the page behind it exists.
+     * The design's header carries Browse and How it works. BRD §15 forbids a
+     * control that does not do what it says, and this is the assertion that
+     * stops one being added back from the mockup before the page behind it
+     * exists.
+     *
+     * **Browse left this list in slice 3.1b**, when `/browse` was built — which
+     * is the rule working rather than being relaxed. *How it works* is still an
+     * anchor into a landing-page section nobody has written.
      */
     render(<SiteHeader signedIn email="sam@example.co.uk" />);
-    expect(screen.queryByRole('link', { name: 'Browse' })).not.toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: 'How it works' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('offers Browse, now that there is somewhere for it to go (3.1b)', () => {
+    render(<SiteHeader signedIn={false} email={null} />);
+
+    expect(screen.getByRole('link', { name: 'Browse' })).toHaveAttribute(
+      'href',
+      '/browse',
+    );
+  });
+
+  it('offers Browse to somebody signed in as well', () => {
+    // Renting is the demand side, and it is not a signed-in privilege — the
+    // public search route needs no session at all.
+    render(<SiteHeader signedIn email="sam@example.co.uk" />);
+
+    expect(screen.getByRole('link', { name: 'Browse' })).toBeInTheDocument();
   });
 
   it('labels the navigation, because a page will have more than one', () => {
