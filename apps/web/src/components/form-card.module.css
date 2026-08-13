@@ -1,0 +1,219 @@
+/*
+ * The shape every long form in this application is made of (slice D7).
+ *
+ * **Extracted from `profile-form.module.css`, where it was written in D5**, once
+ * the listing forms needed the same thing. A CSS Module can be imported by more
+ * than one component — the class names are scoped to this file, not to whoever
+ * imports it — so this is shared without becoming global.
+ *
+ * What is *not* here is anything specific to one form: the district preview
+ * stays with the profile, the money fields stay with the listing.
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`.
+ */
+
+/*
+ * One card per group. **The grouping is the design's real idea**: a flat form
+ * asking for a display name and a home address, or for a price and a collection
+ * address, gives no clue that the parts are treated differently.
+ */
+.card {
+  padding: 24px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+/*
+ * **`<legend>` is kept rather than replaced with a heading**: it is what
+ * associates the label with the whole group for a screen reader, and it is the
+ * only element that does. The cost is that a legend is laid out *inside the
+ * fieldset's border* by default, so a styled one straddles the top edge of the
+ * card.
+ *
+ * `float: left` takes it out of that special placement and puts it in normal
+ * flow; `width: 100%` leaves no room beside it, so the fields below start on
+ * their own line rather than wrapping around the pill. The pill itself is an
+ * inner span, because a full-width legend would stretch the badge across the
+ * whole card.
+ */
+.legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--ink-label);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* Used where a group is about what anybody can see. */
+.badgePublic {
+  background: var(--accent-tint);
+  color: var(--accent-hover);
+}
+
+.intro {
+  margin: 16px 0 4px;
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.field {
+  margin-top: 18px;
+}
+
+/*
+ * What came back from a refused save. Above the form rather than beside the
+ * field, because the server is the real control and it can refuse for reasons no
+ * single field owns — a category that moved underneath the page, a listing that
+ * cannot be published yet. The listing form focuses it, which is why it must not
+ * look like decoration.
+ */
+.problem {
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.help {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/* ---- Radios drawn as cards ----------------------------------------------- */
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/*
+ * The input stays a real `<input type="radio">` — `appearance: none` restyles it
+ * without replacing it, so arrow-key navigation within the group, required-ness,
+ * and the label association all still come from the browser rather than from us.
+ */
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-control);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.choice:hover {
+  background: var(--surface-raised);
+}
+
+/*
+ * Selected. **Two channels, not one**: the border and fill change *and* the dot
+ * fills, so the state does not depend on colour alone (WCAG 1.4.1).
+ * `:has(input:checked)` styles the card from the control's own state, which
+ * means it follows the real radio rather than a copy of it in React.
+ */
+.choice:has(input:checked) {
+  border: 1.5px solid var(--accent);
+  background: var(--accent-wash);
+}
+
+.radio {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin: 2px 0 0;
+  appearance: none;
+  border: 1.5px solid var(--line-control);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.radio:checked {
+  border: 5.5px solid var(--accent);
+}
+
+/* The card carries the focus ring, so a keyboard user sees the whole target
+   rather than an 18px circle. */
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.radio:focus-visible {
+  outline: none;
+}
+
+/* A hint under a choice, for vocabularies that explain themselves. */
+.choiceHint {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.5;
+}
+
+/* ---- Actions ------------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+@media (width <= 744px) {
+  .card {
+    padding: 20px;
+  }
+
+  /* Full-width save, per the handoff's mobile form rule. */
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions button {
+    width: 100%;
+  }
+}
+
+/*
+ * Where a card will be once the reader has made a choice that decides its
+ * contents — the category's own fields, which do not exist until a category is
+ * picked. Dashed rather than solid, because it is a space rather than a thing:
+ * an empty solid card reads as a section that failed to load.
+ */
+.placeholder {
+  padding: 24px;
+  margin-bottom: 16px;
+  border: 1px dashed var(--line-control);
+  border-radius: var(--radius-card);
+  color: var(--ink-muted);
+  text-align: center;
+}
