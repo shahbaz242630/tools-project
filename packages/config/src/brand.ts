@@ -10,7 +10,24 @@
  * to reach production while the placeholder is in place.
  */
 
-export const BRAND_PLACEHOLDER = 'Rental Marketplace (unnamed)';
+/**
+ * The working name. **Still a placeholder** — it is deliberately something that
+ * reads like a brand rather than something that reads like a gap.
+ *
+ * It changed from `Rental Marketplace (unnamed)` on 13 August 2026, when the
+ * visual design arrived with a wordmark on every screen. A nav bar rendering
+ * "Rental Marketplace (unnamed)" at 26px tells you nothing useful and makes
+ * every screenshot unreadable, so the placeholder became a word.
+ *
+ * **This does not weaken the guard, and that was the condition for doing it.**
+ * `isBrandPlaceholder` compares against this constant rather than against any
+ * particular string, so a plausible-looking placeholder is caught exactly as the
+ * old one was: `assertBrandConfigured` still throws, production still refuses to
+ * start, and `legalEntity`, `domain` and `supportEmail` are all still null.
+ * Deciding the name remains the one-line change ADR 0005 promises — set `name`
+ * below to the real thing, at which point it stops equalling this constant.
+ */
+export const BRAND_PLACEHOLDER = 'Lendal';
 
 export interface Brand {
   /** Trading name shown to users. */

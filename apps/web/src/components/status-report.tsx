@@ -1,4 +1,5 @@
 import type { ReadinessOutcome } from '../lib/readiness';
+import styles from './status-report.module.css';
 
 /**
  * Renders one readiness outcome.
@@ -18,11 +19,19 @@ export function StatusReport({ outcome }: { outcome: ReadinessOutcome }) {
               them, so the latter never produces the literal "API: ready" in the
               HTML — which quietly breaks anything asserting on the markup. */}
           <h2 id="api-status">{`API: ${outcome.kind === 'ready' ? 'ready' : 'not ready'}`}</h2>
-          <dl>
+          <dl className={styles.rows}>
             {Object.entries(outcome.checks).map(([dependency, status]) => (
               <div key={dependency}>
                 <dt>{dependency}</dt>
-                <dd>{status}</dd>
+                <dd className={styles.state}>
+                  {/* Decorative: the state is spelled out beside it, so a screen
+                      reader announcing "ok" twice would be worse than silence. */}
+                  <span
+                    aria-hidden="true"
+                    className={`${styles.dot} ${status === 'ok' ? styles.ok : ''}`}
+                  />
+                  {status}
+                </dd>
               </div>
             ))}
           </dl>
