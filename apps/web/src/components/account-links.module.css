@@ -1,0 +1,111 @@
+/*
+ * The account page's list of destinations (slice D4).
+ */
+
+.card {
+  padding: 0;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  list-style: none;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--line-row);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.card > li:first-child .row {
+  border-top: 0;
+}
+
+.row:hover {
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.title {
+  display: block;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+/*
+ * The chevron. A text character rather than an icon: the design needs no icon
+ * set anywhere, and one dependency for one glyph is not a trade worth making.
+ * `aria-hidden` because "›" announced at the end of every row is noise — the row
+ * is already a link, which is what tells somebody it goes somewhere.
+ */
+.chevron {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* ---- Deletion ------------------------------------------------------------ */
+
+/*
+ * **Its own card, not a red row at the bottom of the list.** The handoff draws
+ * it inside, differentiated by colour; slice 2.8b pulled it out into its own
+ * region with its own heading because a destructive control that looks like a
+ * navigational one is a control people press by accident. Colour on its own
+ * would also carry the meaning in one channel, which WCAG 1.4.1 forbids.
+ *
+ * The design's danger treatment is applied to the separated card rather than
+ * instead of it, so the two decisions compose.
+ */
+.danger {
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+}
+
+.dangerHeading {
+  margin: 0 0 8px;
+  color: var(--danger);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.dangerBody {
+  margin: 0 0 14px;
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.dangerLink {
+  display: inline-block;
+  padding: 11px 22px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--danger);
+  font-size: var(--text-body);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.dangerLink:hover {
+  background: var(--danger);
+  color: var(--ground);
+}
