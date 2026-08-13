@@ -17,6 +17,7 @@ import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
 import { ModerationNotice, StatusLine } from '../../../components/listing-visibility';
 import { AttributeValue } from '../../../components/attribute-value';
+import styles from './listing-detail.module.css';
 
 /** Never prerendered — it is somebody's own draft. */
 export const dynamic = 'force-dynamic';
@@ -56,14 +57,14 @@ export default async function ListingPage({
   if (outcome.kind === 'not-found') notFound();
 
   return (
-    <main>
+    <main className={styles.page}>
       {outcome.kind === 'loaded' ? (
         <Listing listing={outcome.value} />
       ) : (
         <Unavailable kind={outcome.kind} />
       )}
 
-      <p>
+      <p className={styles.footnote}>
         {/* Added in 2.9a. This page was previously reachable only by the
             redirect that follows saving, and led nowhere but to creating
             another — so the way back to a listing seen once was its UUID. */}
@@ -78,9 +79,9 @@ export default async function ListingPage({
 function Listing({ listing }: { readonly listing: OwnerListing }) {
   return (
     <>
-      <h1>{listing.title}</h1>
+      <h1 className={styles.title}>{listing.title}</h1>
 
-      <p role="status">
+      <p role="status" className={styles.status}>
         {/*
           **`isPubliclyVisible` decides whether anybody can see this, and this
           page does not** (ADR 0041). Its history — three separate defects on one
@@ -105,7 +106,7 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
 
       <ModerationNotice listing={listing} />
 
-      <dl>
+      <dl className={styles.facts}>
         <dt>Category</dt>
         <dd>
           {listing.categoryName}{' '}
@@ -350,17 +351,21 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
         missing; the control that fixes it should be the one they meet first,
         rather than below the button that just said no.
       */}
-      <p>
-        <Link href={`${listingPath(listing.id)}/edit`}>Edit this listing</Link>
+      <div className={styles.actions}>
+        <Link href={`${listingPath(listing.id)}/edit`} className={styles.edit}>
+          Edit this listing
+        </Link>
+
+        <PublishListingForm
+          listingId={listing.id}
+          status={listing.status}
+          publicationAvailable={listing.publicationAvailable}
+        />
+      </div>
+
+      <p className={styles.footnote}>
+        Photographs are not built yet. When they are, they will appear here.
       </p>
-
-      <PublishListingForm
-        listingId={listing.id}
-        status={listing.status}
-        publicationAvailable={listing.publicationAvailable}
-      />
-
-      <p>Photographs are not built yet. When they are, they will appear here.</p>
     </>
   );
 }

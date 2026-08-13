@@ -1,0 +1,76 @@
+/*
+ * The owner's view of what is happening to their listing (slice D6).
+ *
+ * Two blocks that look similar and mean different things: the status line is
+ * what the owner set, and the moderation notice is what the platform did about
+ * it. ADR 0041 split those two authorities in the schema precisely so one could
+ * not overwrite the other, and giving them the same treatment here would undo
+ * that where it is actually read.
+ */
+
+/*
+ * What the platform decided. Tinted, because it is the one thing on the page the
+ * owner has not been told anywhere else — and, when it is a refusal, the reason
+ * their item is not earning.
+ *
+ * Both states share the treatment: "being reviewed" is not a refusal, but it is
+ * equally somebody else acting on their listing, and splitting the colour would
+ * imply a severity difference that the copy already carries better.
+ */
+.notice {
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+}
+
+.noticeHeading {
+  margin: 0 0 8px;
+  color: var(--danger);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.notice p {
+  margin: 0 0 10px;
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+
+.notice p:last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * Somebody else's words, set apart from the platform speaking in its own voice.
+ * The left rule is what makes that visible rather than merely semantic — and the
+ * distinction matters most when the words are a refusal.
+ */
+.reason {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--danger-line);
+  color: var(--ink);
+  font-style: italic;
+  line-height: 1.6;
+}
+
+/* The status word inside the table's "Who can see it" column. */
+/*
+ * `--success` rather than `--success-ink`. The latter is the design's colour for
+ * text inside a green banner, where the tinted background already says "good";
+ * standing alone in a table cell it reads as near-black, which made the one
+ * label that means "people can find this" indistinguishable from the four that
+ * mean they cannot.
+ */
+.live {
+  color: var(--success);
+  font-weight: 500;
+}
+
+.refused {
+  color: var(--danger);
+  font-weight: 500;
+}

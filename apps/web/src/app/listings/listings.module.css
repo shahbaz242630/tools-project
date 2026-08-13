@@ -1,0 +1,19 @@
+/*
+ * The owner's listings page (slice D6).
+ *
+ * **`--page-width` has to be set on `<main>`**, which is the element
+ * `globals.css` reads it on. Setting it on a section inside the page did nothing
+ * at all and the table simply stayed at the form width, cut off — a custom
+ * property inherits downwards, so a descendant cannot answer a question its
+ * ancestor already asked.
+ */
+
+.page {
+  --page-width: 1000px;
+}
+
+.footnote {
+  margin-top: 20px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}

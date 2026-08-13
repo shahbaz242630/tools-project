@@ -26,6 +26,7 @@ import { listingPath } from '@platform/contracts';
 import type { OwnedListings, OwnerListingSummary } from '@platform/contracts';
 import { VisibilityLabel } from './listing-visibility';
 import type { ListingOutcome } from '../lib/listings';
+import styles from './listing-list.module.css';
 
 export function ListingList({
   outcome,
@@ -42,7 +43,7 @@ export function ListingList({
 
     case 'signed-out':
       return (
-        <p role="alert">
+        <p role="alert" className={styles.problem}>
           Your session has expired. <Link href="/sign-in">Sign in again</Link> to see
           your listings.
         </p>
@@ -70,7 +71,7 @@ export function ListingList({
     case 'unreachable':
     case 'malformed':
       return (
-        <p role="alert">
+        <p role="alert" className={styles.problem}>
           Your listings could not be loaded just now. Nothing has been changed or lost —
           try again in a moment.
         </p>
@@ -93,9 +94,18 @@ export function ListingList({
  */
 function Empty() {
   return (
-    <section aria-labelledby="listings">
-      <h2 id="listings">Your listings</h2>
-      <p>
+    <section className={styles.empty} aria-labelledby="listings">
+      <h2 id="listings" className={styles.emptyHeading}>
+        Your listings
+      </h2>
+      {/*
+        **The copy is 2.9a's, unchanged.** The handoff has no empty state for
+        this page — it draws the table and nothing else — so there was nothing to
+        match, and rewriting a sentence that already works because a slice
+        happened to be open would be the same drift this workstream keeps
+        catching in the other direction.
+      */}
+      <p className={styles.emptyBody}>
         You have not listed anything yet. <Link href="/listings/new">List an item</Link>{' '}
         and it will appear here.
       </p>
@@ -106,7 +116,9 @@ function Empty() {
 function Loaded({ page }: { readonly page: OwnedListings }) {
   return (
     <section aria-labelledby="listings">
-      <h2 id="listings">Your listings</h2>
+      <h2 id="listings" className={styles.srOnly}>
+        Your listings
+      </h2>
 
       {/*
         **Said on screen, not only in a log** (ADR 0035). The bound is set far
@@ -119,29 +131,31 @@ function Loaded({ page }: { readonly page: OwnedListings }) {
         just did.
       */}
       {page.truncated ? (
-        <p role="alert">
+        <p role="alert" className={styles.problem}>
           This is not all of them. You have more listings than this page can show —
           please get in touch and we will sort it out.
         </p>
       ) : null}
 
-      <table>
-        <caption>Most recently created first.</caption>
-        <thead>
-          <tr>
-            <th scope="col">Item</th>
-            <th scope="col">Category</th>
-            <th scope="col">Who can see it</th>
-            <th scope="col">Price</th>
-            <th scope="col">Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {page.listings.map((listing) => (
-            <Row key={listing.id} listing={listing} />
-          ))}
-        </tbody>
-      </table>
+      <div className={styles.scroller}>
+        <table className={styles.table}>
+          <caption className={styles.caption}>Most recently created first.</caption>
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col">Category</th>
+              <th scope="col">Who can see it</th>
+              <th scope="col">Price</th>
+              <th scope="col">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {page.listings.map((listing) => (
+              <Row key={listing.id} listing={listing} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -149,7 +163,7 @@ function Loaded({ page }: { readonly page: OwnedListings }) {
 function Row({ listing }: { readonly listing: OwnerListingSummary }) {
   return (
     <tr>
-      <th scope="row">
+      <th scope="row" className={styles.item}>
         {/* The whole point of the page: a route back to a listing that is not
             its UUID. */}
         <Link href={listingPath(listing.id)}>{listing.title}</Link>
@@ -170,13 +184,12 @@ function Row({ listing }: { readonly listing: OwnerListingSummary }) {
           whatever its status says.
         */}
         {listing.isLocated ? null : (
-          <>
-            <br />
-            <small>Not on the map yet — nobody nearby would find it.</small>
-          </>
+          <small className={styles.note}>
+            Not on the map yet — nobody nearby would find it.
+          </small>
         )}
       </td>
-      <td>
+      <td className={styles.price}>
         {/*
           The inclusive total, computed by the API (§3.4.4, §6.1). The bare rate
           is not on this shape at all, so showing the wrong figure is not
@@ -184,12 +197,11 @@ function Row({ listing }: { readonly listing: OwnerListingSummary }) {
           the summary projection carrying one price and not two.
         */}
         {listing.inclusiveDailyPrice === null ? (
-          <em>Not priced</em>
+          <em className={styles.unpriced}>Not priced</em>
         ) : (
           <>
             {Money.format(listing.inclusiveDailyPrice.total)} a day
-            <br />
-            <small>fees included</small>
+            <small className={styles.note}>fees included</small>
           </>
         )}
       </td>

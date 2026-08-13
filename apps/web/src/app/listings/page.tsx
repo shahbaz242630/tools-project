@@ -5,6 +5,7 @@ import { ListingList } from '../../components/listing-list';
 import { clientIpFrom } from '../../lib/client-ip';
 import { fetchOwnedListings } from '../../lib/listings';
 import { webEnv } from '../../lib/env';
+import styles from './listings.module.css';
 
 /** Never prerendered — the answer is entirely about who is asking. */
 export const dynamic = 'force-dynamic';
@@ -39,7 +40,7 @@ export default async function ListingsPage() {
   );
 
   return (
-    <main>
+    <main className={styles.page}>
       <h1>Your listings</h1>
       <p>
         Everything you have listed, whether it is live or not. Only you can see this
@@ -48,7 +49,7 @@ export default async function ListingsPage() {
 
       <ListingList outcome={outcome} />
 
-      <p>
+      <p className={styles.footnote}>
         <Link href="/listings/new">List another item</Link> ·{' '}
         <Link href="/account">Back to your account</Link>
       </p>

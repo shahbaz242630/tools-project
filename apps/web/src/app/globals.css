@@ -371,7 +371,14 @@ table {
   text-align: left;
 }
 
-th {
+/*
+ * **`thead th`, not `th`.** The uppercase treatment is for column headings. A
+ * `<th scope="row">` is a row's *label* — in this application it is the name of
+ * somebody's listing — and the bare selector shouted every one of them in the
+ * owner's table. Found by looking at the page; nothing in the markup or the
+ * tests could have said it was wrong, because both were correct.
+ */
+thead th {
   padding: 0 0 10px;
   border-bottom: 1px solid var(--line-hairline);
   color: var(--ink-muted);
@@ -379,6 +386,15 @@ th {
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+}
+
+/* A row header is ordinary text that happens to label its row. */
+tbody th {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line-row);
+  font-weight: 500;
+  text-align: left;
+  vertical-align: top;
 }
 
 td {

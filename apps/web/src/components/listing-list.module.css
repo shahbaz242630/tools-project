@@ -1,0 +1,155 @@
+/*
+ * The owner's listings table (slice D6).
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`.
+ */
+
+/*
+ * The section heading, kept for `aria-labelledby` and hidden visually. The page
+ * already carries "Your listings" as its `<h1>`; printing it again above the
+ * table is a duplicate on screen, and removing the element would leave the
+ * region unlabelled for anybody navigating by landmark.
+ */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * Above the scroller rather than inside it. A `<caption>` renders outside the
+ * table's box, so within a bordered container it straddles the top edge.
+ * `caption-side: top` plus the padding keeps it where a caption belongs and out
+ * of the border.
+ */
+.caption {
+  caption-side: top;
+  padding: 14px 20px 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  text-align: left;
+}
+
+/*
+ * **The table scrolls; it does not become cards.**
+ *
+ * The handoff draws a five-column table and its mobile frames cover the owner's
+ * *detail* page but never this list, so the phone treatment is ours to choose.
+ * Collapsing rows into cards is the usual answer and it costs the thing that
+ * makes this page work for a screen reader: a real `<table>`, where each cell is
+ * announced with its column heading and the row header is the item's name.
+ *
+ * Scrolling inside its own container keeps all of that and keeps the page body
+ * from scrolling sideways, which is the rule D1 set for any wide content.
+ */
+.scroller {
+  overflow-x: auto;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.table {
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line-row);
+  vertical-align: top;
+}
+
+.table thead th {
+  padding-top: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-hairline);
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child th,
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover {
+  background: var(--surface-raised);
+}
+
+/* The row header is the item's name, and the link on it is the whole point of
+   the page — a route back to a listing that is not its UUID. */
+.item {
+  font-weight: 500;
+  text-align: left;
+}
+
+.note {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.5;
+
+  /* The one column that carries a second line needs room to wrap; without this
+     it stretches the column past the scroller's width. */
+  max-width: 26ch;
+}
+
+.price {
+  white-space: nowrap;
+}
+
+.unpriced {
+  color: var(--ink-muted);
+  font-style: normal;
+}
+
+/* ---- Empty and failed states -------------------------------------------- */
+
+/*
+ * **An owner with nothing listed and a list that could not be read must not look
+ * the same**, which is why these are two classes and not one. The first is an
+ * invitation; the second is an apology that promises nothing was lost.
+ */
+.empty {
+  padding: 40px 28px;
+  border: 1px dashed var(--line-control);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+.emptyHeading {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.emptyBody {
+  max-width: 40ch;
+  margin: 0 auto 20px;
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+
+.problem {
+  padding: 16px 20px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+
+@media (width <= 744px) {
+  .table th,
+  .table td {
+    padding: 14px 16px;
+  }
+}
