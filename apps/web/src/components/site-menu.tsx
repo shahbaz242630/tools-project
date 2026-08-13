@@ -3,6 +3,7 @@
 import { SignOutButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { BROWSE_PATH } from '../lib/page-paths';
 import styles from './site-menu.module.css';
 
 /**
@@ -197,6 +198,15 @@ export function MobileMenu({
 
       {open ? (
         <nav id={MOBILE_PANEL_ID} className={styles.sheet} aria-label="Menu">
+          {/*
+            Browse is outside the signed-in branch for the reason it is outside
+            it in the header: renting is what a stranger came for, and the mobile
+            sheet is the only navigation a phone has.
+          */}
+          <Link href={BROWSE_PATH} className={styles.sheetRow} onClick={close}>
+            Browse
+          </Link>
+
           {signedIn ? (
             <>
               {ACCOUNT_LINKS.map((link) => (

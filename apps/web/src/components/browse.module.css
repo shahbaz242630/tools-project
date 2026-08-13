@@ -1,0 +1,201 @@
+/*
+ * Browse — the search screen (slice 3.1b).
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`; 1079px is the top
+ * of the compressed band. Both are repeated by hand because a custom property
+ * cannot be used in a media query.
+ */
+
+/* ---- The search controls ------------------------------------------------- */
+
+/*
+ * **A row on a desktop, a stack on a phone, and the postcode field takes the
+ * slack.** The radius is a five-option select that never needs to be wide, and
+ * a postcode field that shrinks to fit a long label is the one people mistype.
+ */
+.search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 32px;
+  padding: 20px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.searchField,
+.radiusField {
+  min-width: 0;
+}
+
+/*
+ * The submit lines up with the fields rather than with their labels, which is
+ * what `align-items: end` on the grid gets — but the button has no label above
+ * it, so it needs the label's height and margin subtracting from nothing. It
+ * sits on the baseline of the inputs because they are the same height.
+ */
+.searchSubmit {
+  height: 45px;
+}
+
+.fieldError {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: var(--text-label);
+}
+
+@media (max-width: 744px) {
+  .search {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .searchSubmit {
+    width: 100%;
+  }
+}
+
+/* ---- Results ------------------------------------------------------------- */
+
+.resultsHeading {
+  margin: 0 0 16px;
+  letter-spacing: -0.01em;
+}
+
+/*
+ * **`auto-fill` with a minimum, not a fixed column count.** The page is 1160px
+ * at its widest and the card wants about 260px, so this lands on four, three,
+ * two and one without four separate breakpoints — and it stays right if
+ * `--page-width` is ever retuned.
+ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * **The whole card is the link**, so the target is 44px in every direction
+ * rather than the height of a title. `display: flex` on an anchor rather than a
+ * wrapper, because a block inside an inline element is the layout that breaks
+ * silently in older engines.
+ */
+.card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-menu);
+  transform: translateY(-2px);
+}
+
+/* Nobody's tool jumps under a reader who asked for stillness. */
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+
+  .card:hover {
+    transform: none;
+  }
+}
+
+/*
+ * The no-photo block, matching the listing page's treatment — every card is in
+ * this state today, because media is slice 2.6 and blocked on the domain.
+ */
+.cardMedia {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  background: var(--photo-empty);
+  color: var(--photo-empty-glyph);
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.cardBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 16px 16px 18px;
+}
+
+.cardTitle {
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.cardCategory,
+.cardWhere {
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+}
+
+/*
+ * The distance sits above the price and below the place, which is the order the
+ * question is asked in: what is it, where is it, how far, what does it cost.
+ */
+.cardDistance {
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+/* `margin-top: auto` pins the price to the bottom, so a two-line title and a
+   one-line title still align their prices across a row. */
+.cardPrice {
+  margin-top: auto;
+  padding-top: 10px;
+  color: var(--ink);
+  font-size: var(--text-body);
+}
+
+.truncated {
+  margin: 24px 0 0;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+}
+
+/* ---- Nothing found ------------------------------------------------------- */
+
+.empty {
+  padding: 44px 24px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface-sunken);
+  text-align: center;
+}
+
+.emptyHeading {
+  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+}
+
+.emptyBody {
+  max-width: 46ch;
+  margin: 0 auto;
+  color: var(--ink-secondary);
+}

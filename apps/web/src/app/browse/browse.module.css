@@ -1,0 +1,43 @@
+/*
+ * The search page's own shell (slice 3.1b).
+ *
+ * The results themselves are styled in `components/browse.module.css`, beside
+ * the components that render them — this file holds only what belongs to the
+ * route: how wide it is, and the two states the page owns rather than the
+ * results component.
+ */
+
+/*
+ * **1160px, which is the design's browse width**, set here rather than globally
+ * because `--page-width` defaults to the form width that most of this
+ * application is. This is the mechanism `globals.css` documents for exactly this
+ * case.
+ */
+.page {
+  --page-width: 1160px;
+}
+
+.heading {
+  margin: 0 0 24px;
+  letter-spacing: -0.02em;
+}
+
+/* Before anybody has searched. Not an empty state — nothing has been asked. */
+.prompt {
+  margin: 0;
+  color: var(--ink-secondary);
+}
+
+/*
+ * The read failed. Deliberately not styled as an empty state: "we could not
+ * look" and "there is nothing there" must not look the same, because only one of
+ * them is worth trying again.
+ */
+.unavailable {
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+  color: var(--danger);
+}

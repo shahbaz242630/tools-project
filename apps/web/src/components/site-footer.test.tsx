@@ -25,21 +25,34 @@ describe('SiteFooter', () => {
     }
   });
 
-  it.each(['Browse', 'How it works', 'Privacy', 'Terms', 'Support'])(
+  it.each(['How it works', 'Privacy', 'Terms', 'Support'])(
     'does not link %s, which has no page behind it',
     (label) => {
       /*
-       * The design's footer draws all five. Browse is Phase 3, How it works is
-       * an anchor into the landing page (slice D3), and the three legal pages
-       * need copy a solicitor writes rather than a designer. BRD §15 forbids a
+       * The design's footer draws five. How it works is an anchor into a
+       * landing-page section nobody has written, and the three legal pages need
+       * copy a solicitor writes rather than a designer. BRD §15 forbids a
        * control that does not do what it says — and this component renders on
        * every page in the application, so a dead link here is a dead link
        * everywhere.
+       *
+       * **Browse was the fifth and left this list in slice 3.1b**, when
+       * `/browse` was built. The rule is why it is now present, not why it was
+       * once missing.
        */
       render(<SiteFooter />);
       expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
     },
   );
+
+  it('links Browse, now that there is somewhere for it to go (3.1b)', () => {
+    render(<SiteFooter />);
+
+    expect(screen.getByRole('link', { name: 'Browse' })).toHaveAttribute(
+      'href',
+      '/browse',
+    );
+  });
 
   it('labels each column with a real heading', () => {
     // Four unlabelled link groups are four unlabelled link groups to a screen
