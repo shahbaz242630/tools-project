@@ -1,5 +1,9 @@
+import type { SearchRadiusMiles } from '@platform/contracts';
+import { Paging } from '@platform/core';
 import { GeocoderUnavailableError } from '../geocoder.js';
 import type { GeocodedPostcode, PostcodeGeocoder } from '../geocoder.js';
+import { bucketDistance, milesToMetres } from '../distance-bucket.js';
+import type { ListingSearchRepository, NearbyListingPage } from '../listing-search.js';
 
 /**
  * Test doubles for Search & Location.
@@ -67,4 +71,89 @@ export class FakeGeocoder implements PostcodeGeocoder {
 
     return Promise.resolve(this.known.get(postcode.toUpperCase()) ?? null);
   }
+}
+
+/** A listing at a known distance, as a test places one. */
+export interface PlacedListing {
+  readonly listingId: string;
+  /** From the origin, in metres. What the real query gets back from PostGIS. */
+  readonly metresFromOrigin: number;
+}
+
+/**
+ * The radius query, without PostGIS (slice 3.1a).
+ *
+ * **It fakes the geometry and reproduces everything else exactly**, which is the
+ * division that makes it useful rather than circular. Distances are given rather
+ * than computed — a fake that re-implemented the great-circle formula would only
+ * prove the two implementations agree — but the radius comparison, the probe,
+ * the truncation flag, the nearest-first order and the bucketing all run the
+ * real code. Those are the parts a service can get wrong.
+ *
+ * **What it cannot prove is exactly what the db test exists for**: that the SQL
+ * filters on the fuzzed point, joins the right tables, and returns no column it
+ * should not. Nothing in here would notice if that statement selected a street
+ * line.
+ */
+export class FakeListingSearch implements ListingSearchRepository {
+  private readonly placed: PlacedListing[] = [];
+  private readonly unplaceable = new Set<string>();
+  /** Every origin it was asked about, in order. */
+  readonly asked: string[] = [];
+
+  /** Put a listing at a distance from wherever the search starts. */
+  places(listingId: string, metresFromOrigin: number): this {
+    this.placed.push({ listingId, metresFromOrigin });
+    return this;
+  }
+
+  /**
+   * Make this origin unplaceable — the null case.
+   *
+   * By postcode rather than a global switch, so a test can assert that one
+   * search fails to place its origin while another succeeds, which is the shape
+   * of a real geocoder that does not recognise a new build's postcode.
+   */
+  cannotPlace(postcode: string): this {
+    this.unplaceable.add(postcode.toUpperCase());
+    return this;
+  }
+
+  findWithin(
+    originPostcode: string,
+    radiusMiles: SearchRadiusMiles,
+    limit: number,
+  ): Promise<NearbyListingPage | null> {
+    this.asked.push(originPostcode);
+
+    if (this.unplaceable.has(originPostcode.toUpperCase())) {
+      return Promise.resolve(null);
+    }
+
+    const radiusMetres = milesToMetres(radiusMiles);
+    const inside = this.placed
+      .filter((listing) => listing.metresFromOrigin <= radiusMetres)
+      .sort(byDistanceThenId)
+      // The probe the real adapter makes, so `truncated` is exercised rather
+      // than assumed — a fake that returned everything would make every test of
+      // the flag pass for the wrong reason.
+      .slice(0, Paging.probe(limit));
+
+    const page = Paging.fitTo(inside, limit);
+
+    return Promise.resolve({
+      matches: page.items.map((listing: PlacedListing) => ({
+        listingId: listing.listingId,
+        distance: bucketDistance(listing.metresFromOrigin),
+      })),
+      truncated: page.truncated,
+    });
+  }
+}
+
+/** The adapter's `ORDER BY`, including its tiebreak on id. */
+function byDistanceThenId(a: PlacedListing, b: PlacedListing): number {
+  return (
+    a.metresFromOrigin - b.metresFromOrigin || a.listingId.localeCompare(b.listingId)
+  );
 }

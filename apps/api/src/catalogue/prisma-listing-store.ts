@@ -30,6 +30,7 @@ import type {
   ListingStore,
   ModerationDecision,
   PublicListingRecord,
+  PublicListingSummaryRecord,
 } from './listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from './listing-locator.js';
 
@@ -495,6 +496,61 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       outwardCode: listing.outwardCode,
       town: listing.town,
     };
+  }
+
+  /**
+   * Several listings, for a search results page (slice 3.1a).
+   *
+   * **It reuses `PUBLIC_LISTING_CATEGORY` rather than defining a narrower
+   * include**, and that is the decision here. A `select` listing only the six
+   * columns a card needs would fetch less — `description` is up to two thousand
+   * characters and no card renders it — but it would be a *second* description
+   * of what a public read may join, and the guarantee that matters is the one
+   * `PUBLIC_LISTING_CATEGORY` carries: it does not join `listing_locations`.
+   * One constant held by both public reads is worth more than the bytes, and the
+   * narrowing that protects anybody is on the record type below rather than on
+   * the wire from Postgres.
+   *
+   * **`PUBLICLY_VISIBLE` is in the `where` again**, for the reason the port
+   * gives: the ids came from a different query in a different transaction.
+   *
+   * A listing with no outward code cannot be publicly visible, so the filter
+   * below is a type narrowing rather than a real branch — it drops the row
+   * rather than throwing, because one unrenderable listing should cost a search
+   * result and not the page.
+   */
+  async findPublishedSummaries(
+    ids: readonly string[],
+  ): Promise<readonly PublicListingSummaryRecord[]> {
+    // No query at all for an empty search. `IN ()` is legal for Prisma and
+    // pointless for Postgres, and this is the ordinary case for a rural
+    // postcode at five miles.
+    if (ids.length === 0) return [];
+
+    const listings = await this.prisma.listing.findMany({
+      where: { id: { in: [...ids] }, ...PUBLICLY_VISIBLE },
+      include: PUBLIC_LISTING_CATEGORY,
+    });
+
+    return listings.flatMap((listing) => {
+      if (listing.outwardCode === null || listing.town === null) return [];
+
+      return [
+        {
+          id: listing.id,
+          ownerId: listing.ownerId,
+          categoryName: listing.categoryVersion.name,
+          currentFeePolicy: asFeePolicy(
+            listing.categoryVersion.category.versions[0] ?? listing.categoryVersion,
+            `the current version of the category listed by ${listing.id}`,
+          ),
+          title: listing.title,
+          rates: asRateCard(listing),
+          outwardCode: listing.outwardCode,
+          town: listing.town,
+        },
+      ];
+    });
   }
 
   /**

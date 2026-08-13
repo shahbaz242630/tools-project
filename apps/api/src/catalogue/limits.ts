@@ -61,6 +61,28 @@ export const EXPORTED_LISTING_LIMIT = 1000;
 export const OWNED_LISTING_LIMIT = 200;
 
 /**
+ * How many listings one page of search results carries (slice 3.1a).
+ *
+ * **The first constant in this file that is honestly a page size**, and it is
+ * worth saying so because the two above go out of their way not to be. The
+ * distinction ADR 0035 draws is between a bound nobody should ever meet and a
+ * bound that is part of the product — a radius search over a working catalogue
+ * is *expected* to have more results than fit, so this one is met constantly and
+ * that is not a defect.
+ *
+ * What makes it honest rather than a silent truncation is `truncated`, which the
+ * response carries: a page that stops says it stopped. **The cursor is slice
+ * 3.1b's**, and `ListingStore.listOwnedBy` has recorded since slice H2 that the
+ * port should take one once a third caller wants a third answer. This is that
+ * third caller, and it is deliberately not taking it yet — a cursor with no
+ * control to drive it would be a paginator nobody can reach.
+ *
+ * Twenty-four rather than twenty because it divides by two, three and four, so a
+ * grid has no ragged last row at any of the breakpoints the design uses.
+ */
+export const SEARCH_RESULT_LIMIT = 24;
+
+/**
  * How many categories any read of the catalogue returns.
  *
  * The launch catalogue is one category. `reference-category-taxonomy.md` found

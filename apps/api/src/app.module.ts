@@ -48,6 +48,7 @@ import { AdminCategoriesController } from './catalogue/admin-categories.controll
 import { AdminListingsController } from './catalogue/admin-listings.controller.js';
 import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
 import { PublicListingsController } from './catalogue/public-listings.controller.js';
+import { PublicListingSearchController } from './catalogue/public-listing-search.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
 import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
@@ -187,18 +188,24 @@ export class AppModule implements NestModule {
         AdminFeatureFlagsController,
         OwnerListingsController,
         AdminListingsController,
-        // **Unguarded by design, both of them**, and kept together at the end of
+        // **Unguarded by design, all three**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
-        // requires the same. Each is a separate controller so the decision is
-        // visible rather than looking like a missing decorator — see the
-        // docblock on either class.
+        // requires the same; §8.4 makes search the point of the whole product.
+        // Each is a separate controller so the decision is visible rather than
+        // looking like a missing decorator — see the docblock on each class.
         //
-        // **Anything added here is world-readable.** Two entries is a number
+        // **Anything added here is world-readable.** Three entries is a number
         // somebody can check by eye at review time; that is the whole reason
-        // they sit together.
+        // they sit together, and it is why slice 3.1a added a class rather than
+        // a second route to the one below it.
+        //
+        // The newest one is also the most exposed: it returns a *collection*
+        // from an origin the caller picks, where the other two answer about one
+        // thing the caller had to already know the id of.
         PublicProfileController,
         PublicListingsController,
+        PublicListingSearchController,
       ],
       providers: [
         ReadinessService,

@@ -1,6 +1,6 @@
 import type { Logger } from '@platform/observability';
-import { GeocoderUnavailableError } from './geocoder.js';
 import type { PostcodeGeocoder } from './geocoder.js';
+import { geocodeQuietly } from './geocode-quietly.js';
 import { applyFuzzOffset, createFuzzOffset } from './fuzz.js';
 import type { FuzzOffset, Point } from './fuzz.js';
 
@@ -115,34 +115,15 @@ export class LocationService {
    * so no caller can obtain a true coordinate without the displaced one arriving
    * in the same object. Widening this to `public` would remove the guarantee the
    * class docblock makes.
+   *
+   * **The body moved to `geocode-quietly.ts` in slice 3.1a**, when the radius
+   * search became a second caller needing the same no-throw, log-the-district
+   * behaviour. This method stays because the guarantee above is about *this
+   * class*, and deleting it would invite the search's helper to be called from
+   * here directly by whoever next adds a method.
    */
   private async geocode(postcode: string): Promise<Point | null> {
-    let located;
-    try {
-      located = await this.geocoder.locate(postcode);
-    } catch (error) {
-      if (!(error instanceof GeocoderUnavailableError)) throw error;
-
-      // Warn rather than error: the listing saved, nothing was lost, and the
-      // next save tries again. It is worth alerting on in aggregate — a
-      // geocoder down for a day means a day of unlocatable listings — which is
-      // a job for the alerting `SECURITY.md` says we do not have yet.
-      this.logger.warn('Could not geocode a listing postcode', {
-        // The district only. A full postcode in a log is an address in a log.
-        outwardCode: outwardCodeOf(postcode),
-        reason: error.message,
-      });
-      return null;
-    }
-
-    if (located === null) {
-      this.logger.info('No coordinates for this postcode', {
-        outwardCode: outwardCodeOf(postcode),
-      });
-      return null;
-    }
-
-    return located;
+    return geocodeQuietly(this.geocoder, this.logger, postcode);
   }
 }
 
@@ -166,15 +147,4 @@ function fuzzedAt(located: Point, offset: FuzzOffset): FuzzedLocation {
     fuzzedLatitude: fuzzed.latitude,
     fuzzedLongitude: fuzzed.longitude,
   };
-}
-
-/**
- * The publishable half of a postcode, for a log line.
- *
- * Deliberately not `Postcode.outwardCode` from `@platform/core`: that throws on
- * anything malformed, and a logging path must never be the thing that fails a
- * request. Whatever precedes the first space is enough for a log.
- */
-function outwardCodeOf(postcode: string): string {
-  return postcode.split(' ')[0] ?? '';
 }

@@ -75,7 +75,19 @@ const RULES = [
     pattern: /\$queryRaw|\$executeRaw|\bsql`/,
     message: 'raw SQL',
     why: 'Raw SQL is confined to the Search & Location module behind a repository interface, because Prisma cannot express PostGIS queries (ADR 0004, BRD §4.2). Elsewhere it bypasses the ORM and the module boundary.',
-    exempt: (p) => p.includes('search') || p.startsWith('scripts/'),
+    /*
+     * **The module directory, not the word.** This read `p.includes('search')`
+     * until slice 3.1a, which exempted any file anywhere in the tree with
+     * "search" in its name — `user-search.service.ts`, `search-form.tsx`, a
+     * `listing-search.repository.ts` sitting in Catalogue. It cost nothing while
+     * no raw SQL existed anywhere; it was tightened the moment the project's
+     * first `$queryRaw` went in behind it (ADR 0044).
+     *
+     * Tests need no exemption — `tracked` drops every `*.test.ts` before any
+     * rule runs.
+     */
+    exempt: (p) =>
+      p.includes('apps/api/src/search-location/') || p.startsWith('scripts/'),
   },
   {
     id: 'use-server-exports-only-functions',

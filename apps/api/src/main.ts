@@ -47,6 +47,7 @@ import { PrismaCategoryStore } from './catalogue/prisma-category-store.js';
 import { ListingsService } from './catalogue/listings.service.js';
 import { LocationService } from './search-location/location.service.js';
 import { PostcodesIoGeocoder } from './search-location/postcodes-io-geocoder.js';
+import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
 import { PrismaFeatureFlagStore } from './feature-flags/prisma-flag-store.js';
@@ -243,8 +244,25 @@ async function bootstrap(): Promise<void> {
   // credentials at all, which is why this line carries none: it is ONS open data
   // behind a free, keyless API, so there is nothing to put in the secret manager
   // and nothing to rotate.
+  const geocoder = new PostcodesIoGeocoder(logger.child({ module: 'search-location' }));
+
   const location = new LocationService(
-    new PostcodesIoGeocoder(logger.child({ module: 'search-location' })),
+    geocoder,
+    logger.child({ module: 'search-location' }),
+  );
+
+  // The radius query (slice 3.1a, ADR 0044) — the one place in the system
+  // holding hand-written SQL, because Prisma cannot express PostGIS (BRD §4.2).
+  //
+  // It takes the geocoder rather than the `LocationService` above, and that is
+  // the boundary rather than a shortcut: a search origin is the *searcher's*
+  // postcode, which is never stored and never published, so it needs none of the
+  // fuzzing that service exists to guarantee. Handing it the service instead
+  // would have meant widening `LocationService.geocode` to public, and its
+  // docblock explains what happens next.
+  const listingSearch = new PrismaListingSearch(
+    database,
+    geocoder,
     logger.child({ module: 'search-location' }),
   );
 
@@ -288,6 +306,18 @@ async function bootstrap(): Promise<void> {
      * past — the narrowing every port across this boundary makes.
      */
     { findOwnerStatus: (userId) => profiles.findOwnerStatus(userId) },
+    /*
+     * Which listings are near a postcode (slice 3.1a). The second port Search &
+     * Location answers, and the two are deliberately separate objects rather
+     * than one geography service: the locator above is reachable only from write
+     * paths and deals in a listing's own position, this is reachable only from
+     * the public read and deals in ids and buckets. Neither can be used to do
+     * the other's job.
+     */
+    {
+      findWithin: (postcode, radiusMiles, limit) =>
+        listingSearch.findWithin(postcode, radiusMiles, limit),
+    },
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(
