@@ -1,0 +1,43 @@
+/*
+ * The account page's identity header (slice D4).
+ */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent-avatar);
+  color: var(--accent-hover);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.name {
+  margin: 0 0 2px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.meta {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+
+  /* An email plus a town plus a district is long, and on a 375px screen it has
+     to be allowed to break rather than push the layout wider than the phone. */
+  overflow-wrap: anywhere;
+}

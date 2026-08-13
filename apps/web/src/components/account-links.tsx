@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import type { MeResponse } from '@platform/contracts';
+import styles from './account-links.module.css';
 
 /**
  * Everything a person can do with their own account, in one list.
  *
- * Extracted from the page because the rules below deserve pinning: until this
- * slice they lived as a conditional in the middle of a server component, where
- * no test could reach them.
+ * Extracted from the page because the rules below deserve pinning: until slice
+ * 1.11 they lived as a conditional in the middle of a server component, where no
+ * test could reach them.
  *
  * **Two links are dropped while an account is suspended.** Saving a profile is
  * a change and the API refuses it, so the form would render and then lose the
@@ -24,18 +25,29 @@ import type { MeResponse } from '@platform/contracts';
  * previously the sixth bullet in a list of six, indistinguishable in weight from
  * "Download your data". Separating it is not decoration: a destructive control
  * that looks exactly like a navigational one is a control people press by
- * accident.
+ * accident. **The design of 13 August draws it as a red row inside the card**;
+ * slice D4 kept the separation and applied the danger treatment to it, because
+ * colour alone would carry the meaning in a single channel (WCAG 1.4.1).
+ *
+ * **The sub-lines are new in D4** and the titles are not. Two of them differ
+ * from the design deliberately: *"Email, password and devices"* stays as it is,
+ * because the name is what lets somebody hunting for *which devices are signed
+ * in to my account* find the page at all; and *"View your public profile"* stays
+ * in the list, which the design drops — a person being asked for a home address
+ * should be one click from the page that proves how little of it is published.
  */
 export function AccountLinks({ account }: { account: MeResponse }) {
   const suspended = account.suspendedAt !== null;
 
   return (
     <>
-      <ul>
+      <ul className={styles.card}>
         {suspended ? null : (
-          <li>
-            <Link href="/account/profile">Edit your profile</Link>
-          </li>
+          <Row
+            href="/account/profile"
+            title="Your profile"
+            sub="Display name, address, how you list"
+          />
         )}
 
         {/* Named for the devices as much as the email, and the wording is the
@@ -50,17 +62,18 @@ export function AccountLinks({ account }: { account: MeResponse }) {
           route to the one control a person suspected of a compromised account
           needs most. Changing an email there cannot lift a suspension: the
           suspension hangs off our `users` row, not off the credential. */}
-        <li>
-          <Link href="/account/email">Email, password and devices</Link>
-        </li>
+        <Row
+          href="/account/email"
+          title="Email, password and devices"
+          sub="Managed with your sign-in provider"
+        />
 
         {suspended ? null : (
-          <li>
-            {/* What everybody else sees. Linked from here on purpose: a person
-              being asked for a home address should be one click from the page
-              that proves how little of it is published. */}
-            <Link href={`/users/${account.id}`}>View your public profile</Link>
-          </li>
+          <Row
+            href={`/users/${account.id}`}
+            title="View your public profile"
+            sub="Exactly what a neighbour sees"
+          />
         )}
 
         {/*
@@ -76,20 +89,50 @@ export function AccountLinks({ account }: { account: MeResponse }) {
           anything a person owned, and it did not mention the listings — so an
           owner's way back to their own item was the UUID in their history.
         */}
-        <li>
-          <Link href="/listings">Your listings</Link>
-        </li>
+        <Row
+          href="/listings"
+          title="Your listings"
+          sub="Everything you have offered to lend"
+        />
 
-        <li>
-          <Link href="/account/activity">Account activity</Link>
-        </li>
-        <li>
-          <Link href="/account/data">Download your data</Link>
-        </li>
+        <Row
+          href="/account/activity"
+          title="Account activity"
+          sub="Recent sign-ins and account events"
+        />
+        <Row
+          href="/account/data"
+          title="Download your data"
+          sub="A copy of everything we hold"
+        />
       </ul>
 
       <DangerZone />
     </>
+  );
+}
+
+function Row({
+  href,
+  title,
+  sub,
+}: {
+  readonly href: string;
+  readonly title: string;
+  readonly sub: string;
+}) {
+  return (
+    <li>
+      <Link href={href} className={styles.row}>
+        <span>
+          <span className={styles.title}>{title}</span>
+          <span className={styles.sub}>{sub}</span>
+        </span>
+        <span className={styles.chevron} aria-hidden="true">
+          &rsaquo;
+        </span>
+      </Link>
+    </li>
   );
 }
 
@@ -99,8 +142,8 @@ export function AccountLinks({ account }: { account: MeResponse }) {
  * **Set apart semantically, not only visually.** A `section` with its own
  * heading means somebody navigating by headings meets the warning before the
  * link, and somebody skimming does not find deletion sitting in a list of
- * everyday tasks. There is no stylesheet to lean on here, so the separation has
- * to come from structure — which is the more durable half anyway.
+ * everyday tasks. That was true when there was no stylesheet to lean on and it
+ * is still the more durable half now that there is one.
  *
  * **Kept while suspended**, like the other data-protection routes: erasure
  * rights do not lapse on suspension (ADR 0024).
@@ -112,10 +155,11 @@ export function AccountLinks({ account }: { account: MeResponse }) {
  */
 function DangerZone() {
   return (
-    <section aria-labelledby="danger-zone">
-      <hr />
-      <h2 id="danger-zone">Danger zone</h2>
-      <p>
+    <section className={styles.danger} aria-labelledby="danger-zone">
+      <h2 id="danger-zone" className={styles.dangerHeading}>
+        Delete your account
+      </h2>
+      <p className={styles.dangerBody}>
         <strong>Deleting your account is immediate and cannot be undone.</strong> Your
         profile, your address and{' '}
         {/* Named explicitly since 2.8b, because it stopped being true that a
@@ -123,9 +167,9 @@ function DangerZone() {
             read as including the six items they spent an evening listing. */}
         <strong>every listing you have</strong> are removed outright.
       </p>
-      <p>
-        <Link href="/account/delete">Delete your account</Link>
-      </p>
+      <Link href="/account/delete" className={styles.dangerLink}>
+        Delete your account
+      </Link>
     </section>
   );
 }
