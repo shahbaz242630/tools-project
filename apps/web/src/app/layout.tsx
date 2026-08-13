@@ -4,6 +4,7 @@ import { BRAND } from '@platform/config';
 import { Instrument_Sans } from 'next/font/google';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { CLERK_APPEARANCE } from '../lib/clerk-appearance';
 import { RouteTransition } from '../components/route-transition';
 import { SiteFooter } from '../components/site-footer';
 import { SiteHeader } from '../components/site-header';
@@ -91,7 +92,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         {/* Inside <body>, not wrapping <html>. Clerk injects elements, and
             wrapping the document element puts them outside <body> where the
             browser relocates them and hydration then disagrees with the server. */}
-        <ClerkProvider>
+        <ClerkProvider appearance={CLERK_APPEARANCE}>
           {/*
             First focusable thing on the page, and invisible until it has focus.
             Without it a keyboard user crosses the whole header on every single

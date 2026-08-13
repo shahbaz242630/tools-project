@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { fetchPublicListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { PublicListingView } from '../../../components/public-listing';
+import styles from './hire.module.css';
 
 /**
  * A listing, as anybody may see it — the first page in this project that does
@@ -80,7 +81,7 @@ export default async function PublicListingPage({
   if (outcome.kind === 'not-found') notFound();
 
   return (
-    <main>
+    <main className={styles.page}>
       {outcome.kind === 'loaded' ? (
         <PublicListingView listing={outcome.value} />
       ) : (
