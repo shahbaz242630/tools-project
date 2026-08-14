@@ -11,6 +11,15 @@ global:
   # faster mostly buys noise on a service with our traffic.
   scrape_interval: 15s
   evaluation_interval: 15s
+  # **Expanded by Prometheus, not by compose** (slice H5). Compose substitutes
+  # variables in the compose file; a mounted config file is just bytes to it. So
+  # this needs `--enable-feature=expand-external-labels` on the command *and*
+  # `APP_ENV` in the container's environment — both are set in
+  # `docker-compose.observability.yml`, and either one alone leaves this empty.
+  #
+  # It also cannot be checked by querying a series: external labels are added
+  # when data leaves Prometheus, so `/api/v1/status/config` is the only place it
+  # shows.
   external_labels:
     environment: '${APP_ENV}'
 

@@ -276,16 +276,37 @@ docker inspect rental-production-api --format '{{.State.StartedAt}}'
 docker image prune -f
 ```
 
-## Watching it (optional)
+## Watching it
 
-Metrics, dashboards and searchable logs. A separate compose file, because a box
-too small to run both should run the marketplace rather than the monitoring.
+> **Run for real on 14 August 2026** (slice H5), against the staging app stack,
+> and corrected where it was wrong. Prometheus scrapes the API (`health: up`),
+> Promtail ships every container's logs into Loki, and Grafana serves both over
+> an SSH tunnel. Proved by _firing_ it rather than by reading a status: the
+> series for `/public/listings` did not exist, five real searches were made, and
+> it read `5`.
+>
+> **Measured cost: ~219 MB** for all four containers — Grafana 115, Loki 53,
+> Promtail 28, Prometheus 23 — on a box with 2.8 GB available. The worry about a
+> box too small to run this was misplaced at our size, and it is no longer
+> described as optional.
+
+Metrics, dashboards and searchable logs. A separate compose file, so that
+running it stays a deployment choice rather than an edit.
 
 ```bash
-# Needs GRAFANA_ADMIN_PASSWORD in the env file. The container refuses to start
-# without one rather than booting with a default.
-docker compose -f docker-compose.app.yml -f docker-compose.observability.yml up -d
+# Needs GRAFANA_ADMIN_PASSWORD and APP_ENV in the env file. Grafana refuses to
+# start without a password rather than booting with a default; Prometheus needs
+# APP_ENV to label which environment it is.
+docker compose --env-file /opt/rental/<env>.env \
+  -f docker-compose.app.yml -f docker-compose.observability.yml up -d
 ```
+
+**The env file is not optional and the app stack must already be up.** This file
+joins the network the app stack created — `rental-<env>_internal`, which is the
+compose _project_ name plus `_internal`. That was wrong in this repository until
+the first real run: it read `rental-<env>-app_internal`, and compose refuses to
+start against a network that does not exist. Check with `docker network ls`
+rather than reading it off a filename.
 
 **Nothing here is published to the internet.** Prometheus scrapes the API over
 the internal network — the same reachability the API has to Postgres, which is
@@ -293,8 +314,12 @@ why `/metrics` needs no credential. Grafana binds to `127.0.0.1` only, so it is
 reached through an SSH tunnel:
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 <user>@<box>
-# then open http://localhost:3000
+# Local 3010, not 3010→3000 by accident: the *left* number is yours to choose,
+# and 3000 is already the local web dev server (and, on this project owner's
+# machine, another project entirely). Binding it here is how you end up reading
+# a dashboard that is actually a Next.js 404.
+ssh -N -L 3010:127.0.0.1:3000 <user>@<box>
+# then open http://localhost:3010
 ```
 
 What it gives you: request rate, error rate and latency by route; database and
@@ -308,6 +333,20 @@ retention schedule reaches them in a way it does not reach metrics (which carry
 no identifiers by construction — see `normaliseRoute`). And there are no alert
 rules yet: this makes the platform _observable_, not _monitored_. Nothing will
 wake anybody up.
+
+**One more thing the first run taught, and it is the kind that hides.** Metrics
+live in the API process, so **every deploy resets them** — and every merge to
+`main` deploys. Before Prometheus existed, the counters were wiped several times
+a day and nobody could have noticed; the exposition on a freshly deployed
+container holds `/health` and nothing else. Prometheus is what makes a number
+outlive a release, which is most of the argument for running it at all.
+
+**And `environment` is expanded by Prometheus, not by compose.** A mounted config
+file is opaque to compose, so `${APP_ENV}` in `prometheus.yml` needs
+`--enable-feature=expand-external-labels` _and_ `APP_ENV` in the container's
+environment. Both are set now; either alone leaves the label empty. It cannot be
+checked by querying a series — external labels are attached on the way out, so
+`/api/v1/status/config` is the only place they show.
 
 ## Not done yet
 
