@@ -1,4 +1,9 @@
-import { widerRadius } from '@platform/contracts';
+import {
+  FIRST_SEARCH_PAGE,
+  nextSearchPage,
+  previousSearchPage,
+  widerRadius,
+} from '@platform/contracts';
 import type { SearchRadiusMiles } from '@platform/contracts';
 
 /**
@@ -45,8 +50,55 @@ export function hirePath(id: string): string {
  * contract's, because this URL is parsed by the page using the contract's own
  * schema.
  */
-export function browseHref(postcode: string, radiusMiles: SearchRadiusMiles): string {
-  return `${BROWSE_PATH}?postcode=${encodeURIComponent(postcode)}&radiusMiles=${String(radiusMiles)}`;
+export function browseHref(
+  postcode: string,
+  radiusMiles: SearchRadiusMiles,
+  page: number = FIRST_SEARCH_PAGE,
+): string {
+  const query = `postcode=${encodeURIComponent(postcode)}&radiusMiles=${String(radiusMiles)}`;
+  /*
+   * **The first page carries no `page` parameter**, matching
+   * `publicListingSearchPath` — one search, one URL. It is what keeps every link
+   * written before slice 3.1d byte-identical, and it is half of the answer slice
+   * 2.12 needs for §8.17's canonical URLs.
+   */
+  return `${BROWSE_PATH}?${page === FIRST_SEARCH_PAGE ? query : `${query}&page=${String(page)}`}`;
+}
+
+/**
+ * The same search, one page on — or null at the cap (slice 3.1d).
+ *
+ * **`widerSearchHref`'s shape, for its reason**: the boundary is decided in one
+ * tested place rather than at the call site. A "Show more" control on the last
+ * permitted page would link to a page the API refuses with a 400, which is BRD
+ * §15's dead control wearing a working link's clothes.
+ *
+ * The caller supplies `hasMore` because only the server knows it — `truncated`
+ * is measured by probing for one row beyond the page. This function answers the
+ * other half: whether we are *allowed* to go there.
+ */
+export function nextSearchHref(
+  postcode: string,
+  radiusMiles: SearchRadiusMiles,
+  page: number,
+  hasMore: boolean,
+): { readonly href: string; readonly page: number } | null {
+  const next = nextSearchPage(page);
+  if (!hasMore || next === null) return null;
+
+  return { href: browseHref(postcode, radiusMiles, next), page: next };
+}
+
+/** The same search, one page back — or null on the first. */
+export function previousSearchHref(
+  postcode: string,
+  radiusMiles: SearchRadiusMiles,
+  page: number,
+): { readonly href: string; readonly page: number } | null {
+  const previous = previousSearchPage(page);
+  if (previous === null) return null;
+
+  return { href: browseHref(postcode, radiusMiles, previous), page: previous };
 }
 
 /**
@@ -56,6 +108,11 @@ export function browseHref(postcode: string, radiusMiles: SearchRadiusMiles): st
  * rather than written out again: "nothing within 5 miles" offers 10, 10 offers
  * 20, and 100 offers nothing at all. That last case is why this is a function —
  * the alternative is a control that silently re-runs the identical search.
+ *
+ * **It drops back to the first page**, which falls out of `browseHref`'s default
+ * rather than being decided here — widening the radius changes which listings
+ * exist and how they are ordered, so carrying page four across would land
+ * somebody in the middle of a set they have never seen the start of.
  */
 export function widerSearchHref(
   postcode: string,

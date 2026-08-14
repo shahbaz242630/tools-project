@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import {
   DEFAULT_SEARCH_RADIUS_MILES,
   listingSearchQuerySchema,
@@ -35,11 +36,44 @@ import styles from './browse.module.css';
  */
 export const dynamic = 'force-dynamic';
 
-export const metadata = {
-  title: 'Find a tool near you',
-  description:
-    'Search for tools and garden equipment to rent from people nearby. Prices include all mandatory fees.',
-};
+/**
+ * **Page two onwards is `noindex, follow`** (slice 3.1d).
+ *
+ * Browse is one of only two indexable pages in this application, and pagination
+ * multiplies it into a URL space a crawler will walk: every postcode times every
+ * radius times every page, all of it near-identical and none of it a landing
+ * page anybody should arrive on. `follow` is the half that matters — the
+ * listings on page four are still reachable and still worth indexing
+ * individually, which is what §8.17 actually asks for.
+ *
+ * **This is the conservative default, not the answer.** Slice 2.12 owns
+ * canonical URLs and the sitemap, and a search URL per postcode is the question
+ * it has to settle. What this avoids meanwhile is shipping a crawl trap and
+ * calling it somebody else's slice.
+ *
+ * **The test is whether a `page` parameter is present at all**, not what it says.
+ * `?page=1` is served identically to the bare URL by design, so it is a
+ * duplicate of the canonical rather than the canonical — keeping it out of the
+ * index is the same decision as keeping page four out, and it needs no parsing
+ * to reach.
+ *
+ * A function rather than the `metadata` object because it depends on the query
+ * string, and Next refuses both exports from one segment.
+ */
+export async function generateMetadata({
+  searchParams,
+}: {
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<Metadata> {
+  const params = await searchParams;
+
+  return {
+    title: 'Find a tool near you',
+    description:
+      'Search for tools and garden equipment to rent from people nearby. Prices include all mandatory fees.',
+    robots: params.page === undefined ? undefined : { index: false, follow: true },
+  };
+}
 
 export default async function BrowsePage({
   searchParams,
@@ -75,6 +109,11 @@ export default async function BrowsePage({
     // is not, and falls through to the same field error, because a URL claiming
     // a 7-mile radius should not be quietly answered with a 5-mile one.
     radiusMiles: first(params.radiusMiles) ?? undefined,
+    // The same treatment for the page, and the same reason: `?page=0` and
+    // `?page=99` are hand-edited or stale URLs, and answering either with page
+    // one would be showing somebody results they did not ask for while the
+    // address bar says otherwise.
+    page: first(params.page) ?? undefined,
   });
 
   if (!parsed.success) {
@@ -93,6 +132,7 @@ export default async function BrowsePage({
     webEnv().API_BASE_URL,
     parsed.data.postcode,
     parsed.data.radiusMiles,
+    parsed.data.page,
   );
 
   return (
@@ -167,19 +207,33 @@ function radiusFrom(value: string | string[] | undefined): SearchRadiusMiles {
 }
 
 /**
+ * What each field is called when something is wrong with it.
+ *
+ * A map rather than a conditional, which is what slice 3.1d's third field
+ * forced: the previous version read *"postcode or else radius"*, so a page
+ * problem would have been reported as a radius one — the label silently wrong
+ * while the message was right.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  postcode: 'Postcode',
+  radiusMiles: 'Radius',
+  page: 'Page',
+};
+
+/**
  * The one message worth showing, in the field's own words.
  *
  * The postcode is the field somebody can actually fix, so its message wins when
- * both are wrong — a page reporting a radius problem to somebody who mistyped
- * their postcode is a page pointing at the wrong control.
+ * more than one is wrong — a page reporting a radius problem to somebody who
+ * mistyped their postcode is a page pointing at the wrong control.
  */
 function messageFor(
   issues: readonly { path: PropertyKey[]; message: string }[],
 ): string {
   const postcode = issues.find((issue) => issue.path[0] === 'postcode');
   const chosen = postcode ?? issues[0];
+  if (chosen === undefined) return 'That search is not valid.';
 
-  return chosen === undefined
-    ? 'That search is not valid.'
-    : `${chosen.path[0] === 'postcode' ? 'Postcode' : 'Radius'} ${chosen.message}.`;
+  const label = FIELD_LABELS[String(chosen.path[0])] ?? 'That search';
+  return `${label} ${chosen.message}.`;
 }

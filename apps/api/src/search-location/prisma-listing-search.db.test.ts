@@ -117,6 +117,14 @@ const geocoder = new FakeGeocoder().knows({
 const logger = createRecordingLogger();
 const search = new PrismaListingSearch(client, geocoder, logger.logger);
 
+/** A full first page, for every test that is not about paging (slice 3.1d). */
+const PAGE_ONE = { limit: 24, offset: 0 } as const;
+
+/** A window of `size`, `page` pages in — the arithmetic the service does. */
+function nthPage(page: number, size: number) {
+  return { limit: size, offset: (page - 1) * size };
+}
+
 async function newUser(): Promise<string> {
   const user = await client.user.create({
     data: {
@@ -230,7 +238,7 @@ describe('what falls inside a radius', () => {
   it('finds a listing well within it', async () => {
     const id = await givenAListing(northOf(3_000));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
   });
@@ -238,7 +246,7 @@ describe('what falls inside a radius', () => {
   it('leaves out a listing well outside it', async () => {
     await givenAListing(northOf(milesToMetres(9)));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     expect(page?.matches).toEqual([]);
   });
@@ -246,7 +254,7 @@ describe('what falls inside a radius', () => {
   it('finds the same listing at a wider radius', async () => {
     const id = await givenAListing(northOf(milesToMetres(9)));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 10, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 10, PAGE_ONE);
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
   });
@@ -257,7 +265,7 @@ describe('what falls inside a radius', () => {
     // metres over this distance — hence fifty rather than one.
     const id = await givenAListing(northOf(milesToMetres(5) - 50));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
   });
@@ -265,7 +273,7 @@ describe('what falls inside a radius', () => {
   it('holds at the boundary, on the outside', async () => {
     await givenAListing(northOf(milesToMetres(5) + 50));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     expect(page?.matches).toEqual([]);
   });
@@ -276,7 +284,7 @@ describe('what falls inside a radius', () => {
     // true, because `ST_DWithin` against NULL is the thing keeping it out.
     await givenAListing(null);
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 100, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 100, PAGE_ONE);
 
     expect(page?.matches).toEqual([]);
   });
@@ -307,7 +315,7 @@ describe('the trilateration defence', () => {
 
     await givenAListing(publishedPoint, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     /*
      * **If this comes back with the listing, the filter is on the true point**
@@ -324,7 +332,7 @@ describe('the trilateration defence', () => {
 
     const id = await givenAListing(publishedPoint, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     // The mirror image, and it is worth having separately: a filter that ANDed
     // the two points together would pass the test above and fail this one.
@@ -338,7 +346,7 @@ describe('the trilateration defence', () => {
     await givenAListing(northOf(3_000 + FUZZ), { truePoint: northOf(3_000) });
 
     const probes = await Promise.all(
-      Array.from({ length: 5 }, () => search.findWithin(ORIGIN_POSTCODE, 5, 24)),
+      Array.from({ length: 5 }, () => search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE)),
     );
 
     const distances = probes.map((page) => JSON.stringify(page?.matches));
@@ -354,7 +362,7 @@ describe('the trilateration defence', () => {
 
     await givenAListing(publishedPoint, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     expect(page?.matches[0]?.distance).toEqual({ kind: 'approximate', miles: 4 });
   });
@@ -367,7 +375,7 @@ describe('the trilateration defence', () => {
     const truePoint = southOf(published, ORDINARY_FUZZ);
     await givenAListing(published, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
     const serialised = JSON.stringify(page?.matches);
 
     expect(Object.keys(page?.matches[0] ?? {}).sort()).toEqual([
@@ -399,7 +407,7 @@ describe('what a search may see', () => {
         const id = await givenAListing(northOf(2_000), { visible: false });
         await setState(id, status, state);
 
-        const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+        const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
         if ((page?.matches.length ?? 0) > 0) visible.push(`${status}/${state}`);
       }
     }
@@ -416,7 +424,7 @@ describe('ordering and bounds', () => {
     const nearId = await givenAListing(northOf(1_000));
     const middleId = await givenAListing(northOf(4_000));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 24);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([
       nearId,
@@ -430,7 +438,7 @@ describe('ordering and bounds', () => {
       await givenAListing(northOf(1_000 + index * 100));
     }
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 2);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
 
     expect(page?.matches).toHaveLength(2);
     expect(page?.truncated).toBe(true);
@@ -441,10 +449,113 @@ describe('ordering and bounds', () => {
       await givenAListing(northOf(1_000 + index * 100));
     }
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, 2);
+    const page = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
 
     expect(page?.matches).toHaveLength(2);
     expect(page?.truncated).toBe(false);
+  });
+});
+
+/**
+ * Paging, against the real statement (slice 3.1d).
+ *
+ * **This is where offset pagination is actually proved.** The fake can show that
+ * a service asked for the right window; only Postgres can show that `OFFSET` and
+ * `ORDER BY` compose into a stable total order — and the ways that fails are all
+ * quiet. A row served on two pages, a row served on neither, or a second page
+ * that is silently the first again all render as a perfectly ordinary grid.
+ */
+describe('paging through the results', () => {
+  /** Six listings at distinct distances, nearest first by construction. */
+  async function givenSix(): Promise<string[]> {
+    const ids: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      ids.push(await givenAListing(northOf(1_000 + index * 300)));
+    }
+    return ids;
+  }
+
+  it('serves the second page from where the first stopped', async () => {
+    const ids = await givenSix();
+
+    const first = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
+    const second = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(2, 2));
+
+    expect(first?.matches.map((match) => match.listingId)).toEqual(ids.slice(0, 2));
+    expect(second?.matches.map((match) => match.listingId)).toEqual(ids.slice(2, 4));
+  });
+
+  it('walks the whole set exactly once, with nothing repeated or skipped', async () => {
+    const ids = await givenSix();
+
+    const pages = await Promise.all(
+      [1, 2, 3].map((page) => search.findWithin(ORIGIN_POSTCODE, 5, nthPage(page, 2))),
+    );
+    const seen = pages.flatMap(
+      (page) => page?.matches.map((match) => match.listingId) ?? [],
+    );
+
+    expect(seen).toEqual(ids);
+    expect(new Set(seen).size).toBe(ids.length);
+  });
+
+  it('says there is more until the last page, and not on it', async () => {
+    await givenSix();
+
+    const second = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(2, 2));
+    const third = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(3, 2));
+
+    expect(second?.truncated).toBe(true);
+    expect(third?.truncated).toBe(false);
+  });
+
+  it('is an empty page past the end, not an error', async () => {
+    await givenSix();
+
+    const past = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(9, 2));
+
+    expect(past?.matches).toEqual([]);
+    expect(past?.truncated).toBe(false);
+  });
+
+  /**
+   * Equidistant listings across a page boundary — a block of flats, or two
+   * neighbours, which is not a contrived case.
+   *
+   * **This test is weaker than it looks, and that is recorded rather than
+   * glossed.** It was written to prove that `ORDER BY "metres" ASC, l."id" ASC`
+   * is load-bearing under `OFFSET`: with tied sort keys and no tiebreak,
+   * Postgres is free to order two statements differently, and a row served on
+   * page one is then served again on page two or by neither — silently, with
+   * both pages looking correct.
+   *
+   * **It was checked by removing the tiebreak, and it still passed** — twice,
+   * once with a row rewritten between the two page reads to shift the heap.
+   * Four rows is small enough that the plan is deterministic, and no fixture
+   * this file can build is not. So what this actually guards is the gross
+   * failure — a lost `ORDER BY`, or offset arithmetic that repeats a row — and
+   * **not** the tie itself.
+   *
+   * The tiebreak stays regardless: Postgres guarantees nothing about tied rows,
+   * and the case that breaks it is a plan change at a scale no test here
+   * reaches. That is an argument from the manual rather than from evidence, and
+   * it is written down as such (ADR 0045).
+   */
+  it('does not repeat or drop an equidistant listing across a page boundary', async () => {
+    const samePoint = northOf(2_000);
+    const ids: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      ids.push(await givenAListing(samePoint));
+    }
+
+    const first = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
+    const second = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(2, 2));
+    const seen = [...(first?.matches ?? []), ...(second?.matches ?? [])].map(
+      (match) => match.listingId,
+    );
+
+    expect(new Set(seen).size).toBe(4);
+    expect([...seen].sort()).toEqual([...ids].sort());
   });
 });
 
@@ -452,7 +563,7 @@ describe('an origin that cannot be placed', () => {
   it('is null rather than an error', async () => {
     await givenAListing(northOf(1_000));
 
-    await expect(search.findWithin('ZZ99 9ZZ', 5, 24)).resolves.toBeNull();
+    await expect(search.findWithin('ZZ99 9ZZ', 5, PAGE_ONE)).resolves.toBeNull();
   });
 
   it('is null rather than a throw when the provider is unreachable', async () => {
@@ -460,6 +571,6 @@ describe('an origin that cannot be placed', () => {
     // a search into a 500.
     geocoder.failsOnce();
 
-    await expect(search.findWithin(ORIGIN_POSTCODE, 5, 24)).resolves.toBeNull();
+    await expect(search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE)).resolves.toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { MAX_SEARCH_PAGE } from '@platform/contracts';
 import type {
   PublicListingSearchResults,
   PublicListingSummary,
@@ -27,8 +28,17 @@ const page = (
   results: [SCARIFIER],
   truncated: false,
   radiusMiles: 5,
+  page: 1,
   ...over,
 });
+
+/** A full page of distinct listings, for the tests that are about paging. */
+const full = (count: number): PublicListingSummary[] =>
+  Array.from({ length: count }, (_unused, index) => ({
+    ...SCARIFIER,
+    id: `8fe74923-e424-421c-b5a2-590280af0f${String(index).padStart(2, '0')}`,
+    title: `Scarifier ${String(index)}`,
+  }));
 
 describe('a page of results', () => {
   it('renders a card per listing, linking to the listing itself', () => {
@@ -96,7 +106,7 @@ describe('a page of results', () => {
     ).toBeInTheDocument();
   });
 
-  it('says when there are more than fit, because a full page looks complete', () => {
+  it('offers the next page when there are more than fit', () => {
     render(
       <BrowseResults
         results={page({ truncated: true })}
@@ -105,13 +115,19 @@ describe('a page of results', () => {
       />,
     );
 
-    expect(screen.getByText(/Showing the first 1\./)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Next 24 tools/ })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&page=2',
+    );
   });
 
-  it('says nothing about truncation when there is none', () => {
+  it('offers no pager at all on a single complete page', () => {
+    // Neither end exists, so the whole nav goes rather than rendering two
+    // disabled controls — a greyed-out link that does nothing is a dead control
+    // in a different coat (BRD §15).
     render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
 
-    expect(screen.queryByText(/Showing the first/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
   it('discloses no address, coordinate or owner, whatever it is given', () => {
@@ -126,6 +142,140 @@ describe('a page of results', () => {
     expect(html).not.toContain('8AA');
     expect(html).not.toMatch(/lat|lon|coordinate/i);
     expect(html).not.toContain('ownerId');
+  });
+});
+
+describe('paging between results (slice 3.1d)', () => {
+  it('says which results these are once there is more than one page', () => {
+    render(
+      <BrowseResults
+        results={page({ results: full(24), page: 2, truncated: true })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    // 25–48, counted from `resultsToSkip` — the same function the API skips by,
+    // so a heading cannot describe a page other than the one underneath it.
+    expect(
+      screen.getByRole('heading', { name: 'Tools 25–48 near you' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the plain count on the first page', () => {
+    render(
+      <BrowseResults
+        results={page({ results: full(24), truncated: true })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: '24 tools near you' }),
+    ).toBeInTheDocument();
+  });
+
+  it('offers the way back from the second page onwards', () => {
+    render(
+      <BrowseResults
+        results={page({ page: 3, truncated: true })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Previous 24 tools/ })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&page=2',
+    );
+  });
+
+  it('drops the page parameter when stepping back to the first', () => {
+    // One search, one URL: `?page=1` is a duplicate of the canonical rather than
+    // the canonical, which is what slice 2.12 would otherwise have to untangle.
+    render(
+      <BrowseResults
+        results={page({ page: 2, truncated: true })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Previous 24 tools/ })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5',
+    );
+  });
+
+  it('offers no previous on the first page', () => {
+    render(
+      <BrowseResults
+        results={page({ truncated: true })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: /Previous/ })).not.toBeInTheDocument();
+  });
+
+  it('offers no next on the last page', () => {
+    render(
+      <BrowseResults
+        results={page({ page: 4, truncated: false })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: /Next/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Previous/ })).toBeInTheDocument();
+  });
+
+  /*
+   * **The cap, said out loud.** `MAX_SEARCH_PAGE` stops an uncapped offset
+   * costing a query per page for as deep as somebody cares to go — but a page
+   * that simply stopped, with results on screen and no control, reads as a bug.
+   */
+  it('stops at the cap and says why, rather than linking to a page the API refuses', () => {
+    render(
+      <BrowseResults
+        results={page({ page: MAX_SEARCH_PAGE, truncated: true })}
+        postcode="BS7 8AA"
+        radiusMiles={5}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: /Next/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/as far as we page/)).toBeInTheDocument();
+  });
+});
+
+describe('past the last page', () => {
+  const beyond = page({ results: [], page: 4 });
+
+  /*
+   * **Two different empty pages.** Nothing on page one means nothing is near
+   * them, and the answer is a wider radius. Nothing on page four means they have
+   * walked off the end of a set that *did* have results — offering a wider
+   * radius there would tell somebody their area is empty straight after showing
+   * them what is in it.
+   */
+  it('does not offer a wider radius, because the area was not empty', () => {
+    render(<BrowseResults results={beyond} postcode="BS7 8AA" radiusMiles={5} />);
+
+    expect(
+      screen.queryByRole('link', { name: /Search within/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers the way back to the first page', () => {
+    render(<BrowseResults results={beyond} postcode="BS7 8AA" radiusMiles={5} />);
+
+    expect(
+      screen.getByRole('link', { name: /Start again from the first page/ }),
+    ).toHaveAttribute('href', '/browse?postcode=BS7%208AA&radiusMiles=5');
   });
 });
 

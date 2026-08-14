@@ -51,13 +51,116 @@ export function widerRadius(radius: SearchRadiusMiles): SearchRadiusMiles | null
   return next ?? null;
 }
 
+/*
+ * **The coercion carries its own message, and that is a copy fix rather than a
+ * validation one** (found by looking, slice 3.1d). `z.coerce.number()` rejects
+ * `?radiusMiles=abc` with *"Invalid input: expected number, received NaN"*, and
+ * the Browse page renders that message to a person as **"Radius Invalid input:
+ * expected number, received NaN."** — a stack trace wearing a sentence's
+ * clothes. The refusal was correct; only the words were wrong, which is why no
+ * test caught it and reading the page did.
+ *
+ * Both failure modes now say the same thing, because for a closed vocabulary
+ * they are the same thing: what you typed is not one of the five.
+ */
 export const searchRadiusMilesSchema = z.coerce
-  .number()
+  .number(`must be one of ${SEARCH_RADII_MILES.join(', ')}`)
   .refine(
     (value): value is SearchRadiusMiles =>
       (SEARCH_RADII_MILES as readonly number[]).includes(value),
     `must be one of ${SEARCH_RADII_MILES.join(', ')}`,
   );
+
+/**
+ * How many results one page carries (slice 3.1a, paginated in 3.1d).
+ *
+ * **It lives in the contract because both sides need the same number**, and they
+ * need it for different halves of the same sentence: the API skips this many
+ * rows per page, and the page renders *"Tools 25–48 near you"*. Two constants
+ * that must agree only agree by accident — the argument `Paging.probe` makes
+ * about itself — and here the disagreement would be silent, showing somebody a
+ * range that does not describe what is under it.
+ *
+ * `catalogue/limits.ts` still owns the *decision* to bound this read at all
+ * (ADR 0035) and re-exports this value as `SEARCH_RESULT_LIMIT`. What moved here
+ * is the number, not the reasoning.
+ *
+ * Twenty-four rather than twenty because it divides by two, three and four, so a
+ * grid has no ragged last row at any of the breakpoints the design uses.
+ */
+export const SEARCH_PAGE_SIZE = 24;
+
+/** The page a searcher gets if they do not ask for one. */
+export const FIRST_SEARCH_PAGE = 1;
+
+/**
+ * How deep anybody may page — **a denial-of-service bound, not a product one**
+ * (slice 3.1d).
+ *
+ * Offset pagination skips rows the database has already found, so `page=100000`
+ * is a two-and-a-half-million-row skip on **the most exposed endpoint in the
+ * system**: a collection, from an origin the caller chooses, with no rate
+ * limiting anywhere in front of it (`SECURITY.md`). The cap is what stops one
+ * query string costing more than the whole search.
+ *
+ * Twenty pages is 480 results, which is past any depth a person browsing tools
+ * near them will reach — and somebody who genuinely needs to see more of a
+ * dense area wants a narrower radius or the filters that are still to come,
+ * not page 40. **A page beyond it is refused rather than clamped**, exactly as
+ * a radius of 7 is: a URL claiming something we do not serve should be told so
+ * rather than quietly answered with something else.
+ */
+export const MAX_SEARCH_PAGE = 20;
+
+/**
+ * Which page of results, one-based.
+ *
+ * **A page number rather than an offset**, and that is the security half of
+ * slice 3.1d's decision. The server multiplies by its own page size, so a caller
+ * cannot ask to skip an arbitrary number of rows and cannot read the page size
+ * out of the URL. It is also the shape §8.17's canonical URLs will need in slice
+ * 2.12, and the shape a person can read.
+ *
+ * **Not a cursor**, which is the option this replaced — see ADR 0045. A keyset
+ * cursor over a distance-ordered search carries an exact distance, and a URL is
+ * copied into browser history, referrer headers, access logs and shared links.
+ */
+export const searchPageSchema = z.coerce
+  // Same message as `.int` below, so "two" and "1.5" read alike — see the note
+  // on `searchRadiusMilesSchema` for why the default one cannot be shown.
+  .number('must be a whole number')
+  .int('must be a whole number')
+  .min(FIRST_SEARCH_PAGE, `must be ${String(FIRST_SEARCH_PAGE)} or more`)
+  .max(MAX_SEARCH_PAGE, `must be ${String(MAX_SEARCH_PAGE)} or less`);
+
+/**
+ * How many results come before this page — **the offset, and the heading**.
+ *
+ * One function with two readers, which is the point of it. The API skips this
+ * many rows; the results heading says *"Tools 25–48 near you"* from the same
+ * number plus one. Written out separately they would be two expressions that
+ * have to agree, and the failure would be silent: a heading that mislabels
+ * which results are underneath it looks exactly like a correct one.
+ */
+export function resultsToSkip(page: number): number {
+  return (page - FIRST_SEARCH_PAGE) * SEARCH_PAGE_SIZE;
+}
+
+/**
+ * The next page, or null at the cap — `widerRadius`'s shape, for its reason.
+ *
+ * A function rather than `page + 1` at the call site so that the boundary is
+ * decided in one place. The alternative is a "Show more" control on page 20
+ * that links to a page the API refuses.
+ */
+export function nextSearchPage(page: number): number | null {
+  return page >= MAX_SEARCH_PAGE ? null : page + 1;
+}
+
+/** The previous page, or null on the first. */
+export function previousSearchPage(page: number): number | null {
+  return page <= FIRST_SEARCH_PAGE ? null : page - 1;
+}
 
 /**
  * How far away a listing is, **as a bucket rather than a number** (§8.4.1).
@@ -111,9 +214,18 @@ export const PUBLIC_LISTING_SEARCH_ROUTE = '/public/listings';
 export function publicListingSearchPath(
   postcode: string,
   radiusMiles: SearchRadiusMiles,
+  page: number = FIRST_SEARCH_PAGE,
 ): string {
   const query = `postcode=${encodeURIComponent(postcode)}&radiusMiles=${String(radiusMiles)}`;
-  return `${PUBLIC_LISTING_SEARCH_ROUTE}?${query}`;
+  /*
+   * **The first page carries no `page` parameter**, which is deliberate rather
+   * than tidiness: one search must have one URL. `?page=1` and the bare URL
+   * returning identical results is the duplicate-content problem slice 2.12 has
+   * to answer for §8.17, and the cheapest answer is not to mint the second URL
+   * in the first place. It also means slice 3.1d changed no existing link.
+   */
+  const paged = page === FIRST_SEARCH_PAGE ? query : `${query}&page=${String(page)}`;
+  return `${PUBLIC_LISTING_SEARCH_ROUTE}?${paged}`;
 }
 
 /**
@@ -126,11 +238,14 @@ export function publicListingSearchPath(
  * an error — see `parseListingSearchQuery`'s callers.
  *
  * **`radiusMiles` defaults rather than being required.** A search URL somebody
- * pastes without it is a search, not a bad request.
+ * pastes without it is a search, not a bad request. **`page` defaults the same
+ * way**, and for a stronger reason: nobody types it, so its absence is the
+ * normal case rather than an omission.
  */
 export const listingSearchQuerySchema = z.object({
   postcode: postcodeSchema,
   radiusMiles: searchRadiusMilesSchema.default(DEFAULT_SEARCH_RADIUS_MILES),
+  page: searchPageSchema.default(FIRST_SEARCH_PAGE),
 });
 export type ListingSearchQuery = z.infer<typeof listingSearchQuerySchema>;
 
@@ -201,11 +316,21 @@ export interface PublicListingSummary {
  * honest about the question it answered — a URL with no radius is served with
  * the default, and a page that did not say so would look like a search of the
  * whole country returning four things.
+ *
+ * **`page` comes back for the same reason and is read the same way** (slice
+ * 3.1d): it is what the pager steps from, and it is what stops a defaulted page
+ * being mistaken for the only one. Together with `truncated` it is everything
+ * the pager needs — there is deliberately **no total**, because counting every
+ * match inside a radius is a second query over the same index for a number
+ * nobody acts on, on the one route with no rate limit in front of it.
  */
 export interface PublicListingSearchResults {
   readonly results: readonly PublicListingSummary[];
+  /** Whether there are more results **beyond this page**. */
   readonly truncated: boolean;
   readonly radiusMiles: SearchRadiusMiles;
+  /** Which page this is, one-based. */
+  readonly page: number;
 }
 
 const publicListingSearchResultsSchema = z.object({
@@ -222,6 +347,7 @@ const publicListingSearchResultsSchema = z.object({
   ),
   truncated: z.boolean(),
   radiusMiles: searchRadiusMilesSchema,
+  page: searchPageSchema,
 });
 
 /**

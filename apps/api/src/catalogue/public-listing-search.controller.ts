@@ -51,7 +51,11 @@ export class PublicListingSearchController {
      * somebody their area is empty when in fact we never looked.
      *
      * The radius vocabulary being closed is a privacy control rather than
-     * validation tidiness — see `SEARCH_RADII_MILES`.
+     * validation tidiness — see `SEARCH_RADII_MILES` — and **the page cap is an
+     * availability control** rather than a product limit: an uncapped offset on
+     * this route is a caller choosing how much work we do. See
+     * `MAX_SEARCH_PAGE`, which is why a page beyond it is refused here rather
+     * than clamped into range.
      */
     let request;
     try {
@@ -65,6 +69,7 @@ export class PublicListingSearchController {
     const found = await this.listings.searchNearby(
       request.postcode,
       request.radiusMiles,
+      request.page,
     );
 
     /*
@@ -82,13 +87,26 @@ export class PublicListingSearchController {
      * changing anything below this line.
      */
     if (found === null) {
-      return { results: [], truncated: false, radiusMiles: request.radiusMiles };
+      return {
+        results: [],
+        truncated: false,
+        radiusMiles: request.radiusMiles,
+        page: request.page,
+      };
     }
 
+    /*
+     * **The radius and the page are echoed from the request, not from the
+     * result.** Both were defaulted if absent, and a response that did not say
+     * which values it used reads as an answer to a different question — a
+     * five-mile search looking like a national one, or page one looking like
+     * all of them.
+     */
     return {
       results: found.results.map(toSummary),
       truncated: found.truncated,
       radiusMiles: request.radiusMiles,
+      page: request.page,
     };
   }
 }

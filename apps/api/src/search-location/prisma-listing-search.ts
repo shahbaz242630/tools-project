@@ -13,6 +13,7 @@ import type {
   ListingSearchRepository,
   NearbyListing,
   NearbyListingPage,
+  ResultWindow,
 } from './listing-search.js';
 
 /**
@@ -58,7 +59,7 @@ export class PrismaListingSearch implements ListingSearchRepository {
   async findWithin(
     originPostcode: string,
     radiusMiles: SearchRadiusMiles,
-    limit: number,
+    window: ResultWindow,
   ): Promise<NearbyListingPage | null> {
     const origin = await geocodeQuietly(this.geocoder, this.logger, originPostcode);
     if (origin === null) return null;
@@ -80,11 +81,21 @@ export class PrismaListingSearch implements ListingSearchRepository {
      * `NOT NULL` test here would be dead code implying a case that cannot reach
      * this query.
      *
-     * **`ORDER BY` carries a tiebreak on id.** Two equidistant listings compare
-     * equal, and a sort with no tiebreak makes the page order depend on
-     * whatever the planner did — which is the same defect that made
-     * `listOwnedBy` flaky one run in eight, arriving here as a row that moves
-     * between pages.
+     * **`ORDER BY` carries a tiebreak on id, and from slice 3.1d it is load
+     * bearing rather than tidy.** Two equidistant listings compare equal, and a
+     * sort with no tiebreak makes the page order depend on whatever the planner
+     * did — which is the same defect that made `listOwnedBy` flaky one run in
+     * eight. Under `OFFSET` it stops being a cosmetic flake: an unstable total
+     * order means a row served on page one can be served again on page two, or
+     * skipped by both, and nothing anywhere would report it. **Do not remove
+     * this tiebreak as redundant** — `prisma-listing-search.db.test.ts` walks
+     * two pages of equidistant listings for exactly this reason.
+     *
+     * **`OFFSET` rather than a keyset cursor** (ADR 0045, slice 3.1d). The skip
+     * is O(n) and that is measured rather than assumed to be acceptable: slice
+     * 3.1c put the widest search over 50,001 listings at a p95 of 111.8 ms
+     * against a 200 ms target, and the depth anybody reaches is capped at
+     * `MAX_SEARCH_PAGE`. What it buys is a URL carrying no exact distance.
      */
     const rows = await this.prisma.$queryRaw<readonly DistanceRow[]>`
       SELECT l."id" AS "listingId",
@@ -102,10 +113,11 @@ export class PrismaListingSearch implements ListingSearchRepository {
               ${radiusMetres}
             )
       ORDER BY "metres" ASC, l."id" ASC
-      LIMIT ${Paging.probe(limit)}
+      LIMIT ${Paging.probe(window.limit)}
+      OFFSET ${window.offset}
     `;
 
-    const page = Paging.fitTo(rows, limit);
+    const page = Paging.fitTo(rows, window.limit);
 
     return {
       matches: page.items.map(toNearbyListing),
