@@ -182,6 +182,22 @@ The API is given only the JWT public key, never `CLERK_SECRET_KEY`.
 | `pnpm licences:check`        | Dependency licence check                                      |
 | `pnpm hooks:install`         | Reinstall git hooks (runs automatically after install)        |
 
+Search performance, from slice 3.1c. Neither is part of any suite — they write and
+measure against a local database on purpose, and **the generator refuses any
+database but `rental_dev` and `rental_test`**:
+
+| Command                                           | Does                                                               |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `node scripts/seed-search-load.mjs --count 50000` | Fill the local database with tagged, obviously fake listings       |
+| `node scripts/seed-search-load.mjs --clean`       | Remove every row it wrote, and nothing else                        |
+| `node scripts/measure-search.mjs`                 | p50/p95 per radius plus the query plan; exits non-zero over target |
+
+`measure-search` **reads the SQL out of `prisma-listing-search.ts` rather than
+restating it**, so what it measures is what ships — and it refuses to run if the
+adapter grows a parameter it does not recognise, rather than measuring something
+else. Leave the load data out of the database when you are done: the eight
+fixtures the handoff describes are what every other test and walkthrough assumes.
+
 Deployment commands run on the box, not here, and take no pnpm wrapper — they must work when only Node and Docker are present:
 
 | Command                                             | Does                                         |
