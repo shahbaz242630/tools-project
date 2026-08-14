@@ -7,3 +7,4 @@
  */
 
 export * from './recording-logger.js';
+export * from './recording-metrics.js';

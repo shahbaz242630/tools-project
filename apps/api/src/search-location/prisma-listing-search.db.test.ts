@@ -17,7 +17,10 @@ import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { LISTING_STATUSES, MODERATION_STATES } from '@platform/contracts';
 import type { ListingStatus, ModerationState } from '@platform/contracts';
-import { createRecordingLogger } from '@platform/observability/testing';
+import {
+  createRecordingLogger,
+  createRecordingMetrics,
+} from '@platform/observability/testing';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaCategoryStore } from '../catalogue/prisma-category-store.js';
@@ -115,7 +118,13 @@ const geocoder = new FakeGeocoder().knows({
 });
 
 const logger = createRecordingLogger();
-const search = new PrismaListingSearch(client, geocoder, logger.logger);
+const metrics = createRecordingMetrics();
+const search = new PrismaListingSearch(
+  client,
+  geocoder,
+  logger.logger,
+  metrics.metrics,
+);
 
 /** A full first page, for every test that is not about paging (slice 3.1d). */
 const PAGE_ONE = { limit: 24, offset: 0 } as const;
@@ -572,5 +581,29 @@ describe('an origin that cannot be placed', () => {
     geocoder.failsOnce();
 
     await expect(search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE)).resolves.toBeNull();
+  });
+
+  /**
+   * **The two reasons a search cannot start, told apart** (slice 3.1f).
+   *
+   * Both return null and both are served as an empty page, which is right for
+   * the searcher and useless for us: a geocoder outage would otherwise look
+   * exactly like a country with no postcodes in it. This asserts the read path
+   * specifically — `location.service.test.ts` asserts the write path, and both
+   * go through the one helper so that neither can be forgotten.
+   */
+  it('records which of the two reasons it was', async () => {
+    const before = metrics.geocodes.length;
+
+    await search.findWithin('ZZ99 9ZZ', 5, PAGE_ONE);
+    geocoder.failsOnce();
+    await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+
+    expect(metrics.geocodes.slice(before).map((sample) => sample.outcome)).toEqual([
+      'unknown',
+      'unavailable',
+      'found',
+    ]);
   });
 });

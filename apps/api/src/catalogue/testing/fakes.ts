@@ -19,8 +19,14 @@
 
 import { DEFAULT_MODERATION_STATE, isPubliclyVisible } from '@platform/contracts';
 import { Postcode, Time } from '@platform/core';
-import { createRecordingLogger } from '@platform/observability/testing';
-import type { RecordingLogger } from '@platform/observability/testing';
+import {
+  createRecordingLogger,
+  createRecordingMetrics,
+} from '@platform/observability/testing';
+import type {
+  RecordingLogger,
+  RecordingMetrics,
+} from '@platform/observability/testing';
 import { LocationService } from '../../search-location/location.service.js';
 import {
   FakeGeocoder,
@@ -763,6 +769,16 @@ export interface ListingFakes {
    * where anything is, and should see nothing rather than everything.
    */
   readonly proximity: FakeListingSearch;
+  /**
+   * What the service recorded about each search (slice 3.1f).
+   *
+   * Exposed rather than swallowed by a no-op, because the *absence* of a
+   * recording is the failure this replaces: a search that finds nothing and a
+   * geocoder that is down look identical from outside, so nothing but an
+   * assertion on `listingSearches` can tell "counted as unplaceable" from
+   * "counted as an empty area".
+   */
+  readonly metrics: RecordingMetrics;
   readonly service: ListingsService;
 }
 
@@ -848,7 +864,8 @@ export function createListingFakes(
   // pass with the offset never drawn, which is the one thing §8.4.1 requires.
   const geocoder = new FakeGeocoder();
   const logger = createRecordingLogger();
-  const location = new LocationService(geocoder, logger.logger);
+  const metrics = createRecordingMetrics();
+  const location = new LocationService(geocoder, logger.logger, metrics.metrics);
 
   const publication = new SwitchableFlag();
   const ownerStatuses = new DeclaredOwnerStatuses();
@@ -863,6 +880,7 @@ export function createListingFakes(
     audit,
     ownerStatuses,
     proximity,
+    metrics,
     service: new ListingsService(
       listings,
       listings,
@@ -878,6 +896,10 @@ export function createListingFakes(
       audit.service,
       ownerStatuses,
       proximity,
+      // The same instance the `LocationService` above was given, so a test can
+      // assert on the search outcome and the geocode in one place — which is
+      // also how the real application is wired.
+      metrics.metrics,
     ),
   };
 }

@@ -241,6 +241,24 @@ export default defineConfig({
         // Clerk's middleware factory. A test would assert that a mock was
         // called with a regex we also wrote.
         '**/web/src/proxy.ts',
+        // And for the radius query, from slice 3.1f — the same argument as the
+        // five Prisma adapters above, and the strongest instance of it in the
+        // project. prisma-listing-search.db.test.ts proves the things only a
+        // real PostGIS can: which point the filter measured from, which is the
+        // entire §8.4.1 privacy control (ADR 0032) and was demonstrated by
+        // repointing the query at the true coordinates and watching three of
+        // five trilateration tests fail. A double asserting that would be
+        // asserting itself — it would be measuring from whichever point the
+        // double was told to.
+        //
+        // **Excluded now rather than in 3.1a because it only now costs
+        // anything**: the file is the project's one piece of hand-written SQL
+        // and has always been invisible to this command, and 3.1f's added
+        // constructor argument was what tipped the global under the threshold.
+        // Keep this exclusion narrow — the bucketing and the mile conversion
+        // live in `distance-bucket.ts`, which is counted, and logic worth
+        // counting belongs there rather than here.
+        '**/api/src/search-location/prisma-listing-search.ts',
       ],
       thresholds: {
         lines: 90,

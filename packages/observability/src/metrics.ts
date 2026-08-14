@@ -19,7 +19,8 @@
  * a postcode is personal data in a system with none of §10.1's retention rules.
  */
 
-import { collectDefaultMetrics, Histogram, Registry } from 'prom-client';
+import { collectDefaultMetrics, Counter, Histogram, Registry } from 'prom-client';
+import type { SearchRadiusMiles } from '@platform/contracts';
 import type { Logger } from './logger.js';
 
 /**
@@ -52,6 +53,74 @@ export interface QueueJobSample {
 }
 
 /**
+ * What a search *did* — the four things a status code cannot tell you apart
+ * (slice 3.1f).
+ *
+ * - **`found`** — at least one listing came back.
+ * - **`empty`** — we searched and there is nothing there. **The single most
+ *   valuable number this file records**: BRD §17 names low inventory density as
+ *   the dominant failure mode of local marketplaces, and until this existed we
+ *   could not say what fraction of searches find nothing.
+ * - **`beyond_end`** — a page past the last one. Kept apart from `empty`
+ *   deliberately: it is somebody walking off the end of a result set that *did*
+ *   have listings, so counting it as a zero-result search would corrupt the one
+ *   number above with a navigation artefact.
+ * - **`unplaceable`** — we could not search from there at all, because the
+ *   origin did not geocode. It is served as an empty page (§8.4, slice 3.1a) and
+ *   **that is exactly why it needs its own counter**: without one, our own
+ *   geocoding provider going down is indistinguishable from a quiet area.
+ */
+export type ListingSearchOutcome = 'found' | 'empty' | 'beyond_end' | 'unplaceable';
+
+export interface ListingSearchSample {
+  /**
+   * How far the search looked.
+   *
+   * **Typed as the contract's closed union rather than `number`, and that is the
+   * cardinality control** — not documentation. A metrics series exists per
+   * distinct label combination, so a free `number` here is one series per value
+   * a caller can invent. Five values times four outcomes is twenty series, and
+   * the compiler is what holds it there.
+   *
+   * It is worth recording at all because the cost is not flat: slice 3.1c
+   * measured 12.1 ms at five miles and 111.8 ms at a hundred, so an aggregate
+   * timing with no radius on it averages two different questions together.
+   */
+  readonly radiusMiles: SearchRadiusMiles;
+  readonly outcome: ListingSearchOutcome;
+}
+
+/**
+ * How the postcode geocoder behaved (slice 3.1f).
+ *
+ * The three outcomes are the ones `geocodeQuietly` already distinguishes and
+ * then deliberately collapses to one null for its callers. Collapsing is right
+ * for the caller — two failure paths ending in the same place is how one of them
+ * gets handled wrongly — but it means the difference existed nowhere at all.
+ *
+ * - **`found`** — the provider answered with a point.
+ * - **`unknown`** — the provider answered and does not recognise the postcode.
+ *   Permanent, and ordinary: new postcodes are issued continuously.
+ * - **`unavailable`** — the question never got an answer. A timeout, a network
+ *   failure, an unreadable body. **This is the one to alert on**, and until now
+ *   a provider outage was visible only as a warning line in the logs.
+ */
+export type GeocodeOutcome = 'found' | 'unknown' | 'unavailable';
+
+export interface GeocodeSample {
+  readonly outcome: GeocodeOutcome;
+  /**
+   * How long the provider took, including a call that ended in a timeout.
+   *
+   * The timeout is the case worth watching — somebody is waiting on it — so the
+   * duration is recorded for every outcome rather than only for the happy one.
+   * A failure path with no timing is one where "it broke" and "it hung for two
+   * and a half seconds and then broke" look the same.
+   */
+  readonly durationMs: number;
+}
+
+/**
  * The exposition content type, as a constant.
  *
  * `prom-client` carries this on its registry, which is the authority — but a
@@ -66,6 +135,24 @@ export interface Metrics {
   recordHttpRequest(sample: HttpRequestSample): void;
   recordDatabaseQuery(sample: DatabaseQuerySample): void;
   recordQueueJob(sample: QueueJobSample): void;
+  /**
+   * One public listing search, and what it found (slice 3.1f).
+   *
+   * **Deliberately carries no timing.** The HTTP histogram already times this
+   * route by template, and a second duration for the same span is two numbers
+   * that can disagree about one thing. What was missing was never how long a
+   * search took — it was what it did.
+   */
+  recordListingSearch(sample: ListingSearchSample): void;
+  /**
+   * One call to the postcode geocoder (slice 3.1f).
+   *
+   * **Recorded once per provider call, wherever it was made from** — saving a
+   * listing and running a search both reach it through the same helper, and
+   * there is no `caller` label because the remedy for a sick geocoder is the
+   * same either way. The route histogram already says which path was slow.
+   */
+  recordGeocode(sample: GeocodeSample): void;
   /** The exposition text Prometheus scrapes. */
   render(): Promise<string>;
   /** The content type that text must be served with. */
@@ -147,6 +234,17 @@ const DATABASE_BUCKETS = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.
 const QUEUE_BUCKETS = [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60];
 
 /**
+ * Built around **one number: the geocoder's 2500 ms timeout**.
+ *
+ * `2.5` and `5` are both here on purpose. A call that times out takes slightly
+ * *more* than 2.5 s, so it lands in `le=5` — which makes the gap between those
+ * two buckets the timeout's signature, readable without knowing anything about
+ * how the adapter is written. Buckets that stopped at 1 s would put every
+ * healthy call and every timeout together in `+Inf`.
+ */
+const GEOCODE_BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 2.5, 5];
+
+/**
  * The real thing.
  *
  * **A private `Registry` rather than the global default**, so two of these in one
@@ -193,6 +291,28 @@ export function createPrometheusMetrics(options: {
     registers: [registry],
   });
 
+  /*
+   * **A counter rather than a histogram**, which is the one place these two
+   * additions differ in shape. There is nothing to time here that the HTTP
+   * histogram is not already timing, so what is wanted is a count per outcome —
+   * and `rate(listing_searches_total{outcome="empty"}[…]) / rate(…)` is the
+   * zero-result rate BRD §17 asks for, in one expression.
+   */
+  const listingSearches = new Counter({
+    name: 'listing_searches_total',
+    help: 'Public listing searches, by radius and what the searcher got back.',
+    labelNames: ['radius', 'outcome'],
+    registers: [registry],
+  });
+
+  const geocodeDuration = new Histogram({
+    name: 'geocode_duration_seconds',
+    help: 'How long postcode geocoding took, and how it ended.',
+    labelNames: ['outcome'],
+    buckets: GEOCODE_BUCKETS,
+    registers: [registry],
+  });
+
   return {
     recordHttpRequest(sample) {
       httpDuration.observe(
@@ -224,6 +344,20 @@ export function createPrometheusMetrics(options: {
       );
     },
 
+    recordListingSearch(sample) {
+      listingSearches.inc({
+        // A label value is a string in the exposition either way; converting it
+        // here rather than at the call site keeps the caller's type the closed
+        // numeric union, which is what bounds this to twenty series.
+        radius: String(sample.radiusMiles),
+        outcome: sample.outcome,
+      });
+    },
+
+    recordGeocode(sample) {
+      geocodeDuration.observe({ outcome: sample.outcome }, sample.durationMs / 1000);
+    },
+
     render: () => registry.metrics(),
     contentType: registry.contentType,
   };
@@ -252,6 +386,12 @@ export function createNoopMetrics(logger?: Logger): Metrics {
       /* deliberately nothing */
     },
     recordQueueJob() {
+      /* deliberately nothing */
+    },
+    recordListingSearch() {
+      /* deliberately nothing */
+    },
+    recordGeocode() {
       /* deliberately nothing */
     },
     render: () => Promise.resolve(''),

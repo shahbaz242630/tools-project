@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createRecordingLogger } from '@platform/observability/testing';
+import {
+  createRecordingLogger,
+  createRecordingMetrics,
+} from '@platform/observability/testing';
+import { GeocoderUnavailableError } from './geocoder.js';
 import { LocationService } from './location.service.js';
 import { applyFuzzOffset, distanceMetres } from './fuzz.js';
 import { FakeGeocoder } from './testing/fakes.js';
@@ -26,11 +30,13 @@ const STORED = { bearingDegrees: 137, distanceMetres: 812 };
 function service() {
   const geocoder = new FakeGeocoder().knows(FakeGeocoder.BS7_8AA);
   const logger = createRecordingLogger();
+  const metrics = createRecordingMetrics();
 
   return {
     geocoder,
     logger,
-    location: new LocationService(geocoder, logger.logger),
+    metrics,
+    location: new LocationService(geocoder, logger.logger, metrics.metrics),
   };
 }
 
@@ -153,5 +159,120 @@ describe('locating for the first time', () => {
     // it would fail on a coincidence rather than on a defect. What matters is
     // that they are not all one point.
     expect(distinct.size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * What the geocoder did, recorded (slice 3.1f).
+ *
+ * **These assertions are here rather than in a `geocode-quietly.test.ts`
+ * because the write path is the half most likely to be forgotten.** The search
+ * path has a db test watching it; saving a listing had nothing, and a metric
+ * that covers only the read would make a geocoder outage look half as bad as it
+ * is at the moment somebody cannot publish.
+ *
+ * The three outcomes are the three the caller deliberately cannot tell apart —
+ * `locate` and `relocate` answer null for all of them — so this is the only
+ * place the distinction is observable at all.
+ */
+describe('what the geocoder did', () => {
+  it('records a successful geocode as found, with a duration', async () => {
+    const { metrics, location } = service();
+
+    await location.locate('BS7 8AA');
+
+    expect(metrics.geocodes).toHaveLength(1);
+    expect(metrics.geocodes[0]?.outcome).toBe('found');
+    // Not a specific figure — a real clock is being read. That it is a
+    // non-negative number is the whole claim, and it is `performance.now()`
+    // rather than a wall clock so an NTP step cannot make it negative.
+    expect(metrics.geocodes[0]?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('separates a postcode nobody knows from a provider that is down', async () => {
+    /*
+     * **The distinction this slice exists for.** Both answer null, both serve an
+     * empty page, and until now both looked identical from outside — so our own
+     * provider being down was indistinguishable from a quiet area. One label
+     * apart is the difference between "there is nothing near you" and "wake
+     * somebody up".
+     */
+    const { geocoder, metrics, location } = service();
+
+    await location.locate('ZZ99 9ZZ');
+    geocoder.failsOnce();
+    await location.locate('BS7 8AA');
+
+    expect(metrics.geocodes.map((sample) => sample.outcome)).toEqual([
+      'unknown',
+      'unavailable',
+    ]);
+  });
+
+  it('records the write path too, not only search', async () => {
+    // `relocate` is an edit saving a listing. It reaches the same helper, which
+    // is the point of the helper — but "it is the same function" is an argument,
+    // and this is the test.
+    const { metrics, location } = service();
+
+    await location.relocate('BS7 8AA', STORED);
+
+    expect(metrics.geocodes.map((sample) => sample.outcome)).toEqual(['found']);
+  });
+
+  it('does not let a broken metrics backend fail a geocode', async () => {
+    /*
+     * The rule the whole codebase follows and the one most easily undone here: a
+     * diagnostic must not be able to fail the thing it is watching. This
+     * function's entire contract is that geocoding cannot fail a request, and
+     * recording must not become the one exception to it.
+     */
+    const geocoder = new FakeGeocoder().knows(FakeGeocoder.BS7_8AA);
+    const logger = createRecordingLogger();
+    const broken = {
+      ...createRecordingMetrics().metrics,
+      recordGeocode: () => {
+        throw new Error('registry exploded');
+      },
+    };
+
+    const location = new LocationService(geocoder, logger.logger, broken);
+
+    await expect(location.locate('BS7 8AA')).resolves.not.toBeNull();
+  });
+
+  it('rethrows an unexpected error rather than filing it under unavailable', async () => {
+    /*
+     * A defect is not a provider outcome. Labelling one `unavailable` would
+     * blame postcodes.io for our bug and quietly hide it in a metric somebody
+     * has decided is somebody else's problem — so it is rethrown, becomes a 5xx,
+     * and is counted there instead.
+     */
+    const logger = createRecordingLogger();
+    const metrics = createRecordingMetrics();
+    const broken = {
+      locate: () => Promise.reject(new TypeError('undefined is not a function')),
+    };
+
+    const location = new LocationService(broken, logger.logger, metrics.metrics);
+
+    await expect(location.locate('BS7 8AA')).rejects.toThrow(TypeError);
+    expect(metrics.geocodes).toHaveLength(0);
+  });
+
+  it('still records the outcome when the provider raises its own error type', async () => {
+    // Guards the `instanceof` above from being loosened into a catch-all, which
+    // would swallow the defect case the previous test pins.
+    const logger = createRecordingLogger();
+    const metrics = createRecordingMetrics();
+    const unreachable = {
+      locate: () =>
+        Promise.reject(new GeocoderUnavailableError('postcodes.io timed out')),
+    };
+
+    const location = new LocationService(unreachable, logger.logger, metrics.metrics);
+
+    await expect(location.locate('BS7 8AA')).resolves.toBeNull();
+    expect(metrics.geocodes.map((sample) => sample.outcome)).toEqual(['unavailable']);
   });
 });

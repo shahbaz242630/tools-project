@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import type { HttpRequestSample, Metrics } from '@platform/observability';
+import type { Metrics } from '@platform/observability';
+import { createRecordingMetrics } from '@platform/observability/testing';
 import { installMetricsHook } from './metrics.hook.js';
 import type { HookReply, HookRequest, HookableServer } from './metrics.hook.js';
 
+/**
+ * **The shared fake rather than a literal written here**, since slice 3.1f.
+ *
+ * This file used to hand-roll two `Metrics` objects, which was fine while it was
+ * the only place implementing the interface — and stopped being fine the moment
+ * a second method arrived, because a hand-rolled double is a place the compiler
+ * reports as broken and a reader is tempted to patch with a stub. One fake means
+ * a method added to `Metrics` is answered once, correctly, for everybody.
+ */
 function recording() {
-  const samples: HttpRequestSample[] = [];
-  const metrics: Metrics = {
-    recordHttpRequest: (sample) => samples.push(sample),
-    recordDatabaseQuery: () => undefined,
-    recordQueueJob: () => undefined,
-    render: () => Promise.resolve(''),
-    contentType: 'text/plain',
-  };
-  return { samples, metrics };
+  const { metrics, httpRequests } = createRecordingMetrics();
+  return { samples: httpRequests, metrics };
 }
 
 /** A server that captures the hook so a test can fire it by hand. */
@@ -103,14 +106,14 @@ describe('the response hook', () => {
    * rejection rather than a failed request — worse than the failure it reports.
    */
   it('calls done even when the metrics backend throws', () => {
+    // Built from the fake and then broken, rather than hand-rolled: the point
+    // of the test is one method throwing, and spelling out the other five again
+    // is what leaves this file behind the next time the interface grows.
     const metrics: Metrics = {
+      ...createRecordingMetrics().metrics,
       recordHttpRequest: () => {
         throw new Error('registry exploded');
       },
-      recordDatabaseQuery: () => undefined,
-      recordQueueJob: () => undefined,
-      render: () => Promise.resolve(''),
-      contentType: 'text/plain',
     };
     const { server, respond } = fakeServer();
     installMetricsHook(server, metrics);

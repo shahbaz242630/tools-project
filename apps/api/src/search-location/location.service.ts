@@ -1,4 +1,4 @@
-import type { Logger } from '@platform/observability';
+import type { Logger, Metrics } from '@platform/observability';
 import type { PostcodeGeocoder } from './geocoder.js';
 import { geocodeQuietly } from './geocode-quietly.js';
 import { applyFuzzOffset, createFuzzOffset } from './fuzz.js';
@@ -38,6 +38,16 @@ export class LocationService {
   constructor(
     private readonly geocoder: PostcodeGeocoder,
     private readonly logger: Logger,
+    /**
+     * Carried only to be handed to `geocodeQuietly` (slice 3.1f).
+     *
+     * **Required rather than optional**, for the reason every dependency in this
+     * codebase is: an optional one is one a boot site forgets, and the failure
+     * would be a write path that silently stopped being measured while the
+     * search path kept reporting — which reads as "geocoding is fine" at exactly
+     * the moment half of it is not.
+     */
+    private readonly metrics: Metrics,
   ) {}
 
   /**
@@ -123,7 +133,7 @@ export class LocationService {
    * here directly by whoever next adds a method.
    */
   private async geocode(postcode: string): Promise<Point | null> {
-    return geocodeQuietly(this.geocoder, this.logger, postcode);
+    return geocodeQuietly(this.geocoder, this.logger, this.metrics, postcode);
   }
 }
 
