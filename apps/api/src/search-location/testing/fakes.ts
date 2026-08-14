@@ -3,7 +3,11 @@ import { Paging } from '@platform/core';
 import { GeocoderUnavailableError } from '../geocoder.js';
 import type { GeocodedPostcode, PostcodeGeocoder } from '../geocoder.js';
 import { bucketDistance, milesToMetres } from '../distance-bucket.js';
-import type { ListingSearchRepository, NearbyListingPage } from '../listing-search.js';
+import type {
+  ListingSearchRepository,
+  NearbyListingPage,
+  ResultWindow,
+} from '../listing-search.js';
 
 /**
  * Test doubles for Search & Location.
@@ -100,6 +104,14 @@ export class FakeListingSearch implements ListingSearchRepository {
   private readonly unplaceable = new Set<string>();
   /** Every origin it was asked about, in order. */
   readonly asked: string[] = [];
+  /**
+   * Every window it was asked for, in order (slice 3.1d).
+   *
+   * Recorded because the offset is the one thing a service can get wrong that
+   * the results would not reveal: asking for page two with an offset of zero
+   * returns a perfectly plausible page of the wrong rows.
+   */
+  readonly windows: ResultWindow[] = [];
 
   /** Put a listing at a distance from wherever the search starts. */
   places(listingId: string, metresFromOrigin: number): this {
@@ -122,9 +134,10 @@ export class FakeListingSearch implements ListingSearchRepository {
   findWithin(
     originPostcode: string,
     radiusMiles: SearchRadiusMiles,
-    limit: number,
+    window: ResultWindow,
   ): Promise<NearbyListingPage | null> {
     this.asked.push(originPostcode);
+    this.windows.push(window);
 
     if (this.unplaceable.has(originPostcode.toUpperCase())) {
       return Promise.resolve(null);
@@ -134,12 +147,15 @@ export class FakeListingSearch implements ListingSearchRepository {
     const inside = this.placed
       .filter((listing) => listing.metresFromOrigin <= radiusMetres)
       .sort(byDistanceThenId)
-      // The probe the real adapter makes, so `truncated` is exercised rather
-      // than assumed — a fake that returned everything would make every test of
-      // the flag pass for the wrong reason.
-      .slice(0, Paging.probe(limit));
+      /*
+       * **The skip, then the probe** — the real statement's `OFFSET` and `LIMIT`
+       * in the order Postgres applies them (slice 3.1d). Slicing before sorting,
+       * or probing before skipping, would both produce a fake that paginates
+       * something other than what ships.
+       */
+      .slice(window.offset, window.offset + Paging.probe(window.limit));
 
-    const page = Paging.fitTo(inside, limit);
+    const page = Paging.fitTo(inside, window.limit);
 
     return Promise.resolve({
       matches: page.items.map((listing: PlacedListing) => ({

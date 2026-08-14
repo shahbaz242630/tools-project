@@ -3,6 +3,7 @@ import {
   moderationRequiresReason,
   offersTransportRequirement,
   publicationBlockers,
+  resultsToSkip,
   transitionRefusal,
   validateAttributeValues,
 } from '@platform/contracts';
@@ -752,7 +753,8 @@ export class ListingsService {
   }
 
   /**
-   * Listings near a postcode, nearest first (slice 3.1a, BRD §8.4).
+   * Listings near a postcode, nearest first (slice 3.1a, BRD §8.4), one page
+   * at a time (slice 3.1d).
    *
    * **Four steps, and the order of the last two is the security of the method.**
    * Proximity gives ids in distance order; the store hydrates them, re-applying
@@ -783,12 +785,25 @@ export class ListingsService {
   async searchNearby(
     originPostcode: string,
     radiusMiles: SearchRadiusMiles,
+    pageNumber: number,
   ): Promise<NearbySearchResults | null> {
-    const page = await this.proximity.findWithin(
-      originPostcode,
-      radiusMiles,
-      SEARCH_RESULT_LIMIT,
-    );
+    /*
+     * **The page number becomes an offset here and nowhere else** (slice 3.1d).
+     * This is the only layer that knows both how large a page is and which page
+     * was asked for; below it the repository skips rows, above it the controller
+     * echoes a number. `resultsToSkip` is the contract's own, shared with the
+     * heading that says which results these are — one expression, two readers,
+     * so a mislabelled page is not expressible.
+     *
+     * **`pageNumber` is required rather than defaulted**, which is slice H2's
+     * rule applied to a second parameter: an optional bound is one a caller
+     * omits, and the omission is invisible until somebody is on page three
+     * being served page one.
+     */
+    const page = await this.proximity.findWithin(originPostcode, radiusMiles, {
+      limit: SEARCH_RESULT_LIMIT,
+      offset: resultsToSkip(pageNumber),
+    });
     if (page === null) return null;
 
     const summaries = await this.store.findPublishedSummaries(

@@ -1,12 +1,23 @@
 import Link from 'next/link';
 import { Money } from '@platform/core';
+import {
+  FIRST_SEARCH_PAGE,
+  SEARCH_PAGE_SIZE,
+  resultsToSkip,
+} from '@platform/contracts';
 import type {
   PublicListingSearchResults,
   PublicListingSummary,
   SearchRadiusMiles,
 } from '@platform/contracts';
 import { distanceLabel } from '../lib/distance';
-import { hirePath, widerSearchHref } from '../lib/page-paths';
+import {
+  browseHref,
+  hirePath,
+  nextSearchHref,
+  previousSearchHref,
+  widerSearchHref,
+} from '../lib/page-paths';
 import styles from './browse.module.css';
 
 /**
@@ -31,15 +42,40 @@ export function BrowseResults({
   readonly radiusMiles: SearchRadiusMiles;
 }) {
   if (results.results.length === 0) {
-    return <NothingFound postcode={postcode} radiusMiles={radiusMiles} />;
+    /*
+     * **Two different empty pages, and telling them apart is the point** (slice
+     * 3.1d). Nothing on page one means nothing is near them, and the answer is
+     * a wider radius. Nothing on page five means they have walked off the end of
+     * a set that did have results — offering a wider radius there would be
+     * telling somebody their area is empty immediately after showing them what
+     * is in it.
+     */
+    return results.page === FIRST_SEARCH_PAGE ? (
+      <NothingFound postcode={postcode} radiusMiles={radiusMiles} />
+    ) : (
+      <NothingFurther postcode={postcode} radiusMiles={radiusMiles} />
+    );
   }
+
+  const first = resultsToSkip(results.page) + 1;
+  const last = first + results.results.length - 1;
 
   return (
     <section aria-labelledby="results-heading">
       <h2 id="results-heading" className={styles.resultsHeading}>
-        {results.results.length === 1
-          ? '1 tool near you'
-          : `${String(results.results.length)} tools near you`}
+        {/*
+          **Which results these are, once there is more than one page of them.**
+          The range comes from `resultsToSkip`, the same function the API uses to
+          decide what to skip — so a heading cannot describe a page other than
+          the one underneath it. On page one it stays the plain count, because
+          "tools 1–24" is a worse sentence than "24 tools" for the only page most
+          searches will ever have.
+        */}
+        {results.page === FIRST_SEARCH_PAGE
+          ? results.results.length === 1
+            ? '1 tool near you'
+            : `${String(results.results.length)} tools near you`
+          : `Tools ${String(first)}–${String(last)} near you`}
       </h2>
 
       <ul className={styles.grid}>
@@ -50,21 +86,108 @@ export function BrowseResults({
         ))}
       </ul>
 
-      {/*
-        **The honest half of a page that has no "Show more" yet** (slice 3.1c).
-        A list that stops without saying so is one somebody reads as everything
-        there is, and `truncated` is measured by the server rather than inferred
-        from a full page — so this sentence is the only thing standing between a
-        bounded read and a wrong impression. The cursor is a separate slice
-        because a keyset cursor on distance would have to carry an exact
-        distance, which is the precision §8.4.1 exists to remove.
-      */}
-      {results.truncated && (
-        <p className={styles.truncated}>
-          Showing the first {String(results.results.length)}. Try a smaller radius to
-          narrow it down.
-        </p>
+      <Pager
+        postcode={postcode}
+        radiusMiles={radiusMiles}
+        page={results.page}
+        truncated={results.truncated}
+      />
+    </section>
+  );
+}
+
+/**
+ * Moving between pages of results (slice 3.1d).
+ *
+ * **Links that navigate, not a button that appends** — and the label says so.
+ * The design package drew a *"Show more"* button, which means JavaScript adding
+ * to the grid in place; this page is deliberately a plain GET form with no
+ * JavaScript at all, which is what makes a search shareable, the back button
+ * work and the whole thing usable before hydration. A control labelled *"Show
+ * more"* that in fact *replaces* what is on screen is a small lie, and BRD §15's
+ * rule about controls doing what they say does not have a size exemption. So the
+ * control keeps the behaviour and loses the label.
+ *
+ * **Both ends can be absent and neither renders a disabled control.** There is
+ * no next page when the server did not find one, or when the cap is reached;
+ * there is no previous page on the first. A greyed-out link that does nothing is
+ * the same dead control in a different coat.
+ */
+function Pager({
+  postcode,
+  radiusMiles,
+  page,
+  truncated,
+}: {
+  readonly postcode: string;
+  readonly radiusMiles: SearchRadiusMiles;
+  readonly page: number;
+  readonly truncated: boolean;
+}) {
+  const previous = previousSearchHref(postcode, radiusMiles, page);
+  const next = nextSearchHref(postcode, radiusMiles, page, truncated);
+
+  if (previous === null && next === null) return null;
+
+  return (
+    <nav className={styles.pager} aria-label="More results">
+      {previous === null ? (
+        <span />
+      ) : (
+        <Link href={previous.href} className={styles.pagerLink} rel="prev">
+          ← Previous {String(SEARCH_PAGE_SIZE)} tools
+        </Link>
       )}
+
+      {next === null ? (
+        /*
+          **The cap, said out loud.** `MAX_SEARCH_PAGE` exists to stop an
+          uncapped offset costing us a query per page for as deep as somebody
+          cares to go — but a page that simply stopped, with results still on
+          screen and no control, would read as a bug. The honest answer is that
+          this many results means the search was too broad.
+        */
+        truncated ? (
+          <p className={styles.pagerEnd}>
+            That is as far as we page. Try a smaller radius to narrow it down.
+          </p>
+        ) : (
+          <span />
+        )
+      ) : (
+        <Link href={next.href} className={styles.pagerLink} rel="next">
+          Next {String(SEARCH_PAGE_SIZE)} tools →
+        </Link>
+      )}
+    </nav>
+  );
+}
+
+/**
+ * Past the last page — reachable by a stale link or a hand-edited URL.
+ *
+ * It offers the way back rather than the way wider, which is the distinction
+ * `NothingFound` cannot make: this person has already seen results.
+ */
+function NothingFurther({
+  postcode,
+  radiusMiles,
+}: {
+  readonly postcode: string;
+  readonly radiusMiles: SearchRadiusMiles;
+}) {
+  return (
+    <section className={styles.empty} aria-labelledby="results-heading">
+      <h2 id="results-heading" className={styles.emptyHeading}>
+        Nothing more to show
+      </h2>
+      <p className={styles.emptyBody}>
+        You have reached the end of the results.{' '}
+        <Link href={browseHref(postcode, radiusMiles)}>
+          Start again from the first page
+        </Link>
+        .
+      </p>
     </section>
   );
 }

@@ -37,7 +37,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { buildQuery, percentile, TARGET_P95_MS } from './lib/search-query.mjs';
+import {
+  buildQuery,
+  percentile,
+  DEEPEST_OFFSET,
+  PAGE_SIZE,
+  TARGET_P95_MS,
+} from './lib/search-query.mjs';
 
 const PG_CONTAINER = 'rental-postgres';
 const PG_USER = process.env.POSTGRES_USER ?? 'rental';
@@ -129,7 +135,8 @@ function main() {
         longitude,
         latitude,
         radiusMetres: miles * METRES_PER_MILE,
-        limit: 24,
+        limit: PAGE_SIZE,
+        offset: 0,
       });
 
       // One untimed run so the comparison is warm-cache to warm-cache. A cold
@@ -156,6 +163,34 @@ function main() {
     }
   }
 
+  /*
+   * **What the last page costs** — slice 3.1d, and the evidence ADR 0045 rests
+   * on rather than an inference from the numbers above.
+   *
+   * Offset pagination skips rows the database has already found, so the honest
+   * question is not "is page one fast" but "is the deepest page anybody may ask
+   * for still fast". It is measured from the densest origin at the widest
+   * radius, which is where the skip has the most rows to walk.
+   */
+  const deepest = buildQuery(source, {
+    longitude: ORIGINS[0][2],
+    latitude: ORIGINS[0][1],
+    radiusMetres: 100 * METRES_PER_MILE,
+    limit: PAGE_SIZE,
+    offset: DEEPEST_OFFSET,
+  });
+  timeOnce(database, deepest);
+  const deepTimings = [];
+  for (let run = 0; run < runs; run += 1) {
+    deepTimings.push(timeOnce(database, deepest));
+  }
+  const deepP95 = percentile(deepTimings, 0.95);
+  worst = Math.max(worst, deepP95);
+
+  // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
+  const deepRow = `${'London'.padEnd(9)} 100 mi   p50 ${percentile(deepTimings, 0.5).toFixed(1).padStart(7)} ms   p95 ${deepP95.toFixed(1).padStart(7)} ms   ${deepP95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (offset ${String(DEEPEST_OFFSET)}, the last page)`;
+  console.log(deepRow);
+
   // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
   const summary = `\nWorst p95: ${worst.toFixed(1)} ms (target ${TARGET_P95_MS} ms)`;
   console.log(summary);
@@ -166,7 +201,8 @@ function main() {
     longitude: ORIGINS[0][2],
     latitude: ORIGINS[0][1],
     radiusMetres: 100 * METRES_PER_MILE,
-    limit: 24,
+    limit: PAGE_SIZE,
+    offset: 0,
   });
   console.log(`\nPlan for London / 100 mi:\n`);
   console.log(psql(database, `EXPLAIN (ANALYZE, BUFFERS) ${widest}`));

@@ -1,3 +1,5 @@
+import { SEARCH_PAGE_SIZE } from '@platform/contracts';
+
 /**
  * How many rows each of Catalogue's list reads may return (slice H2, ADR 0035).
  *
@@ -48,9 +50,10 @@ export const EXPORTED_LISTING_LIMIT = 1000;
  * Two hundred is above any private owner and above any business we expect at
  * launch, so in practice it is never met; and if it ever is, the page says so
  * rather than quietly stopping. **When somebody real is cut by this, the answer
- * is a cursor rather than a larger number** — `ListingStore.listOwnedBy` already
- * records that the port should take one once a third caller wants a third
- * answer, and this is the second.
+ * is pagination rather than a larger number** — and from slice 3.1d there is a
+ * worked example to copy rather than a prediction: search pages by number, not
+ * by cursor (ADR 0045). This read would want the same shape, and for a stronger
+ * reason: it is ordered by `createdAt`, which is not sensitive at all.
  *
  * Deliberately its own constant rather than sharing `EXPORTED_LISTING_LIMIT`.
  * They bound the same query for different readers: an export is a legal
@@ -61,7 +64,8 @@ export const EXPORTED_LISTING_LIMIT = 1000;
 export const OWNED_LISTING_LIMIT = 200;
 
 /**
- * How many listings one page of search results carries (slice 3.1a).
+ * How many listings one page of search results carries (slice 3.1a, paginated
+ * in 3.1d).
  *
  * **The first constant in this file that is honestly a page size**, and it is
  * worth saying so because the two above go out of their way not to be. The
@@ -70,17 +74,21 @@ export const OWNED_LISTING_LIMIT = 200;
  * is *expected* to have more results than fit, so this one is met constantly and
  * that is not a defect.
  *
- * What makes it honest rather than a silent truncation is `truncated`, which the
- * response carries: a page that stops says it stopped. **The cursor is slice
- * 3.1b's**, and `ListingStore.listOwnedBy` has recorded since slice H2 that the
- * port should take one once a third caller wants a third answer. This is that
- * third caller, and it is deliberately not taking it yet — a cursor with no
- * control to drive it would be a paginator nobody can reach.
+ * **The number itself moved to `@platform/contracts` in slice 3.1d**, because
+ * the page now renders *"Tools 25–48 near you"* and has to skip by the same
+ * amount the server does. The decision to bound this read stays here, where
+ * ADR 0035's argument is; only the value is shared.
  *
- * Twenty-four rather than twenty because it divides by two, three and four, so a
- * grid has no ragged last row at any of the breakpoints the design uses.
+ * ~~**The cursor is slice 3.1b's**, and `ListingStore.listOwnedBy` has recorded
+ * since slice H2 that the port should take one once a third caller wants a
+ * third answer.~~ **Struck out in 3.1d, and the correction is the useful part.**
+ * The cursor is not arriving: measured performance made offset pagination the
+ * better trade (ADR 0045), because a keyset cursor over a distance-ordered
+ * search puts an exact distance in a URL. Two smaller things were also wrong —
+ * pagination was 3.1d rather than 3.1b, and `listOwnedBy`'s own docblock never
+ * mentioned a cursor at all. It says the bound must be explicit, which it is.
  */
-export const SEARCH_RESULT_LIMIT = 24;
+export const SEARCH_RESULT_LIMIT = SEARCH_PAGE_SIZE;
 
 /**
  * How many categories any read of the catalogue returns.

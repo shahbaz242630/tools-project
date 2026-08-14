@@ -60,16 +60,16 @@ const DRAFT = {
   replacementValue: { amount: 24_999, currency: 'GBP' },
   categoryVersionNumber: 1,
   attributes: { weight_kg: '5.2' },
-  // Null and false: a draft that has not said how it is collected, which §8.3
+  // Null and false: a draft that has not said how it is collected, which Â§8.3
   // allows and 2.4c-ii made explicit rather than assumed.
   transportRequirement: null,
   requiresTwoPersonLift: false,
   // Null for the same reason: a draft need not say where the item is either
-  // (§8.3, slice 2.5a). The field is required to be *present*, so omitting it
+  // (Â§8.3, slice 2.5a). The field is required to be *present*, so omitting it
   // here would be the compile error that made every caller of this fixture
   // findable in the first place.
   collectionLocation: null,
-  // Unpriced, which is what a draft nobody has priced looks like (§8.3). The
+  // Unpriced, which is what a draft nobody has priced looks like (Â§8.3). The
   // field is required to be *present* for the reason `collectionLocation` is.
   rates: { daily: null, weekend: null, weekly: null },
 } as const;
@@ -205,7 +205,7 @@ describe('createListing', () => {
      * to a newer web app.
      *
      * If the field were optional, a response without it would parse and default
-     * to nothing — and the page would call a listing published and bookable while
+     * to nothing â€” and the page would call a listing published and bookable while
      * the platform was hiding it, which is exactly the state this slice exists to
      * end. Required means that mismatch surfaces as `malformed` on a page that
      * says so, rather than as a confident lie.
@@ -259,7 +259,7 @@ describe('fetchListing', () => {
     expect(calls[0]?.url).not.toContain('/admin/categories');
   });
 
-  it('reports somebody else’s listing as not-found', async () => {
+  it('reports somebody elseâ€™s listing as not-found', async () => {
     expect((await fetchListing(API, TOKEN, LISTING.id, responds(404))).kind).toBe(
       'not-found',
     );
@@ -304,7 +304,7 @@ describe('fetchCategoryOptions', () => {
   it('refuses a category whose schema this build could not render', async () => {
     // A configured type this version does not know means a form that would
     // silently omit a field an administrator set up. Failing loudly is the
-    // better of the two outcomes — the same argument the API store makes.
+    // better of the two outcomes â€” the same argument the API store makes.
     const outcome = await fetchCategoryOptions(
       API,
       TOKEN,
@@ -362,7 +362,7 @@ describe('fetchCategoryOptions', () => {
 /**
  * Publishing, and the two refusals that are not about the request.
  *
- * These had no coverage at this layer before slice H3a — the 422 was proven in
+ * These had no coverage at this layer before slice H3a â€” the 422 was proven in
  * the API's integration test and in the form component, and nothing asserted
  * that this module *translated* either one. That gap is exactly what let a 503
  * fall through to the generic branch.
@@ -399,11 +399,11 @@ describe('publishListing', () => {
     });
   });
 
-  it('reads a 503 as the platform switch being off, keeping the API’s message', () => {
+  it('reads a 503 as the platform switch being off, keeping the APIâ€™s message', () => {
     // Slice H3a, and it was found by pressing the button rather than by a test.
-    // The API writes a careful sentence — "Publishing is temporarily switched
-    // off across the platform. Your listing is saved and unchanged" — and
-    // before this the owner saw "That did not complete — API answered 503",
+    // The API writes a careful sentence â€” "Publishing is temporarily switched
+    // off across the platform. Your listing is saved and unchanged" â€” and
+    // before this the owner saw "That did not complete â€” API answered 503",
     // because 503 fell through to the generic unknown-status branch.
     //
     // **The bug was not in the new code.** The kill switch worked perfectly; what
@@ -411,7 +411,7 @@ describe('publishListing', () => {
     // can answer with.
     const message =
       'Publishing is temporarily switched off across the platform. ' +
-      'Your listing is saved and unchanged — try again shortly.';
+      'Your listing is saved and unchanged â€” try again shortly.';
 
     return expect(
       publishListing(
@@ -437,8 +437,8 @@ describe('publishListing', () => {
  * Pausing, and the status code that already meant something else.
  *
  * The test worth having here is the 409 one. `call` maps every 409 to
- * `stale-category` — correct for `createListing`, where a conflict really does
- * mean the category moved underneath the form — so without a hook of its own, a
+ * `stale-category` â€” correct for `createListing`, where a conflict really does
+ * mean the category moved underneath the form â€” so without a hook of its own, a
  * pause refused for being a draft would have reported *"the category was changed
  * while this page was open"*. That is H3a's defect one status along: **a status
  * reused on the server is not handled until the client says which meaning it
@@ -467,7 +467,7 @@ describe('pauseListing', () => {
     expect(calls[0]?.url).toContain('/publication');
   });
 
-  it('reads a 409 as a refusal, keeping the API’s sentence', async () => {
+  it('reads a 409 as a refusal, keeping the APIâ€™s sentence', async () => {
     const message = 'This listing is not published, so there is nothing to pause.';
 
     const outcome = await pauseListing(
@@ -551,7 +551,7 @@ describe('updateListing', () => {
     await updateListing(API, TOKEN, LISTING.id, EDIT, fetchImpl);
 
     expect(calls[0]?.init?.method).toBe('PUT');
-    // The address is in the body even when null — "absent" and "clear this"
+    // The address is in the body even when null â€” "absent" and "clear this"
     // being one value on the wire is exactly what a PATCH would have meant.
     expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
       collectionLocation: null,
@@ -648,7 +648,7 @@ describe('fetchPublicListing', () => {
       minimumFeeApplied: false,
     },
     rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
-    // §8.3's consumer-law disclosure. Required on the wire, so a response
+    // Â§8.3's consumer-law disclosure. Required on the wire, so a response
     // missing it is `malformed` rather than a page that quietly says "private".
     ownerStatus: 'private_owner',
   };
@@ -665,11 +665,11 @@ describe('fetchPublicListing', () => {
 
   it('sends no authorization header and no client IP', async () => {
     /*
-     * The header would be empty anyway — there is no token — but sending the
+     * The header would be empty anyway â€” there is no token â€” but sending the
      * key at all invites somebody to populate it later. The client IP is absent
      * for its own reason: ADR 0017 forwards it so an audit entry can record who
      * acted, and nothing on this path is audited, so collecting it would be
-     * collecting for no purpose (§10, data minimisation).
+     * collecting for no purpose (Â§10, data minimisation).
      */
     const { calls, fetchImpl } = capturing(200, JSON.stringify(PUBLIC));
     await fetchPublicListing(API, LISTING.id, fetchImpl);
@@ -678,7 +678,7 @@ describe('fetchPublicListing', () => {
     expect(Object.keys(headers)).toEqual([]);
   });
 
-  it('asks the public path, not the owner’s', async () => {
+  it('asks the public path, not the ownerâ€™s', async () => {
     // The two differ by a prefix and return different projections. A call to the
     // owner's path with no token would 401, which is a confusing way to find out
     // the URL was wrong.
@@ -707,7 +707,7 @@ describe('fetchPublicListing', () => {
     /*
      * **The projection is what keeps a street address off this page**, so a
      * response this build cannot vouch for is not one to render. Rendering it
-     * anyway is how a field nobody reviewed reaches the internet — which is the
+     * anyway is how a field nobody reviewed reaches the internet â€” which is the
      * same argument `fetchListing` makes about a missing moderation state, one
      * audience wider.
      */
@@ -840,6 +840,7 @@ describe('fetchListingSearch', () => {
     ],
     truncated: false,
     radiusMiles: 5,
+    page: 1,
   };
 
   it('reads a page of results with no token at all', async () => {
@@ -847,6 +848,7 @@ describe('fetchListingSearch', () => {
       API,
       'BS7 8AA',
       5,
+      1,
       responds(200, JSON.stringify(RESULTS)),
     );
 
@@ -857,20 +859,20 @@ describe('fetchListingSearch', () => {
     // Same reasoning as `fetchPublicListing`, and it matters more here: this is
     // the route somebody hits repeatedly while narrowing a search.
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 5, fetchImpl);
+    await fetchListingSearch(API, 'BS7 8AA', 5, 1, fetchImpl);
 
     expect(Object.keys(calls[0]?.init?.headers ?? {})).toEqual([]);
   });
 
-  it('builds the query string with the contract’s own parameter names', async () => {
+  it('builds the query string with the contractâ€™s own parameter names', async () => {
     /*
      * The path comes from `publicListingSearchPath`, so the string this sends
      * and the one the API parses are assembled by the same function. Writing it
      * by hand here is how a page comes to disagree with the server about a
-     * parameter name — and the failure is an empty page rather than an error.
+     * parameter name â€” and the failure is an empty page rather than an error.
      */
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 20, fetchImpl);
+    await fetchListingSearch(API, 'BS7 8AA', 20, 1, fetchImpl);
 
     expect(calls[0]?.url).toContain(
       '/public/listings?postcode=BS7%208AA&radiusMiles=20',
@@ -879,7 +881,7 @@ describe('fetchListingSearch', () => {
 
   it('does not cache, so a listing taken down stops appearing', async () => {
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 5, fetchImpl);
+    await fetchListingSearch(API, 'BS7 8AA', 5, 1, fetchImpl);
 
     expect(calls[0]?.init?.cache).toBe('no-store');
   });
@@ -891,12 +893,13 @@ describe('fetchListingSearch', () => {
       API,
       'BS7 8AA',
       5,
+      1,
       responds(200, JSON.stringify({ ...RESULTS, results: [] })),
     );
 
     expect(outcome).toEqual({
       kind: 'loaded',
-      value: { results: [], truncated: false, radiusMiles: 5 },
+      value: { results: [], truncated: false, radiusMiles: 5, page: 1 },
     });
   });
 
@@ -907,6 +910,7 @@ describe('fetchListingSearch', () => {
       API,
       'BS7 8AA',
       5,
+      1,
       responds(
         200,
         JSON.stringify({ results: [{ id: LISTING.id }], truncated: false }),
@@ -916,13 +920,24 @@ describe('fetchListingSearch', () => {
     expect(outcome.kind).toBe('malformed');
   });
 
+  it('carries the page into the query string, and leaves it off the first', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
+    await fetchListingSearch(API, 'BS7 8AA', 5, 3, fetchImpl);
+    await fetchListingSearch(API, 'BS7 8AA', 5, 1, fetchImpl);
+
+    expect(calls[0]?.url).toContain('page=3');
+    // One search, one URL — `?page=1` is a duplicate of the canonical rather
+    // than the canonical, which is slice 2.12's problem not to have.
+    expect(calls[1]?.url).not.toContain('page');
+  });
+
   it('reads a 400 as unreachable rather than as an empty area', async () => {
     /*
      * The page validates before calling, so a 400 means the two disagree about
      * what is valid. Reporting "nothing near you" would be telling somebody
      * their area is empty when we never managed to look.
      */
-    const outcome = await fetchListingSearch(API, 'BS7 8AA', 5, responds(400));
+    const outcome = await fetchListingSearch(API, 'BS7 8AA', 5, 1, responds(400));
 
     expect(outcome.kind).toBe('unreachable');
   });

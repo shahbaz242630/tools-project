@@ -396,16 +396,22 @@ export function fetchPublicListing(
  *
  * The caller is expected to have parsed the postcode and radius already — see
  * the page — so this takes a `SearchRadiusMiles` rather than a number, and a
- * radius the BRD does not name cannot reach it.
+ * radius the BRD does not name cannot reach it. **`page` is the same
+ * arrangement** (slice 3.1d): the page has already run it through the
+ * contract's schema, and the API validates it again regardless.
  */
 export function fetchListingSearch(
   apiBaseUrl: string,
   postcode: string,
   radiusMiles: SearchRadiusMiles,
+  page: number,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
 ): Promise<ListingSearchOutcome> {
   return publicCall(
-    new URL(publicListingSearchPath(postcode, radiusMiles), apiBaseUrl).toString(),
+    new URL(
+      publicListingSearchPath(postcode, radiusMiles, page),
+      apiBaseUrl,
+    ).toString(),
     fetchImpl,
     parsePublicListingSearchResults,
   );

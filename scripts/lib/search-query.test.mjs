@@ -20,6 +20,7 @@ const PARAMETERS = {
   latitude: 51.5074,
   radiusMetres: 8_046.72,
   limit: 24,
+  offset: 0,
 };
 
 /**
@@ -71,6 +72,23 @@ describe('lifting the query out of the adapter', () => {
 
   it('probes for one more row than the page, exactly as the adapter does', () => {
     expect(buildQuery(source, { ...PARAMETERS, limit: 24 })).toContain('LIMIT 25');
+  });
+
+  it('skips the rows the requested page is past (slice 3.1d)', () => {
+    // The measurement's whole point on a deep page: if the offset did not
+    // arrive in the SQL, it would be timing page one twenty times and calling
+    // it evidence that paging is cheap.
+    expect(buildQuery(source, { ...PARAMETERS, offset: 456 })).toContain('OFFSET 456');
+  });
+
+  it('measures the first page when asked for offset zero', () => {
+    expect(buildQuery(source, PARAMETERS)).toContain('OFFSET 0');
+  });
+
+  it('refuses a missing offset rather than writing "undefined" into the SQL', () => {
+    expect(() => buildQuery(source, { ...PARAMETERS, offset: undefined })).toThrow(
+      /needs a number for offset/,
+    );
   });
 
   it('refuses a parameter it does not recognise, rather than guessing', () => {

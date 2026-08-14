@@ -40,6 +40,22 @@ export interface ProximityMatch {
  * grow with the catalogue on the one route with no rate limit in front of it. A
  * probe for one extra row answers the only question the page asks.
  */
+/**
+ * Which slice of the ordered matches to return (slice 3.1d).
+ *
+ * **One object rather than two numbers**, because `(…, 24, 24)` type checks with
+ * them the wrong way round and means something else entirely. The compiler
+ * cannot tell two numbers apart; it can tell two fields apart.
+ *
+ * **An offset, not a page number.** How many results make a page is Catalogue's
+ * decision (`limits.ts`), and Search & Location has no business knowing it —
+ * this port asks for rows and says where to start.
+ */
+export interface ResultWindow {
+  readonly limit: number;
+  readonly offset: number;
+}
+
 export interface ProximityPage {
   /**
    * Matches, **nearest first**, at most the requested limit.
@@ -79,6 +95,6 @@ export interface ListingProximity {
   findWithin(
     originPostcode: string,
     radiusMiles: SearchRadiusMiles,
-    limit: number,
+    window: ResultWindow,
   ): Promise<ProximityPage | null>;
 }

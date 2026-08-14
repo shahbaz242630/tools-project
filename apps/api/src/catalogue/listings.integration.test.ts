@@ -5,6 +5,7 @@ import {
   CATEGORY_OPTIONS_PATH,
   LISTINGS_PATH,
   LISTING_STATUSES,
+  MAX_SEARCH_PAGE,
   ME_PATH,
   MODERATION_STATES,
   listingPath,
@@ -3012,12 +3013,16 @@ describe('searching for listings near a postcode', () => {
     rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
   };
 
-  function search(postcode = 'BS7 8AA', radiusMiles = 5) {
+  function search(postcode = 'BS7 8AA', radiusMiles = 5, page = 1) {
     // **No authorization header**, which is the whole point of the route. A
     // test that passed a token would prove nothing about the case that matters.
     return app.inject({
       method: 'GET',
-      url: publicListingSearchPath(postcode, radiusMiles as 5 | 10 | 20 | 50 | 100),
+      url: publicListingSearchPath(
+        postcode,
+        radiusMiles as 5 | 10 | 20 | 50 | 100,
+        page,
+      ),
     });
   }
 
@@ -3262,6 +3267,116 @@ describe('searching for listings near a postcode', () => {
 
       expect(results.results).toHaveLength(SEARCH_RESULT_LIMIT);
       expect(results.truncated).toBe(false);
+    });
+  });
+
+  /**
+   * Paging through results (slice 3.1d).
+   *
+   * **The properties worth asserting are the ones offset pagination gets wrong
+   * quietly**: a row served twice, a row served never, or a second page that is
+   * simply the first again. None of those produce an error, and all three look
+   * plausible on screen.
+   */
+  describe('paging through the results', () => {
+    /** One more than a page, so there is a second page with exactly one on it. */
+    async function givenAPageAndOne() {
+      const created = [];
+      for (let index = 0; index <= SEARCH_RESULT_LIMIT; index += 1) {
+        // Distinct distances, so the expected order is unambiguous and a
+        // paging defect cannot hide behind a tie.
+        created.push(await givenAListing(100 + index * 10));
+      }
+      return created;
+    }
+
+    it('serves the rest on the second page', async () => {
+      const created = await givenAPageAndOne();
+
+      const second = parsePublicListingSearchResults(
+        (await search('BS7 8AA', 5, 2)).json(),
+      );
+
+      expect(second.results.map((result) => result.id)).toEqual([
+        created[SEARCH_RESULT_LIMIT]?.id,
+      ]);
+      expect(second.truncated).toBe(false);
+      expect(second.page).toBe(2);
+    });
+
+    it('repeats nothing and skips nothing across the boundary', async () => {
+      const created = await givenAPageAndOne();
+
+      const first = parsePublicListingSearchResults((await search()).json());
+      const second = parsePublicListingSearchResults(
+        (await search('BS7 8AA', 5, 2)).json(),
+      );
+      const seen = [...first.results, ...second.results].map((result) => result.id);
+
+      // Every listing exactly once, in the order they were placed — which is
+      // nearest first, because each was put ten metres further out.
+      expect(seen).toEqual(created.map((listing) => listing.id));
+      expect(new Set(seen).size).toBe(seen.length);
+    });
+
+    it('says which page it answered, so a defaulted page is not misread', async () => {
+      await givenAListing(800);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=BS7%208AA',
+      });
+
+      expect(parsePublicListingSearchResults(response.json()).page).toBe(1);
+    });
+
+    it('is an empty page past the end rather than an error', async () => {
+      // Reachable from a stale link. The page distinguishes it from "nothing
+      // near you" and offers the way back instead of a wider radius.
+      await givenAListing(800);
+
+      const response = await search('BS7 8AA', 5, 3);
+
+      expect(response.statusCode).toBe(200);
+      const results = parsePublicListingSearchResults(response.json());
+      expect(results.results).toEqual([]);
+      expect(results.page).toBe(3);
+    });
+
+    describe('what it refuses', () => {
+      it('rejects page zero', async () => {
+        const response = await app.inject({
+          method: 'GET',
+          url: '/public/listings?postcode=BS7%208AA&page=0',
+        });
+
+        expect(response.statusCode).toBe(400);
+      });
+
+      /*
+       * **The availability control, fired.** Offset pagination skips rows the
+       * database has already found, so an uncapped page number lets a caller
+       * choose how much work we do — on the one public collection route with no
+       * rate limiting in front of it (`SECURITY.md`). Refused rather than
+       * clamped, for the reason a radius of 7 is refused.
+       */
+      it('rejects a page past the cap rather than serving a huge offset', async () => {
+        const response = await app.inject({
+          method: 'GET',
+          url: `/public/listings?postcode=BS7%208AA&page=${String(MAX_SEARCH_PAGE + 1)}`,
+        });
+
+        expect(response.statusCode).toBe(400);
+      });
+
+      it('rejects a page that is not a whole number', async () => {
+        const response = await app.inject({
+          method: 'GET',
+          url: '/public/listings?postcode=BS7%208AA&page=1.5',
+        });
+
+        expect(response.statusCode).toBe(400);
+      });
     });
   });
 });

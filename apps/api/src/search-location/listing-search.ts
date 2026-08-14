@@ -35,6 +35,23 @@ export interface NearbyListingPage {
   readonly truncated: boolean;
 }
 
+/**
+ * Which slice of an ordered result set to return (slice 3.1d).
+ *
+ * **One object rather than two number arguments**, because `(…, 24, 24)` type
+ * checks with the two the wrong way round and means something entirely
+ * different — page two served as page one, or a page size of nothing. The
+ * compiler cannot tell two numbers apart; it can tell two fields apart.
+ *
+ * **`offset` rather than a page number**, so no layer below the service knows
+ * how large a page is. The repository's job is to skip rows; deciding how many
+ * rows a page holds is the caller's.
+ */
+export interface ResultWindow {
+  readonly limit: number;
+  readonly offset: number;
+}
+
 export interface ListingSearchRepository {
   /**
    * Publicly visible listings within `radiusMiles` of `originPostcode`, or null
@@ -46,6 +63,6 @@ export interface ListingSearchRepository {
   findWithin(
     originPostcode: string,
     radiusMiles: SearchRadiusMiles,
-    limit: number,
+    window: ResultWindow,
   ): Promise<NearbyListingPage | null>;
 }
