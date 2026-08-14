@@ -5,7 +5,7 @@ import type {
   SearchRadiusMiles,
 } from '@platform/contracts';
 import { Paging } from '@platform/core';
-import type { Logger } from '@platform/observability';
+import type { Logger, Metrics } from '@platform/observability';
 import type { PostcodeGeocoder } from './geocoder.js';
 import { geocodeQuietly } from './geocode-quietly.js';
 import { bucketDistance, milesToMetres } from './distance-bucket.js';
@@ -54,6 +54,16 @@ export class PrismaListingSearch implements ListingSearchRepository {
      */
     private readonly geocoder: PostcodeGeocoder,
     private readonly logger: Logger,
+    /**
+     * Carried only to be handed to `geocodeQuietly` (slice 3.1f).
+     *
+     * **The search's *own* outcome is not recorded here**, and that is the
+     * decision rather than an oversight: this repository cannot tell an empty
+     * radius from a page past the end, because it does not know which page was
+     * asked for in the searcher's terms — it was given an offset. Catalogue
+     * knows, and records it there.
+     */
+    private readonly metrics: Metrics,
   ) {}
 
   async findWithin(
@@ -61,7 +71,12 @@ export class PrismaListingSearch implements ListingSearchRepository {
     radiusMiles: SearchRadiusMiles,
     window: ResultWindow,
   ): Promise<NearbyListingPage | null> {
-    const origin = await geocodeQuietly(this.geocoder, this.logger, originPostcode);
+    const origin = await geocodeQuietly(
+      this.geocoder,
+      this.logger,
+      this.metrics,
+      originPostcode,
+    );
     if (origin === null) return null;
 
     const radiusMetres = milesToMetres(radiusMiles);

@@ -100,6 +100,27 @@ async function bootstrap(): Promise<void> {
 
   const logger = createLogger({ service: 'api', level: env.LOG_LEVEL });
 
+  /*
+   * Metrics are built here, in the composition root, so `prom-client` stays out
+   * of the module graph exactly as `@clerk/backend` and Prisma do — and so a
+   * test can boot the real application against a recording double without a
+   * registry.
+   *
+   * Disabled collects nothing and still serves an empty exposition, which tells
+   * a scraper "reachable, collecting nothing" rather than refusing the
+   * connection.
+   *
+   * **It moved up here from `AppModule.register` in slice 3.1f**, and the reason
+   * is worth a line: until then the only thing recording was a Fastify hook,
+   * which Nest owns, so building it inside the module options was enough. Search
+   * telemetry records from inside application services, which are constructed
+   * below — and **there must be exactly one registry**, or a service and the
+   * HTTP hook would each hold their own and only one of them would be scraped.
+   */
+  const metrics = env.METRICS_ENABLED
+    ? createPrometheusMetrics({ service: 'api' })
+    : createNoopMetrics(logger);
+
   // One client, one pool. Prisma 7 connects through a `pg` driver adapter, so
   // this is the same driver the raw PostGIS queries will use later (BRD §4.2)
   // rather than a second pool alongside it.
@@ -249,6 +270,7 @@ async function bootstrap(): Promise<void> {
   const location = new LocationService(
     geocoder,
     logger.child({ module: 'search-location' }),
+    metrics,
   );
 
   // The radius query (slice 3.1a, ADR 0044) — the one place in the system
@@ -264,6 +286,7 @@ async function bootstrap(): Promise<void> {
     database,
     geocoder,
     logger.child({ module: 'search-location' }),
+    metrics,
   );
 
   // Feature flags open as their own module (slice H3a, ADR 0036). Built before
@@ -318,23 +341,18 @@ async function bootstrap(): Promise<void> {
       findWithin: (postcode, radiusMiles, limit) =>
         listingSearch.findWithin(postcode, radiusMiles, limit),
     },
+    // What a search did (slice 3.1f). The same instance the geocoder above was
+    // given and the same one the HTTP hook records into — see the note where it
+    // is built.
+    metrics,
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
-      /*
-       * Metrics are built here, in the composition root, so `prom-client` stays
-       * out of the module graph exactly as `@clerk/backend` and Prisma do — and
-       * so a test can boot the real application against a recording double
-       * without a registry.
-       *
-       * Disabled collects nothing and still serves an empty exposition, which
-       * tells a scraper "reachable, collecting nothing" rather than refusing the
-       * connection.
-       */
-      metrics: env.METRICS_ENABLED
-        ? createPrometheusMetrics({ service: 'api' })
-        : createNoopMetrics(logger),
+      // The same instance the services above were given (slice 3.1f). One
+      // registry, or the HTTP hook and the search counter end up in different
+      // expositions and only one of them is scraped.
+      metrics,
       checks: [
         // `ping` is bound to the client here rather than the check holding a
         // Prisma instance, so the check stays testable without one.

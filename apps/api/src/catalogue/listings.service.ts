@@ -1,4 +1,5 @@
 import {
+  FIRST_SEARCH_PAGE,
   TRANSPORT_REQUIREMENT_LABELS,
   moderationRequiresReason,
   offersTransportRequirement,
@@ -21,7 +22,7 @@ import type {
 } from '@platform/contracts';
 import { Paging, Time } from '@platform/core';
 import type { Page } from '@platform/core';
-import type { Logger } from '@platform/observability';
+import type { ListingSearchOutcome, Logger, Metrics } from '@platform/observability';
 import {
   CATEGORY_LIST_LIMIT,
   EXPORTED_LISTING_LIMIT,
@@ -341,6 +342,20 @@ export class PublishedListingIncompleteError extends Error {
  * **not as a flag on an owner's one** — a boolean is how an unaudited path and
  * an audited path come to share a body.
  */
+/**
+ * Which of the three "we searched" outcomes this was (slice 3.1f).
+ *
+ * A named function rather than a ternary at the call site, because the rule it
+ * encodes is not obvious from the expression: **an empty page on page two is not
+ * a zero-result search.** `unplaceable` is not here on purpose — that is the
+ * case where we never searched at all, and it is decided earlier, before there
+ * is a result count to have an opinion about.
+ */
+function searchOutcome(resultCount: number, pageNumber: number): ListingSearchOutcome {
+  if (resultCount > 0) return 'found';
+  return pageNumber > FIRST_SEARCH_PAGE ? 'beyond_end' : 'empty';
+}
+
 export class ListingsService {
   constructor(
     private readonly store: ListingStore,
@@ -417,6 +432,23 @@ export class ListingsService {
      * arrive as a search that silently finds nothing.
      */
     private readonly proximity: ListingProximity,
+    /**
+     * What a search did, for the platform to be able to say (slice 3.1f).
+     *
+     * **Taken whole, like `logger` above, rather than narrowed to one method
+     * like the three ports around it** — and the difference is what is on the
+     * other side. Those cross a §5.1 module boundary, so the narrowing is what
+     * stops Catalogue reaching into Profiles or Search & Location for something
+     * else. `Metrics` is cross-cutting infrastructure from a shared package,
+     * exactly as `Logger` is, and there is no module behind it to over-reach
+     * into. Wrapping it in a one-method port would be a port to nowhere.
+     *
+     * Required rather than optional, for the reason every dependency here is —
+     * and this one has a particularly quiet failure: a boot site that forgot it
+     * would produce a dashboard reading zero searches, which looks exactly like
+     * a marketplace nobody is using.
+     */
+    private readonly metrics: Metrics,
   ) {}
 
   /**
@@ -781,6 +813,14 @@ export class ListingsService {
    * standing deliberately: the fix is a batch method on `OwnerStatusSource`, and
    * a port method added for a page size we have never served would be
    * speculation. It is recorded as a known limitation rather than forgotten.
+   *
+   * **Every exit from this method is counted** (slice 3.1f), and this is the only
+   * layer that can do it. The controller above collapses null into an empty page
+   * — deliberately, because a searcher is owed one answer rather than a
+   * diagnosis of our provider — so a counter placed there could never tell an
+   * empty area from our own geocoder being down. The repository below cannot do
+   * it either: it is handed an offset, not a page number, so it cannot tell a
+   * genuinely empty radius from somebody walking off the end of a result set.
    */
   async searchNearby(
     originPostcode: string,
@@ -804,7 +844,10 @@ export class ListingsService {
       limit: SEARCH_RESULT_LIMIT,
       offset: resultsToSkip(pageNumber),
     });
-    if (page === null) return null;
+    if (page === null) {
+      this.recordSearch(radiusMiles, 'unplaceable');
+      return null;
+    }
 
     const summaries = await this.store.findPublishedSummaries(
       page.matches.map((match) => match.listingId),
@@ -840,7 +883,48 @@ export class ListingsService {
       results.push({ listing, ownerStatus, distance: match.distance });
     }
 
+    /*
+     * **The outcome describes what the *searcher* got, not what the query
+     * found**, which matters in one uncommon case: a page whose matches were all
+     * dropped on hydration — an owner who changed their declaration since
+     * publishing (ADR 0044's named cost) — is recorded as `empty`, because an
+     * empty page is what somebody was shown. Counting it as `found` would make
+     * the zero-result rate disagree with the product.
+     *
+     * **A page past the end is its own outcome rather than `empty`.** Somebody
+     * on page four of a three-page result found plenty; folding that into the
+     * zero-result rate would report a navigation artefact as missing inventory,
+     * which is the exact number BRD §17 says to watch.
+     */
+    this.recordSearch(radiusMiles, searchOutcome(results.length, pageNumber));
+
     return { results, truncated: page.truncated };
+  }
+
+  /**
+   * One search counted, and **never at the cost of the search** (slice 3.1f).
+   *
+   * The `try` is the same rule the Fastify metrics hook follows: a diagnostic
+   * must not be able to fail the thing it is watching. Silent rather than
+   * logged, because a broken metrics backend would otherwise write a line per
+   * search and turn a diagnostic problem into a log-volume one.
+   *
+   * **No postcode is passed, and none can be.** The sample takes a radius from a
+   * closed union and an outcome from another, so there is no field here a
+   * postcode could occupy — which is the control, rather than a rule somebody
+   * has to remember. A postcode in a label is an area of interest kept in
+   * process memory and exported to a scraper that has none of §10.1's retention
+   * or erasure guarantees.
+   */
+  private recordSearch(
+    radiusMiles: SearchRadiusMiles,
+    outcome: ListingSearchOutcome,
+  ): void {
+    try {
+      this.metrics.recordListingSearch({ radiusMiles, outcome });
+    } catch {
+      /* deliberately nothing */
+    }
   }
 
   /**

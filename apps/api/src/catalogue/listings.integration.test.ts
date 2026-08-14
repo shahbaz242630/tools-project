@@ -3244,6 +3244,135 @@ describe('searching for listings near a postcode', () => {
     });
   });
 
+  /**
+   * What the platform can say about its own searches (slice 3.1f).
+   *
+   * **Every one of these outcomes is served as a 200 with a list**, which is why
+   * they need counting separately: the request metrics H1 already collects
+   * cannot tell any of them apart, so before this slice "nobody is finding
+   * anything" and "our geocoder is down" and "the marketplace is busy" all
+   * looked identical from outside.
+   *
+   * The assertions are at the HTTP boundary on purpose. Recording is easy to put
+   * somewhere that a controller then makes unreachable — the `unplaceable` case
+   * is exactly that shape, since the controller collapses it into an empty page
+   * — so the test drives the route a stranger drives.
+   */
+  describe('what the search recorded', () => {
+    it('counts a search that found something, with the radius it used', async () => {
+      await givenAListing(3_000);
+
+      await search('BS7 8AA', 20);
+
+      expect(listings.metrics.listingSearches).toEqual([
+        { radiusMiles: 20, outcome: 'found' },
+      ]);
+    });
+
+    it('counts an area with nothing in it as empty', async () => {
+      /*
+       * **The single most valuable number here.** BRD §17 names low inventory
+       * density as the dominant failure mode of local marketplaces, and until
+       * this existed we could not say what fraction of searches find nothing.
+       */
+      await givenAListing(milesToMetres(8));
+
+      await search('BS7 8AA', 5);
+
+      expect(listings.metrics.listingSearches).toEqual([
+        { radiusMiles: 5, outcome: 'empty' },
+      ]);
+    });
+
+    it('counts an unplaceable origin apart from an empty area', async () => {
+      /*
+       * **The one the controller would have hidden.** An origin we cannot place
+       * is served as an empty page — deliberately, since a searcher is owed one
+       * answer rather than a diagnosis of our provider — so a counter at the
+       * route could never tell this from a quiet area. Which means our own
+       * geocoding provider going down would read as "nobody has anything near
+       * you", indefinitely, with nothing to alert on.
+       */
+      await givenAListing(800);
+      listings.proximity.cannotPlace('BS7 8AA');
+
+      await search();
+
+      expect(listings.metrics.listingSearches).toEqual([
+        { radiusMiles: 5, outcome: 'unplaceable' },
+      ]);
+    });
+
+    it('does not count a page past the end as a zero-result search', async () => {
+      /*
+       * Somebody on page four of a one-page result found plenty. Folding that
+       * into `empty` would report a navigation artefact as missing inventory,
+       * corrupting the one number this whole metric exists to produce.
+       */
+      await givenAListing(3_000);
+
+      await search('BS7 8AA', 5, 4);
+
+      expect(listings.metrics.listingSearches).toEqual([
+        { radiusMiles: 5, outcome: 'beyond_end' },
+      ]);
+    });
+
+    it('records nothing at all for a request it refused', async () => {
+      // A radius of 7 and a malformed postcode never reach the service, so they
+      // are not searches — counting them would put caller error into the
+      // zero-result rate. They are already visible as 4xx on the route metric.
+      await givenAListing(800);
+
+      await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=BS7%208AA&radiusMiles=7',
+      });
+      await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=not-a-postcode',
+      });
+
+      expect(listings.metrics.listingSearches).toEqual([]);
+    });
+
+    it('counts the geocode as well as the search, through one shared helper', async () => {
+      /*
+       * The search path reaches the geocoder through `geocodeQuietly`, the same
+       * function the write path uses — so a provider outage is one series
+       * whichever half of the platform hit it. Here the fake proximity answers
+       * without a real geocoder, so what this pins is the *listing* geocode from
+       * publishing: the recording is not confined to one path by accident.
+       */
+      await givenAListing(3_000);
+
+      expect(listings.metrics.geocodes.map((sample) => sample.outcome)).toContain(
+        'found',
+      );
+    });
+
+    it('does not let a broken metrics backend fail a search', async () => {
+      /*
+       * The rule the Fastify hook already follows, applied one layer in: a
+       * diagnostic must never be able to fail the thing it is watching. Without
+       * the guard this is a 500 on the most public route in the system.
+       */
+      const created = await givenAListing(3_000);
+      listings.metrics.metrics.recordListingSearch = () => {
+        throw new Error('registry exploded');
+      };
+
+      const response = await search();
+
+      expect(response.statusCode).toBe(200);
+      expect(
+        parsePublicListingSearchResults(response.json()).results.map(
+          (result) => result.id,
+        ),
+      ).toEqual([created.id]);
+    });
+  });
+
   describe('when there are more than fit on a page', () => {
     it('says so rather than stopping quietly', async () => {
       // One more than the page size, which is the only case where a full page

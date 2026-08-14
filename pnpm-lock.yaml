@@ -225,6 +225,9 @@ importers:
 
   packages/observability:
     dependencies:
+      '@platform/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@platform/core':
         specifier: workspace:*
         version: link:../core
