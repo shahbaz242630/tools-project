@@ -31,23 +31,80 @@ describe('Landing', () => {
     }
   });
 
-  it.each([
-    ['a search box', 'searchbox'],
-    ['a text input', 'textbox'],
-  ])('does not offer %s, because search is Phase 3', (_case, role) => {
-    // The design's hero is built around a search pill. Searching nothing would
-    // be the largest dead control in the application (BRD §15).
+  /*
+   * **These four were absence tests until slice 3.1e**, saying the hero must not
+   * offer a search box because search was Phase 3 and a box that searches
+   * nothing is the largest dead control available (BRD §15). Search exists now,
+   * so they are inverted rather than deleted — the record should show the rule
+   * being satisfied, not relaxed.
+   */
+  it('offers the search the design draws, now that there is something behind it', () => {
     render(<Landing />);
-    expect(screen.queryByRole(role)).not.toBeInTheDocument();
+
+    expect(screen.getByRole('search')).toBeInTheDocument();
+    expect(
+      screen.getByRole('textbox', { name: /where are you looking/i }),
+    ).toBeInTheDocument();
   });
 
-  it.each(['Browse everything', 'Browse', 'Near you'])(
-    'does not offer %s, because there is nothing to browse yet',
-    (label) => {
-      render(<Landing />);
-      expect(screen.queryByText(label)).not.toBeInTheDocument();
-    },
-  );
+  it('searches through the same route and field names the search page uses', () => {
+    // It is `BrowseSearch` itself rather than a copy. A second form is a second
+    // place for `postcode` to drift into `location`, and that failure is an
+    // empty results page rather than an error.
+    render(<Landing />);
+    const form = screen.getByRole('search');
+
+    expect(form).toHaveAttribute('action', '/browse');
+    expect(form).toHaveAttribute('method', 'get');
+    expect(form.querySelector('[name="postcode"]')).not.toBeNull();
+    expect(form.querySelector('[name="radiusMiles"]')).not.toBeNull();
+  });
+
+  it('asks once, not three times', () => {
+    /*
+     * The design draws a hero pill, a "Near you" grid and "Browse everything".
+     * With the header already carrying *Browse*, wiring all of them puts three
+     * routes to one page on one screen. The grid is the one that had to go
+     * regardless — see below — and "Browse everything" is its escape hatch, so
+     * it has no parent left.
+     */
+    render(<Landing />);
+
+    expect(screen.getAllByRole('search')).toHaveLength(1);
+    expect(screen.queryByText('Browse everything')).not.toBeInTheDocument();
+  });
+
+  it('never claims to know where the reader is', () => {
+    /*
+     * **The test that pins the decision, and the reason it is phrased against
+     * the rendered page rather than against a function.** The design's "Near
+     * you" grid is a search *result*, so filling it means sourcing a location
+     * from somebody who has given us none — browser geolocation (which Chrome's
+     * own Lighthouse audit fails a page for requesting on load, and which
+     * collects a precise point to answer a postcode-grade question), IP
+     * inference (a free Cloudflare header, and wrong often enough at five miles
+     * to be worse than nothing), or a remembered postcode (storage on a device,
+     * which engages PECR and is not covered by the strictly-necessary
+     * exemption).
+     *
+     * So the hero asks. If somebody later fills this grid from a request header,
+     * this test is what stops it arriving unnoticed.
+     */
+    render(<Landing />);
+
+    // Not a bare text match: the lede legitimately says "from people near you",
+    // which is a description of the product rather than a claim about the
+    // reader. What must not exist is a *panel* asserting proximity, or listings
+    // presented as though we knew.
+    expect(
+      screen.queryByRole('heading', { name: /near you|in your area|near me/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen
+        .queryAllByRole('link')
+        .filter((link) => /\/hire\//.test(link.getAttribute('href') ?? '')),
+    ).toHaveLength(0);
+  });
 
   describe('what it claims about money', () => {
     /*

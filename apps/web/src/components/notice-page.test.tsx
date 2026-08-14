@@ -26,10 +26,33 @@ describe('NoticePage', () => {
     expect(screen.getByRole('link', { name: 'Go home' })).toHaveAttribute('href', '/');
   });
 
-  it('does not offer to browse, because there is nothing to browse', () => {
-    // The design pairs "Go home" with "Browse tools", which is search — Phase 3.
-    // A 404 linking to another page that does not exist is a joke at the
-    // reader's expense.
+  /*
+   * **An absence test until slice 3.1e**, saying this page must not link to
+   * Browse because search was Phase 3 and a 404 pointing at a page that does not
+   * exist is a joke at the reader's expense. It exists now, so the test is
+   * inverted rather than deleted — and the pair below is the point: a page that
+   * asks for a primary link gets one, a page that does not still gets none.
+   */
+  it('offers the primary link when the page has one', () => {
+    render(
+      <NoticePage
+        overline="404"
+        heading="Gone"
+        primaryLink={{ href: '/browse', label: 'Browse tools' }}
+      >
+        Nothing here.
+      </NoticePage>,
+    );
+    expect(screen.getByRole('link', { name: 'Browse tools' })).toHaveAttribute(
+      'href',
+      '/browse',
+    );
+  });
+
+  it('offers none when the page has none, so the error boundary stays a pair', () => {
+    // The error boundary's controls are "Try again" and "Go home". A third,
+    // offering to go shopping after something broke, is noise at the wrong
+    // moment.
     render(
       <NoticePage overline="404" heading="Gone">
         Nothing here.

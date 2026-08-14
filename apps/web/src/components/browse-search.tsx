@@ -16,20 +16,44 @@ import styles from './browse.module.css';
  * **It posts to the API's own route shape**, `/browse?postcode=…&radiusMiles=…`,
  * so the query string the browser builds is the one the page parses with the
  * contract's schema. The field names are the contract's, not this component's.
+ *
+ * **From slice 3.1e it is also the landing page's hero pill**, which is why it
+ * takes a `className` rather than being copied. A second search form would be a
+ * second place for `postcode` to drift into `location` — and the failure mode of
+ * that drift is an empty results page rather than an error, which is the
+ * quietest kind. Everything worth getting right lives here once: the contract's
+ * field names, §8.4's closed radius vocabulary, the placeholder that is
+ * deliberately nobody's postcode, and the error shown against its own field.
  */
 export function BrowseSearch({
   postcode,
   radiusMiles,
   error,
+  className,
 }: {
   /** What was searched for, so the field is not cleared by its own results. */
   readonly postcode: string;
   readonly radiusMiles: SearchRadiusMiles;
   /** What was wrong with it, shown against the field rather than at the top. */
   readonly error: string | null;
+  /**
+   * Layout only — the hero lays this out differently from the search page.
+   *
+   * `| undefined` explicitly, because `exactOptionalPropertyTypes` is on and a
+   * CSS module's class is typed `string | undefined`: without it, passing
+   * `styles.heroSearch` is a type error rather than the ordinary thing it is.
+   */
+  readonly className?: string | undefined;
 }) {
   return (
-    <form className={styles.search} action={BROWSE_PATH} method="get" role="search">
+    <form
+      className={
+        className === undefined ? styles.search : `${styles.search} ${className}`
+      }
+      action={BROWSE_PATH}
+      method="get"
+      role="search"
+    >
       <div className={styles.searchField}>
         <label htmlFor="postcode">Where are you looking?</label>
         <input

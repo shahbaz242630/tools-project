@@ -1,19 +1,38 @@
 import Link from 'next/link';
+import { DEFAULT_SEARCH_RADIUS_MILES } from '@platform/contracts';
+import { BrowseSearch } from './browse-search';
 import styles from './landing.module.css';
 
 /**
- * The front page (slice D3).
+ * The front page (slice D3, search added in 3.1e).
  *
  * **Two things about this page are not the design's, and both are deliberate.**
  *
- * **It does not carry the hero's search pill, the "Near you" grid, or "Browse
- * everything".** All three are search, which is Phase 3 — there is no radius
- * query, no public list endpoint and no way to say what is *near* anybody. The
- * design's own note on the empty state gives the game away: it says the panel
- * *"replaces the 4-card grid when search returns nothing within 100 miles"*, so
- * it is a search result rather than a landing section. A search box that
- * searches nothing would be the largest dead control in the application (BRD
- * §15), and it arrives with the thing behind it.
+ * **The hero now searches, and the "Near you" grid still does not exist.** Both
+ * were withheld in D3 because search was Phase 3; 3.1b built it, so the pill is
+ * real — it is `BrowseSearch`, the same control the search page uses, so the two
+ * cannot disagree about a parameter name.
+ *
+ * **The grid stays out, and that is a decision rather than a deferral.** It
+ * needs a location for somebody who has given us none, and the three ways to
+ * get one are all worse than asking. Browser geolocation cannot fill a panel
+ * nobody has touched — Chrome's own Lighthouse audit fails a page for requesting
+ * it on load — and it collects a precise point to answer a question that only
+ * needs a postcode. IP inference is a free Cloudflare header and wrong too
+ * often to be useful at a five-mile radius: roughly 60–75% correct city on fixed
+ * lines, worse on mobile and CGNAT, which is most traffic. Remembering a typed
+ * postcode is storage on somebody's device, which engages PECR, and the ICO's
+ * strictly-necessary exemption does not cover a convenience. **So the hero asks,
+ * and the answer lives in the URL** — which is what Gumtree does (it says
+ * plainly *"In your area — United Kingdom"* rather than guessing) and roughly
+ * what Hygglo does. `landing.test.tsx` pins it: there is exactly one place to
+ * ask, and nothing on this page claims to know where anybody is.
+ *
+ * **"Browse everything" is not here either, and it is redundant rather than
+ * unbuilt.** In the design it is the escape hatch beneath the grid; with no grid
+ * it has no parent, and the header already carries *Browse* while the hero now
+ * carries the search itself. Three routes to one page on one screen is not
+ * generosity.
  *
  * **The copy about money was rewritten, and this is the more important one.** The
  * handoff says *"Deposits held safely"*, *"Pay by the day with a refundable
@@ -58,6 +77,27 @@ export function Landing() {
           <strong>Booking is not open yet.</strong> The marketplace is still being
           built. You can list an item today, and renting opens when it is ready.
         </p>
+
+        {/*
+          **The ask, and it sits below the notice on purpose** (slice 3.1e).
+          Search works today — it finds real listings — but booking does not, and
+          inviting somebody to search before saying so would put the good news
+          above the honest news. Same instinct as D3's decision to keep the
+          notice above the fold at all.
+
+          It is the search page's own form rather than a copy, so the field
+          names, the five radii and the placeholder cannot drift from what the
+          API accepts. It carries no postcode, because we know nothing about
+          whoever is reading this and will not pretend otherwise — the module
+          docblock has the three ways we could have guessed and why each was
+          rejected.
+        */}
+        <BrowseSearch
+          postcode=""
+          radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
+          error={null}
+          className={styles.heroSearch}
+        />
 
         <Link href="/listings/new" className={styles.cta}>
           List a tool
