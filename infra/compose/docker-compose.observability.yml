@@ -13,8 +13,23 @@
 # tunnel to the box; publishing a dashboard with a default password on the
 # public internet is how monitoring becomes the way in.
 #
-# **This has never run on a real machine.** Like the rest of `infra/compose`, it
-# is exercised by CI against these same files and nothing more. See the README.
+# **Run for real on 14 August 2026** (slice H5), on the Hetzner CX23 against the
+# staging app stack, and corrected where it was wrong — which is what a first run
+# is for. Two defects, both invisible to CI because CI never joins a network the
+# app stack created:
+#
+#   1. the external network name was `rental-${APP_ENV}-app_internal`, and the
+#      app stack's project is `rental-${APP_ENV}`, so the network is actually
+#      `rental-${APP_ENV}_internal`. Compose would have refused to start, which
+#      is the good version of this bug — the comment at the bottom of this file
+#      describes the bad one;
+#   2. `${APP_ENV}` in `prometheus.yml` does not expand on its own. Prometheus
+#      needs `--enable-feature=expand-external-labels` *and* the variable in the
+#      container's environment; without both, `environment` was an empty label.
+#
+# Measured cost on the box: **~219 MB** across all four containers — Grafana 115,
+# Loki 53, Promtail 28, Prometheus 23 — against 2.8 GB available. The header's
+# worry about a box too small to run this was misplaced at our size.
 
 name: rental-${APP_ENV:?set APP_ENV}-observability
 
@@ -37,6 +52,13 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
 
+    # **The variable has to be in the container, not just in compose.** Compose
+    # substitutes `${APP_ENV}` in *this* file; it does not touch a mounted config
+    # file, so `prometheus.yml` sees the literal text and needs Prometheus itself
+    # to expand it. See the feature flag below — they only work as a pair.
+    environment:
+      APP_ENV: ${APP_ENV:?set APP_ENV}
+
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -46,6 +68,12 @@ services:
       # retention schedule does not reach them — but disk is finite regardless.
       - '--storage.tsdb.retention.time=15d'
       - '--web.enable-lifecycle'
+      # Without this, `${APP_ENV}` in prometheus.yml is not expanded and
+      # `environment` ends up an empty label — which is silent, because external
+      # labels are attached on the way *out* (remote write, federation, alerts)
+      # and never appear on a local query. So the obvious check does not show it:
+      # look at `/api/v1/status/config`, not at a series.
+      - '--enable-feature=expand-external-labels'
 
     # No ports. Nothing outside the stack talks to Prometheus; Grafana reaches
     # it over `internal`, and a human reaches Grafana over an SSH tunnel.
@@ -145,6 +173,12 @@ networks:
   # rather than making a second one. Two networks would mean Prometheus could
   # not reach the API at all — and the failure would look like a scrape target
   # that is simply always down.
+  #
+  # **The name is the app stack's compose project plus `_internal`**, and it was
+  # wrong until slice H5 ran this for the first time: `docker-compose.app.yml`
+  # sets `name: rental-${APP_ENV}`, so Docker names the network
+  # `rental-staging_internal` — not `rental-staging-app_internal`. Verify with
+  # `docker network ls` rather than by reading it off a filename.
   internal:
     external: true
-    name: rental-${APP_ENV}-app_internal
+    name: rental-${APP_ENV}_internal
