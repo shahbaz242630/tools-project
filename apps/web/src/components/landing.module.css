@@ -77,6 +77,26 @@
   line-height: 1.6;
 }
 
+/*
+ * The hero's search pill (slice 3.1e).
+ *
+ * **Two classes deep on purpose, and it is not a specificity habit.** The form
+ * is `BrowseSearch`, which brings `.search` from `browse.module.css` — a single
+ * class, like `.heroSearch` — so which one wins would otherwise be decided by
+ * the order the two CSS modules happen to land in the bundle, and that order
+ * follows the import order in `landing.tsx`. A layout that changes when somebody
+ * sorts imports is not a layout. `.hero .heroSearch` beats `.search` by
+ * specificity, whatever the order.
+ *
+ * `text-align: left` because the hero centres its text and a form's labels
+ * should sit above their fields, not over the middle of them.
+ */
+.hero .heroSearch {
+  max-width: 620px;
+  margin: 0 auto 28px;
+  text-align: left;
+}
+
 .cta {
   display: inline-block;
   padding: 13px 28px;
@@ -103,9 +123,13 @@
 
 /*
  * No top margin, unlike the design's spacing. The handoff puts a four-card
- * "Near you" grid between the hero and this rule; without it — search is Phase 3
- * — that margin plus the hero's own padding leaves a void that reads as a
- * section which failed to load. The margin comes back with the grid.
+ * "Near you" grid between the hero and this rule, and that margin plus the
+ * hero's own padding leaves a void without it — one that reads as a section
+ * which failed to load.
+ *
+ * **The grid is not coming, so neither is the margin** (slice 3.1e). It is a
+ * search result, and filling it means guessing where a stranger is; the reasons
+ * that was rejected are in `landing.tsx`. The hero asks instead.
  */
 .steps {
   display: grid;

@@ -44,6 +44,30 @@
   justify-content: center;
 }
 
+/*
+ * The primary action when it is a link (slice 3.1e) — the filled pill the
+ * landing page's `.cta` uses, repeated here rather than shared because the two
+ * modules are the only styling boundary this app has and a third "buttons"
+ * module for two rules would be worse. If a fourth page wants it, extract then.
+ */
+.primary {
+  display: inline-block;
+  padding: 13px 26px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--ground);
+  font-size: var(--text-body);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--ground);
+}
+
 .secondary {
   display: inline-block;
   padding: 13px 26px;
