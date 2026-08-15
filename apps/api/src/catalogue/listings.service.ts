@@ -17,6 +17,7 @@ import type {
   ListingStatus,
   ListingTransition,
   ModerationState,
+  PublicCategory,
   PublicationBlocker,
   TransportRequirement,
 } from '@platform/contracts';
@@ -929,6 +930,37 @@ export class ListingsService {
     this.recordSearch(search, searchOutcome(results.length, pageNumber));
 
     return { results, truncated: page.truncated };
+  }
+
+  /**
+   * The categories a searcher may narrow to (slice 3.2b).
+   *
+   * **Its own method rather than a projection of `categoryOptions`**, because the
+   * two answer different questions for different people: that one feeds a form an
+   * owner is filling in and carries the attribute schema; this feeds a `select`
+   * on a page anybody on the internet can load. Narrowing the wider one here
+   * would mean the public path holds the schema for as long as it takes to drop
+   * it, on the route with no rate limit in front of it.
+   *
+   * **The truncation warning says which surface was cut**, matching
+   * `categoryOptions`, and this one is worse than the owner picker's: a category
+   * missing here is inventory a searcher cannot reach, behind a control that
+   * looks complete. Nobody would report it, because nothing looks wrong.
+   */
+  async publicCategories(): Promise<readonly PublicCategory[]> {
+    const rows = await this.categories.listCategoryNames(
+      Paging.probe(CATEGORY_LIST_LIMIT),
+    );
+    const page = Paging.fitTo(rows, CATEGORY_LIST_LIMIT);
+
+    if (page.truncated) {
+      this.logger.warn('category list truncated', {
+        limit: CATEGORY_LIST_LIMIT,
+        surface: 'search-filter',
+      });
+    }
+
+    return page.items;
   }
 
   /**

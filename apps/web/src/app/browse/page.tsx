@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
 import {
   DEFAULT_SEARCH_RADIUS_MILES,
+  SEARCH_CATEGORY_MESSAGE,
   listingSearchQuerySchema,
 } from '@platform/contracts';
-import type { SearchRadiusMiles } from '@platform/contracts';
-import { fetchListingSearch } from '../../lib/listings';
+import type { PublicCategory, SearchRadiusMiles } from '@platform/contracts';
+import { fetchListingSearch, fetchPublicCategories } from '../../lib/listings';
+import { namesAnUnknownCategory } from '../../lib/search-category';
 import { webEnv } from '../../lib/env';
 import { BrowseSearch } from '../../components/browse-search';
 import { BrowseResults } from '../../components/browse-results';
@@ -84,6 +86,21 @@ export default async function BrowsePage({
   const submitted = first(params.postcode);
 
   /*
+   * **Fetched before anything branches, and a failure is not an error page.**
+   * Every return below renders the search form, and the form needs the list to
+   * draw its control — so this sits above the branches rather than being
+   * repeated in each.
+   *
+   * **The outcome is collapsed to a list, and an empty one means "no control"**
+   * (see `BrowseSearch`). Search does not depend on this read: if the category
+   * endpoint is down, a searcher can still type a postcode and get results, and
+   * a filter already in the URL is still applied and still honoured by every
+   * link. The alternative — failing the page — would let a cosmetic outage take
+   * down the one demand-side page this platform has.
+   */
+  const categories = await categoryOptions();
+
+  /*
    * **Nothing typed yet is not an error.** Somebody arriving from the nav has
    * given us nothing to search with, and a page that greeted them with "that is
    * not a valid postcode" would be blaming them for having just arrived.
@@ -95,6 +112,7 @@ export default async function BrowsePage({
           postcode=""
           radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
           category={categoryFrom(params.category)}
+          categories={categories}
           error={null}
         />
         <p className={styles.prompt}>
@@ -116,10 +134,9 @@ export default async function BrowsePage({
     // address bar says otherwise.
     page: first(params.page) ?? undefined,
     /*
-     * **And the same again for the category** (slice 3.2a) — but note this
-     * schema can only refuse a slug that is *malformed*. A well-formed slug
-     * naming no category is refused by the API, because only the server knows
-     * what exists; the page cannot tell the difference and must not pretend to.
+     * **And the same again for the category** (slice 3.2a). This schema can only
+     * refuse a slug that is *malformed*; one that is well formed but names no
+     * category is caught below, against the list this page already holds.
      */
     category: first(params.category) ?? undefined,
   });
@@ -131,7 +148,42 @@ export default async function BrowsePage({
           postcode={submitted}
           radiusMiles={radiusFrom(params.radiusMiles)}
           category={categoryFrom(params.category)}
+          categories={categories}
           error={messageFor(parsed.error.issues)}
+        />
+      </Page>
+    );
+  }
+
+  /*
+   * **A well-formed slug naming no category we have, caught here rather than by
+   * the API** (slice 3.2b, found by looking at the page).
+   *
+   * The API refuses it with a 400 — correctly, and that refusal is the control.
+   * But `publicCall` maps every 400 to `unreachable`, so the page rendered
+   * *"Search is unavailable at the moment"* for a URL whose only problem was a
+   * category that does not exist. Search was entirely available. That is 3.1d's
+   * defect exactly, one field along: **the refusal was right and the words were
+   * wrong**, which is why no test caught it and reading the page did.
+   *
+   * The rule and its one tricky condition live in `lib/search-category.ts`,
+   * where they can be tested — pages here have no tests, and the condition that
+   * an *empty* list means "the read failed" rather than "there are none" is
+   * exactly the kind that gets simplified away.
+   */
+  if (namesAnUnknownCategory(parsed.data.category, categories)) {
+    return (
+      <Page>
+        <BrowseSearch
+          postcode={parsed.data.postcode}
+          radiusMiles={parsed.data.radiusMiles}
+          // Reset to "all" rather than echoed: the value names nothing, so there
+          // is no option to select and nothing for a person to correct by
+          // reading it back — and echoing it would carry the bad slug into the
+          // next submission. The postcode is echoed for the opposite reason.
+          category={null}
+          categories={categories}
+          error={`Category ${SEARCH_CATEGORY_MESSAGE}.`}
         />
       </Page>
     );
@@ -145,11 +197,16 @@ export default async function BrowsePage({
         postcode={parsed.data.postcode}
         radiusMiles={parsed.data.radiusMiles}
         category={parsed.data.category}
+        categories={categories}
         error={null}
       />
 
       {outcome.kind === 'loaded' ? (
-        <BrowseResults results={outcome.value} search={parsed.data} />
+        <BrowseResults
+          results={outcome.value}
+          search={parsed.data}
+          categoryName={nameOf(categories, outcome.value.category)}
+        />
       ) : (
         /*
          * **One message for every way the read can fail**, and `not-found` is
@@ -197,6 +254,36 @@ function first(value: string | string[] | undefined): string | null {
   if (value === undefined) return null;
   const single = Array.isArray(value) ? value[0] : value;
   return single === undefined || single.trim() === '' ? null : single;
+}
+
+/**
+ * The categories the filter may offer, or none (slice 3.2b).
+ *
+ * **Every failure collapses to an empty list on purpose.** `unreachable`,
+ * `malformed` and the unreachable `not-found` all mean the same thing to this
+ * page: we cannot draw the control. None of them means the search is broken, and
+ * none of them is worth a message — a searcher who never intended to filter
+ * should not be told that a thing they were not using is unavailable.
+ */
+async function categoryOptions(): Promise<readonly PublicCategory[]> {
+  const outcome = await fetchPublicCategories(webEnv().API_BASE_URL);
+  return outcome.kind === 'loaded' ? outcome.value : [];
+}
+
+/**
+ * The display name for a slug, or null if we do not have one.
+ *
+ * Null covers both "no filter" and "the category read failed", which the empty
+ * state treats identically — it falls back to wording that needs no name rather
+ * than rendering the slug, because a slug on screen is a URL segment shown to a
+ * person.
+ */
+function nameOf(
+  categories: readonly PublicCategory[],
+  slug: string | null,
+): string | null {
+  if (slug === null) return null;
+  return categories.find((category) => category.slug === slug)?.name ?? null;
 }
 
 /** What to leave in the selector when the query is refused. */

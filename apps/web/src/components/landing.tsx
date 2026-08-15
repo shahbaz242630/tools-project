@@ -95,13 +95,19 @@ export function Landing() {
         {/*
           **No category either, and for the same reason as the postcode** (slice
           3.2a): we know nothing about whoever is reading this, and a filter
-          nobody chose is a narrower search than they asked for. The landing hero
-          asks the one question it has to ask; the rest is Browse's.
+          nobody chose is a narrower search than they asked for.
+
+          **`categories={[]}` is deliberate, not a stub** (slice 3.2b). The hero
+          asks the one question it has to ask, and a category `select` here would
+          be a second decision in front of somebody who has not made the first —
+          the same argument that cut the "Near you" grid in 3.1e. Browse is one
+          click away and has the control.
         */}
         <BrowseSearch
           postcode=""
           radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
           category={null}
+          categories={[]}
           error={null}
           className={styles.heroSearch}
         />

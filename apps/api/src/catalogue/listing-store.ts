@@ -6,6 +6,7 @@ import type {
   ListingCollectionLocation,
   ListingStatus,
   ModerationState,
+  PublicCategory,
   TransportRequirement,
 } from '@platform/contracts';
 import type { ListingRateCard } from '@platform/contracts';
@@ -820,4 +821,24 @@ export interface CategoryOptionSource {
    * to confuse the two, and `resolveSearchCategory` is where that is enforced.
    */
   findCategoryId(slug: string): Promise<string | null>;
+
+  /**
+   * Every category as a slug and a name, oldest first — at most `limit`
+   * (slice 3.2b).
+   *
+   * **Narrow because the caller is the public search filter**, and the rule this
+   * follows is the one `PublicListingSummary` records: a public shape is built
+   * field by field rather than by narrowing a wider one. `listOptions` returns
+   * the attribute schema and the transport options because an owner is about to
+   * fill in a form; on the search path those are fields somebody has to remember
+   * not to project, on the one route with no rate limit in front of it. Here
+   * there is nothing to forget.
+   *
+   * **Bounded for `listOptions`' reason** (ADR 0035): rows arrive only through an
+   * audited administrative form, so the count is a decision somebody made rather
+   * than a number users can drive, and the bound is a guardrail against a bug.
+   * It must not truncate silently — a category missing from the filter is
+   * inventory a searcher cannot reach, with a control that looks complete.
+   */
+  listCategoryNames(limit: number): Promise<readonly PublicCategory[]>;
 }

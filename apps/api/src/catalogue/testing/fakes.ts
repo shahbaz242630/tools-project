@@ -38,6 +38,7 @@ import type {
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
+  PublicCategory,
 } from '@platform/contracts';
 import { CategorySlugTakenError } from '../category-store.js';
 import { CategoryChangedError, UnknownCategoryError } from '../listing-store.js';
@@ -735,6 +736,21 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
   async findCategoryId(slug: string): Promise<string | null> {
     const category = await this.categories.findBySlug(slug);
     return category?.id ?? null;
+  }
+
+  /**
+   * Slug and name only (slice 3.2b).
+   *
+   * **Built rather than spread**, so the double cannot return a field the real
+   * one does not — which is the failure that would matter here: a disclosure
+   * test passing against a fake that happens to carry more than production does.
+   */
+  async listCategoryNames(limit: number): Promise<readonly PublicCategory[]> {
+    const categories = await this.categories.list(limit);
+    return categories.map((category) => ({
+      slug: category.slug,
+      name: category.name,
+    }));
   }
 
   /** Everything stored, for asserting that a refused write left nothing behind. */

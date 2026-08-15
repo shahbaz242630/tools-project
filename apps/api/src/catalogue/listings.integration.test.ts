@@ -14,6 +14,7 @@ import {
   parseOwnedListings,
   parseOwnerListing,
   parsePublicListing,
+  parsePublicCategories,
   parsePublicListingSearchResults,
   publicListingPath,
   publicListingSearchPath,
@@ -239,6 +240,23 @@ async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<v
       riskLevel: 'medium',
       reportableActivity: 'none',
       attributes,
+      feePolicy: FEE_POLICY,
+      transportOptions: [],
+    },
+    author,
+  );
+}
+
+/** Rename it, minting a version — the slug stays put and only the label moves. */
+async function reconfiguredName(name: string): Promise<void> {
+  const author = await idOf('alice-token');
+  await listings.categories.addVersion(
+    'outdoor-gardening',
+    {
+      name,
+      riskLevel: 'medium',
+      reportableActivity: 'none',
+      attributes: SCHEMA,
       feePolicy: FEE_POLICY,
       transportOptions: [],
     },
@@ -3679,5 +3697,106 @@ describe('searching for listings near a postcode', () => {
         expect(response.statusCode).toBe(400);
       });
     });
+  });
+});
+
+/**
+ * The categories a searcher may filter by (slice 3.2b).
+ *
+ * **Driven with no authorization header**, which is the whole point of the
+ * route: `/categories` is behind `AuthGuard`, and Browse is the page a
+ * signed-out stranger meets first. A filter that needed an account would be a
+ * dead control wearing a login prompt.
+ *
+ * **A top-level describe rather than a child of the search one**, because it has
+ * to be able to test a platform with *no* categories configured — and every
+ * search block creates one in its own `beforeEach`.
+ */
+describe('the public category list', () => {
+  function publicCategories() {
+    return app.inject({ method: 'GET', url: '/public/categories' });
+  }
+
+  it('is an empty list rather than an error when nothing is configured', async () => {
+    // The state of a fresh platform, and of local development right now. The
+    // page renders without the control; it must not fail.
+    const response = await publicCategories();
+
+    expect(response.statusCode).toBe(200);
+    expect(parsePublicCategories(response.json()).categories).toEqual([]);
+  });
+
+  it('answers a caller with no session at all', async () => {
+    await givenACategory();
+
+    const response = await publicCategories();
+
+    expect(response.statusCode).toBe(200);
+    expect(parsePublicCategories(response.json()).categories).toEqual([
+      { slug: 'outdoor-gardening', name: 'Outdoor and gardening' },
+    ]);
+  });
+
+  it('lists every category, oldest first', async () => {
+    await givenACategory();
+    await givenACategory('power-tools', SCHEMA, TRANSPORT);
+
+    const { categories } = parsePublicCategories((await publicCategories()).json());
+
+    expect(categories.map((category) => category.slug)).toEqual([
+      'outdoor-gardening',
+      'power-tools',
+    ]);
+  });
+
+  /*
+   * **A slug and a name, and nothing else on the wire.** The owner's
+   * `/categories` carries the attribute schema, the transport options and the
+   * version number; the admin one adds the risk level and the reportable
+   * activity flag (ADR 0028). None of that belongs on a route anybody on the
+   * internet can call, and the guarantee is the *shape* rather than a filter
+   * somebody has to remember — asserted against the raw body, because that is
+   * what actually crosses the wire.
+   *
+   * **It also rules out a count.** A listing count per category would publish
+   * BRD §17's dominant risk — how thin our supply is — as an endpoint, live, to
+   * anybody who asks. There is no field here it could arrive in.
+   */
+  it('discloses no configuration beyond a slug and a name', async () => {
+    await givenACategory();
+
+    const body = (await publicCategories()).json() as {
+      categories: Record<string, unknown>[];
+    };
+
+    expect(Object.keys(body.categories[0] ?? {}).sort()).toEqual(['name', 'slug']);
+
+    const raw = JSON.stringify(body);
+    for (const absent of [
+      'attributes',
+      'transportOptions',
+      'riskLevel',
+      'reportableActivity',
+      'feePolicy',
+      'versionNumber',
+      'count',
+    ]) {
+      expect(raw).not.toContain(absent);
+    }
+  });
+
+  /*
+   * **The name is the current version's**, which is what makes renaming safe:
+   * the slug in every URL and every filter stays put, and only the label moves.
+   */
+  it('shows the current version’s name after a rename', async () => {
+    await givenACategory();
+    await reconfiguredName('Garden and outdoor');
+
+    const { categories } = parsePublicCategories((await publicCategories()).json());
+
+    expect(categories).toEqual([
+      { slug: 'outdoor-gardening', name: 'Garden and outdoor' },
+    ]);
   });
 });
