@@ -18,6 +18,7 @@ import { editListingAction } from '../app/listings/[id]/edit/actions';
 import { editStateFrom } from '../app/listings/[id]/edit/state';
 import { AttributeFields, toSubmittedAttributes } from './attribute-fields';
 import type { AttributeAnswers } from './attribute-fields';
+import { OutwardCodePreview } from './outward-code-preview';
 import { TransportField } from './transport-field';
 import group from './form-card.module.css';
 import { toStoredAnswers } from '../lib/stored-answers';
@@ -82,6 +83,9 @@ export function ListingEditForm({
     listing.transportRequirement,
   );
   const [twoPersonLift, setTwoPersonLift] = useState(listing.requiresTwoPersonLift);
+  // Only so the district under the field can be the one they typed. The input
+  // stays uncontrolled — the server action reads the form, not this.
+  const [postcode, setPostcode] = useState(state.postcode);
 
   const weight = readItemWeight(category.attributes, answers);
 
@@ -310,12 +314,13 @@ export function ListingEditForm({
             type="text"
             autoComplete="postal-code"
             defaultValue={state.postcode}
+            onChange={(event) => setPostcode(event.target.value)}
             placeholder="BS7 8AA"
             aria-describedby="edit-postcode-help"
           />
         </p>
         <p id="edit-postcode-help" className={group.help}>
-          Only the first part — <strong>BS7</strong> — is ever published.
+          <OutwardCodePreview postcode={postcode} />
         </p>
 
         {/*
