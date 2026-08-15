@@ -64,12 +64,17 @@ describe('fetchSignIns', () => {
     });
   });
 
-  it('does not report 403 as signed out', async () => {
+  it('reports 403 as a refusal — not as signed out, and not as an outage', async () => {
     // A suspended account reaches this route — it opts in — so a 403 means
     // something else went wrong. Reporting it as "sign in again" would send
     // somebody round a loop that cannot end.
+    //
+    // **This test used to assert `unreachable`**, which pinned the defect
+    // rather than the rule: it stopped the 403 being called a sign-out and left
+    // it being called an outage instead, so the page said the history "could
+    // not be loaded" when in fact it had been withheld.
     const outcome = await fetchSignIns(API, TOKEN, responds(403, ''));
-    expect(outcome.kind).toBe('unreachable');
+    expect(outcome).toEqual({ kind: 'forbidden' });
   });
 
   it('reports a non-JSON body as malformed, with what it got', async () => {

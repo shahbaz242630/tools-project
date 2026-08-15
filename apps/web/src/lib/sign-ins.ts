@@ -20,23 +20,21 @@ import {
   parseSignInsResponse,
 } from '@platform/contracts';
 import type { SignInEntry } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const SIGN_INS_TIMEOUT_MS = 3_000;
 
-/**
- * **A `forbidden` member is owed here too**, for the reason written out in
- * `activity.ts`: a 403 is the API understanding us and refusing, which is not an
- * outage and must not be worded as one. The comment further down about not
- * folding 403 into `signed-out` is right and is not the same point — the fix is
- * a third member, not a second meaning for an existing one.
- *
- * It lands with a branch in `components/sign-in-list.tsx`, whose switch is
- * exhaustive by design and which `noImplicitReturns` rejects the moment this
- * union grows.
- */
 export type SignInsOutcome =
   | { readonly kind: 'loaded'; readonly entries: readonly SignInEntry[] }
   | { readonly kind: 'signed-out' }
+  /**
+   * **Authenticated, and refused anyway**, for the reason written out in
+   * `activity.ts`: a 403 is the API understanding us and refusing, which is not
+   * an outage and must not be worded as one. The comment further down about not
+   * folding 403 into `signed-out` was right and is not the same point — the fix
+   * was a third member, not a second meaning for an existing one.
+   */
+  | { readonly kind: 'forbidden' }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
 
@@ -74,6 +72,7 @@ export async function fetchSignIns(
       headers: {
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
     });
   } catch (error) {
@@ -85,7 +84,11 @@ export async function fetchSignIns(
   // 403 is not folded into `signed-out`. A suspended account reaches this route
   // — it is one of the five that opt in — so a 403 here means something else
   // went wrong, and reporting it as "sign in again" would send somebody round a
-  // loop that cannot end.
+  // loop that cannot end. It is not folded into the catch-all below either:
+  // that one says the history could not be *read*, which is a claim about us
+  // rather than about a decision somebody made.
+  if (response.status === 403) return { kind: 'forbidden' };
+
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'unreachable', reason: `API answered ${String(response.status)}` };
   }

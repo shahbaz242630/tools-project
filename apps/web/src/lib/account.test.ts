@@ -87,6 +87,17 @@ describe('fetchAccount', () => {
     });
   });
 
+  it('reports 403 as a refusal rather than as an outage', async () => {
+    // `/me` opts in to `@AllowsSuspended`, so nothing produces one today. The
+    // branch exists because the alternative was a client that would answer the
+    // first route which does not opt in with "the service did not answer" —
+    // which is how the profile form came to blame the site for an
+    // administrator's decision.
+    expect(await fetchAccount(BASE, 'token', answering(403, ''))).toEqual({
+      kind: 'forbidden',
+    });
+  });
+
   it.each([[500], [502], [418]])(
     'does not report signed out when the API answers %i',
     async (status) => {

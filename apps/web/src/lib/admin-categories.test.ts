@@ -157,14 +157,40 @@ describe('createCategory', () => {
   });
 
   it('falls back to a usable message when the error body says nothing', async () => {
+    const outcome = await createCategory(API, TOKEN, DRAFT, REASON, responds(409, ''));
+    expect(outcome).toEqual({ kind: 'taken', reason: 'That slug is already in use.' });
+  });
+
+  it('keeps the fallback and still reports a body it could not read', async () => {
+    // The status decides the outcome, as it always did. What changed is that
+    // the body is no longer swallowed by the parse's `catch`: an administrator
+    // told "that slug is already in use" when the service actually returned a
+    // gateway error page had no way to find that out.
     const outcome = await createCategory(
       API,
       TOKEN,
       DRAFT,
       REASON,
-      responds(409, 'not json'),
+      responds(409, '<html>502 Bad Gateway</html>'),
     );
-    expect(outcome).toEqual({ kind: 'taken', reason: 'That slug is already in use.' });
+
+    expect(outcome.kind).toBe('taken');
+    expect(outcome.kind === 'taken' && outcome.reason).toContain(
+      'That slug is already in use.',
+    );
+    expect(outcome.kind === 'taken' && outcome.reason).toContain('502 Bad Gateway');
+  });
+
+  it('uses the API’s message as the issue when it sent no issues array', async () => {
+    const outcome = await createCategory(
+      API,
+      TOKEN,
+      DRAFT,
+      REASON,
+      responds(400, JSON.stringify({ message: 'slug: must be lowercase' })),
+    );
+
+    expect(outcome).toEqual({ kind: 'invalid', issues: ['slug: must be lowercase'] });
   });
 });
 

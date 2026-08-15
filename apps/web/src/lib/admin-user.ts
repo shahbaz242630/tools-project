@@ -14,6 +14,7 @@ import {
   parseAdminUserView,
 } from '@platform/contracts';
 import type { AdminUserView } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const ADMIN_USER_TIMEOUT_MS = 5_000;
 
@@ -72,6 +73,7 @@ export async function fetchAdminUser(
         headers: {
           [AUTHORIZATION_HEADER]: `Bearer ${token}`,
           ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+          ...(await correlationHeaders()),
         },
       },
     );

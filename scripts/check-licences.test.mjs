@@ -165,6 +165,57 @@ describe('evaluateExpression', () => {
   });
 });
 
+describe('a dependency that grants no licence', () => {
+  /*
+   * The hole the August 2026 audit found. Every one of these used to be
+   * reported as UNCLASSIFIED and pass, because the leniency that keeps the
+   * build green for an unfamiliar *permissive* licence could not tell one from
+   * the absence of a grant.
+   */
+  it.each([
+    ['UNLICENSED', 'unlicensed-thing'],
+    ['Unknown', 'no-license-field'],
+    ['SEE LICENSE IN LICENSE.md', 'read-it-yourself'],
+    ['LicenseRef-Bespoke', 'someones-own-terms'],
+    ['', 'empty-field'],
+  ])('fails the build on %s', (expression, name) => {
+    const { noGrant, blocked, needsReview } = assess({ [expression]: [{ name }] });
+
+    expect(noGrant.map((entry) => entry.name)).toEqual([name]);
+    // Its own class, not folded into copyleft: the remedy is different, and
+    // "would oblige us to publish our own source" is simply not true of it.
+    expect(blocked).toEqual([]);
+    expect(needsReview).toEqual([]);
+  });
+
+  it('does not confuse Unlicense with UNLICENSED', () => {
+    // One letter apart and opposite in meaning: a public-domain dedication
+    // against the absence of any grant.
+    expect(classifyIdentifier('Unlicense').verdict).toBe('allowed');
+    expect(classifyIdentifier('UNLICENSED').verdict).toBe('no-grant');
+    expect(assess({ Unlicense: [{ name: 'public-domain-thing' }] }).noGrant).toEqual(
+      [],
+    );
+  });
+
+  it('lets OR choose the licence we can comply with', () => {
+    // We may pick either, and picking is free — so this is an MIT dependency
+    // and its unlicensed half is not a problem we have.
+    expect(evaluateExpression('MIT OR UNLICENSED').verdict).toBe('allowed');
+  });
+
+  it('takes the no-grant half of an AND, which obliges us under both', () => {
+    expect(evaluateExpression('MIT AND UNLICENSED').verdict).toBe('no-grant');
+  });
+
+  it('can be excused by a recorded commercial licence, unlike copyleft', () => {
+    // Nothing is excused today; this asserts the mechanism exists, because a
+    // paid licence is a real thing to hold and the alternative is arguing with
+    // a red build. `findException` is what REVIEWED is consulted through.
+    expect(findException('unlicensed-thing', 'UNLICENSED')).toBeNull();
+  });
+});
+
 describe('findException', () => {
   it('matches on the normalised identifier, whichever spelling arrives', () => {
     expect(findException('elkjs', 'EPL-2.0')).not.toBeNull();

@@ -3,9 +3,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { listingEditSchema, listingPath } from '@platform/contracts';
+import { listingEditSchema } from '@platform/contracts';
 import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../../lib/client-ip';
+import { ownerListingPath } from '../../../../lib/page-paths';
 import { readCollectionLocation } from '../../../../lib/collection-location';
 import { asSentences } from '../../../../lib/contract-issues';
 import { describeIncompleteRefusal } from '../../../../lib/incomplete-refusal';
@@ -221,5 +222,6 @@ export async function editListingAction(
       return refused(`That did not save — ${outcome.reason}`);
   }
 
-  redirect(listingPath(listingId));
+  // The page, not the API resource the save just wrote to. See `page-paths.ts`.
+  redirect(ownerListingPath(listingId));
 }

@@ -121,6 +121,53 @@ Studio, a local development tool — `pnpm deploy --prod` does not carry the
 So does anything that puts Prisma Studio in front of a user, which would make it
 a distributed component rather than a local tool.
 
+## `UNLICENSED` and friends — no exception, and why there is an entry anyway
+
+|                |                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| Added          | 2026-08-15                                                                                         |
+| Kind           | **Policy**, not an exception — nothing is excused by it and the list below is empty on purpose     |
+| Applies to     | `UNLICENSED`, `Unknown`, an empty licence field, `NOASSERTION`, `SEE LICENSE IN …`, `LicenseRef-…` |
+| Verdict        | **Fails the build**, as its own class rather than as copyleft                                      |
+| Review trigger | The first time one of these appears and somebody wants it excused                                  |
+
+**What was wrong.** `scripts/check-licences.mjs` deliberately permits an
+identifier that appears in none of its policy lists, and prints it as
+`UNCLASSIFIED`. That leniency is correct and is defended in the file: failing on
+every unfamiliar permissive licence would redden the build for the next
+`BlueOak-1.0.0` and teach everyone to skip the check. But it could not tell an
+unfamiliar _permissive_ licence from **the absence of a grant**, so a dependency
+declaring `UNLICENSED` — npm's way of saying the publisher grants no rights at
+all — took the same silent pass as `Zlib`. Found in the August 2026 audit.
+
+**Why that is worse than the copyleft cases above.** GPL tells us exactly what it
+would oblige us to do; we decline the price and remove the dependency. `UNLICENSED`
+grants nothing, so there is no price and no compliant way to use it: we would be
+copying and deploying somebody's code with no permission whatsoever, in a
+repository that goes private before launch and ships as a hosted service. A gate
+that blocks the licence we could at least reason about while passing the one that
+gives us no rights is a gate pointed at the wrong risk.
+
+**What it does now.** Six declarations are recognised as granting nothing and each
+fails with its own message naming the remedy. `SEE LICENSE IN …` is matched on the
+whole declaration before it is parsed, because it is not an SPDX expression —
+tokenising it yields an identifier called `SEE`, which is exactly how it passed.
+`MIT OR UNLICENSED` still passes, because OR lets us choose and choosing is free;
+`MIT AND UNLICENSED` fails, because AND obliges us under both.
+
+**`Unlicense` is not `UNLICENSED`** and the two differ by one letter while meaning
+opposite things — the first is a public-domain dedication. It is in the tree today
+(`pnpm licences:check` lists it), so this was a live trap rather than a
+hypothetical one. Every pattern is anchored, and a test asserts the pair.
+
+**What would change this.** If we ever buy a commercial licence for a package that
+publishes as `UNLICENSED`, that is recordable: add an entry here naming the
+agreement and its scope, and the matching entry to `REVIEWED` in
+`scripts/check-licences.mjs`. The mechanism is the same one the two licences above
+use, and it is deliberately available for this class and **not** for the denied
+copyleft ones — a private agreement can change what we are permitted to do with
+an unlicensed package; nothing written here changes what the GPL requires.
+
 ---
 
 # Overrides applied

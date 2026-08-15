@@ -357,12 +357,25 @@ async function bootstrap(): Promise<void> {
     // (slice 2.8c-i, ADR 0041), and ADR 0017 makes an unaudited one a failure.
     audit,
     /*
-     * How a listing's owner lists, answered by Profiles (slice 2.13). One
+     * How a listing's owners list, answered by Profiles (slice 2.13). One
      * method, so Catalogue can ask the one question §8.3 makes it responsible
      * for and cannot read a phone number or an address off a profile on the way
      * past — the narrowing every port across this boundary makes.
+     *
+     * **The port went plural in the August 2026 audit remediation**, because
+     * asking per listing was an N+1 on the search results page. Catalogue asks
+     * once per page and Profiles answers with one `findMany`, so the round trip
+     * count no longer grows with the number of distinct owners on a page.
+     *
+     * **It was briefly half done, and that is worth remembering rather than
+     * tidying away.** The first pass made the port plural while this adapter
+     * still fanned out over a singular `findOwnerStatus`, which moved the cost
+     * from Catalogue into Profiles instead of removing it — a shape that reads
+     * as fixed in every assertion about returned data, because only the query
+     * *count* changes. `InMemoryProfileStore.ownerStatusLookups` exists so a
+     * test can assert the count and stop it coming back.
      */
-    { findOwnerStatus: (userId) => profiles.findOwnerStatus(userId) },
+    { findOwnerStatuses: (userIds) => profiles.findOwnerStatuses(userIds) },
     /*
      * Which listings are near a postcode (slice 3.1a). The second port Search &
      * Location answers, and the two are deliberately separate objects rather
@@ -414,7 +427,37 @@ async function bootstrap(): Promise<void> {
       featureFlags,
       listings,
     }),
-    new FastifyAdapter(),
+    /*
+     * **One hop, not all of them, and not none.**
+     *
+     * Fastify's default is `trustProxy: false`, under which `request.ip` is the
+     * socket peer — and this API's socket peer is *always* the web container,
+     * because only `web` joins the edge network and every call arrives
+     * server-side. So the default makes `request.ip` a constant, which is
+     * harmless while nothing reads it and quietly wrong for the first thing that
+     * does. That thing is already named: BRD §10 requires rate limiting by IP,
+     * and `@fastify/rate-limit` keys on `request.ip`, so under the default the
+     * entire internet would share one bucket and the limit would fire on the
+     * hundredth honest visitor.
+     *
+     * `true` is the answer most examples give and it means "believe the whole
+     * `X-Forwarded-For` chain". That is only ever correct while the topology
+     * holds, and it fails open: the day this API is reachable by anything else,
+     * every address it records is whatever the caller typed. `1` trusts exactly
+     * the nearest hop and takes the **last** entry, which is the same rule
+     * ADR 0017 wrote down for `clientIpFrom` in the web app, for the same reason
+     * — the first entry is attacker-supplied, the last is what a proxy we run
+     * observed.
+     *
+     * **This changes nothing that is recorded today**, and that is the point of
+     * doing it now rather than later. The web app does not forward
+     * `X-Forwarded-For` at all: it resolves the address itself and sends
+     * `x-client-ip`, a single-valued header the guard reads and the audit log
+     * stores (ADR 0017). With no `X-Forwarded-For` present, proxy-addr returns
+     * the socket address exactly as before. What this settles is what happens
+     * the day a header does arrive — before something depends on the answer.
+     */
+    new FastifyAdapter({ trustProxy: 1 }),
     { logger: new NestLoggerAdapter(logger) },
   );
 

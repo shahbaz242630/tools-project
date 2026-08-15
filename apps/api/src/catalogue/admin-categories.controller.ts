@@ -64,6 +64,32 @@ export class AdminCategoriesController {
     return { categories: categories.map(toAdminCategory) };
   }
 
+  /**
+   * One category by slug. **Nothing calls this, and it is kept deliberately.**
+   *
+   * The admin surface is a single page listing every category with its forms
+   * inline (`app/admin/categories/page.tsx`), and the list route above already
+   * returns the whole `AdminCategory`, so a caller holding a slug is a caller
+   * that already has the object. `apps/web/src/lib/admin-categories.ts` uses
+   * this path for the `PUT` and never for the `GET`. It was found unused in the
+   * August 2026 audit and this comment is the decision, not an oversight.
+   *
+   * **Why it is not deleted, given this project deletes features built for
+   * callers who do not exist** (slice 2.11): that rule is about work whose
+   * consumer will *never* exist — a concierge flow needing staff we will never
+   * hire. This is the read half of a read/write pair whose write half is live,
+   * and it cannot rot in the way dead code rots, because both routes project
+   * through the one `toAdminCategory` below. A field added to `AdminCategory`
+   * reaches both or neither, and their tests fail together. It is also what
+   * `categories.integration.test.ts` reads a configuration back through, so it
+   * is exercised on every run rather than merely compiled.
+   *
+   * **What would delete it:** an admin surface that still has no per-category
+   * page by the time the first rate limits land (BRD §10), at which point this
+   * becomes one more authenticated route needing a budget nobody can size from
+   * traffic that does not exist. Deleting it then also means deleting
+   * `CatalogueService.findBySlug`, whose only production caller it is.
+   */
   @Get(ADMIN_CATEGORY_ROUTE)
   @Roles('ADMIN')
   async read(@Param('slug') slug: string): Promise<AdminCategory> {

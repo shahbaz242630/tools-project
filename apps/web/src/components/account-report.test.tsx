@@ -47,6 +47,25 @@ describe('AccountReport', () => {
     expect(screen.getByText('connect ECONNREFUSED')).toBeInTheDocument();
   });
 
+  it('calls a refusal a decision rather than a fault', () => {
+    render(<AccountReport outcome={{ kind: 'forbidden' }} />);
+
+    // Lead with what is certainly true: the token was accepted, so this person
+    // is signed in and must not be told to sign in again.
+    expect(screen.getByText(/you are signed in/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see your account/i)).not.toBeInTheDocument();
+
+    // Then what to do. The reason lives with the administrator who wrote it,
+    // and the activity trail is the one route to it that a refused `/me` does
+    // not take away.
+    expect(screen.getByText(/account activity/i)).toBeInTheDocument();
+
+    // Never a status code at a person, and never worded as an outage: this is
+    // the sentence the audit found in five clients at once.
+    expect(screen.queryByText(/403/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/did not answer/i)).not.toBeInTheDocument();
+  });
+
   it('names a version skew as the likely cause of a malformed answer', () => {
     render(
       <AccountReport outcome={{ kind: 'malformed', reason: 'id: invalid uuid' }} />,

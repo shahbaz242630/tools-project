@@ -22,9 +22,9 @@
 
 import Link from 'next/link';
 import { Money, Time } from '@platform/core';
-import { listingPath } from '@platform/contracts';
 import type { OwnedListings, OwnerListingSummary } from '@platform/contracts';
 import { VisibilityLabel } from './listing-visibility';
+import { ownerListingPath } from '../lib/page-paths';
 import type { ListingOutcome } from '../lib/listings';
 import styles from './listing-list.module.css';
 
@@ -187,8 +187,10 @@ function Row({ listing }: { readonly listing: OwnerListingSummary }) {
     <tr>
       <th scope="row" className={styles.item}>
         {/* The whole point of the page: a route back to a listing that is not
-            its UUID. */}
-        <Link href={listingPath(listing.id)}>{listing.title}</Link>
+            its UUID. **`ownerListingPath`, not the contract's `listingPath`** —
+            that one is the API route this page's data came from, and it spells
+            the same string only by coincidence. */}
+        <Link href={ownerListingPath(listing.id)}>{listing.title}</Link>
       </th>
       <td>{listing.categoryName}</td>
       <td>

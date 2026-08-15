@@ -110,6 +110,12 @@ describe('fetchActivity', () => {
     });
   });
 
+  it('reads 403 as a refusal, which is neither an empty log nor an outage', async () => {
+    expect(await fetchActivity(API, TOKEN, responds(403, ''))).toEqual({
+      kind: 'forbidden',
+    });
+  });
+
   it.each([500, 502])('does not read %d as an empty log', async (status) => {
     // The failure that matters here: "nothing has happened on your account" is
     // a security claim, and an outage must never render as one.

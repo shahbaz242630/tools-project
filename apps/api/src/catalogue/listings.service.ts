@@ -650,7 +650,7 @@ export class ListingsService {
         // fresh means an owner who declares "business" stops being able to keep
         // a published listing complete from that moment, rather than from
         // whenever the listing was last written.
-        ownerStatus: await this.ownerStatuses.findOwnerStatus(ownerId),
+        ownerStatus: await this.ownerStatusOf(ownerId),
       });
 
       if (blockers.length > 0) throw new PublishedListingIncompleteError(blockers);
@@ -774,7 +774,7 @@ export class ListingsService {
     const listing = await this.store.findPublished(id);
     if (listing === null) return null;
 
-    const ownerStatus = await this.ownerStatuses.findOwnerStatus(listing.ownerId);
+    const ownerStatus = await this.ownerStatusOf(listing.ownerId);
 
     // Not `!== 'professional_trader'`: an owner who has *never* declared must
     // not be published either, and writing the negative would have let null
@@ -820,11 +820,14 @@ export class ListingsService {
    * matches and looks each listing up, rather than mapping over what the store
    * returned.
    *
-   * **Owner statuses are deduplicated and resolved together.** It is still one
-   * query per distinct owner, which is an N+1 in the strict sense and is left
-   * standing deliberately: the fix is a batch method on `OwnerStatusSource`, and
-   * a port method added for a page size we have never served would be
-   * speculation. It is recorded as a known limitation rather than forgotten.
+   * **Owner statuses are deduplicated and resolved in one lookup.** Until the
+   * August 2026 audit this was one call per distinct owner — a genuine N+1
+   * across a module boundary, on the one public route that answers with a
+   * collection rather than about a single thing whose id you already had, and
+   * therefore the cheapest route in the system to call and the most expensive
+   * to serve. `OwnerStatusSource` is plural for that reason and has no singular
+   * form left to reach for; the set is what is passed, so an owner with four
+   * listings on the page is asked about once.
    *
    * **Every exit from this method is counted** (slice 3.1f), and this is still
    * the only layer that can do it — though for one reason now rather than two.
@@ -899,15 +902,9 @@ export class ListingsService {
     );
     const byId = new Map(summaries.map((summary) => [summary.id, summary]));
 
-    const ownerIds = [...new Set(summaries.map((summary) => summary.ownerId))];
-    const ownerStatuses = new Map(
-      await Promise.all(
-        ownerIds.map(
-          async (ownerId) =>
-            [ownerId, await this.ownerStatuses.findOwnerStatus(ownerId)] as const,
-        ),
-      ),
-    );
+    const ownerStatuses = await this.ownerStatuses.findOwnerStatuses([
+      ...new Set(summaries.map((summary) => summary.ownerId)),
+    ]);
 
     const results: NearbyListingView[] = [];
 
@@ -995,6 +992,26 @@ export class ListingsService {
     const id = await this.categories.findCategoryId(slug);
     if (id === null) throw new UnknownCategoryError(slug);
     return id;
+  }
+
+  /**
+   * One owner's declaration, asked for through the plural port.
+   *
+   * `OwnerStatusSource` has no singular method by design — see its docblock; a
+   * batch method sitting beside a convenient single one is a batch method
+   * nobody calls. This is the adapter for the three paths that genuinely
+   * concern one listing, and it is private so the shape of that convenience
+   * cannot spread past this file.
+   *
+   * **Absent means "has not declared", and that is returned as null** rather
+   * than collapsed into anything else, because every caller here compares
+   * against `'private_owner'` positively (ADR 0043): an owner who has never
+   * answered must be refused, and only the positive test is safe as the
+   * vocabulary grows.
+   */
+  private async ownerStatusOf(userId: string): Promise<OwnerStatus | null> {
+    const statuses = await this.ownerStatuses.findOwnerStatuses([userId]);
+    return statuses.get(userId) ?? null;
   }
 
   /**
@@ -1210,7 +1227,7 @@ export class ListingsService {
       rates: listing.rates,
       hasCollectionLocation: listing.collectionLocation !== null,
       isLocated: listing.isLocated,
-      ownerStatus: await this.ownerStatuses.findOwnerStatus(ownerId),
+      ownerStatus: await this.ownerStatusOf(ownerId),
     });
 
     if (blockers.length > 0) throw new ListingNotPublishableError(blockers);

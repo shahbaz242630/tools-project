@@ -3,9 +3,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { listingDraftSchema, listingPath } from '@platform/contracts';
+import { listingDraftSchema } from '@platform/contracts';
 import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
+import { ownerListingPath } from '../../../lib/page-paths';
 import { readCollectionLocation } from '../../../lib/collection-location';
 import { asSentence } from '../../../lib/contract-issues';
 import { readRateCard } from '../../../lib/rate-card';
@@ -257,5 +258,7 @@ export async function createListingAction(
       };
   }
 
-  redirect(listingPath(outcome.value.id));
+  // A page path, not the API one it used to be — `redirect` sends a browser
+  // here, so the two namespaces must not be confused (see `page-paths.ts`).
+  redirect(ownerListingPath(outcome.value.id));
 }

@@ -18,23 +18,28 @@ import {
   ME_EXPORT_PATH,
   parseDataExport,
 } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 /** Longer than a read: this assembles several tables and decrypts an address. */
 export const EXPORT_TIMEOUT_MS = 10_000;
 
-/**
- * **A `forbidden` member is owed here too**, for the reason written out in
- * `activity.ts`. It cannot land on its own: `app/account/data/download/route.ts`
- * funnels everything that is not `ready` into one 502 and reads `outcome.reason`
- * off it, so a member without a reason is a compile error there — which is the
- * type system pointing at the copy that has to be written, not an obstacle.
- *
- * Export survives suspension by design (ADR 0024), so nothing produces a 403
- * here today.
- */
 export type ExportOutcome =
   | { readonly kind: 'ready'; readonly body: string; readonly exportedAt: string }
   | { readonly kind: 'signed-out' }
+  /**
+   * **Authenticated, and refused anyway**, for the reason written out in
+   * `activity.ts`. It could not land on its own: `app/account/data/download/
+   * route.ts` funnelled everything that is not `ready` into one 502 and read
+   * `outcome.reason` off it, so a member without a reason was a compile error
+   * there — the type system pointing at the copy that had to be written rather
+   * than an obstacle.
+   *
+   * Export survives suspension by design (ADR 0024), so nothing produces a 403
+   * here today. A 502 would have been doubly wrong if one ever did: it names
+   * the API as broken, and this route hands its body to a browser that may
+   * write it to disk under the name of a file somebody asked for.
+   */
+  | { readonly kind: 'forbidden' }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
 
@@ -72,6 +77,7 @@ export async function fetchDataExport(
       headers: {
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
     });
   } catch (error) {
@@ -79,6 +85,8 @@ export async function fetchDataExport(
   }
 
   if (response.status === 401) return { kind: 'signed-out' };
+
+  if (response.status === 403) return { kind: 'forbidden' };
 
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'unreachable', reason: `API answered ${String(response.status)}` };

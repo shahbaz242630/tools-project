@@ -66,6 +66,29 @@ export async function GET(): Promise<Response> {
     );
   }
 
+  if (outcome.kind === 'forbidden') {
+    /*
+     * **403, not 502.** The catch-all below says the API could not answer, and
+     * that would be a false accusation here: it answered, and it said no. A 502
+     * also invites a retry, and there is nothing on the other side of one.
+     *
+     * **Written for the medium, like the branch above** — plain text, so the
+     * route back is named in words rather than linked, and it names the account
+     * page because reloading *this* URL would start another download rather
+     * than land somewhere a person can stand.
+     */
+    return new Response(
+      'You are signed in, but your data was not exported. That is a decision ' +
+        'about your account rather than a fault, so trying again will not ' +
+        'change it. If your account has been suspended, the reason is on your ' +
+        'account page.',
+      {
+        status: 403,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      },
+    );
+  }
+
   if (outcome.kind !== 'ready') {
     // 502 rather than 500: the failure is upstream, and saying so distinguishes
     // "the API could not answer" from "this route is broken".

@@ -3,8 +3,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { listingPath } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
+import { ownerListingPath } from '../../../lib/page-paths';
 import { pauseListing, publishListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { INITIAL_PUBLICATION_STATE } from './publication-state';
@@ -55,7 +55,12 @@ export async function publishListingAction(
       // the row changed. Without this the owner presses Publish, the request
       // succeeds, and the page redraws from cache still saying "Draft" — which
       // reads exactly like a button that does nothing.
-      revalidatePath(listingPath(id));
+      //
+      // **`revalidatePath` takes a page path and this one used to pass the API
+      // path.** It matched by coincidence; had it not, this call would have
+      // silently revalidated nothing and reinstated the exact defect the
+      // paragraph above describes, with no error anywhere. See `page-paths.ts`.
+      revalidatePath(ownerListingPath(id));
       return { ...INITIAL_PUBLICATION_STATE, status: 'idle' };
 
     case 'not-ready':
@@ -180,8 +185,8 @@ export async function pauseListingAction(
       // The page is a server component, so it has to be told the row changed.
       // Without this the owner presses Pause, the request succeeds, and the page
       // redraws from cache still saying Published — the defect 2.8a found on the
-      // other button.
-      revalidatePath(listingPath(id));
+      // other button. A page path, as above.
+      revalidatePath(ownerListingPath(id));
       return { ...INITIAL_PUBLICATION_STATE, status: 'idle' };
 
     case 'refused':

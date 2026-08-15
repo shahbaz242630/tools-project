@@ -117,6 +117,25 @@ export function SignInList({ outcome }: { outcome: SignInsOutcome }) {
         </section>
       );
 
+    case 'forbidden':
+      return (
+        <section aria-labelledby="sign-ins">
+          <h2 id="sign-ins">Sign-in history unavailable</h2>
+          {/* The same two claims as the branch below refuses to make, plus one
+              this branch refuses on its own: it must not offer the sign-in
+              prompt. The token was accepted — being refused is not being signed
+              out, and conflating them sends somebody round a loop. */}
+          <p>
+            Your sign-in history was not shown to you, so this is not a record of nobody
+            signing in. That is a decision about your account rather than a fault.
+          </p>
+          <p>
+            If your account has been suspended, the reason is on your{' '}
+            <Link href="/account">account page</Link>.
+          </p>
+        </section>
+      );
+
     case 'unreachable':
     case 'malformed':
       return (

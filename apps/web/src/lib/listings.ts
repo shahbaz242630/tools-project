@@ -37,6 +37,7 @@ import type {
   PublicListingSearchResults,
   PublicationBlocker,
 } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const LISTINGS_TIMEOUT_MS = 5_000;
 
@@ -248,6 +249,7 @@ async function call<T, E422 = never, E503 = never, E409 = never>(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
       // A listing somebody has just written must not be served from a cache
       // holding what it said before.
@@ -457,7 +459,9 @@ async function publicCall<T>(
     response = await fetchImpl(url, {
       method: 'GET',
       signal: AbortSignal.timeout(LISTINGS_TIMEOUT_MS),
-      headers: {},
+      // No credentials — that is the point of this path — but still the trace.
+      // A stranger's search is exactly the request nobody can reproduce later.
+      headers: { ...(await correlationHeaders()) },
       // **`no-store`, on a page that is otherwise ideal to cache.** A listing
       // paused or rejected a moment ago must stop being served, and a cached
       // copy is a listing the platform has taken down and is still showing.

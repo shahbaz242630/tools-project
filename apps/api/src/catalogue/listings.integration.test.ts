@@ -3148,6 +3148,38 @@ describe('searching for listings near a postcode', () => {
     expect(results.results[0]?.ownerStatus).toBe('private_owner');
   });
 
+  it('asks Profiles once for the whole page, not once per owner', async () => {
+    /*
+     * **The N+1 the August 2026 audit found.** Hydration used to resolve each
+     * distinct owner with its own call across the module boundary — cheap at
+     * three fixtures and one query per owner on a page of twenty-four, on the
+     * one public route that returns a collection and has no rate limit in front
+     * of it.
+     *
+     * This is invisible in the response: the fixed and the broken version
+     * return identical JSON, which is why it is asserted on the port rather
+     * than on the body. Two owners, three listings — so a service that batched
+     * by *listing* rather than by owner would still fail.
+     */
+    await givenAListing(800);
+    await givenAListing(1_200);
+    await givenAListing(2_000, { token: 'bob-token' });
+
+    // Publication asks the same question, so counting starts once the fixtures
+    // exist — otherwise this measures the setup.
+    listings.ownerStatuses.forgetLookups();
+
+    const results = parsePublicListingSearchResults((await search()).json());
+    expect(results.results).toHaveLength(3);
+
+    expect(listings.ownerStatuses.lookups).toHaveLength(1);
+    // Sorted rather than ordered: the ids come from the hydration query, whose
+    // order is the store's business and not something this test should pin.
+    expect([...(listings.ownerStatuses.lookups[0] ?? [])].sort()).toEqual(
+      [await idOf('alice-token'), await idOf('bob-token')].sort(),
+    );
+  });
+
   describe('what a search must never return', () => {
     it('leaves out a listing its owner never published', async () => {
       const created = parseOwnerListing(

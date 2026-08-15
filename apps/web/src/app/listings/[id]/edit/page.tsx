@@ -2,10 +2,10 @@ import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { listingPath } from '@platform/contracts';
 import { ListingEditForm } from '../../../../components/listing-edit-form';
 import { clientIpFrom } from '../../../../lib/client-ip';
 import { fetchCategoryOptions, fetchListing } from '../../../../lib/listings';
+import { ownerListingPath } from '../../../../lib/page-paths';
 import { webEnv } from '../../../../lib/env';
 
 /** Never prerendered — it is somebody's own listing. */
@@ -58,7 +58,7 @@ export default async function EditListingPage({
       <Body listing={listing} categories={categories} />
 
       <p>
-        <Link href={listingPath(id)}>Back to the listing</Link> ·{' '}
+        <Link href={ownerListingPath(id)}>Back to the listing</Link> ·{' '}
         <Link href="/listings">All your listings</Link>
       </p>
     </main>
@@ -124,9 +124,9 @@ function Body({
         This listing&rsquo;s category is not available at the moment, so it cannot be
         edited. Nothing has been changed and nothing has been lost — the listing and
         every answer on it are still stored, and{' '}
-        <Link href={listingPath(listing.value.id)}>its own page</Link> still shows them.
-        Editing returns on its own if the category comes back. There is no way to force
-        it from here, and we do not send an email when it does.
+        <Link href={ownerListingPath(listing.value.id)}>its own page</Link> still shows
+        them. Editing returns on its own if the category comes back. There is no way to
+        force it from here, and we do not send an email when it does.
       </p>
     );
   }

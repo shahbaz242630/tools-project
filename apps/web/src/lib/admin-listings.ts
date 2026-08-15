@@ -29,6 +29,7 @@ import {
   parseModerationOutcome,
 } from '@platform/contracts';
 import type { ModerationOutcome, ModerationState } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const ADMIN_LISTINGS_TIMEOUT_MS = 5_000;
 
@@ -123,6 +124,7 @@ export async function moderateListing(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         'content-type': 'application/json',
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
       cache: 'no-store',
       body: JSON.stringify({ state, reason }),

@@ -20,6 +20,7 @@ import {
   publicProfilePath,
 } from '@platform/contracts';
 import type { MyProfile, ProfileInput, PublicProfile } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 /** Matches `ACCOUNT_TIMEOUT_MS`: one row, no dependency probing. */
 export const PROFILE_TIMEOUT_MS = 3_000;
@@ -141,7 +142,7 @@ export async function fetchMyProfile(
   try {
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: authHeaders(token, clientIp),
+      headers: { ...authHeaders(token, clientIp), ...(await correlationHeaders()) },
     });
   } catch (error) {
     return { kind: 'unreachable', reason: describe(error) };
@@ -190,7 +191,11 @@ export async function saveMyProfile(
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       method: 'PUT',
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: { ...authHeaders(token, clientIp), 'content-type': 'application/json' },
+      headers: {
+        ...authHeaders(token, clientIp),
+        'content-type': 'application/json',
+        ...(await correlationHeaders()),
+      },
       body: JSON.stringify(input),
     });
   } catch (error) {
@@ -260,6 +265,9 @@ export async function fetchPublicProfile(
       new URL(publicProfilePath(userId), apiBaseUrl).toString(),
       {
         signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
+        // No credentials — sending them would suggest the answer depends on who
+        // is asking — but the trace still belongs to the page view that made it.
+        headers: { ...(await correlationHeaders()) },
       },
     );
   } catch (error) {

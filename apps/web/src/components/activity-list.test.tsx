@@ -177,4 +177,19 @@ describe('ActivityList', () => {
     render(<ActivityList outcome={{ kind: 'signed-out' }} />);
     expect(screen.getByText(/sign in to see activity/i)).toBeInTheDocument();
   });
+
+  it('calls a refusal a decision, and still not a record of nothing', () => {
+    render(<ActivityList outcome={{ kind: 'forbidden' }} />);
+
+    // Both claims this component must never make: that nothing happened, and
+    // that the visitor should sign in again against a token that was accepted.
+    expect(screen.queryByText(/nothing has been recorded/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/sign in to see activity/i)).not.toBeInTheDocument();
+
+    expect(screen.getByText(/decision about your account/i)).toBeInTheDocument();
+    expect(screen.getByText(/account page/i)).toBeInTheDocument();
+
+    // Never a status code at a person.
+    expect(screen.queryByText(/403/)).not.toBeInTheDocument();
+  });
 });

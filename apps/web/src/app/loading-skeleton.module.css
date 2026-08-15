@@ -1,0 +1,148 @@
+/*
+ * The loading skeleton (Phase 0–3 audit).
+ *
+ * Beside `loading-skeleton.tsx` and shared by every `loading.tsx` in the
+ * application, the way `form-card.module.css` is shared by both listing forms
+ * (slice D7). A CSS Module can be imported by more than one component, so this is
+ * shared without becoming global.
+ *
+ * **Only tokens.** Nothing here invents a colour — the bars are the sunken fill
+ * every other empty surface in this design uses, and the sheen that crosses them
+ * is the raised one.
+ */
+
+/*
+ * The bar itself.
+ *
+ * **The sheen is a moving `background-position`, not a moving element**, so it
+ * costs no layout and no extra DOM, and a page rendering six of these while the
+ * API is slow is not competing with the render it is waiting for.
+ *
+ * **Nothing here handles reduced motion, and that is deliberate**:
+ * `globals.css` collapses every animation to 0.01ms under
+ * `prefers-reduced-motion`, which is the one place that rule can be enforced for
+ * code nobody has written yet. The base `background` is declared separately from
+ * the sheen for exactly that reason — with the animation collapsed the bar is
+ * still a visible block rather than a blank space, which is what a stopped
+ * skeleton has to be.
+ */
+.bar {
+  background-color: var(--surface-sunken);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--surface-raised) 50%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-size: 240px 100%;
+  border-radius: var(--radius-control);
+  animation: sheen 1500ms ease-in-out infinite;
+}
+
+@keyframes sheen {
+  from {
+    background-position: -240px 0;
+  }
+
+  to {
+    background-position: calc(100% + 240px) 0;
+  }
+}
+
+/* ---- The shapes ---------------------------------------------------------- */
+
+/* Where the page's `<h1>` will be. 34px is `globals.css`'s h1 size. */
+.title {
+  height: 34px;
+  max-width: 22ch;
+  margin-bottom: 20px;
+}
+
+/* A line of body text. Three widths, because a paragraph whose lines are all
+   the same length reads as a table rather than as prose. */
+.line {
+  height: 12px;
+  margin-bottom: 10px;
+}
+
+.lineFull {
+  width: 100%;
+}
+
+.lineLong {
+  width: 72%;
+}
+
+.lineShort {
+  width: 38%;
+}
+
+/*
+ * A region standing in for content whose *amount* nobody knows yet.
+ *
+ * **One block, never a row of them.** A skeleton drawing five table rows or six
+ * result cards is a claim that there are five listings or six results, made
+ * before anything has been read — and this application has an owner with no
+ * listings, a search with no matches nearby and an activity log with one entry.
+ * Being told you have five of something and then being shown none is worse
+ * feedback than a plain rectangle.
+ */
+.panel {
+  border-radius: var(--radius-card);
+}
+
+.panelShort {
+  height: 120px;
+}
+
+.panelTall {
+  height: 320px;
+}
+
+.panel + .panel {
+  margin-top: 16px;
+}
+
+/*
+ * A form field — its label and its control.
+ *
+ * **The one shape that may safely be repeated**, because a form's fields are
+ * decided by the category schema rather than by how much content exists. Drawing
+ * three of them promises a form, which is what is coming.
+ */
+.field {
+  margin-bottom: 22px;
+}
+
+.fieldLabel {
+  width: 30%;
+  height: 11px;
+  margin-bottom: 8px;
+}
+
+.fieldControl {
+  height: 44px;
+}
+
+/* ---- The announcement ---------------------------------------------------- */
+
+/*
+ * What a screen reader is told, and the only thing in here that is not
+ * decorative. Visually hidden rather than absent: sighted readers have the bars,
+ * and without this a blind reader gets a page of nothing with no explanation.
+ *
+ * The same clip technique `listing-list.module.css` uses — `display: none` and
+ * `visibility: hidden` both remove an element from the accessibility tree, which
+ * would defeat the whole point.
+ */
+.announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -12,6 +12,7 @@
  */
 
 import { Time } from '@platform/core';
+import type { OwnerStatus } from '@platform/contracts';
 import type {
   Account,
   AccountLookup,
@@ -51,6 +52,29 @@ export class InMemoryProfileStore implements ProfileStore {
 
   find(userId: string): Promise<StoredProfile | null> {
     return Promise.resolve(this.rows.get(userId) ?? null);
+  }
+
+  /**
+   * Every call, so a test can assert the *shape* of the access and not only its
+   * result. The N+1 this method exists to remove was invisible in every
+   * assertion about returned data — it only shows up as a count.
+   */
+  readonly ownerStatusLookups: (readonly string[])[] = [];
+
+  findOwnerStatuses(
+    userIds: readonly string[],
+  ): Promise<ReadonlyMap<string, OwnerStatus>> {
+    this.ownerStatusLookups.push([...userIds]);
+
+    const statuses = new Map<string, OwnerStatus>();
+    for (const userId of userIds) {
+      const status = this.rows.get(userId)?.ownerStatus ?? null;
+      // Absent rather than null, matching the port — a fake that answered with
+      // a third state would let code pass here and fail against Postgres.
+      if (status !== null) statuses.set(userId, status);
+    }
+
+    return Promise.resolve(statuses);
   }
 
   erase(userId: string): Promise<void> {

@@ -128,6 +128,15 @@ describe('fetchDataExport', () => {
     });
   });
 
+  it('reads 403 as a refusal, so the route can answer 403 rather than 502', async () => {
+    // Export survives suspension by design (ADR 0024), so nothing produces one
+    // today. Without the member, the download route accused the API of being
+    // broken for a decision it had made deliberately.
+    expect(await fetchDataExport(API, TOKEN, responds(403, ''))).toEqual({
+      kind: 'forbidden',
+    });
+  });
+
   it.each([500, 502])('does not hand over a %d body as a data file', async (status) => {
     // Saving an error page as account-data.json would give somebody a file they
     // believe is their data.

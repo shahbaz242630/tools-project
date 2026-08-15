@@ -368,9 +368,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Same image under both tags. The rollback assertions compare the tag
-          # the container was started from, so two identical builds would prove
-          # the same thing at twice the cost.
+          # The three application images are the same build under both tags. The
+          # rollback assertions compare the tag a container was started from, and
+          # a second identical compile of the same source would prove that twice
+          # at several minutes' cost.
+          #
+          # **The migrations image is deliberately not dual-tagged**, and until
+          # 15 August 2026 it was. That made the whole rehearsal a rollback
+          # between two byte-identical releases, which is the one kind of
+          # rollback that cannot go wrong -- while the path a real one takes,
+          # `deploy.mjs` re-running the OLDER migrations image against a database
+          # the newer release has already migrated, had never run anywhere. TAG_B
+          # gets its own migrations image, one migration ahead, in the step below.
           docker build -f apps/api/Dockerfile \
             -t "local/rental/api:${TAG_A}" -t "local/rental/api:${TAG_B}" .
           docker build -f apps/worker/Dockerfile \
@@ -378,8 +387,40 @@ jobs:
           docker build -f apps/web/Dockerfile \
             -t "local/rental/web:${TAG_A}" -t "local/rental/web:${TAG_B}" .
           docker build -f packages/database/Dockerfile \
-            -t "local/rental/migrations:${TAG_A}" \
+            -t "local/rental/migrations:${TAG_A}" .
+
+      - name: Build a second release whose schema has moved on
+        run: |
+          set -euo pipefail
+
+          # A migration TAG_A's image does not have. It is written here rather
+          # than committed because a real one would be applied to the local
+          # database, staging and production on merge, and this exists only to
+          # be rolled away from -- it must not survive this job.
+          #
+          # The table is deliberately trivial and additive, because that is what
+          # expand-and-contract requires (BRD §15) and what makes the rollback
+          # assertion meaningful: the older release has to keep running against
+          # the newer schema. A destructive migration would break rollback by
+          # design, and proving that is not this job's business.
+          probe="packages/database/prisma/migrations/29990101000000_rehearsal_rollback_probe"
+          mkdir -p "$probe"
+          cat > "${probe}/migration.sql" <<'SQL'
+          -- Rehearsal only. Built into the TAG_B migrations image and never
+          -- committed; see .github/workflows/ci.yml.
+          CREATE TABLE "rehearsal_rollback_probe" (
+            id integer PRIMARY KEY
+          );
+          SQL
+
+          docker build -f packages/database/Dockerfile \
             -t "local/rental/migrations:${TAG_B}" .
+
+          # Removed immediately, so every later step -- and any image built after
+          # this one -- sees the committed tree. The image keeps its copy.
+          rm -rf "$probe"
+          git diff --quiet -- packages/database/prisma/migrations
+          echo "TAG_B carries one migration TAG_A does not"
 
       - name: Build a release that starts but never serves
         run: |
@@ -651,7 +692,7 @@ jobs:
           done
           echo "no application container publishes a port"
 
-      - name: Deploy a second release
+      - name: Deploy a second release, which migrates
         run: |
           set -euo pipefail
           node scripts/deploy.mjs --env staging --tag "${TAG_B}" --timeout 180
@@ -664,9 +705,28 @@ jobs:
             fi
           done
 
-      - name: Roll back
+          # The schema really moved. Without this the next step would "roll back
+          # across a migration" between two identical schemas, which is what this
+          # whole rehearsal used to do without saying so.
+          if [ "$(docker exec rental-staging-postgres psql -U rental -d rental -tAc \
+                  "select to_regclass('public.rehearsal_rollback_probe') is not null;")" != "t" ]; then
+            echo "::error::TAG_B deployed but its migration did not apply"
+            exit 1
+          fi
+          echo "TAG_B is serving and its migration is applied"
+
+      - name: Roll back, across the migration
         run: |
           set -euo pipefail
+
+          # `deploy.mjs` re-runs the migrations image at the tag it is rolling
+          # *to*, so this runs TAG_A's -- an image whose migrations folder does
+          # not contain the migration the database has already applied. Nothing
+          # in the project had ever run that, here or on a box: it was reasoned
+          # about in the script's docblock and never executed, because both tags
+          # were the same image. A `migrate deploy` that treated an unknown
+          # applied migration as drift would abort here, and the first place we
+          # would have found out is a production rollback during an incident.
           node scripts/deploy.mjs --env staging --rollback --timeout 180
 
           # The assertion that matters: not that the command succeeded, but that
@@ -679,7 +739,17 @@ jobs:
               exit 1
             fi
           done
-          echo "rolled back to ${TAG_A}"
+
+          # And the schema is untouched. Expand-and-contract means the older
+          # release runs against the newer schema (BRD §15) -- a rollback that
+          # *reverted* the migration would be data loss dressed up as recovery,
+          # and it is worth asserting that nothing in this path tries.
+          if [ "$(docker exec rental-staging-postgres psql -U rental -d rental -tAc \
+                  "select to_regclass('public.rehearsal_rollback_probe') is not null;")" != "t" ]; then
+            echo "::error::the rollback removed the newer release's schema change"
+            exit 1
+          fi
+          echo "rolled back to ${TAG_A} across a schema change, and the schema stands"
 
       - name: A failed deploy reverts itself and says why
         run: |
@@ -784,6 +854,56 @@ jobs:
             exit 1
           fi
           echo "ingress serves the staging web app, keeps the API private, and does not confuse staging with production"
+
+      - name: The browser-facing app sets its security headers
+        run: |
+          set -euo pipefail
+
+          # docs/SECURITY.md finding 2.2: helmet is registered on the API, which
+          # no browser reaches, while the web app set none of these. Asserted on
+          # the real response through the real ingress rather than on the config
+          # object, because what matters is what a browser is handed -- and the
+          # two are not the same claim while a proxy sits in between able to
+          # strip or replace a header.
+          #
+          # Report-only for the CSP, deliberately and permanently until a human
+          # has walked sign-in in a browser (see next.config.mjs). Asserting the
+          # *report-only* name is therefore part of the assertion: an enforcing
+          # policy appearing here would mean somebody promoted it without that
+          # walk, and nothing in CI can see a broken sign-in.
+          curl -fsS -D /tmp/headers.txt -o /dev/null http://localhost/
+
+          for header in \
+            'content-security-policy-report-only' \
+            'strict-transport-security' \
+            'referrer-policy' \
+            'x-content-type-options' \
+            'x-frame-options' \
+            'permissions-policy'
+          do
+            if ! grep -qi "^${header}:" /tmp/headers.txt; then
+              echo "::error::the web app served no ${header} header"
+              cat /tmp/headers.txt
+              exit 1
+            fi
+          done
+
+          # A CSP with no frame-ancestors is a policy that forgot the one
+          # directive an enforcing header would still be carrying if the rest
+          # were dropped.
+          if ! grep -qi "^content-security-policy-report-only:.*frame-ancestors 'none'" \
+                 /tmp/headers.txt; then
+            echo "::error::the CSP carries no frame-ancestors 'none'"
+            cat /tmp/headers.txt
+            exit 1
+          fi
+
+          # And the enforcing header is absent, so nobody promoted it by accident.
+          if grep -qi '^content-security-policy:' /tmp/headers.txt; then
+            echo "::error::an enforcing Content-Security-Policy is being served; it was meant to stay report-only until a browser has verified it"
+            exit 1
+          fi
+          echo "security headers present on the response the ingress served"
 
       - name: Logs can be retrieved
         run: |

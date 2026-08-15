@@ -20,17 +20,35 @@ import type { OwnerStatus } from '@platform/contracts';
  */
 export interface OwnerStatusSource {
   /**
-   * How this person lists, or **null if they have not said**.
+   * How these people list — **many at a time, and never one**.
    *
-   * Null is the ordinary state of a new account and is not an error: BRD §8.1's
-   * pattern is that a profile is permissive and completeness is enforced at the
-   * point it matters. Somebody who only ever rents is never asked, because the
-   * question is about being a supplier.
+   * **The plural is the port** (audit remediation, August 2026). It used to be
+   * `findOwnerStatus(userId)`, which reads perfectly at the two write paths
+   * that ask about one listing and turns into a query per owner on the search
+   * results page — an N+1 across a module boundary, on the one public route
+   * that returns a *collection* and has no rate limit in front of it. Adding a
+   * batch method beside the single one would have left the slow shape available
+   * and idiomatic; there is one method so that the cheap thing is the only
+   * thing that can be written, and so Profiles has exactly one query to make
+   * fast. The single-listing callers ask about a list of one.
    *
-   * **Null is also the answer for an account with no profile at all**, and the
-   * caller must not tell the two apart — both mean "has not declared", both
-   * refuse publication, and distinguishing them would only invite a branch that
-   * treats one of them as consent.
+   * **An absent key means "has not declared"**, and that is deliberately the
+   * only way this can answer anything but a declaration. Null is the ordinary
+   * state of a new account and is not an error: BRD §8.1's pattern is that a
+   * profile is permissive and completeness is enforced at the point it matters.
+   * Somebody who only ever rents is never asked, because the question is about
+   * being a supplier.
+   *
+   * **An account with no profile at all is also simply absent**, and the caller
+   * must not tell the two apart — both mean "has not declared", both refuse
+   * publication, and distinguishing them would only invite a branch that treats
+   * one of them as consent. A map with no entry cannot express the difference,
+   * which is the point of returning one rather than a list of pairs.
+   *
+   * The implementation may be asked about an id twice, or about none at all,
+   * and must answer both without complaint.
    */
-  findOwnerStatus(userId: string): Promise<OwnerStatus | null>;
+  findOwnerStatuses(
+    userIds: readonly string[],
+  ): Promise<ReadonlyMap<string, OwnerStatus>>;
 }

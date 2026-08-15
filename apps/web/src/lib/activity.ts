@@ -15,25 +15,29 @@ import {
   parseActivityResponse,
 } from '@platform/contracts';
 import type { ActivityEntry } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const ACTIVITY_TIMEOUT_MS = 3_000;
 
-/**
- * **A `forbidden` member is owed here and is deliberately not added alone.**
- *
- * `profile.ts` grew one because a 403 means the API understood us and said no,
- * and calling that `unreachable` tells somebody the site broke when what
- * happened was a decision about their account. `/me/activity` opts in to
- * `@AllowsSuspended` so nothing can produce one today — but the copy is wrong in
- * advance, and the next route that does not opt in inherits it silently.
- *
- * Adding it is one line here and one branch in `components/activity-list.tsx`,
- * whose switch is exhaustive by design and which `noImplicitReturns` rejects the
- * moment this union grows. The two have to land in the same change.
- */
 export type ActivityOutcome =
   | { readonly kind: 'loaded'; readonly entries: readonly ActivityEntry[] }
   | { readonly kind: 'signed-out' }
+  /**
+   * **Authenticated, and refused anyway — a decision, not an outage.**
+   *
+   * `profile.ts` grew one of these because a 403 means the API understood us
+   * and said no, and calling that `unreachable` tells somebody the site broke
+   * when what happened was a decision about their account. `/me/activity` opts
+   * in to `@AllowsSuspended` so nothing can produce one today — but the copy
+   * was wrong in advance, and the next route that does not opt in would have
+   * inherited it silently.
+   *
+   * It matters more here than on most routes: the branch this would otherwise
+   * have fallen into is the one that says the list *could not be read*, and
+   * this page's whole discipline is that a list which could not be read must
+   * never be confused with a list of nothing. A refusal is a third thing again.
+   */
+  | { readonly kind: 'forbidden' }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
 
@@ -71,6 +75,7 @@ export async function fetchActivity(
       headers: {
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
     });
   } catch (error) {
@@ -78,6 +83,8 @@ export async function fetchActivity(
   }
 
   if (response.status === 401) return { kind: 'signed-out' };
+
+  if (response.status === 403) return { kind: 'forbidden' };
 
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'unreachable', reason: `API answered ${String(response.status)}` };

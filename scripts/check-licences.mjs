@@ -18,7 +18,14 @@
  * classified as nothing. Meanwhile `EPL-2.0: elkjs` printed `NEEDS REVIEW` and
  * the process exited 0, which is not a gate; it is a log line.
  *
- * So three things happen here now, and all three are unit tested:
+ * **A fourth thing was added on 15 August 2026**, after an audit pointed out
+ * that the leniency above had a hole the size of the problem it was avoiding: a
+ * dependency declaring `UNLICENSED` — npm's way of granting no rights at all —
+ * was in no policy list, so it printed under UNCLASSIFIED and passed. For a
+ * product that ships closed-source that is a worse position than GPL, which at
+ * least tells us the price. See NO_GRANT.
+ *
+ * So four things happen here now, and all four are unit tested:
  *
  * 1. **Identifiers are normalised.** `LGPL-3.0-only`, `LGPL-3.0-or-later` and
  *    the deprecated `LGPL-3.0+` are all the LGPL-3.0 policy question.
@@ -32,6 +39,8 @@
  *    are recorded in AUDIT-EXCEPTIONS.md and repeated in REVIEWED below. That
  *    file is the existing precedent for a documented, scoped exception with a
  *    void condition, and the two entries here follow it.
+ * 4. **A declaration that grants nothing fails the build**, and is reported as
+ *    its own class rather than as copyleft, because the remedy is different.
  */
 
 import { execSync } from 'node:child_process';
@@ -102,6 +111,55 @@ export const PERMISSIVE = new Set([
 ]);
 
 /**
+ * Declarations that grant us **no licence at all**.
+ *
+ * **This was the hole this whole file was written to close, and it stayed open.**
+ * An identifier in none of the lists above was reported as `UNCLASSIFIED` and
+ * permitted, on the reasoning — still correct — that failing on every unfamiliar
+ * *permissive* licence would redden the build for the next `BlueOak-1.0.0` and
+ * teach everybody to skip this check. But `UNLICENSED` is not an unfamiliar
+ * permissive licence. It is npm's way of saying the publisher grants no rights
+ * whatever, and it took the same silent pass as `Zlib`. For a product we intend
+ * to ship closed-source, a proprietary dependency with no grant is a worse
+ * position than a GPL one: the GPL at least tells us what we would have to do.
+ *
+ * The same is true of a package with no `license` field, which pnpm reports as
+ * `Unknown`, and of `SEE LICENSE IN <file>`, which is a licence nobody has read.
+ *
+ * **Matched on the whole declaration before it is parsed as an expression**,
+ * because `SEE LICENSE IN LICENSE.md` is not an SPDX expression and tokenising
+ * it produces an identifier called `SEE`. That is precisely how it would have
+ * passed.
+ *
+ * **`Unlicense` is not `UNLICENSED`.** One is a public-domain dedication in
+ * PERMISSIVE above; the other is the absence of a grant. They differ by one
+ * letter and mean opposite things, which is why every pattern here is anchored
+ * rather than a substring.
+ */
+export const NO_GRANT = [
+  { pattern: /^UNLICENSED$/i, why: 'declares no licence grant at all' },
+  { pattern: /^UNKNOWN$/i, why: 'has no licence field' },
+  { pattern: /^NOASSERTION$/i, why: 'asserts no licence' },
+  { pattern: /^$/, why: 'has an empty licence field' },
+  {
+    pattern: /^SEE LICEN[CS]E IN\b/i,
+    why: 'points at a licence file nobody has read',
+  },
+  {
+    // SPDX's escape hatch for a licence with no identifier. It may be anything,
+    // including a bespoke commercial one, so it is a decision rather than a pass.
+    pattern: /^LicenseRef-/i,
+    why: 'carries a bespoke licence with no SPDX identifier',
+  },
+];
+
+/** Why this declaration grants nothing, or null if it is an ordinary licence. */
+export function noGrantReason(expression) {
+  const declaration = String(expression ?? '').trim();
+  return NO_GRANT.find((entry) => entry.pattern.test(declaration))?.why ?? null;
+}
+
+/**
  * Prefixes of licence families that always need a decision, whatever version
  * appears.
  *
@@ -165,7 +223,16 @@ export function normaliseLicenceId(identifier) {
     .replace(/-(only|or-later)$/i, '');
 }
 
-const SEVERITY = { allowed: 0, review: 1, denied: 2 };
+/**
+ * How the verdicts order, which is what makes AND and OR work.
+ *
+ * `no-grant` sits above `denied` deliberately: `MIT OR UNLICENSED` is an MIT
+ * dependency, because OR lets us choose and choosing is free; `MIT AND
+ * UNLICENSED` is unusable, because AND obliges us under both and one of them
+ * grants nothing. Putting it anywhere else in this order would get one of those
+ * two backwards.
+ */
+const SEVERITY = { allowed: 0, review: 1, denied: 2, 'no-grant': 3 };
 
 /**
  * One identifier's verdict, plus whether anybody has ever classified it.
@@ -174,6 +241,10 @@ const SEVERITY = { allowed: 0, review: 1, denied: 2 };
  */
 export function classifyIdentifier(identifier) {
   const id = normaliseLicenceId(identifier);
+
+  // Before the sets, so a bare `UNLICENSED` appearing as one operand of an
+  // expression is judged the same way as one standing alone.
+  if (noGrantReason(id) !== null) return { verdict: 'no-grant', id, known: true };
 
   if (DENIED.has(id)) return { verdict: 'denied', id, known: true };
   if (REVIEW.has(id)) return { verdict: 'review', id, known: true };
@@ -218,6 +289,21 @@ const isOperator = (token, word) => token.toUpperCase() === word;
  * we did not take contributes nothing to the report.
  */
 export function evaluateExpression(expression) {
+  /*
+   * **Before tokenising**, because the declarations that grant nothing are not
+   * all SPDX expressions. `SEE LICENSE IN LICENSE.md` splits into four words, of
+   * which the parser reads one — `SEE`, an unrecognised identifier, permitted
+   * and reported. That is the shape of the hole this closes.
+   */
+  const noGrant = noGrantReason(expression);
+  if (noGrant !== null) {
+    return {
+      verdict: 'no-grant',
+      identifiers: [String(expression ?? '').trim() || '(none)'],
+      unrecognised: [],
+    };
+  }
+
   const tokens = tokenise(expression);
   let position = 0;
 
@@ -316,6 +402,7 @@ export function findException(packageName, identifier) {
 export function assess(licences) {
   const blocked = [];
   const needsReview = [];
+  const noGrant = [];
   const excused = [];
   const unrecognised = new Set();
 
@@ -338,8 +425,29 @@ export function assess(licences) {
       // Every reviewable identifier in the expression needs its own recorded
       // decision. Covering one of two is not covering it.
       const exceptions = result.identifiers.map((id) => findException(name, id));
+      const covered = exceptions.every((entry) => entry !== null);
 
-      if (exceptions.every((entry) => entry !== null)) {
+      /*
+       * **A no-grant dependency can be excused and a denied one cannot**, and
+       * the asymmetry is the point. `GPL-3.0` says what it obliges us to do and
+       * no note in a markdown file changes it. "No licence grant" is a statement
+       * about what the publisher has *published*, not about what we may have
+       * separately agreed — a paid commercial licence is a real thing to hold,
+       * and if we hold one it belongs in AUDIT-EXCEPTIONS.md naming the contract
+       * rather than in an argument about why the build is red.
+       */
+      if (result.verdict === 'no-grant') {
+        if (covered) excused.push({ name, expression, why: exceptions[0]?.why ?? '' });
+        else
+          noGrant.push({
+            name,
+            expression,
+            why: noGrantReason(expression) ?? 'grants no licence',
+          });
+        continue;
+      }
+
+      if (covered) {
         excused.push({ name, expression, why: exceptions[0]?.why ?? '' });
       } else {
         needsReview.push({ name, expression, identifiers: result.identifiers });
@@ -347,7 +455,13 @@ export function assess(licences) {
     }
   }
 
-  return { blocked, needsReview, excused, unrecognised: [...unrecognised].sort() };
+  return {
+    blocked,
+    needsReview,
+    noGrant,
+    excused,
+    unrecognised: [...unrecognised].sort(),
+  };
 }
 
 function readLicences() {
@@ -369,7 +483,7 @@ function main() {
     return 1;
   }
 
-  const { blocked, needsReview, excused, unrecognised } = assess(licences);
+  const { blocked, needsReview, noGrant, excused, unrecognised } = assess(licences);
 
   console.log(`Licences in use: ${Object.keys(licences).sort().join(', ')}\n`);
 
@@ -389,8 +503,26 @@ function main() {
     console.log(`NEEDS REVIEW  ${expression}: ${name}  (${identifiers.join(', ')})`);
   }
 
+  for (const { name, expression, why } of noGrant) {
+    console.log(`NO LICENCE    ${expression || '(empty)'}: ${name}`);
+    console.log(`              ${why}`);
+  }
+
   for (const { name, expression, identifiers } of blocked) {
     console.log(`BLOCKED       ${expression}: ${name}  (${identifiers.join(', ')})`);
+  }
+
+  if (noGrant.length > 0) {
+    console.error(
+      `\n${noGrant.length} dependenc(ies) grant us no licence. This is not a ` +
+        `copyleft problem and it is worse than one:\nwe have no permission to ` +
+        `use, copy or deploy them at all, and the check used to pass them ` +
+        `silently\nbecause the identifier was in no policy list.\nRemove the ` +
+        `dependency, or — if we hold a commercial licence for it — record that ` +
+        `in\nAUDIT-EXCEPTIONS.md and in REVIEWED in this file, naming the ` +
+        `agreement.`,
+    );
+    return 1;
   }
 
   if (blocked.length > 0) {
