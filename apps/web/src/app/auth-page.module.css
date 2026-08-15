@@ -1,0 +1,38 @@
+/*
+ * The two Clerk screens — sign in and sign up (Phase 0–3 audit).
+ *
+ * **One module for both, at the root of `app/` rather than beside either.** They
+ * are two route folders and the shape is one decision; a copy in each is two
+ * files that drift, and putting it inside one catch-all folder would make the
+ * sign-up page import from the sign-in page's directory for no reason a reader
+ * could reconstruct.
+ *
+ * **It replaces an inline `min-height: 100vh` on both pages.** That value was
+ * written as though these screens owned the viewport, and they do not — the root
+ * layout renders a sticky header above them and a footer below, so a full
+ * viewport height for the middle pushes the document past the bottom of the
+ * screen and leaves an auth form nobody asked to scroll. Centring is what the
+ * flex box was actually for, and that survives here.
+ */
+
+.page {
+  display: flex;
+  justify-content: center;
+
+  /*
+   * Narrower than the 600px form default, because Clerk's card sets its own
+   * width and a wide column around it only moves it off centre. Set on `main`,
+   * which is the element `globals.css` reads it on.
+   */
+  --page-width: 480px;
+
+  /* A little more air above than an ordinary page. This is the one screen with
+     no heading of ours, so the card is the first thing on it. */
+  padding-top: 64px;
+}
+
+@media (width <= 744px) {
+  .page {
+    padding-top: 32px;
+  }
+}

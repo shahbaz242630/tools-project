@@ -3,9 +3,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { listingEditSchema, listingPath } from '@platform/contracts';
+import { listingEditSchema } from '@platform/contracts';
 import type { TransportRequirement } from '@platform/contracts';
 import { clientIpFrom } from '../../../../lib/client-ip';
+import { ownerListingPath } from '../../../../lib/page-paths';
 import { readCollectionLocation } from '../../../../lib/collection-location';
 import { asSentences } from '../../../../lib/contract-issues';
 import { describeIncompleteRefusal } from '../../../../lib/incomplete-refusal';
@@ -166,7 +167,22 @@ export async function editListingAction(
       );
 
     case 'signed-out':
-      return refused('Your session has expired. Sign in again.');
+      /*
+       * **The state first, the likeliest cause second**, as in
+       * `listings/new/actions.ts` — "your session has expired" is a claim about
+       * a session we cannot vouch for, and it was being shown to people who had
+       * never had one.
+       *
+       * **The last clause is a promise `refused` keeps.** It spreads `typed`
+       * over `previous`, so every field comes back with what was in it; an edit
+       * refused this way loses nothing, and somebody who is not told that will
+       * assume it did and copy their text out before signing in.
+       */
+      return refused(
+        'You are not signed in, so nothing was saved. Your session may have ' +
+          'expired — sign in again and save once more; everything you typed is ' +
+          'still here.',
+      );
 
     case 'stale-category':
       /*
@@ -206,5 +222,6 @@ export async function editListingAction(
       return refused(`That did not save — ${outcome.reason}`);
   }
 
-  redirect(listingPath(listingId));
+  // The page, not the API resource the save just wrote to. See `page-paths.ts`.
+  redirect(ownerListingPath(listingId));
 }

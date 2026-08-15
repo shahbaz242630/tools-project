@@ -19,6 +19,7 @@ import {
   parseMeResponse,
 } from '@platform/contracts';
 import type { MeResponse } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 /**
  * How long the API has to answer before the page gives up.
@@ -33,6 +34,18 @@ export type AccountOutcome =
   | { readonly kind: 'signed-in'; readonly account: MeResponse }
   /** The API rejected the token, or there was no token to send. */
   | { readonly kind: 'signed-out' }
+  /**
+   * **Authenticated, and refused anyway — a decision, not an outage.**
+   *
+   * A 403 means the API understood us and said no. Collapsing it into
+   * `unreachable` tells somebody the site broke when what happened was a
+   * decision about their account, and that sentence is the one this whole
+   * change exists to delete. `/me` opts in to `@AllowsSuspended`, so today
+   * nothing can produce one here — but the next `/me` route that does not opt
+   * in would have inherited the wrong sentence silently, which is precisely how
+   * the profile form came to say it.
+   */
+  | { readonly kind: 'forbidden' }
   /** No answer at all: refused, DNS failure, or too slow. */
   | { readonly kind: 'unreachable'; readonly reason: string }
   /** It answered, but not with something this version understands. */
@@ -86,6 +99,10 @@ export async function fetchAccount(
       headers: {
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        // One id for the whole page view, so `/me` and `/me/profile` — which
+        // this page reads concurrently — say in the logs that they came from
+        // the same browser request. See `correlation.ts`.
+        ...(await correlationHeaders()),
       },
     });
   } catch (error) {
@@ -96,6 +113,12 @@ export async function fetchAccount(
   // instance issues them with a 60-second lifetime — so one expiring between
   // render and fetch is routine rather than exceptional.
   if (response.status === 401) return { kind: 'signed-out' };
+
+  // Not folded into either neighbour. It is not `signed-out`, because this
+  // token was accepted and telling somebody to sign in again sends them round a
+  // loop that cannot end; and it is not `unreachable`, because the API answered
+  // perfectly well. It is an answer we have to render as one.
+  if (response.status === 403) return { kind: 'forbidden' };
 
   // Anything else non-2xx is our problem, not the user's, and must not be
   // rendered as "signed out": telling a signed-in person they are signed out

@@ -4,7 +4,10 @@ import type { ListingSearchQuery, SearchRadiusMiles } from '@platform/contracts'
 import {
   BROWSE_PATH,
   browseHref,
+  editListingPath,
+  hirePath,
   nextSearchHref,
+  ownerListingPath,
   previousSearchHref,
   widerSearchHref,
 } from './page-paths';
@@ -63,6 +66,32 @@ describe('where search lives', () => {
     // Not reachable through the contract's slug rules, which is the point: the
     // builder must not depend on its input having been validated elsewhere.
     expect(browseHref(searchFor({ category: 'a b' }))).toContain('category=a%20b');
+  });
+});
+
+describe('where a listing lives', () => {
+  const ID = '11111111-1111-4111-8111-111111111111';
+
+  it('sends a stranger to the hire page and an owner to the management page', () => {
+    // Two pages about one listing, and they are not the same page: one is
+    // crawlable and shows a postal district, the other is `noindex` and shows a
+    // street address. A helper that returned the wrong one would leak the second
+    // to whoever followed the link.
+    expect(hirePath(ID)).toBe(`/hire/${ID}`);
+    expect(ownerListingPath(ID)).toBe(`/listings/${ID}`);
+  });
+
+  it('builds the edit form from the listing page, not by hand', () => {
+    // The listing page concatenated `/edit` onto the *API* path. Deriving it
+    // here means slice 2.12 moves both together or neither.
+    expect(editListingPath(ID)).toBe(`${ownerListingPath(ID)}/edit`);
+  });
+
+  it('escapes the id, for the reason `hirePath` does', () => {
+    // Ids are uuids today and will be slugs from 2.12. A builder must not
+    // depend on its input having been validated somewhere else.
+    expect(ownerListingPath('a b')).toBe('/listings/a%20b');
+    expect(editListingPath('a b')).toBe('/listings/a%20b/edit');
   });
 });
 

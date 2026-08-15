@@ -44,6 +44,46 @@ export function hirePath(id: string): string {
 }
 
 /**
+ * One listing, as its **owner** reads it — the management page, not the public
+ * one.
+ *
+ * **This is the twin of the confusion the module docblock describes, and it went
+ * the other way.** `listingPath` from `@platform/contracts` is the *API* route
+ * `GET /listings/:id`, and it was used as a page `href`, as a `redirect()` target
+ * and as a `revalidatePath()` argument in seven places. All of them worked, and
+ * every one of them worked by coincidence: the owner's page and the owner's API
+ * resource happen to spell `/listings/:id` identically today. Nothing enforced
+ * that, nothing tested it, and nothing would have failed the moment either
+ * namespace moved.
+ *
+ * `revalidatePath` is the call that makes it more than pedantry — it takes a
+ * *page* path and silently does nothing when handed one that matches no route,
+ * so an API path there would mean an owner pressing Publish, the request
+ * succeeding, and the page redrawing from cache still saying "Draft". That is
+ * exactly the defect slice 2.8a fixed, waiting to come back through a rename
+ * nobody would connect to it.
+ *
+ * **§8.17's slugs land in slice 2.12** and will change one of the two
+ * namespaces. This function is the one place the page half changes.
+ */
+export function ownerListingPath(id: string): string {
+  return `/listings/${encodeURIComponent(id)}`;
+}
+
+/**
+ * The form that edits it.
+ *
+ * **A function rather than a suffix at the call site.** The listing page built
+ * this as `` `${listingPath(id)}/edit` `` — string-concatenating an API path into
+ * a page URL, which is the same mistake twice over and is invisible in review
+ * because the result is right. Built from `ownerListingPath` so the two cannot
+ * drift apart when 2.12 moves the id.
+ */
+export function editListingPath(id: string): string {
+  return `${ownerListingPath(id)}/edit`;
+}
+
+/**
  * A search, as a link.
  *
  * **It takes the whole search rather than a field per parameter** (slice 3.2a),

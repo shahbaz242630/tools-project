@@ -18,6 +18,7 @@ import {
   parseAdminApprovalList,
 } from '@platform/contracts';
 import type { AdminAccount, AdminApprovalView, UserRole } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const ADMIN_APPROVALS_TIMEOUT_MS = 5_000;
 
@@ -64,22 +65,64 @@ function describe(error: unknown): string {
   return String(error);
 }
 
-/** Pull `message` or `issues` out of an error body without trusting its shape. */
-function readError(raw: string): { message?: string; issues?: readonly string[] } {
+/**
+ * Pull `message` or `issues` out of an error body without trusting its shape.
+ *
+ * **The status still decides the outcome and always did; what changed is that
+ * the body is no longer thrown away when this fails to understand it.** The
+ * `catch` returned `{}`, and so did a parse that succeeded and found neither
+ * key — so an error page from something in front of the API, or a message under
+ * a key we do not read, reached an administrator as a generic fallback with no
+ * trace anywhere that anything else had been said. That is the failure mode
+ * hardest to diagnose later: the sentence on screen is plausible, and the real
+ * one no longer exists.
+ *
+ * `unreadable` is what was there instead, and it is deliberately **absent for an
+ * empty body** — there is nothing to lose when nothing was sent, and appending
+ * "the service also said: nothing" to a fallback would be noise on the common
+ * case.
+ */
+function readError(raw: string): {
+  message?: string;
+  issues?: readonly string[];
+  unreadable?: string;
+} {
+  let body: unknown;
   try {
-    const body: unknown = JSON.parse(raw);
-    if (typeof body !== 'object' || body === null) return {};
-
-    const record = body as { message?: unknown; issues?: unknown };
-    return {
-      ...(typeof record.message === 'string' ? { message: record.message } : {}),
-      ...(Array.isArray(record.issues)
-        ? { issues: record.issues as readonly string[] }
-        : {}),
-    };
+    body = JSON.parse(raw);
   } catch {
-    return {};
+    // Almost always a proxy error page rather than the API.
+    return unreadable(raw);
   }
+
+  if (typeof body !== 'object' || body === null) return unreadable(raw);
+
+  const record = body as { message?: unknown; issues?: unknown };
+  const read = {
+    ...(typeof record.message === 'string' ? { message: record.message } : {}),
+    ...(Array.isArray(record.issues)
+      ? { issues: record.issues as readonly string[] }
+      : {}),
+  };
+
+  // Parsed, and said nothing in a vocabulary this knows. Same loss as a body
+  // that would not parse at all, so the same answer.
+  return 'message' in read || 'issues' in read ? read : unreadable(raw);
+}
+
+/** A short excerpt of a body we could not read, or nothing when there was none. */
+function unreadable(raw: string): { unreadable?: string } {
+  const trimmed = raw.trim();
+  // A short excerpt only — the full body could be an entire HTML document.
+  return trimmed === '' ? {} : { unreadable: trimmed.slice(0, 80) };
+}
+
+/**
+ * The fallback sentence, and whatever the service said instead of a body we
+ * could read. One or the other, never neither.
+ */
+function withUnread(fallback: string, unread: string | undefined): string {
+  return unread === undefined ? fallback : `${fallback} (the service said: ${unread})`;
 }
 
 async function call<T>(
@@ -101,6 +144,7 @@ async function call<T>(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     });
@@ -113,13 +157,23 @@ async function call<T>(
   if (response.status === 404) return { kind: 'not-found' };
 
   if (response.status === 409) {
-    const { message } = readError(await response.text());
-    return { kind: 'refused', reason: message ?? 'That is no longer possible.' };
+    const { message, unreadable } = readError(await response.text());
+    return {
+      kind: 'refused',
+      reason: message ?? withUnread('That is no longer possible.', unreadable),
+    };
   }
 
   if (response.status === 400) {
-    const { issues } = readError(await response.text());
-    return { kind: 'invalid', issues: issues ?? ['The request was rejected'] };
+    // `message` before the fallback: a 400 whose body carries one sentence
+    // rather than an `issues` array was answered with "the request was
+    // rejected" and the sentence was dropped — the field-level detail the form
+    // exists to show, discarded for being under the wrong key.
+    const { message, issues, unreadable } = readError(await response.text());
+    return {
+      kind: 'invalid',
+      issues: issues ?? [message ?? withUnread('The request was rejected', unreadable)],
+    };
   }
 
   if (response.status < 200 || response.status >= 300) {

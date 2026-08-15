@@ -15,6 +15,7 @@ import {
   ME_DELETION_PATH,
   parseDeletionResponse,
 } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const DELETION_TIMEOUT_MS = 5_000;
 
@@ -22,6 +23,21 @@ export type DeletionOutcome =
   | { readonly kind: 'deleted' }
   /** No token, or the API refused it. Nothing was done. */
   | { readonly kind: 'signed-out' }
+  /**
+   * **Authenticated, and refused anyway — and nothing was deleted.**
+   *
+   * As unambiguous as `signed-out`: a 403 comes from the guard, before the
+   * handler that erases anything runs. That certainty is the reason this is a
+   * member of its own rather than an `uncertain` with a different reason —
+   * `uncertain` tells somebody to go and check by signing in, and sending a
+   * person to check something we already know would be a lie of politeness.
+   *
+   * Erasure survives suspension by design (ADR 0024), so nothing produces a 403
+   * here today. It is branched on anyway, because the alternative — the shape
+   * this file carried until now — was a union that could grow without the
+   * consumer noticing, on the one code path where not noticing is unrecoverable.
+   */
+  | { readonly kind: 'forbidden' }
   /**
    * The request may or may not have been applied. Deliberately distinct from a
    * failure: a timeout on a POST is not evidence that nothing happened.
@@ -66,6 +82,9 @@ export async function requestDeletion(
       headers: {
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        // Worth more here than anywhere else: this is the one request whose
+        // effects cannot be replayed, so the trace is the only account of it.
+        ...(await correlationHeaders()),
       },
     });
   } catch (error) {
@@ -76,6 +95,13 @@ export async function requestDeletion(
   // covers the repeat case — a second request from an already-deleted account
   // cannot authenticate, which means the first one worked.
   if (response.status === 401) return { kind: 'signed-out' };
+
+  // **Read before the catch-all below, and that ordering is the fix.** A 403
+  // falling into `uncertain` told somebody we could not tell whether their
+  // account had been deleted, when in fact we knew perfectly well that it had
+  // not — and the remedy `uncertain` offers, signing in to check, would have
+  // shown them an account that still exists and left them no wiser about why.
+  if (response.status === 403) return { kind: 'forbidden' };
 
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'uncertain', reason: `API answered ${String(response.status)}` };

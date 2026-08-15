@@ -20,14 +20,29 @@ import {
   publicProfilePath,
 } from '@platform/contracts';
 import type { MyProfile, ProfileInput, PublicProfile } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 /** Matches `ACCOUNT_TIMEOUT_MS`: one row, no dependency probing. */
 export const PROFILE_TIMEOUT_MS = 3_000;
 
+/**
+ * **`forbidden` is separate from `unreachable`, and it is the whole point of
+ * this union having grown.**
+ *
+ * A 403 means the API understood us perfectly and said no. Collapsing it into
+ * `unreachable` produced the worst sentence in the product: a suspended person
+ * was handed their own fully populated, editable profile form — `GET` opts in to
+ * `@AllowsSuspended` and `PUT` deliberately does not (ADR 0024) — pressed Save,
+ * and read *"Your profile was not saved — API answered 403"*. They were told the
+ * site had broken when what had actually happened was a decision somebody made
+ * about their account, with a reason waiting on their account page.
+ */
 export type ProfileOutcome =
   | { readonly kind: 'loaded'; readonly profile: MyProfile | null }
   /** The API rejected the token, or there was no token to send. */
   | { readonly kind: 'signed-out' }
+  /** Authenticated, and refused anyway — suspended, most likely. */
+  | { readonly kind: 'forbidden' }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
 
@@ -36,6 +51,8 @@ export type SaveOutcome =
   /** The submission was rejected. `issues` name the fields, for the form. */
   | { readonly kind: 'invalid'; readonly issues: readonly string[] }
   | { readonly kind: 'signed-out' }
+  /** Authenticated, and refused anyway — suspended, most likely. */
+  | { readonly kind: 'forbidden' }
   | { readonly kind: 'unreachable'; readonly reason: string }
   | { readonly kind: 'malformed'; readonly reason: string };
 
@@ -125,13 +142,18 @@ export async function fetchMyProfile(
   try {
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: authHeaders(token, clientIp),
+      headers: { ...authHeaders(token, clientIp), ...(await correlationHeaders()) },
     });
   } catch (error) {
     return { kind: 'unreachable', reason: describe(error) };
   }
 
   if (response.status === 401) return { kind: 'signed-out' };
+
+  // This route opts in to `@AllowsSuspended`, so a 403 here is not the ordinary
+  // suspension refusal — it is reported honestly rather than as an outage
+  // because the remedy is nothing the reader can retry their way out of.
+  if (response.status === 403) return { kind: 'forbidden' };
 
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'unreachable', reason: `API answered ${String(response.status)}` };
@@ -169,7 +191,11 @@ export async function saveMyProfile(
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       method: 'PUT',
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: { ...authHeaders(token, clientIp), 'content-type': 'application/json' },
+      headers: {
+        ...authHeaders(token, clientIp),
+        'content-type': 'application/json',
+        ...(await correlationHeaders()),
+      },
       body: JSON.stringify(input),
     });
   } catch (error) {
@@ -177,6 +203,11 @@ export async function saveMyProfile(
   }
 
   if (response.status === 401) return { kind: 'signed-out' };
+
+  // The live one. `PUT /me/profile` does not opt in to `@AllowsSuspended`, so a
+  // suspended person reaches this exact line — and until this branch existed
+  // they were told the API had broken rather than that their account is held.
+  if (response.status === 403) return { kind: 'forbidden' };
 
   if (response.status === 400) {
     const body = await readJson(response);
@@ -234,6 +265,9 @@ export async function fetchPublicProfile(
       new URL(publicProfilePath(userId), apiBaseUrl).toString(),
       {
         signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
+        // No credentials — sending them would suggest the answer depends on who
+        // is asking — but the trace still belongs to the page view that made it.
+        headers: { ...(await correlationHeaders()) },
       },
     );
   } catch (error) {

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { AccountOutcome } from '../lib/account';
 
 /**
@@ -42,6 +43,35 @@ export function AccountReport({ outcome }: { outcome: AccountOutcome }) {
         <section aria-labelledby="account">
           <h2 id="account">Not signed in</h2>
           <p>Sign in to see your account.</p>
+        </section>
+      );
+
+    case 'forbidden':
+      return (
+        <section aria-labelledby="account">
+          <h2 id="account">Account details unavailable</h2>
+          {/* **What is certainly true first.** The token was accepted, so this
+              person is signed in — offering them the sign-in prompt would send
+              them round a loop that cannot end, which is the same defect the
+              `unreachable` branch below exists to avoid, arrived at from the
+              other side.
+
+              Then what to do. The reason for a refusal is an administrator's
+              and is shown verbatim by `SuspensionNotice` — but that notice is
+              rendered from this very outcome, so a refused `/me` is exactly the
+              case where it cannot appear. The activity trail is the route to it
+              that survives, because `/me/activity` opts in to
+              `@AllowsSuspended` (ADR 0024). */}
+          <p>
+            You are signed in, and the service that holds your account did not show it
+            to you. That is a decision about your account rather than a fault, so trying
+            again will not change it.
+          </p>
+          <p>
+            If your account has been suspended, an administrator recorded a reason.{' '}
+            <Link href="/account/activity">Your account activity</Link> shows what was
+            changed and when.
+          </p>
         </section>
       );
 

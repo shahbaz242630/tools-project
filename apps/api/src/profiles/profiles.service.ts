@@ -197,6 +197,24 @@ export class ProfilesService {
     return profile?.ownerStatus ?? null;
   }
 
+  /**
+   * The same fact for a page of people, in one round trip.
+   *
+   * **This is the half of the N+1 the port change alone did not close.**
+   * Catalogue was asking per listing; slice 3.2's fix made its port plural, but
+   * the adapter still fanned out over `findOwnerStatus`, so the cost moved into
+   * this module rather than going away. Delegating to the store's own plural
+   * read is what actually removes it.
+   *
+   * Absence carries the same meaning as `null` above — nobody has declared
+   * anything — so the two methods cannot disagree about what silence means.
+   */
+  async findOwnerStatuses(
+    userIds: readonly string[],
+  ): Promise<ReadonlyMap<string, OwnerStatus>> {
+    return this.profiles.findOwnerStatuses(userIds);
+  }
+
   async findPublic(userId: string): Promise<PublicProfile | null> {
     // Account first. A profile row can outlive its owner's deletion — the
     // erasure slice that removes it is still to come — so checking the profile

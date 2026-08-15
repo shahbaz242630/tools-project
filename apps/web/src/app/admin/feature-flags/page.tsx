@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import Link from 'next/link';
 import type { AdminFeatureFlag } from '@platform/contracts';
 import { FeatureFlagSwitch } from '../../../components/feature-flag-switch';
+import { AdminNav } from '../../../components/admin-nav';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchFeatureFlags } from '../../../lib/admin-feature-flags';
 import type { AdminFeatureFlagOutcome } from '../../../lib/admin-feature-flags';
@@ -83,17 +84,7 @@ export default async function FeatureFlagsPage() {
         <FlagList outcome={outcome} />
       </section>
 
-      <nav>
-        <Link href="/admin/categories">Categories</Link>
-        {' · '}
-        <Link href="/admin/approvals">Role changes</Link>
-        {' · '}
-        <Link href="/admin/users">Look up an account</Link>
-        {' · '}
-        <Link href="/admin/listings">Listing moderation</Link>
-        {' · '}
-        <Link href="/account">Back to your account</Link>
-      </nav>
+      <AdminNav current="/admin/feature-flags" />
     </main>
   );
 }
@@ -104,7 +95,14 @@ function FlagList({
   readonly outcome: AdminFeatureFlagOutcome<readonly AdminFeatureFlag[]>;
 }) {
   if (outcome.kind === 'signed-out') {
-    return <p role="status">Your session has expired. Sign in again.</p>;
+    // The state first, the likeliest cause second — an expiry stated as fact is
+    // a claim about a session we cannot vouch for.
+    return (
+      <p role="status">
+        You are not signed in. Your session may have expired —{' '}
+        <Link href="/sign-in">sign in</Link> to see the switches.
+      </p>
+    );
   }
 
   if (outcome.kind === 'forbidden') {

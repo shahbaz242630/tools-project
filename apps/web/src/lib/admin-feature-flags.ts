@@ -22,6 +22,7 @@ import {
   parseAdminFeatureFlags,
 } from '@platform/contracts';
 import type { AdminFeatureFlag } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 export const ADMIN_FEATURE_FLAGS_TIMEOUT_MS = 5_000;
 
@@ -59,17 +60,60 @@ function describe(error: unknown): string {
   return String(error);
 }
 
-/** Pull `issues` out of an error body without trusting its shape. */
-function readIssues(raw: string): readonly string[] | undefined {
+/**
+ * Pull `issues` or `message` out of an error body without trusting its shape.
+ *
+ * **The status still decides the outcome and always did; what changed is that
+ * the body is no longer thrown away when this fails to understand it.** It
+ * returned `undefined` from the `catch` and from a parse that found no `issues`
+ * array, so a message under any other key — including the single `message`
+ * string Nest sends for most refusals — reached an administrator as "the request
+ * was rejected" with nothing anywhere recording what had actually been said.
+ * This is the kill-switch client: the person reading that sentence is usually
+ * mid-incident, and the detail they lost is the one that explains it.
+ *
+ * `unreadable` is deliberately absent for an empty body — nothing was sent, so
+ * nothing was lost.
+ */
+function readError(raw: string): {
+  message?: string;
+  issues?: readonly string[];
+  unreadable?: string;
+} {
+  let body: unknown;
   try {
-    const body: unknown = JSON.parse(raw);
-    if (typeof body !== 'object' || body === null) return undefined;
-
-    const { issues } = body as { issues?: unknown };
-    return Array.isArray(issues) ? (issues as readonly string[]) : undefined;
+    body = JSON.parse(raw);
   } catch {
-    return undefined;
+    // Almost always a proxy error page rather than the API.
+    return unreadable(raw);
   }
+
+  if (typeof body !== 'object' || body === null) return unreadable(raw);
+
+  const record = body as { message?: unknown; issues?: unknown };
+  const read = {
+    ...(typeof record.message === 'string' ? { message: record.message } : {}),
+    ...(Array.isArray(record.issues)
+      ? { issues: record.issues as readonly string[] }
+      : {}),
+  };
+
+  return 'message' in read || 'issues' in read ? read : unreadable(raw);
+}
+
+/** A short excerpt of a body we could not read, or nothing when there was none. */
+function unreadable(raw: string): { unreadable?: string } {
+  const trimmed = raw.trim();
+  // A short excerpt only — the full body could be an entire HTML document.
+  return trimmed === '' ? {} : { unreadable: trimmed.slice(0, 80) };
+}
+
+/**
+ * The fallback sentence, and whatever the service said instead of a body we
+ * could read. One or the other, never neither.
+ */
+function withUnread(fallback: string, unread: string | undefined): string {
+  return unread === undefined ? fallback : `${fallback} (the service said: ${unread})`;
 }
 
 async function call<T>(
@@ -91,6 +135,7 @@ async function call<T>(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
+        ...(await correlationHeaders()),
       },
       // **Never cached, and here it matters more than anywhere else in the app.**
       // A kill switch read from a cache is one that appears not to have worked,
@@ -108,9 +153,10 @@ async function call<T>(
   if (response.status === 404) return { kind: 'not-found' };
 
   if (response.status === 400) {
+    const { message, issues, unreadable } = readError(await response.text());
     return {
       kind: 'invalid',
-      issues: readIssues(await response.text()) ?? ['The request was rejected'],
+      issues: issues ?? [message ?? withUnread('The request was rejected', unreadable)],
     };
   }
 

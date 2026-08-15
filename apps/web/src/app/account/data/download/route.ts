@@ -43,10 +43,47 @@ export async function GET(): Promise<Response> {
   );
 
   if (outcome.kind === 'signed-out') {
+    /*
+     * **The state first, the likeliest cause second**, as everywhere else — an
+     * expiry stated as fact is a claim about a session we cannot vouch for.
+     *
+     * **Written for the medium, which is why there is no link.** Everywhere
+     * else this sentence appears it offers `/sign-in` to click; here the
+     * response is plain text a browser either shows in a bare tab or writes to
+     * disk as a file, and markup would arrive as literal angle brackets. So the
+     * route back is named in words instead — and it names the account page
+     * rather than the sign-in page, because reloading this URL after signing in
+     * would be a second file download rather than a place to stand.
+     */
     return new Response(
-      'Your session has expired. Sign in again to download your data.',
+      'You are not signed in, so no data was exported. Your session may have ' +
+        'expired — sign in again, then start the download from your account ' +
+        'page.',
       {
         status: 401,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      },
+    );
+  }
+
+  if (outcome.kind === 'forbidden') {
+    /*
+     * **403, not 502.** The catch-all below says the API could not answer, and
+     * that would be a false accusation here: it answered, and it said no. A 502
+     * also invites a retry, and there is nothing on the other side of one.
+     *
+     * **Written for the medium, like the branch above** — plain text, so the
+     * route back is named in words rather than linked, and it names the account
+     * page because reloading *this* URL would start another download rather
+     * than land somewhere a person can stand.
+     */
+    return new Response(
+      'You are signed in, but your data was not exported. That is a decision ' +
+        'about your account rather than a fault, so trying again will not ' +
+        'change it. If your account has been suspended, the reason is on your ' +
+        'account page.',
+      {
+        status: 403,
         headers: { 'content-type': 'text/plain; charset=utf-8' },
       },
     );

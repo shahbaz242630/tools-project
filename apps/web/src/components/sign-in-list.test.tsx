@@ -119,6 +119,21 @@ describe('SignInList', () => {
     expect(screen.getByText(/Sign in to see the sign-in history/)).toBeInTheDocument();
   });
 
+  it('calls a refusal a decision, and still not an empty history', () => {
+    render(<SignInList outcome={{ kind: 'forbidden' }} />);
+
+    expect(screen.queryByText(/No sign-ins recorded yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Sign in to see the sign-in history/),
+    ).not.toBeInTheDocument();
+
+    expect(screen.getByText(/not a record of nobody signing in/)).toBeInTheDocument();
+    expect(screen.getByText(/decision about your account/i)).toBeInTheDocument();
+
+    // Never a status code at a person.
+    expect(screen.queryByText(/403/)).not.toBeInTheDocument();
+  });
+
   it('takes somebody to the devices, rather than telling them to go there', () => {
     // This test used to be named for an action and assert only that a sentence
     // existed. It passed for five slices over copy that named a destination and

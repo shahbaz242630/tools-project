@@ -63,9 +63,18 @@ function Categories({
 }) {
   switch (outcome.kind) {
     case 'signed-out':
+      /*
+       * **Not "your session has expired".** This is the page the header's
+       * primary "List a tool" leads to, so a signed-out stranger arrived here
+       * and was told a session they had never had was over. The proxy now sends
+       * them to sign in before this renders (slice: proxy protection), which
+       * makes the remaining reader somebody whose token stopped being accepted
+       * mid-visit — real, and still not something to state as fact.
+       */
       return (
         <p role="alert">
-          Your session has expired. <Link href="/sign-in">Sign in again</Link>.
+          You are not signed in. Your session may have expired —{' '}
+          <Link href="/sign-in">sign in</Link> to list an item.
         </p>
       );
 

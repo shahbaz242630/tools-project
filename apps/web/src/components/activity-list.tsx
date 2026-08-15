@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import Link from 'next/link';
 import {
   describeAction,
   describeActivityOrigin,
@@ -110,6 +111,28 @@ export function ActivityList({
         <section aria-labelledby="activity">
           <h2 id="activity">Account activity</h2>
           <p>Sign in to see activity on your account.</p>
+        </section>
+      );
+
+    case 'forbidden':
+      return (
+        <section aria-labelledby="activity">
+          <h2 id="activity">Activity unavailable</h2>
+          {/* Two claims at once, and both matter. Not "nothing happened" — the
+              rule this component exists for. And not an outage either: the API
+              answered, it refused, and calling that a fault sends somebody to
+              retry a decision. The reason itself belongs to whoever made it, so
+              this points at the one page that shows it verbatim rather than
+              paraphrasing it here. */}
+          <p>
+            Your account activity was not shown to you, so this is not a record of
+            nothing happening. That is a decision about your account rather than a
+            fault.
+          </p>
+          <p>
+            If your account has been suspended, the reason is on your{' '}
+            <Link href="/account">account page</Link>.
+          </p>
         </section>
       );
 

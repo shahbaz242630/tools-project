@@ -1,3 +1,4 @@
+import { renderToString } from 'react-dom/server';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { MAX_CATEGORY_ATTRIBUTES } from '@platform/contracts';
@@ -283,6 +284,62 @@ describe('an existing schema', () => {
     editor(SCHEMA);
 
     expect(screen.getAllByText(/Permanent in practice/i)[0]).toBeInTheDocument();
+  });
+});
+
+/**
+ * **Element ids came from a module-level counter until the Phase 0–3 audit**, and
+ * that is a hydration hazard rather than a style complaint.
+ *
+ * The counter lived in module scope, so on the server it kept climbing for the
+ * whole life of the process while in the browser it started at zero — the same
+ * form rendered `id="test-draft-57-label"` on the server and
+ * `id="test-draft-1-label"` on the client. React repairs that by throwing the
+ * server's markup away and re-rendering the subtree, which is silent, wasteful,
+ * and only happens on `/admin/categories` where nobody was looking.
+ *
+ * The ids also depended on **module evaluation order** — which component
+ * imported this file first, and how many editors had been built before — which
+ * is not a property any id should have.
+ *
+ * These render the way a request does, because that is the only place the defect
+ * exists: every other test in this file renders once, on the client, where a
+ * counter looks perfectly stable.
+ */
+describe('the ids the server sends', () => {
+  const idsIn = (markup: string): readonly string[] =>
+    [...markup.matchAll(/ id="([^"]+)"/g)].map((match) => match[1] ?? '');
+
+  const serverMarkup = (): string =>
+    renderToString(
+      <AttributeSchemaEditor name="attributes" idPrefix="test" initial={SCHEMA} />,
+    );
+
+  it('are the same on the second request as on the first', () => {
+    // The half a module counter fails, and the half that makes it a hydration
+    // mismatch: a browser that starts its own counting at zero can only agree
+    // with a server whose ids do not depend on what it rendered earlier.
+    const first = idsIn(serverMarkup());
+    const second = idsIn(serverMarkup());
+
+    expect(second).toEqual(first);
+    expect(first.length).toBeGreaterThan(0);
+  });
+
+  it('are unique across two editors on one page', () => {
+    // Uniqueness is not the whole requirement but it is half of it: the admin
+    // categories page renders one editor per category, and a colliding id means
+    // a `<label for>` pointing at somebody else's field.
+    const ids = idsIn(
+      renderToString(
+        <>
+          <AttributeSchemaEditor name="one" idPrefix="test" initial={SCHEMA} />
+          <AttributeSchemaEditor name="two" idPrefix="test" initial={SCHEMA} />
+        </>,
+      ),
+    );
+
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 

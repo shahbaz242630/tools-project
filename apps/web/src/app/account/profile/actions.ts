@@ -52,10 +52,35 @@ export async function saveProfileAction(
       return { status: 'invalid', issues: outcome.issues, message: null };
 
     case 'signed-out':
+      // **Not "your session has expired"**, which claims a session this person
+      // may never have had. Reaching a server action means the page rendered,
+      // so an expiry is the likeliest cause — but it is a guess, and the state
+      // is what the reader needs first.
       return {
         status: 'error',
         issues: [],
-        message: 'Your session has expired. Sign in again and your changes will save.',
+        message:
+          'You are not signed in, so nothing was saved. Your session may have ' +
+          'expired — sign in again and your changes will save.',
+      };
+
+    case 'forbidden':
+      /*
+       * The suspended case, and the whole reason `forbidden` exists.
+       *
+       * `GET /me/profile` opts in to `@AllowsSuspended` and this `PUT`
+       * deliberately does not (ADR 0024), so before this branch a suspended
+       * person read "Your profile was not saved — API answered 403" and had no
+       * way to know that was a decision rather than a fault. The reason an
+       * administrator wrote is on their account page, verbatim, which is where
+       * this sends them rather than repeating it here — one place holds it.
+       */
+      return {
+        status: 'error',
+        issues: [],
+        message:
+          'Your profile was not saved, because your account cannot be changed at ' +
+          'the moment. If it has been suspended, the reason is on your account page.',
       };
 
     case 'unreachable':

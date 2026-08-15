@@ -31,6 +31,10 @@ const page = (
   radiusMiles: 5,
   page: 1,
   category: null,
+  // The default is the ordinary case — we placed the origin and ran the query —
+  // so every test below reads as being about what the search *found*. The one
+  // group that overrides it is the one about not having searched at all.
+  originStatus: 'placed',
   ...over,
 });
 
@@ -672,5 +676,174 @@ describe('when a radius has nothing in it', () => {
       screen.queryByRole('link', { name: /Search within/ }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/nothing listed near you yet/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * When we could not place the origin at all.
+ *
+ * **The defect these tests were written against was confirmed in a browser on
+ * staging**, and it is the reason `originStatus` exists. postcodes.io going down
+ * arrives here as a 200 with no listings — the API is right to answer that way,
+ * since the postcode was well formed and a third party's outage is not a 5xx of
+ * ours — and every branch above this one then described an area nobody had
+ * looked at. At a hundred miles the page said *"There is nothing listed near you
+ * yet. We are just getting started"*: a claim about the entire catalogue, made
+ * during an outage, with no alert rule to notice it and nothing in the response
+ * a reader could have used to know better.
+ *
+ * The fixture is deliberately the worst case rather than a convenient one — a
+ * hundred miles, no filter — because that is the exact combination that produced
+ * the sentence.
+ */
+describe('when the origin could not be placed', () => {
+  const unplaceable = page({ results: [], originStatus: 'unplaceable' });
+
+  /**
+   * **The test that fails without the fix.**
+   *
+   * With the old contract there was no `originStatus` to set, an outage and an
+   * empty area were the same value, and this rendered the catalogue-is-empty
+   * sentence. Asserting its *absence* is the half that has teeth: the honest
+   * heading could be added while the dishonest claim went on being rendered
+   * underneath it, and the page would look fixed.
+   */
+  it('never claims the catalogue is empty when it could not look', () => {
+    render(
+      <BrowseResults
+        results={page({
+          results: [],
+          radiusMiles: 100,
+          originStatus: 'unplaceable',
+        })}
+        search={searchFor({ radiusMiles: 100 })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.queryByText(/nothing listed near you yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/We are just getting started/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'We could not search from that postcode' }),
+    ).toBeInTheDocument();
+  });
+
+  it('says outright that this is not a statement about the area', () => {
+    // Somebody who reads the heading and nothing else can still walk away
+    // thinking their area is empty, so the thing they must not conclude is
+    // written down rather than left to be inferred from a missing count.
+    render(
+      <BrowseResults
+        results={unplaceable}
+        search={searchFor({ postcode: 'BS7 8ZZ' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByText(/this does not mean there is nothing near you/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the postcode it could not place, as the searcher typed it', () => {
+    // The API does not echo the postcode, so this comes from the request — and
+    // showing it is what turns a generic apology into something actionable: a
+    // typo is visible the moment it is quoted back.
+    render(
+      <BrowseResults
+        results={unplaceable}
+        search={searchFor({ postcode: 'BS7 8ZZ' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.getByText(/BS7 8ZZ/)).toBeInTheDocument();
+  });
+
+  it('offers both pieces of advice, because we do not know which applies', () => {
+    /*
+     * An unrecognised postcode and a geocoder that is down are collapsed into
+     * one null by `ListingProximity` before Catalogue sees them, so the page
+     * genuinely cannot tell. Offering only "check the postcode" would blame the
+     * searcher for our outage; offering only "try again shortly" would leave
+     * somebody retrying a postcode that will never resolve.
+     */
+    render(
+      <BrowseResults results={unplaceable} search={searchFor()} categoryName={null} />,
+    );
+
+    expect(screen.getByText(/Check the postcode and try again/)).toBeInTheDocument();
+    expect(screen.getByText(/temporarily unavailable/)).toBeInTheDocument();
+  });
+
+  it('offers no wider radius, which could only fail the same way', () => {
+    // What failed is the origin, not the radius, so "Search within 10 miles"
+    // would be a control that cannot work — a dead control by BRD §15's rule,
+    // and one that implies the radius was the problem.
+    render(
+      <BrowseResults
+        results={unplaceable}
+        search={searchFor({ radiusMiles: 5 })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('link', { name: /Search within/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says the same thing when a category was filtered', () => {
+    /*
+     * The filter is irrelevant here and must not soften the message into
+     * "nothing in this category" — that is still a claim about inventory, and
+     * "Search all categories" would offer a search that fails identically.
+     */
+    render(
+      <BrowseResults
+        results={page({
+          results: [],
+          radiusMiles: 100,
+          category: 'outdoor-gardening',
+          originStatus: 'unplaceable',
+        })}
+        search={searchFor({ radiusMiles: 100, category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'We could not search from that postcode' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Nothing in this category is listed/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Search all categories' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('outranks the past-the-last-page state, which is also a claim about results', () => {
+    /*
+     * A stale link to page two of a search whose origin no longer places would
+     * otherwise render *"Nothing more to show — you have reached the end of the
+     * results"*, which asserts there were results and that this person saw them.
+     * Both are false. This is why the check sits above every branch rather than
+     * inside the empty state.
+     */
+    render(
+      <BrowseResults
+        results={page({ results: [], page: 2, originStatus: 'unplaceable' })}
+        search={searchFor({ page: 2 })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.queryByText(/reached the end of the results/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'We could not search from that postcode' }),
+    ).toBeInTheDocument();
   });
 });

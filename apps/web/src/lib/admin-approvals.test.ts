@@ -126,11 +126,62 @@ describe('proposeRoleChange', () => {
       API,
       TOKEN,
       { userId: USER, role: 'ADMIN', reason: REASON },
-      responds(409, 'not json'),
+      responds(409, ''),
+    );
+
+    expect(outcome).toEqual({ kind: 'refused', reason: 'That is no longer possible.' });
+  });
+
+  it('keeps the fallback and still reports a body it could not read', async () => {
+    // The defect: the parse failure was caught and the body thrown away, so an
+    // administrator read a generic sentence and nothing recorded that the
+    // service had said something else entirely. The status still decides the
+    // outcome — that part was never wrong — but the message is no longer lost.
+    const outcome = await proposeRoleChange(
+      API,
+      TOKEN,
+      { userId: USER, role: 'ADMIN', reason: REASON },
+      responds(409, '<html>502 Bad Gateway</html>'),
     );
 
     expect(outcome.kind).toBe('refused');
-    expect(outcome.kind === 'refused' && outcome.reason.length).toBeGreaterThan(0);
+    expect(outcome.kind === 'refused' && outcome.reason).toContain(
+      'That is no longer possible.',
+    );
+    expect(outcome.kind === 'refused' && outcome.reason).toContain('502 Bad Gateway');
+  });
+
+  it('keeps a message the API sent under a key it does not recognise', async () => {
+    // Valid JSON, no `message` and no `issues`. The old reader parsed it, found
+    // neither, returned `{}` — and the one sentence explaining the refusal went
+    // nowhere.
+    const outcome = await proposeRoleChange(
+      API,
+      TOKEN,
+      { userId: USER, role: 'ADMIN', reason: REASON },
+      responds(409, JSON.stringify({ error: 'that account is already ADMIN' })),
+    );
+
+    expect(outcome.kind === 'refused' && outcome.reason).toContain(
+      'that account is already ADMIN',
+    );
+  });
+
+  it('uses the API’s message as the issue when it sent no issues array', async () => {
+    const outcome = await proposeRoleChange(
+      API,
+      TOKEN,
+      { userId: USER, role: 'ADMIN', reason: 'no' },
+      responds(
+        400,
+        JSON.stringify({ message: 'reason must be at least 12 characters' }),
+      ),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'invalid',
+      issues: ['reason must be at least 12 characters'],
+    });
   });
 
   it('surfaces the issues from a rejected reason', async () => {

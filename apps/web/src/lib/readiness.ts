@@ -12,6 +12,7 @@
 
 import { parseReadyResponse, READY_PATH } from '@platform/contracts';
 import type { DependencyStatus } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 /**
  * How long the API has to answer before the page gives up.
@@ -34,7 +35,7 @@ export type ReadinessOutcome =
 
 export type FetchLike = (
   input: string,
-  init?: { signal?: AbortSignal },
+  init?: { signal?: AbortSignal; headers?: Record<string, string> },
 ) => Promise<{ text: () => Promise<string> }>;
 
 function describe(error: unknown): string {
@@ -65,6 +66,9 @@ export async function fetchReadiness(
   try {
     const response = await fetchImpl(url, {
       signal: AbortSignal.timeout(READINESS_TIMEOUT_MS),
+      // Unauthenticated, and still traced. This is the call somebody makes
+      // while an incident is in progress, which is when the trace is worth most.
+      headers: { ...(await correlationHeaders()) },
     });
     raw = await response.text();
   } catch (error) {

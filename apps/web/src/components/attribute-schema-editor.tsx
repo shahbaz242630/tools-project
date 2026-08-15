@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import {
   CATEGORY_ATTRIBUTE_TYPES,
   MAX_ATTRIBUTE_DECIMAL_PLACES,
@@ -63,22 +63,58 @@ const DEFAULT_TEXT_LENGTH = 60;
  * Not the attribute key: that is the administrator's to type, is empty on a
  * fresh row, and changes as they type — using it would remount every input on
  * each keystroke and lose the caret.
+ *
+ * **They came from a module-level counter until the Phase 0–3 audit, and that
+ * was a hydration mismatch waiting on somebody opening the page.** A counter in
+ * module scope keeps climbing for the life of a server process while a browser
+ * starts its own at zero, so the same form arrived as `draft-57` from the server
+ * and re-rendered as `draft-1` on the client — React throws the server's markup
+ * away and rebuilds the subtree, silently. It also made every id depend on module
+ * evaluation order, which is not a property an id should have.
+ *
+ * **The replacement is `useId` plus a rule about where an id may come from.**
+ * There are two sources and the split is what makes it work:
+ *
+ * - a row that comes from a **stored schema** takes its id from its *position*,
+ *   which the server and the browser compute identically. That is every id that
+ *   exists during the render being hydrated;
+ * - a row **added by clicking** takes it from a per-editor counter. Those only
+ *   ever appear after hydration, in a browser, so nothing on the server can
+ *   disagree about them.
+ *
+ * Both are namespaced by `useId`, so two editors on one page cannot collide.
  */
-let sequence = 0;
-const nextId = (): string => `draft-${String(++sequence)}`;
+const storedAttributeId = (instance: string, index: number): string =>
+  `${instance}-a${String(index)}`;
+
+/**
+ * An option's id need only be unique **within its attribute**: it is a React key
+ * among that draft's own options, and the DOM id it ends up in is already
+ * prefixed with the row. Keeping it short is what stops the rendered ids
+ * repeating the instance three times.
+ */
+const storedOptionId = (index: number): string => `o${String(index)}`;
 
 /** An emptied number input reads as NaN. Zero is the value that fails usefully. */
 function zeroIfBlank(value: number): number {
   return Number.isNaN(value) ? 0 : value;
 }
 
-function emptyOption(): OptionDraft {
-  return { id: nextId(), value: '', label: '' };
+/**
+ * A fresh id, for a row or option somebody has just added.
+ *
+ * Passed as an argument rather than reached for, because the counter behind it
+ * belongs to one editor. A module-scoped one is what this slice removed.
+ */
+type Mint = () => string;
+
+function emptyOption(mint: Mint): OptionDraft {
+  return { id: mint(), value: '', label: '' };
 }
 
-function emptyAttribute(): AttributeDraft {
+function emptyAttribute(mint: Mint): AttributeDraft {
   return {
-    id: nextId(),
+    id: mint(),
     key: '',
     label: '',
     required: false,
@@ -88,15 +124,25 @@ function emptyAttribute(): AttributeDraft {
     decimalPlaces: 0,
     // Two, because `choice` needs two and starting with none makes the commonest
     // next action invisible.
-    options: [emptyOption(), emptyOption()],
+    options: [emptyOption(mint), emptyOption(mint)],
   };
 }
 
-/** An existing schema, opened for editing. */
-function toDrafts(attributes: readonly CategoryAttribute[]): readonly AttributeDraft[] {
-  return attributes.map((attribute) => ({
-    ...emptyAttribute(),
-    id: nextId(),
+/**
+ * An existing schema, opened for editing.
+ *
+ * **Every id in here is a function of position and nothing else**, so this
+ * produces byte-identical markup on the server and on the client. It no longer
+ * spreads `emptyAttribute()` for its defaults: that minted three ids per
+ * attribute and then overwrote all of them, which is how the counter got so far
+ * ahead of itself in the first place.
+ */
+function toDrafts(
+  attributes: readonly CategoryAttribute[],
+  instance: string,
+): readonly AttributeDraft[] {
+  return attributes.map((attribute, index) => ({
+    id: storedAttributeId(instance, index),
     key: attribute.key,
     label: attribute.label,
     required: attribute.required,
@@ -106,8 +152,13 @@ function toDrafts(attributes: readonly CategoryAttribute[]): readonly AttributeD
     decimalPlaces: attribute.type === 'number' ? attribute.decimalPlaces : 0,
     options:
       attribute.type === 'choice' || attribute.type === 'choice-many'
-        ? attribute.options.map((option) => ({ ...option, id: nextId() }))
-        : [emptyOption(), emptyOption()],
+        ? attribute.options.map((option, at) => ({ ...option, id: storedOptionId(at) }))
+        : // The two placeholders a non-choice row carries in case its type is
+          // changed to one. Positional, like everything else here.
+          [
+            { id: storedOptionId(0), value: '', label: '' },
+            { id: storedOptionId(1), value: '', label: '' },
+          ],
   }));
 }
 
@@ -159,11 +210,37 @@ export function AttributeSchemaEditor({
   /** The hidden field the server action reads. */
   readonly name: string;
   readonly initial?: readonly CategoryAttribute[];
-  /** Distinguishes the create form's ids from each category's row form. */
+  /**
+   * A readable stem for the rendered ids — `create`, or a category's slug.
+   *
+   * **It no longer carries the uniqueness**: `useId` below does that, and does
+   * it for editors the caller forgot were on the same page. The prop stays
+   * because it makes an id legible in a browser's inspector, and because the
+   * callers' contract is unchanged.
+   */
   readonly idPrefix: string;
 }) {
+  /*
+   * **One namespace per editor, minted by React rather than by us.** It is the
+   * same value on the server and after hydration for the same position in the
+   * tree, which is the whole reason this replaced a module counter.
+   */
+  const instance = useId();
+
+  /*
+   * And the counter for rows added by clicking. A ref rather than state: nothing
+   * renders from it, and a `useState` here would redraw the whole editor for a
+   * number nobody sees. It can only advance in a browser, because the button
+   * that advances it does not exist until the page is interactive.
+   */
+  const minted = useRef(0);
+  const mint = (): string => {
+    minted.current += 1;
+    return `${instance}-n${String(minted.current)}`;
+  };
+
   const [drafts, setDrafts] = useState<readonly AttributeDraft[]>(() =>
-    toDrafts(initial ?? []),
+    toDrafts(initial ?? [], instance),
   );
 
   const update = (id: string, change: Partial<AttributeDraft>) => {
@@ -221,6 +298,7 @@ export function AttributeSchemaEditor({
               <AttributeRow
                 draft={draft}
                 idPrefix={`${idPrefix}-${draft.id}`}
+                mint={mint}
                 position={index + 1}
                 of={drafts.length}
                 onChange={(change) => {
@@ -242,7 +320,12 @@ export function AttributeSchemaEditor({
         <button
           type="button"
           onClick={() => {
-            setDrafts((current) => [...current, emptyAttribute()]);
+            // Minted outside the updater, which React may run more than once.
+            // A `mint()` call in there would advance the counter twice per
+            // click — harmless today, and exactly the kind of impurity that
+            // stops being harmless when somebody adds StrictMode.
+            const added = emptyAttribute(mint);
+            setDrafts((current) => [...current, added]);
           }}
           disabled={full}
         >
@@ -263,6 +346,7 @@ export function AttributeSchemaEditor({
 function AttributeRow({
   draft,
   idPrefix,
+  mint,
   position,
   of,
   onChange,
@@ -271,6 +355,8 @@ function AttributeRow({
 }: {
   readonly draft: AttributeDraft;
   readonly idPrefix: string;
+  /** Passed down rather than reached for — see the id note at the top. */
+  readonly mint: Mint;
   readonly position: number;
   readonly of: number;
   readonly onChange: (change: Partial<AttributeDraft>) => void;
@@ -398,6 +484,7 @@ function AttributeRow({
         <OptionsEditor
           draft={draft}
           idPrefix={idPrefix}
+          mint={mint}
           onChange={(options) => {
             onChange({ options });
           }}
@@ -460,10 +547,19 @@ function AttributeRow({
 function OptionsEditor({
   draft,
   idPrefix,
+  mint,
   onChange,
 }: {
   readonly draft: AttributeDraft;
   readonly idPrefix: string;
+  /**
+   * **Not a `useId` of its own**, which is the tempting shortcut and is wrong:
+   * this component unmounts when the type changes away from a choice and
+   * remounts when it changes back, while the options themselves live in the
+   * parent's state and survive. A counter that reset on remount would hand a
+   * second option the id an existing one already has.
+   */
+  readonly mint: Mint;
   readonly onChange: (options: readonly OptionDraft[]) => void;
 }) {
   const id = (field: string) => `${idPrefix}-${field}`;
@@ -535,7 +631,7 @@ function OptionsEditor({
           type="button"
           disabled={draft.options.length >= MAX_ATTRIBUTE_OPTIONS}
           onClick={() => {
-            onChange([...draft.options, emptyOption()]);
+            onChange([...draft.options, emptyOption(mint)]);
           }}
         >
           Add an option

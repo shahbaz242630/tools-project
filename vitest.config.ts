@@ -237,10 +237,6 @@ export default defineConfig({
         // uncovered because there is nothing to run. If any code appears in
         // here, delete this line rather than keeping it honest by accident.
         '**/api/src/identity/webhook-ledger.ts',
-        // Composition root, same argument as main.ts: it hands a matcher to
-        // Clerk's middleware factory. A test would assert that a mock was
-        // called with a regex we also wrote.
-        '**/web/src/proxy.ts',
         // And for the radius query, from slice 3.1f — the same argument as the
         // five Prisma adapters above, and the strongest instance of it in the
         // project. prisma-listing-search.db.test.ts proves the things only a

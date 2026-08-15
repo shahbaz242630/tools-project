@@ -99,6 +99,12 @@ describe('fetchMyProfile', () => {
     });
   });
 
+  it('reads 403 as forbidden rather than as an outage', async () => {
+    expect(await fetchMyProfile(API, TOKEN, responds(403, ''))).toEqual({
+      kind: 'forbidden',
+    });
+  });
+
   it.each([500, 502, 418])('does not read %d as signed out', async (status) => {
     // Telling a signed-in person they are signed out because the API returned
     // 500 invites them to sign in again and again.
@@ -211,6 +217,20 @@ describe('saveMyProfile', () => {
 
     expect(outcome).toEqual({ kind: 'signed-out' });
     expect(called).toBe(false);
+  });
+
+  /*
+   * The reachable one, and the reason this member exists.
+   *
+   * `GET /me/profile` opts in to `@AllowsSuspended` and `PUT` deliberately does
+   * not (ADR 0024), so a suspended person is handed their own populated,
+   * editable form and refused the moment they press Save. Until this branch,
+   * every 403 fell into `unreachable` and the page read *"Your profile was not
+   * saved — API answered 403"*: the site blamed for a decision somebody made.
+   */
+  it('reads 403 as forbidden, not as an unreachable API', async () => {
+    const outcome = await saveMyProfile(API, TOKEN, INPUT, responds(403, ''));
+    expect(outcome).toEqual({ kind: 'forbidden' });
   });
 });
 

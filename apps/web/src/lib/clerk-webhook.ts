@@ -13,6 +13,7 @@
 
 import { CLERK_EVENTS_PATH, clerkEventResultSchema } from '@platform/contracts';
 import type { ClerkEventResult } from '@platform/contracts';
+import { correlationHeaders } from './correlation';
 
 /**
  * How long the API has to accept the event.
@@ -90,7 +91,13 @@ export async function forwardIdentityEvent(
     response = await fetchImpl(url, {
       method: 'POST',
       body: JSON.stringify(forward),
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        // The one trace in the application that starts at a provider rather
+        // than at a browser: the id ties Clerk's delivery to what the API did
+        // with it, which is the only way to follow a webhook that arrived twice.
+        ...(await correlationHeaders()),
+      },
       signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
     });
   } catch (error) {

@@ -114,7 +114,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             <RouteTransition>{children}</RouteTransition>
           </div>
 
-          <SiteFooter />
+          {/* The same answer the header was given, rather than a second read.
+              Both navigations describe one session, and a footer that worked it
+              out separately is a footer that can disagree with the bar above
+              it. */}
+          <SiteFooter signedIn={userId !== null} />
         </ClerkProvider>
       </body>
     </html>

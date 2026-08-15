@@ -3,8 +3,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { listingPath } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
+import { ownerListingPath } from '../../../lib/page-paths';
 import { pauseListing, publishListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { INITIAL_PUBLICATION_STATE } from './publication-state';
@@ -55,7 +55,12 @@ export async function publishListingAction(
       // the row changed. Without this the owner presses Publish, the request
       // succeeds, and the page redraws from cache still saying "Draft" — which
       // reads exactly like a button that does nothing.
-      revalidatePath(listingPath(id));
+      //
+      // **`revalidatePath` takes a page path and this one used to pass the API
+      // path.** It matched by coincidence; had it not, this call would have
+      // silently revalidated nothing and reinstated the exact defect the
+      // paragraph above describes, with no error anywhere. See `page-paths.ts`.
+      revalidatePath(ownerListingPath(id));
       return { ...INITIAL_PUBLICATION_STATE, status: 'idle' };
 
     case 'not-ready':
@@ -82,10 +87,27 @@ export async function publishListingAction(
       };
 
     case 'signed-out':
+      /*
+       * **The state first, the likeliest cause second** — the wording
+       * `listings/new/actions.ts` settled on, for the reason recorded there:
+       * "your session has expired" is a claim about a session we cannot vouch
+       * for, and it was being shown to people who had never had one.
+       *
+       * **The trailing clause names the button they pressed**, because the two
+       * actions in this file are not interchangeable and a generic "try once
+       * more" would leave somebody wondering whether a half-published listing
+       * is now visible to strangers. It says what is visible rather than what
+       * the status is: this control also *resumes* a paused listing, so
+       * "it is still a draft" would be wrong half the time — but both states
+       * it can be pressed from are ones nobody else can see.
+       */
       return {
         ...INITIAL_PUBLICATION_STATE,
         status: 'error',
-        message: 'Your session has expired. Sign in again.',
+        message:
+          'You are not signed in, so this listing was not published and nobody ' +
+          'else can see it. Your session may have expired — sign in again and ' +
+          'publish it once more.',
       };
 
     case 'invalid':
@@ -163,8 +185,8 @@ export async function pauseListingAction(
       // The page is a server component, so it has to be told the row changed.
       // Without this the owner presses Pause, the request succeeds, and the page
       // redraws from cache still saying Published — the defect 2.8a found on the
-      // other button.
-      revalidatePath(listingPath(id));
+      // other button. A page path, as above.
+      revalidatePath(ownerListingPath(id));
       return { ...INITIAL_PUBLICATION_STATE, status: 'idle' };
 
     case 'refused':
@@ -203,10 +225,26 @@ export async function pauseListingAction(
       };
 
     case 'signed-out':
+      /*
+       * **The mirror of the publish action's, and the trailing clause is the
+       * half that had to change.** The refusal is identical; what it leaves
+       * behind is the opposite. Somebody who pressed Pause wanted their listing
+       * off the public site, so the fact they need first is that it is still
+       * on it — telling them only to sign in again would let them walk away
+       * believing an item they cannot lend is no longer being offered.
+       *
+       * **"Still published" rather than "still public"**: this control only
+       * renders on a `PUBLISHED` listing, but a published listing an
+       * administrator has hidden is not visible to anybody, and the stronger
+       * word would be a claim about moderation state this action never reads.
+       */
       return {
         ...INITIAL_PUBLICATION_STATE,
         status: 'error',
-        message: 'Your session has expired. Sign in again.',
+        message:
+          'You are not signed in, so this listing was not paused and is still ' +
+          'published. Your session may have expired — sign in again and pause ' +
+          'it once more.',
       };
 
     case 'invalid':

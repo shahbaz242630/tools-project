@@ -83,6 +83,25 @@ export function BrowseResults({
     category: results.category,
   };
 
+  /*
+   * **Asked before the results are counted, because an empty list means two
+   * opposite things and only this field separates them.**
+   *
+   * Every branch below this line is a statement about the area — "nothing within
+   * 5 miles", "nothing listed near you yet", "try 10 miles instead" — and all of
+   * them are inventions when the origin never geocoded. That was the defect: an
+   * outage at our postcode provider arrived here as `results: []`, and the
+   * hundred-mile branch of `NothingFound` told the searcher the catalogue was
+   * empty. Ordering matters as much as the copy does, which is why this sits at
+   * the top of the component rather than as another case inside the empty state.
+   */
+  if (results.originStatus === 'unplaceable') {
+    // The postcode comes from the request rather than the response: it is the
+    // one parameter the API does not echo, which is fine — it is what the person
+    // typed, and it is already in the form above this.
+    return <CouldNotSearch postcode={current.postcode} />;
+  }
+
   if (results.results.length === 0) {
     /*
      * **Two different empty pages, and telling them apart is the point** (slice
@@ -220,6 +239,66 @@ function NothingFurther({ search }: { readonly search: ListingSearchQuery }) {
           Start again from the first page
         </Link>
         .
+      </p>
+    </section>
+  );
+}
+
+/**
+ * We could not place the origin, so we have nothing to say about the area.
+ *
+ * **The whole point is that this says nothing about inventory**, and every
+ * sentence was checked against that. The other two empty states are entitled to
+ * describe what is near somebody, because a query ran; this one is not, because
+ * none did. Getting the refusal right and the words wrong is a mistake this page
+ * has made twice already — `?radiusMiles=abc` rendering zod's own
+ * *"expected number, received NaN"* in 3.1d, and a well-formed unknown category
+ * rendering *"Search is unavailable at the moment"* in 3.2b — and both times the
+ * tests were green and reading the page is what found it.
+ *
+ * **It carries two pieces of advice because we genuinely do not know which
+ * applies.** An unrecognised postcode wants "check the postcode"; a geocoder
+ * that is down wants "try again shortly". `geocodeQuietly` knows which, and
+ * `ListingProximity` collapses the two into one null before Catalogue sees it,
+ * so `unplaceable` is all that reaches this component. Offering both, in that
+ * order — the one the reader can act on first — is honest; picking one would be
+ * a guess presented as a diagnosis. When the port carries the distinction, this
+ * splits into two components and the union in `SearchOriginStatus` makes the
+ * compiler ask for the second.
+ *
+ * **No wider radius and no "search all categories" here**, which is the one
+ * thing it deliberately does *not* inherit from `NothingFound`. Re-running an
+ * identical failure at 10 miles is a control that cannot work — the origin is
+ * what failed, not the radius — and BRD §15's rule about controls doing what
+ * they say has no exemption for a control that merely looks helpful.
+ */
+function CouldNotSearch({ postcode }: { readonly postcode: string }) {
+  return (
+    <section className={styles.empty} aria-labelledby="results-heading">
+      {/*
+        **"could not search from", not "could not find".** The postcode may be
+        perfectly real and our lookup simply unreachable, so a heading blaming
+        the input would be wrong half the time — and the half it is wrong on is
+        the half that is our fault.
+      */}
+      <h2 id="results-heading" className={styles.emptyHeading}>
+        We could not search from that postcode
+      </h2>
+
+      {/*
+        **The second clause is the entire fix in one sentence.** Somebody who
+        reads only the heading might still conclude their area is empty, so the
+        thing they must not conclude is said outright rather than implied by the
+        absence of a result count.
+      */}
+      <p className={styles.emptyBody}>
+        We could not look up {postcode}, so we have not searched yet — this does not
+        mean there is nothing near you.
+      </p>
+
+      <p className={styles.emptyBody}>
+        Check the postcode and try again. If it is right, our postcode lookup may be
+        temporarily unavailable, and trying again in a few minutes should work.
       </p>
     </section>
   );

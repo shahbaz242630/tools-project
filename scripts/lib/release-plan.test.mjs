@@ -5,6 +5,7 @@ import {
   emptyState,
   interpretProbe,
   interpretWebProbe,
+  interpretWorkerProbe,
   isImmutableTag,
   MAX_HISTORY,
   nextStateAfterDeploy,
@@ -12,6 +13,7 @@ import {
   parseArgs,
   parseState,
   planDeploy,
+  planFailureResponse,
   planRollback,
   REHEARSAL_PROFILE,
   ReleaseError,
@@ -189,6 +191,54 @@ describe('planRollback', () => {
     expect(() => planRollback({ version: 1, current: A, history: [A] })).toThrow(
       /git log --oneline/,
     );
+  });
+
+  it('has no automatic fallback, because the only other release is the one being left', () => {
+    expect(planRollback({ version: 1, current: C, history: [C, B, A] }).fallback).toBe(
+      null,
+    );
+  });
+});
+
+describe('planFailureResponse', () => {
+  it('reverts an ordinary deploy to the release it replaced', () => {
+    const plan = planDeploy({ version: 1, current: A, history: [A] }, B);
+
+    expect(planFailureResponse(plan)).toEqual({ response: 'revert', target: A });
+  });
+
+  it('is stuck when nothing has ever served here', () => {
+    const plan = planDeploy(emptyState(), A);
+
+    expect(planFailureResponse(plan)).toEqual({ response: 'stuck' });
+  });
+
+  it('is stranded — not stuck — when a rollback fails', () => {
+    /*
+     * The distinction defect 5 of the August 2026 audit was about. Both plans
+     * carry `fallback: null`, so `deploy.mjs` treated a failed rollback as a
+     * first deploy: it printed "there is no previous release to revert to" and
+     * wrote no state, leaving `state.current` naming the newer tag while the
+     * older one served. Nothing errored, and a second `--rollback` re-deployed
+     * the release that had just failed.
+     */
+    const plan = planRollback({ version: 1, current: C, history: [C, B, A] });
+
+    expect(plan.fallback).toBe(null);
+    expect(planFailureResponse(plan)).toEqual({ response: 'stranded' });
+  });
+
+  it('records what is actually running after a stranded rollback', () => {
+    // What `deploy.mjs` writes in that branch. `current` becomes the release
+    // that is serving, and the abandoned one leaves history — so another
+    // rollback walks further back rather than repeating the failure.
+    const state = { version: 1, current: C, history: [C, B, A] };
+
+    expect(nextStateAfterRollback(state)).toEqual({
+      version: 1,
+      current: B,
+      history: [B, A],
+    });
   });
 });
 
@@ -409,5 +459,68 @@ describe('interpretWebProbe', () => {
 
   it('tolerates absent output', () => {
     expect(interpretWebProbe({ exitCode: 1 }).outcome).toBe('starting');
+  });
+});
+
+describe('interpretWorkerProbe', () => {
+  it('is ready when the container is healthy', () => {
+    expect(interpretWorkerProbe({ exitCode: 0, stdout: 'running healthy' })).toEqual({
+      outcome: 'ready',
+    });
+  });
+
+  it('is unhealthy when the process is up but its health check is failing', () => {
+    /*
+     * The failure this probe exists for: a worker that started, never reached
+     * Redis, and is therefore processing nothing. Before the container carried a
+     * HEALTHCHECK at all, compose's `--wait` accepted "running" and this
+     * deployed as a success.
+     */
+    const result = interpretWorkerProbe({ exitCode: 0, stdout: 'running unhealthy' });
+
+    expect(result.outcome).toBe('unhealthy');
+    expect(result.detail).toContain('Redis');
+  });
+
+  it('is starting while the health check is still within its start period', () => {
+    expect(
+      interpretWorkerProbe({ exitCode: 0, stdout: 'running starting' }).outcome,
+    ).toBe('starting');
+  });
+
+  it('is starting — not ready — while the container is crash-looping', () => {
+    // `restarting` may still resolve, so it is worth waiting out; what must not
+    // happen is calling it ready, which is what having no probe at all did.
+    const result = interpretWorkerProbe({ exitCode: 0, stdout: 'restarting starting' });
+
+    expect(result.outcome).toBe('starting');
+    expect(result.detail).toContain('restarting');
+  });
+
+  it.each([['exited'], ['dead']])('is unhealthy when the container has %s', (state) => {
+    expect(interpretWorkerProbe({ exitCode: 0, stdout: `${state} none` }).outcome).toBe(
+      'unhealthy',
+    );
+  });
+
+  it('is starting when there is no container yet', () => {
+    expect(
+      interpretWorkerProbe({ exitCode: 1, stdout: 'Error: No such object' }).outcome,
+    ).toBe('starting');
+    expect(interpretWorkerProbe({ exitCode: 1, stdout: '' }).outcome).toBe('starting');
+    expect(interpretWorkerProbe({ exitCode: 1 }).outcome).toBe('starting');
+  });
+
+  it('passes an image with no health check, and says it is unverified', () => {
+    /*
+     * Every image built before the HEALTHCHECK existed is a legitimate rollback
+     * target. Failing here would mean the first rollback after this shipped
+     * could not complete — a probe added to catch a bad deploy would have become
+     * the thing that stopped an incident being ended.
+     */
+    const result = interpretWorkerProbe({ exitCode: 0, stdout: 'running none' });
+
+    expect(result.outcome).toBe('ready');
+    expect(result.unverified).toBe(true);
   });
 });

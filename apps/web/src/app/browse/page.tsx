@@ -201,6 +201,19 @@ export default async function BrowsePage({
         error={null}
       />
 
+      {/*
+        **`loaded` includes "we could not place your postcode", and that is
+        handled inside `BrowseResults` rather than here.**
+
+        Worth saying out loud, because the natural instinct on reading this
+        branch is to add a third case beside it — and it would be the wrong
+        place. An unplaceable origin is a *successful* read of a well-formed
+        answer: the API looked at the request, decided it could not geocode the
+        origin, and said so in `originStatus`. It is not the read failing, so it
+        does not belong beside `unreachable`; and the page has no tests, while
+        the component does, which is where the sentence a searcher reads should
+        be pinned. See `SearchOriginStatus`.
+      */}
       {outcome.kind === 'loaded' ? (
         <BrowseResults
           results={outcome.value}

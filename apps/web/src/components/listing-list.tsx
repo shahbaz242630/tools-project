@@ -22,9 +22,9 @@
 
 import Link from 'next/link';
 import { Money, Time } from '@platform/core';
-import { listingPath } from '@platform/contracts';
 import type { OwnedListings, OwnerListingSummary } from '@platform/contracts';
 import { VisibilityLabel } from './listing-visibility';
+import { ownerListingPath } from '../lib/page-paths';
 import type { ListingOutcome } from '../lib/listings';
 import styles from './listing-list.module.css';
 
@@ -42,10 +42,22 @@ export function ListingList({
       );
 
     case 'signed-out':
+      /*
+       * **The state first, the likeliest cause second** — the wording every
+       * page in the application now shares, for the reason recorded in
+       * `listings/new/page.tsx`: an expiry stated as fact is a claim about a
+       * session we cannot vouch for, and it was being shown to people who had
+       * never had one.
+       *
+       * That it is *this* page hardly softens it. Somebody arriving here with
+       * no session — a stale bookmark, a second browser, a link they were sent
+       * — is told their listings could not be read; being told *why* in terms
+       * of a session they never had is a sentence they can do nothing with.
+       */
       return (
         <p role="alert" className={styles.problem}>
-          Your session has expired. <Link href="/sign-in">Sign in again</Link> to see
-          your listings.
+          You are not signed in. Your session may have expired —{' '}
+          <Link href="/sign-in">sign in</Link> to see your listings.
         </p>
       );
 
@@ -129,11 +141,21 @@ function Loaded({ page }: { readonly page: OwnedListings }) {
 
         `role="alert"` rather than `status`: it is not a result of anything they
         just did.
+
+        **It does not offer a way to get in touch, because there is not one.**
+        The original copy said "please get in touch and we will sort it out",
+        which named a channel the platform does not have and will not have until
+        Phase 6 — no contact page, no inbox, and by our own rule no support desk
+        afterwards either. An instruction nobody can follow is worse than an
+        admission, so the sentence now tells the owner the two things that are
+        true and useful: their listings are all still there, and this page cannot
+        reach past the bound yet.
       */}
       {page.truncated ? (
         <p role="alert" className={styles.problem}>
-          This is not all of them. You have more listings than this page can show —
-          please get in touch and we will sort it out.
+          This is not all of them. You have more listings than this page can show, and
+          there is no way to page past it yet — nothing is missing from your account,
+          and nothing has been deleted.
         </p>
       ) : null}
 
@@ -165,8 +187,10 @@ function Row({ listing }: { readonly listing: OwnerListingSummary }) {
     <tr>
       <th scope="row" className={styles.item}>
         {/* The whole point of the page: a route back to a listing that is not
-            its UUID. */}
-        <Link href={listingPath(listing.id)}>{listing.title}</Link>
+            its UUID. **`ownerListingPath`, not the contract's `listingPath`** —
+            that one is the API route this page's data came from, and it spells
+            the same string only by coincidence. */}
+        <Link href={ownerListingPath(listing.id)}>{listing.title}</Link>
       </th>
       <td>{listing.categoryName}</td>
       <td>

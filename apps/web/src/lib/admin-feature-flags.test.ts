@@ -156,6 +156,39 @@ describe('setFeatureFlag', () => {
   it('falls back to a usable message when a 400 carries no issues', async () => {
     const outcome = await setFeatureFlag(API, TOKEN, KEY, false, REASON, responds(400));
 
+    // No body means nothing was lost, so the fallback stands on its own.
     expect(outcome).toEqual({ kind: 'invalid', issues: ['The request was rejected'] });
+  });
+
+  it('keeps the fallback and still reports a body it could not read', async () => {
+    const outcome = await setFeatureFlag(
+      API,
+      TOKEN,
+      KEY,
+      false,
+      REASON,
+      responds(400, '<html>502 Bad Gateway</html>'),
+    );
+
+    expect(outcome.kind).toBe('invalid');
+    const [issue] = outcome.kind === 'invalid' ? outcome.issues : [];
+    expect(issue).toContain('The request was rejected');
+    // The whole point: an administrator throwing a kill switch during an
+    // incident, told only "the request was rejected", had no way to see that
+    // something in front of the API had answered instead of the API.
+    expect(issue).toContain('502 Bad Gateway');
+  });
+
+  it('uses the API’s message as the issue when it sent no issues array', async () => {
+    const outcome = await setFeatureFlag(
+      API,
+      TOKEN,
+      KEY,
+      false,
+      '',
+      responds(400, JSON.stringify({ message: 'A reason is required' })),
+    );
+
+    expect(outcome).toEqual({ kind: 'invalid', issues: ['A reason is required'] });
   });
 });

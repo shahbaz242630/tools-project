@@ -3148,6 +3148,38 @@ describe('searching for listings near a postcode', () => {
     expect(results.results[0]?.ownerStatus).toBe('private_owner');
   });
 
+  it('asks Profiles once for the whole page, not once per owner', async () => {
+    /*
+     * **The N+1 the August 2026 audit found.** Hydration used to resolve each
+     * distinct owner with its own call across the module boundary — cheap at
+     * three fixtures and one query per owner on a page of twenty-four, on the
+     * one public route that returns a collection and has no rate limit in front
+     * of it.
+     *
+     * This is invisible in the response: the fixed and the broken version
+     * return identical JSON, which is why it is asserted on the port rather
+     * than on the body. Two owners, three listings — so a service that batched
+     * by *listing* rather than by owner would still fail.
+     */
+    await givenAListing(800);
+    await givenAListing(1_200);
+    await givenAListing(2_000, { token: 'bob-token' });
+
+    // Publication asks the same question, so counting starts once the fixtures
+    // exist — otherwise this measures the setup.
+    listings.ownerStatuses.forgetLookups();
+
+    const results = parsePublicListingSearchResults((await search()).json());
+    expect(results.results).toHaveLength(3);
+
+    expect(listings.ownerStatuses.lookups).toHaveLength(1);
+    // Sorted rather than ordered: the ids come from the hydration query, whose
+    // order is the store's business and not something this test should pin.
+    expect([...(listings.ownerStatuses.lookups[0] ?? [])].sort()).toEqual(
+      [await idOf('alice-token'), await idOf('bob-token')].sort(),
+    );
+  });
+
   describe('what a search must never return', () => {
     it('leaves out a listing its owner never published', async () => {
       const created = parseOwnerListing(
@@ -3273,6 +3305,84 @@ describe('searching for listings near a postcode', () => {
       const results = parsePublicListingSearchResults(response.json());
       expect(results.results).toEqual([]);
       expect(results.truncated).toBe(false);
+    });
+
+    /**
+     * **The test that fails without the fix, at the HTTP boundary.**
+     *
+     * The empty page above is correct and stays correct — a well-formed postcode
+     * is not a 400, and a provider outage is not our 500. What was wrong is that
+     * the response said nothing else, so `{ results: [] }` here was byte-identical
+     * to `{ results: [] }` from a genuinely quiet area, and Browse rendered the
+     * outage as *"There is nothing listed near you yet. We are just getting
+     * started"*. Confirmed in a browser on staging.
+     *
+     * **Asserted at the route rather than on the service** deliberately, and for
+     * the reason slice 3.1f gives about its own counters: this distinction had
+     * been available on the service since 3.1a — it returns null — and died in the
+     * controller, which is precisely the layer a service-level test cannot see.
+     * The listing seeded a metre away is the teeth: it is inside the radius and
+     * must still not come back, so nothing here can pass by accidentally finding
+     * nothing.
+     */
+    it('says it could not place the origin, rather than implying an empty area', async () => {
+      await givenAListing(800);
+      listings.proximity.cannotPlace('BS7 8AA');
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.originStatus).toBe('unplaceable');
+    });
+
+    it('still echoes the radius, page and category it was asked about', async () => {
+      /*
+       * The page has to keep drawing its own form and its own links from this
+       * response, so a search that could not run still has to say what was asked
+       * — otherwise correcting a postcode would silently drop the radius and the
+       * filter the searcher had already chosen.
+       */
+      listings.proximity.cannotPlace('BS7 8AA');
+
+      const results = parsePublicListingSearchResults(
+        (await search({ radiusMiles: 20, category: 'outdoor-gardening' })).json(),
+      );
+
+      expect(results.radiusMiles).toBe(20);
+      expect(results.category).toBe('outdoor-gardening');
+      expect(results.page).toBe(1);
+      expect(results.originStatus).toBe('unplaceable');
+    });
+  });
+
+  /**
+   * The other half of the same distinction, and the half that is easy to leave
+   * untested.
+   *
+   * A field that only ever reports failure is one nobody notices is stuck; these
+   * pin that a search which *did* run says so, whether or not it found anything.
+   * The second case is the one that carries the meaning — an empty result with
+   * `placed` is the platform saying "we looked, and there is nothing", which is
+   * the only circumstance in which the page is entitled to say so.
+   */
+  describe('an origin it could place', () => {
+    it('says the origin was placed when it found something', async () => {
+      await givenAListing(800);
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toHaveLength(1);
+      expect(results.originStatus).toBe('placed');
+    });
+
+    it('says the origin was placed even when the radius is empty', async () => {
+      // The combination the whole field exists to separate from the one above:
+      // no results, and they mean something.
+      await givenAListing(milesToMetres(8));
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toEqual([]);
+      expect(results.originStatus).toBe('placed');
     });
   });
 

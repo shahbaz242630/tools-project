@@ -455,3 +455,45 @@ describe('eraseFor', () => {
     });
   });
 });
+
+describe('owner status for a page of owners', () => {
+  /**
+   * **The assertion is the lookup count, not the answers.** An N+1 returns
+   * exactly the right data, so every test about what came back passes while the
+   * defect is present — which is how the fan-out survived the first pass of the
+   * fix, having merely moved from Catalogue into this module. Only the number
+   * of round trips tells the two apart.
+   */
+  it('asks the store once for the whole page', async () => {
+    await service.saveMine(ALICE, { ...input, ownerStatus: 'private_owner' });
+    await service.saveMine(BOB, {
+      ...input,
+      displayName: 'Bob B.',
+      ownerStatus: 'private_owner',
+    });
+
+    const statuses = await service.findOwnerStatuses([ALICE_ID, BOB_ID]);
+
+    expect(statuses.get(ALICE_ID)).toBe('private_owner');
+    expect(statuses.get(BOB_ID)).toBe('private_owner');
+    expect(profiles.ownerStatusLookups).toHaveLength(1);
+  });
+
+  it('leaves an undeclared owner out rather than answering null', async () => {
+    // Absence and a null value would mean the same thing, and a caller reading
+    // "no answer" as an answer is how a business ends up published (ADR 0043).
+    await service.saveMine(ALICE, input);
+
+    const statuses = await service.findOwnerStatuses([ALICE_ID]);
+
+    expect(statuses.has(ALICE_ID)).toBe(false);
+  });
+
+  it('answers an empty page with an empty map', async () => {
+    // The service delegates unconditionally; it is the Prisma store that
+    // declines to make Postgres parse `IN ()`, and its own test covers that.
+    const statuses = await service.findOwnerStatuses([]);
+
+    expect(statuses.size).toBe(0);
+  });
+});

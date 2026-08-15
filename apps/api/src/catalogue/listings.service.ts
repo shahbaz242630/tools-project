@@ -650,7 +650,7 @@ export class ListingsService {
         // fresh means an owner who declares "business" stops being able to keep
         // a published listing complete from that moment, rather than from
         // whenever the listing was last written.
-        ownerStatus: await this.ownerStatuses.findOwnerStatus(ownerId),
+        ownerStatus: await this.ownerStatusOf(ownerId),
       });
 
       if (blockers.length > 0) throw new PublishedListingIncompleteError(blockers);
@@ -774,7 +774,7 @@ export class ListingsService {
     const listing = await this.store.findPublished(id);
     if (listing === null) return null;
 
-    const ownerStatus = await this.ownerStatuses.findOwnerStatus(listing.ownerId);
+    const ownerStatus = await this.ownerStatusOf(listing.ownerId);
 
     // Not `!== 'professional_trader'`: an owner who has *never* declared must
     // not be published either, and writing the negative would have let null
@@ -799,9 +799,20 @@ export class ListingsService {
    *
    * **Null means the origin could not be placed**, not that nothing was found.
    * Both an unrecognised postcode and a geocoder that is briefly down arrive as
-   * null, exactly as they do on the write path — and the caller collapses them,
-   * because a searcher is owed one answer rather than a diagnosis of our
-   * provider.
+   * null, exactly as they do on the write path — the difference between the two
+   * is collapsed by `ListingProximity`, which is where the argument for
+   * collapsing it lives.
+   *
+   * **What the caller does with this null is no longer to hide it.** It used to
+   * become an empty page indistinguishable from a quiet area, on the reasoning
+   * that a searcher is owed one answer rather than a diagnosis of our provider —
+   * and that reasoning was right about the *status code* and wrong about the
+   * *page*, because the page then told people the catalogue was empty during a
+   * geocoder outage. The controller still answers 200 with no results, and now
+   * says `originStatus: 'unplaceable'` alongside them. **So this null is
+   * load-bearing in a way it was not**: returning an empty `NearbySearchResults`
+   * here instead would restore the exact defect, because "we searched and found
+   * nothing" and "we could not search" would once more be the same value.
    *
    * **The order comes from `page.matches` and is not recomputed.** Exact
    * distances do not cross the proximity boundary (§8.4.1), so this method
@@ -809,19 +820,25 @@ export class ListingsService {
    * matches and looks each listing up, rather than mapping over what the store
    * returned.
    *
-   * **Owner statuses are deduplicated and resolved together.** It is still one
-   * query per distinct owner, which is an N+1 in the strict sense and is left
-   * standing deliberately: the fix is a batch method on `OwnerStatusSource`, and
-   * a port method added for a page size we have never served would be
-   * speculation. It is recorded as a known limitation rather than forgotten.
+   * **Owner statuses are deduplicated and resolved in one lookup.** Until the
+   * August 2026 audit this was one call per distinct owner — a genuine N+1
+   * across a module boundary, on the one public route that answers with a
+   * collection rather than about a single thing whose id you already had, and
+   * therefore the cheapest route in the system to call and the most expensive
+   * to serve. `OwnerStatusSource` is plural for that reason and has no singular
+   * form left to reach for; the set is what is passed, so an owner with four
+   * listings on the page is asked about once.
    *
-   * **Every exit from this method is counted** (slice 3.1f), and this is the only
-   * layer that can do it. The controller above collapses null into an empty page
-   * — deliberately, because a searcher is owed one answer rather than a
-   * diagnosis of our provider — so a counter placed there could never tell an
-   * empty area from our own geocoder being down. The repository below cannot do
-   * it either: it is handed an offset, not a page number, so it cannot tell a
-   * genuinely empty radius from somebody walking off the end of a result set.
+   * **Every exit from this method is counted** (slice 3.1f), and this is still
+   * the only layer that can do it — though for one reason now rather than two.
+   * The controller above does distinguish an unplaceable origin from an empty
+   * area since `originStatus` was added, so that half of the original argument
+   * has expired. What has not is the other half: **the repository below is
+   * handed an offset, not a page number**, so it cannot tell a genuinely empty
+   * radius from somebody walking off the end of a result set, and the controller
+   * cannot tell either without doing the page arithmetic a second time. Only
+   * this method holds both facts at once, which is why all four outcomes are
+   * recorded here.
    *
    * **The category slug is resolved here too, and nowhere below** (slice 3.2a).
    * Catalogue owns categories, so it is Catalogue that turns the slug a searcher
@@ -885,15 +902,9 @@ export class ListingsService {
     );
     const byId = new Map(summaries.map((summary) => [summary.id, summary]));
 
-    const ownerIds = [...new Set(summaries.map((summary) => summary.ownerId))];
-    const ownerStatuses = new Map(
-      await Promise.all(
-        ownerIds.map(
-          async (ownerId) =>
-            [ownerId, await this.ownerStatuses.findOwnerStatus(ownerId)] as const,
-        ),
-      ),
-    );
+    const ownerStatuses = await this.ownerStatuses.findOwnerStatuses([
+      ...new Set(summaries.map((summary) => summary.ownerId)),
+    ]);
 
     const results: NearbyListingView[] = [];
 
@@ -981,6 +992,26 @@ export class ListingsService {
     const id = await this.categories.findCategoryId(slug);
     if (id === null) throw new UnknownCategoryError(slug);
     return id;
+  }
+
+  /**
+   * One owner's declaration, asked for through the plural port.
+   *
+   * `OwnerStatusSource` has no singular method by design — see its docblock; a
+   * batch method sitting beside a convenient single one is a batch method
+   * nobody calls. This is the adapter for the three paths that genuinely
+   * concern one listing, and it is private so the shape of that convenience
+   * cannot spread past this file.
+   *
+   * **Absent means "has not declared", and that is returned as null** rather
+   * than collapsed into anything else, because every caller here compares
+   * against `'private_owner'` positively (ADR 0043): an owner who has never
+   * answered must be refused, and only the positive test is safe as the
+   * vocabulary grows.
+   */
+  private async ownerStatusOf(userId: string): Promise<OwnerStatus | null> {
+    const statuses = await this.ownerStatuses.findOwnerStatuses([userId]);
+    return statuses.get(userId) ?? null;
   }
 
   /**
@@ -1131,11 +1162,25 @@ export class ListingsService {
    * against the terms it was written under, not against what the category asks
    * today.
    *
-   * **Publishing does not re-pin.** ADR 0029 makes re-pinning explicit and
-   * value-migrating, never a side effect — and "side effect of publishing" is
-   * the same defect as "side effect of saving". A listing goes live under the
-   * version it was written against; moving it to a newer one is slice 2.8d's
-   * deliberate operation.
+   * **Publishing does not re-pin.** ADR 0029 makes re-pinning something an owner
+   * can see happening, never a side effect of an unrelated transition, and
+   * "side effect of publishing" is the same defect as "side effect of going
+   * live". A listing goes live under the version it was written against.
+   *
+   * **What moves a listing onto a newer version is editing it** — ADR 0042, and
+   * `update` above is where the argument lives. `ListingStore` writes
+   * `categoryVersionId: current.id` on every edit deliberately: the form an owner
+   * is looking at is built from the current configuration, so saving it brings
+   * the listing onto that configuration with the new questions on screen. The
+   * guard is a **stale-form 409** — a form built against a version that has since
+   * moved is refused and reloaded — rather than a prohibition on re-pinning.
+   *
+   * **This paragraph used to name slice 2.8d's "deliberate operation" and that
+   * operation does not exist.** 2.8d was deleted from scope rather than built,
+   * and ADR 0042 replaced its premise. The correction is worth its length because
+   * the old text described the opposite of the shipped rule, and the failure mode
+   * of a docblock like that is somebody reading it and "fixing" correct code —
+   * here, by removing the re-pin from `update`.
    *
    * Returns null when no such listing belongs to this owner, so the route can
    * answer 404 without distinguishing "not yours" from "does not exist".
@@ -1182,7 +1227,7 @@ export class ListingsService {
       rates: listing.rates,
       hasCollectionLocation: listing.collectionLocation !== null,
       isLocated: listing.isLocated,
-      ownerStatus: await this.ownerStatuses.findOwnerStatus(ownerId),
+      ownerStatus: await this.ownerStatusOf(ownerId),
     });
 
     if (blockers.length > 0) throw new ListingNotPublishableError(blockers);

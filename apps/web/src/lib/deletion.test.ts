@@ -80,6 +80,16 @@ describe('requestDeletion', () => {
     expect(outcome.kind).toBe('uncertain');
   });
 
+  it('reads 403 as a refusal, not as something it could not tell', async () => {
+    // The distinction is the whole reason `forbidden` exists here. A 403 comes
+    // from the guard, before anything is erased, so we know the account is
+    // intact — and `uncertain` would send somebody to sign in and check
+    // something we already knew the answer to.
+    expect(await requestDeletion(API, TOKEN, responds(403, ''))).toEqual({
+      kind: 'forbidden',
+    });
+  });
+
   it.each([500, 502, 409])('reports %d as uncertain', async (status) => {
     const outcome = await requestDeletion(API, TOKEN, responds(status, ''));
     expect(outcome.kind).toBe('uncertain');

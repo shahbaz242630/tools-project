@@ -14,6 +14,7 @@ import { createListingAction } from '../app/listings/new/actions';
 import { INITIAL_LISTING_STATE } from '../app/listings/new/state';
 import { AttributeFields, toSubmittedAttributes } from './attribute-fields';
 import type { AttributeAnswers } from './attribute-fields';
+import { OutwardCodePreview } from './outward-code-preview';
 import { ResetSafeSelect } from './reset-safe-select';
 import { TransportField } from './transport-field';
 import group from './form-card.module.css';
@@ -53,6 +54,9 @@ export function ListingForm({
    */
   const [transport, setTransport] = useState<TransportRequirement | null>(null);
   const [twoPersonLift, setTwoPersonLift] = useState(false);
+  // Only so the district under the field can be the one they typed. The input
+  // stays uncontrolled — the server action reads the form, not this.
+  const [postcode, setPostcode] = useState(state.postcode);
 
   const chosen = categories.find((category) => category.slug === slug);
   // The weight the category captured, if it captured one. Keyed off the
@@ -412,12 +416,13 @@ export function ListingForm({
             type="text"
             autoComplete="postal-code"
             defaultValue={state.postcode}
+            onChange={(event) => setPostcode(event.target.value)}
             placeholder="BS7 8AA"
             aria-describedby="listing-postcode-help"
           />
         </p>
         <p id="listing-postcode-help" className={group.help}>
-          Only the first part — <strong>BS7</strong> — is ever published.
+          <OutwardCodePreview postcode={postcode} />
         </p>
       </fieldset>
 

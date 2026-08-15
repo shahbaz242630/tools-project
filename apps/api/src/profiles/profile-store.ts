@@ -82,6 +82,27 @@ export interface ProfileStore {
   find(userId: string): Promise<StoredProfile | null>;
 
   /**
+   * The declared owner status of many people, in one round trip.
+   *
+   * **Plural because the caller is plural.** Catalogue hydrates a whole page of
+   * search results and needs one answer per distinct owner; asking `find` in a
+   * loop is the N+1 that slice 3.1a's gap list recorded, and moving that loop
+   * from Catalogue into Profiles only changed which module paid for it.
+   *
+   * **A map with no entry, not a null value.** Absence means nobody has
+   * declared anything — which covers both "no profile row" and "a profile that
+   * has not answered", conflated on purpose exactly as `findOwnerStatus` does.
+   * A `Map<string, OwnerStatus | null>` would offer a third state that means
+   * the same as the second and invite a branch that reads one of them as
+   * consent.
+   *
+   * Returns only what it found: callers must not assume every id is a key.
+   */
+  findOwnerStatuses(
+    userIds: readonly string[],
+  ): Promise<ReadonlyMap<string, OwnerStatus>>;
+
+  /**
    * Remove everything this module holds about a person.
    *
    * A real delete, not a flag: this is what a deletion request is *for*, and a

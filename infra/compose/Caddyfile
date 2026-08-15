@@ -11,8 +11,17 @@
 }
 
 # Applied to both sites. Kept minimal on purpose: the headers that matter for a
-# browser application belong with apps/web, which does not exist yet. These two
-# are the ones that are correct for an API regardless of what fronts it.
+# browser application belong with apps/web, and since 15 August 2026 that is
+# where they are — CSP (report-only), HSTS, Referrer-Policy, Permissions-Policy
+# and X-Frame-Options are set in `apps/web/next.config.mjs`, so they exist in
+# local development and under `next start` too rather than only on the one path
+# that happens to pass through here. This file predates them and said they did
+# "not exist yet" for three weeks after they were needed.
+#
+# `X-Content-Type-Options` is set in both places deliberately. Caddy's is a
+# floor: it is correct for any response this ingress ever proxies, including one
+# from something that is not the Next app, and `header` replaces rather than
+# appends so the two cannot arrive twice.
 (common) {
 	header {
 		# Stops a browser from second-guessing a declared Content-Type, which is

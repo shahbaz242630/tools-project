@@ -1,5 +1,11 @@
+import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
 import Link from 'next/link';
 import { ListingModerationForm } from '../../../components/listing-moderation-form';
+import { AdminNav } from '../../../components/admin-nav';
+import { AdminAccessNotice, adminAccess } from '../admin-access';
+import { clientIpFrom } from '../../../lib/client-ip';
+import { webEnv } from '../../../lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,17 +26,23 @@ export const metadata = {
  * **The page does not check whether you are an administrator**, the same as every
  * other admin page. The API does, on every request, with the second factor
  * (ADR 0021). A check here would be a second place for the rule to live and the
- * easier of the two to get wrong.
+ * easier of the two to get wrong. It does *ask* before drawing the form, which
+ * is a different thing — see `../admin-access.tsx`.
  *
- * **Nothing is read before the decision is written**, which makes this the first
- * admin page with no read at all — and it is a real limitation rather than a
- * simplification. Every read in Catalogue is owner-scoped, so there is no route
- * by which an administrator can fetch somebody else's listing; the public listing
- * page arrives in 2.10 and the queue that would show it in Phase 9. The copy
- * below says so, because a moderator who assumes they are looking at what they
- * are deciding about is the one thing this page must not encourage.
+ * **There is still no read of the listing being decided about**, and the copy
+ * below says so. What changed is that there is now somewhere to look: `/hire/:id`
+ * shipped in slice 2.10 and renders any listing its owner has published and the
+ * platform permits. That covers the commonest decision — a live listing somebody
+ * reported — and not the two that matter most, a draft and one already hidden.
  */
-export default function AdminListingsPage() {
+export default async function AdminListingsPage() {
+  const { getToken } = await auth();
+  const access = await adminAccess(
+    webEnv().API_BASE_URL,
+    await getToken(),
+    clientIpFrom((await headers()).get('x-forwarded-for')),
+  );
+
   return (
     <main>
       <h1>Listing moderation</h1>
@@ -44,16 +56,41 @@ export default function AdminListingsPage() {
         exactly as they had it.
       </p>
 
-      <section aria-labelledby="what-you-cannot-see">
-        <h2 id="what-you-cannot-see">What this page cannot show you</h2>
+      <section aria-labelledby="what-you-can-see">
+        <h2 id="what-you-can-see">Seeing the listing you are deciding about</h2>
+
+        {/*
+          **Rewritten. The old wording sent a moderator to the database.**
+
+          It said there was no way for an administrator to open somebody else's
+          listing and "no public listing page yet either", and told the reader to
+          check the row directly if the decision needed it. `/hire/:id` shipped
+          in slice 2.10. The sentence had simply not been revisited, and the cost
+          of that is high: it points somebody at production data for a question a
+          URL answers, and it is exactly the instruction a moderator would follow.
+
+          What stays true is narrower, and it is the part worth keeping: the
+          public page shows only what the public can see, so a draft, a paused
+          listing and one this page has already hidden all answer 404 there.
+        */}
+        <p>
+          A listing its owner has published, and the platform permits, is at{' '}
+          <code>/hire/&lt;id&gt;</code> — the same id you type below. That is what a
+          renter sees, which is usually the right thing to judge.{' '}
+          <Link href="/browse">Browse</Link> reaches the same pages by searching.
+        </p>
 
         <p role="note">
-          <strong>You are deciding without seeing the listing.</strong> Every way of
-          reading a listing today is scoped to its owner, so there is no way for an
-          administrator to open somebody else&rsquo;s — there is no public listing page
-          yet either. Until there is, work from whatever the report gave you and check
-          the listing directly in the database if the decision needs it. Do not treat
-          this form as evidence that you have looked.
+          <strong>
+            Three listings will not open there, and two of them are the decisions that
+            matter.
+          </strong>{' '}
+          A draft, a listing its owner has paused, and one you have already hidden all
+          answer &ldquo;not found&rdquo; on the public page — deliberately, because it
+          discloses nothing about listings the public may not see. There is still{' '}
+          <strong>no administrative view</strong> of a listing, so for those you are
+          working from whatever the report gave you. Do not treat this form as evidence
+          that you have looked.
         </p>
 
         <p>
@@ -83,21 +120,19 @@ export default function AdminListingsPage() {
         </p>
       </section>
 
-      <ListingModerationForm />
+      {/*
+        Only offered to somebody who could actually use it — the same rule slice
+        2.1 learned on `/admin/categories`. This page had no read at all, so
+        until now there was nothing on it that could refuse before the button
+        did, and a moderation decision that bounces is one somebody repeats.
+      */}
+      {access.kind === 'permitted' ? (
+        <ListingModerationForm />
+      ) : (
+        <AdminAccessNotice access={access} controls="this form" />
+      )}
 
-      <nav>
-        <Link href="/admin/users">Look up an account</Link>
-        {' · '}
-        <Link href="/admin/activity">Look up an account&rsquo;s activity</Link>
-        {' · '}
-        <Link href="/admin/categories">Categories</Link>
-        {' · '}
-        <Link href="/admin/feature-flags">Feature flags</Link>
-        {' · '}
-        <Link href="/admin/approvals">Role changes</Link>
-        {' · '}
-        <Link href="/account">Back to your account</Link>
-      </nav>
+      <AdminNav current="/admin/listings" />
     </main>
   );
 }

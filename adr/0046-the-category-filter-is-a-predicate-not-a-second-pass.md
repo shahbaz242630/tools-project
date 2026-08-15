@@ -58,8 +58,15 @@ them in a category we have never had — indistinguishable from a quiet area, an
 counted as one by the §17 zero-result metric.
 
 **An absent filter composes to nothing at all.** The statement is assembled with
-a `Prisma.empty` fragment when no category was chosen, so the unfiltered query is
-**byte-identical to the one slice 3.1c measured**.
+a `Prisma.empty` fragment when no category was chosen, so the unfiltered query
+carries **the same predicates and produces the same plan as the one slice 3.1c
+measured**. It is not byte-identical and this ADR claimed it was until the
+Phase 0–3 audit: an empty fragment still leaves the whitespace it was
+interpolated into, so the literal text differs by a space. Nothing rests on the
+bytes — what the gate number rests on is the predicate set and the plan, both
+unchanged, and `measure-search.mjs` re-reads the SQL out of the live adapter
+rather than restating it, so a future edit that _did_ change the predicates would
+be measured rather than assumed.
 
 **The ports take a request object rather than positional arguments.**
 `originPostcode` and `categoryId` are both strings; a signature carrying them

@@ -847,6 +847,29 @@ export class DeclaredOwnerStatuses {
   private readonly declared = new Map<string, OwnerStatus | null>();
   private fallback: OwnerStatus | null = 'private_owner';
 
+  /**
+   * Every lookup, in order, as the list of ids it was asked about.
+   *
+   * Here so a test can assert **how many round trips a page of results costs**,
+   * which is not visible in any response body. A search that resolved each
+   * owner separately and one that resolved them together return byte-identical
+   * JSON, so without this the N+1 the audit found could be reintroduced by a
+   * refactor with every assertion still green.
+   */
+  readonly lookups: (readonly string[])[] = [];
+
+  /**
+   * Forget what has been asked so far.
+   *
+   * Test setup goes through the real publication path, which asks this question
+   * too — so a test about what a *search* costs has to start counting after its
+   * fixtures exist, or it measures the fixtures.
+   */
+  forgetLookups(): this {
+    this.lookups.length = 0;
+    return this;
+  }
+
   /** Everybody who has not been named individually has not answered. */
   nobodyHasDeclared(): this {
     this.fallback = null;
@@ -863,10 +886,24 @@ export class DeclaredOwnerStatuses {
     return this;
   }
 
-  findOwnerStatus(userId: string): Promise<OwnerStatus | null> {
-    return Promise.resolve(
-      this.declared.has(userId) ? (this.declared.get(userId) ?? null) : this.fallback,
-    );
+  findOwnerStatuses(
+    userIds: readonly string[],
+  ): Promise<ReadonlyMap<string, OwnerStatus>> {
+    this.lookups.push([...userIds]);
+
+    const statuses = new Map<string, OwnerStatus>();
+    for (const userId of userIds) {
+      const status = this.declared.has(userId)
+        ? (this.declared.get(userId) ?? null)
+        : this.fallback;
+      // Absent, never null. The port says an undeclared owner has no entry, and
+      // a fake that answered with a null value would let a service that reads
+      // `.has()` rather than the value pass here and refuse nobody in
+      // production.
+      if (status !== null) statuses.set(userId, status);
+    }
+
+    return Promise.resolve(statuses);
   }
 }
 

@@ -8,11 +8,11 @@ import {
   TRANSPORT_REQUIREMENT_HINTS,
   TRANSPORT_REQUIREMENT_LABELS,
   isPubliclyVisible,
-  listingPath,
 } from '@platform/contracts';
 import type { CategoryAttribute, OwnerListing } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
+import { editListingPath } from '../../../lib/page-paths';
 import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
 import { ModerationNotice, StatusLine } from '../../../components/listing-visibility';
@@ -352,7 +352,7 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
         rather than below the button that just said no.
       */}
       <div className={styles.actions}>
-        <Link href={`${listingPath(listing.id)}/edit`} className={styles.edit}>
+        <Link href={editListingPath(listing.id)} className={styles.edit}>
           Edit this listing
         </Link>
 
@@ -430,9 +430,13 @@ function OwnerAttributeValue({
  */
 function Unavailable({ kind }: { readonly kind: string }) {
   if (kind === 'signed-out') {
+    // The state first, the likeliest cause second. Claiming an expiry to
+    // somebody who never signed in is a lie that costs them a pointless trip
+    // through the sign-in page wondering what they lost.
     return (
       <p role="alert">
-        Your session has expired. <Link href="/sign-in">Sign in again</Link>.
+        You are not signed in. Your session may have expired —{' '}
+        <Link href="/sign-in">sign in</Link> to see this listing.
       </p>
     );
   }

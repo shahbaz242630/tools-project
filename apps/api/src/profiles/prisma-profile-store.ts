@@ -81,6 +81,39 @@ export class PrismaProfileStore implements ProfileStore {
   }
 
   /**
+   * One query for a whole page of owners.
+   *
+   * **No `address` join, unlike `find`.** The caller wants one enum per person
+   * and this module's rule is to hand out the narrowest fact that answers the
+   * question — reading the encrypted address to decide whether somebody is a
+   * private individual would decrypt a home address per search result, which is
+   * both the slowest and the least defensible way to answer it.
+   *
+   * An empty input is answered without asking the database: `IN ()` is not
+   * something to make Postgres parse, and a page with no results is ordinary.
+   */
+  async findOwnerStatuses(
+    userIds: readonly string[],
+  ): Promise<ReadonlyMap<string, OwnerStatus>> {
+    if (userIds.length === 0) return new Map();
+
+    const rows = await this.prisma.profile.findMany({
+      where: { userId: { in: [...new Set(userIds)] } },
+      select: { userId: true, ownerStatus: true },
+    });
+
+    const statuses = new Map<string, OwnerStatus>();
+    for (const row of rows) {
+      const status = asOwnerStatus(row.ownerStatus, row.userId);
+      // Undeclared is absent rather than present-and-null, which is what the
+      // port promises and what stops a caller reading "no answer" as an answer.
+      if (status !== null) statuses.set(row.userId, status);
+    }
+
+    return statuses;
+  }
+
+  /**
    * Write the profile and the address as one unit.
    *
    * In a transaction because they are two tables holding one person's answer to
