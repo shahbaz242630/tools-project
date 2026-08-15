@@ -28,6 +28,21 @@ export type DeletionOutcome =
    */
   | { readonly kind: 'uncertain'; readonly reason: string };
 
+/*
+ * **A `forbidden` member is owed here, and adding it alone would be worse than
+ * leaving it out.**
+ *
+ * `app/account/delete/actions.ts` tests for `signed-out`, then for `uncertain`,
+ * and treats everything remaining as done. A new member therefore falls straight
+ * through to the success path, and somebody refused by the API would be told
+ * their account had been deleted — the one failure this module's opening
+ * paragraph exists to prevent, arrived at from the opposite direction.
+ *
+ * So the branch in that action is not a follow-up; it is half of the change.
+ * Erasure survives suspension by design (ADR 0024), so nothing produces a 403
+ * here today.
+ */
+
 export interface FetchResponse {
   status: number;
   text: () => Promise<string>;

@@ -33,6 +33,21 @@ export type AccountOutcome =
   | { readonly kind: 'signed-in'; readonly account: MeResponse }
   /** The API rejected the token, or there was no token to send. */
   | { readonly kind: 'signed-out' }
+  /**
+   * **There is deliberately no `forbidden` member here yet, and it is owed.**
+   *
+   * Every other account-facing client in this directory grew one: a 403 means
+   * the API understood us and said no, and collapsing it into `unreachable`
+   * tells somebody the site broke when what happened was a decision about their
+   * account. `/me` opts in to `@AllowsSuspended`, so today nothing can produce
+   * one here — but the next `/me` route that does not opt in inherits the wrong
+   * sentence silently, which is precisely how the profile form came to say it.
+   *
+   * Adding the member is one line. What it also requires is a branch in
+   * `components/account-report.tsx`, whose switch is exhaustive by design and
+   * which `noImplicitReturns` correctly rejects the moment this union grows.
+   * The two changes have to land together.
+   */
   /** No answer at all: refused, DNS failure, or too slow. */
   | { readonly kind: 'unreachable'; readonly reason: string }
   /** It answered, but not with something this version understands. */

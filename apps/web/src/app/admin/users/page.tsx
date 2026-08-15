@@ -1,5 +1,10 @@
-import Link from 'next/link';
+import { auth } from '@clerk/nextjs/server';
+import { headers } from 'next/headers';
 import { AdminUserLookup } from '../../../components/admin-user-lookup';
+import { AdminNav } from '../../../components/admin-nav';
+import { AdminAccessNotice, adminAccess } from '../admin-access';
+import { clientIpFrom } from '../../../lib/client-ip';
+import { webEnv } from '../../../lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +25,21 @@ export const metadata = {
  * an oversight.** The API does, on every request, along with the second factor.
  * A check here would be a second place for the rule to live and the easier of
  * the two to get wrong.
+ *
+ * **It does now *ask*, though, which is a different thing.** This page had no
+ * read at all, so it drew a lookup form — and the suspension controls behind it —
+ * to callers the API was certain to refuse, the same defect slice 2.1 fixed on
+ * `/admin/categories`. `adminAccess` puts the question first and renders the
+ * answer; see `../admin-access.tsx` for why the flag list is what it asks.
  */
-export default function AdminUsersPage() {
+export default async function AdminUsersPage() {
+  const { getToken } = await auth();
+  const access = await adminAccess(
+    webEnv().API_BASE_URL,
+    await getToken(),
+    clientIpFrom((await headers()).get('x-forwarded-for')),
+  );
+
   return (
     <main>
       <h1>Account lookup</h1>
@@ -38,16 +56,13 @@ export default function AdminUsersPage() {
         can download those themselves from their own account page.
       </p>
 
-      <AdminUserLookup />
+      {access.kind === 'permitted' ? (
+        <AdminUserLookup />
+      ) : (
+        <AdminAccessNotice access={access} controls="the lookup" />
+      )}
 
-      <p>
-        <Link href="/admin/activity">Look up an account&rsquo;s activity</Link> ·{' '}
-        <Link href="/admin/approvals">Role changes</Link> ·{' '}
-        <Link href="/admin/feature-flags">Feature flags</Link> ·{' '}
-        <Link href="/admin/categories">Categories</Link> ·{' '}
-        <Link href="/admin/listings">Listing moderation</Link> ·{' '}
-        <Link href="/account">Back to your account</Link>
-      </p>
+      <AdminNav current="/admin/users" />
     </main>
   );
 }

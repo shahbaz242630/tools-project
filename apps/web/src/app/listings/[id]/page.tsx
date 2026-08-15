@@ -430,9 +430,13 @@ function OwnerAttributeValue({
  */
 function Unavailable({ kind }: { readonly kind: string }) {
   if (kind === 'signed-out') {
+    // The state first, the likeliest cause second. Claiming an expiry to
+    // somebody who never signed in is a lie that costs them a pointless trip
+    // through the sign-in page wondering what they lost.
     return (
       <p role="alert">
-        Your session has expired. <Link href="/sign-in">Sign in again</Link>.
+        You are not signed in. Your session may have expired —{' '}
+        <Link href="/sign-in">sign in</Link> to see this listing.
       </p>
     );
   }

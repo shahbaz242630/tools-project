@@ -96,18 +96,28 @@ export class PublicListingSearchController {
     }
 
     /*
-     * **An unplaceable origin is an empty page, not an error**, and the two are
-     * collapsed here rather than in the service on purpose.
+     * **An unplaceable origin is an empty page, not an error — but it says so.**
      *
      * A *valid* postcode the geocoder does not recognise, and a geocoder that is
      * briefly unreachable, are both "we could not search from there". Neither is
      * the caller's fault and neither is worth a 5xx: the postcode was well
      * formed, so a 400 would be wrong, and a 500 would turn a third party's
-     * outage into ours.
+     * outage into ours. That half of slice 3.1a's decision stands.
      *
-     * The service still distinguishes them — it returns null — so **slice 3.1b
-     * can say something more useful on the page** than "nothing found" without
-     * changing anything below this line.
+     * **What did not stand is the other half.** This comment used to promise
+     * that the service *"still distinguishes them — it returns null — so slice
+     * 3.1b can say something more useful on the page"*. 3.1b never did, and the
+     * distinction died here: `{ results: [] }` is byte-identical to a genuinely
+     * quiet area, so `browse-results.tsx` answered a postcodes.io outage with
+     * *"There is nothing listed near you yet. We are just getting started"* — a
+     * confident claim about the whole catalogue, made while we had not looked at
+     * any of it. Two audits called it the most consequential silent failure in
+     * the product, and it was confirmed in a browser on staging.
+     *
+     * `originStatus` is that promise, kept. The status code, the shape and every
+     * existing field are unchanged — a caller reading `results` is unaffected —
+     * and the one new field is what lets the page tell a searcher we could not
+     * look rather than that there is nothing to find.
      */
     if (found === null) {
       return {
@@ -116,6 +126,7 @@ export class PublicListingSearchController {
         radiusMiles: request.radiusMiles,
         page: request.page,
         category: request.category,
+        originStatus: 'unplaceable',
       };
     }
 
@@ -131,6 +142,13 @@ export class PublicListingSearchController {
      * resolved to. The id never leaves the server: it is an internal identifier
      * with no place in a public response, and the slug is what every URL, link
      * and canonical (§8.17) is built from.
+     *
+     * **`placed` is stated rather than left to be inferred from a non-empty
+     * list**, which is the same instinct as echoing the radius: a reader that
+     * has to derive what happened from the data will eventually derive it
+     * wrongly, and here the wrong derivation is the defect this field exists to
+     * close. A search that placed the origin and found nothing is `placed` with
+     * no results, and that combination has to be expressible.
      */
     return {
       results: found.results.map(toSummary),
@@ -138,6 +156,7 @@ export class PublicListingSearchController {
       radiusMiles: request.radiusMiles,
       page: request.page,
       category: request.category,
+      originStatus: 'placed',
     };
   }
 }

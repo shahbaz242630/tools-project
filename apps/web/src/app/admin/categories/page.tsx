@@ -8,6 +8,7 @@ import {
   CreateCategoryForm,
   ReconfigureCategoryForm,
 } from '../../../components/category-form';
+import { AdminNav } from '../../../components/admin-nav';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchCategories } from '../../../lib/admin-categories';
 import type { AdminCategoryOutcome } from '../../../lib/admin-categories';
@@ -97,13 +98,7 @@ export default async function CategoriesPage() {
         </section>
       ) : null}
 
-      <p>
-        <Link href="/admin/approvals">Role changes</Link> ·{' '}
-        <Link href="/admin/feature-flags">Feature flags</Link> ·{' '}
-        <Link href="/admin/users">Look up an account</Link> ·{' '}
-        <Link href="/admin/listings">Listing moderation</Link> ·{' '}
-        <Link href="/account">Back to your account</Link>
-      </p>
+      <AdminNav current="/admin/categories" />
     </main>
   );
 }
@@ -137,7 +132,7 @@ function transportSummary(count: number): string {
 /**
  * Whether this category has been priced at all (§8.2, §3.4).
  *
- * On the summary line for 's reason, and here it matters
+ * On the summary line for `transportSummary`'s reason, and here it matters
  * more: a category nobody has priced takes **no fee on any booking in it**, and
  * it looks exactly like a priced one from this list. §8.2 forbids enabling a
  * category for public booking before §3.4.3's worked example, so an unpriced
@@ -169,9 +164,12 @@ function CategoryList({
 }) {
   switch (outcome.kind) {
     case 'signed-out':
+      // The state first, the likeliest cause second — an expiry stated as fact
+      // is a claim about a session we cannot vouch for.
       return (
         <p role="alert">
-          Your session has expired. <Link href="/sign-in">Sign in again</Link>.
+          You are not signed in. Your session may have expired —{' '}
+          <Link href="/sign-in">sign in</Link> to see the categories.
         </p>
       );
 

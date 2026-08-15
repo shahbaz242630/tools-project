@@ -844,6 +844,7 @@ describe('fetchListingSearch', () => {
     radiusMiles: 5,
     page: 1,
     category: null,
+    originStatus: 'placed',
   };
 
   /** One search, defaulted — the shape `fetchListingSearch` takes from 3.2a. */
@@ -907,7 +908,14 @@ describe('fetchListingSearch', () => {
 
     expect(outcome).toEqual({
       kind: 'loaded',
-      value: { results: [], truncated: false, radiusMiles: 5, page: 1, category: null },
+      value: {
+        results: [],
+        truncated: false,
+        radiusMiles: 5,
+        page: 1,
+        category: null,
+        originStatus: 'placed',
+      },
     });
   });
 

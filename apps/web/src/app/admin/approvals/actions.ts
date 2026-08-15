@@ -40,7 +40,15 @@ function describe(
       };
 
     case 'signed-out':
-      return { status: 'error', message: 'Your session has expired. Sign in again.' };
+      // The state first, the likeliest cause second. "Your session has expired"
+      // alone is a claim about a session we cannot vouch for — and it was being
+      // shown to people who had never had one.
+      return {
+        status: 'error',
+        message:
+          'You are not signed in. Your session may have expired — sign in again ' +
+          'and try once more.',
+      };
 
     case 'unreachable':
     case 'malformed':

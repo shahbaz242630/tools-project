@@ -41,10 +41,10 @@ describe('ProfileFormStatus', () => {
   it('shows the message for a failure that is nobody’s fault', () => {
     render(
       <ProfileFormStatus
-        state={state({ status: 'error', message: 'Your session has expired.' })}
+        state={state({ status: 'error', message: 'You are not signed in.' })}
       />,
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('Your session has expired.');
+    expect(screen.getByRole('alert')).toHaveTextContent('You are not signed in.');
   });
 
   it('still says it was not saved when there is no message to show', () => {

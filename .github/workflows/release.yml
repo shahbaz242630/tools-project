@@ -10,6 +10,17 @@ name: Release
 # `latest`, deliberately: a moving tag makes "what is running in production"
 # unanswerable after the fact, and rollback becomes a rebuild rather than a
 # re-point. See ADR 0012.
+#
+# **Nothing is published until CI has passed for this exact commit.** That was
+# not true until 15 August 2026: this workflow fired on the raw push, so it ran
+# *beside* CI rather than after it, and `Deploy` chained off this workflow
+# finishing. The whole path from branch to staging therefore verified the branch
+# and never the artefact's own commit — squash merge means the SHA that lands on
+# `main` is a new commit whose CI run gates nothing. Branch protection kept the
+# real-world exposure small, but `enforce_admins` is off by design, so a direct
+# push to `main` reached staging with no CI at all. BRD §14's exit gate says a
+# change travels *branch → CI → staging*; the `ci-passed` job below is the
+# arrow in the middle.
 
 on:
   push:
@@ -30,9 +41,108 @@ permissions:
   contents: read
 
 jobs:
+  # The gate. Waits for CI's verdict on `github.sha` — this workflow's own
+  # commit — and refuses to publish unless it succeeded.
+  #
+  # **Deliberately a job here rather than an `on: workflow_run` chain off CI**,
+  # and the reason is the SHA plumbing. `deploy.yml` reads
+  # `github.event.workflow_run.head_sha` to decide what to deploy, and that value
+  # is only trustworthy because this workflow is `push`-triggered: a
+  # `workflow_run`-triggered run takes `GITHUB_SHA` from the tip of the default
+  # branch rather than from the run that triggered it, and what a *second*
+  # `workflow_run` level then reports as `head_sha` is not something GitHub
+  # documents. Chaining would have worked whenever `main` had not moved and
+  # deployed the wrong commit when it had — a race that presents as a successful
+  # deploy of code nobody built. Asking the API directly costs one job and keeps
+  # every SHA in this path meaning exactly what it means today.
+  #
+  # It also gates the thing that actually matters: CI's conclusion **for the
+  # commit being published**, not for the branch it came from.
+  ci-passed:
+    name: CI passed for this commit
+    runs-on: ubuntu-latest
+    # Longer than CI's slowest path (the deploy rehearsal builds four images),
+    # with room for a queued runner. The wait below gives up first and says so.
+    timeout-minutes: 70
+
+    permissions:
+      contents: read
+      # Reading other workflows' runs. The default `contents: read` cannot.
+      actions: read
+
+    steps:
+      - name: Wait for CI on ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          # CI and this workflow start in the same second on a push, so at the
+          # first poll CI's run may not exist yet. An absent run therefore means
+          # "keep waiting", never "nothing to check" — the only thing that ends
+          # this loop with a pass is a completed, successful run.
+          #
+          # **`workflow_dispatch` waits minutes rather than an hour.** That
+          # trigger republishes a commit already on main, whose CI run has
+          # therefore already concluded; there is nothing in flight to wait for
+          # and a five-minute ceiling turns "this commit has no verdict" into a
+          # quick, legible refusal rather than an hour of a spinner. The hatch
+          # still cannot publish an unverified commit, which is the point of the
+          # job — re-run CI on that SHA first, and it becomes a normal release.
+          WAIT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && '300' || '3600' }}
+          POLL_SECONDS: '15'
+        run: |
+          set -euo pipefail
+
+          deadline=$(( $(date +%s) + WAIT_SECONDS ))
+
+          while :; do
+            # `--jq` with defaults rather than raw JSON: an absent run and a
+            # queued one have to be told apart, and both have to survive `set -u`.
+            #
+            # A failed call is an absent verdict, not a failed gate. `set -e`
+            # would otherwise turn a transient 502 from the API into a refused
+            # release, and the deadline below already ends the loop if the
+            # blip turns out to be an outage.
+            snapshot=$(
+              gh api "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+                --jq '(.workflow_runs[0] // {}) | "\(.status // "absent") \(.conclusion // "none") \(.html_url // "-")"' \
+                2>/dev/null || true
+            )
+            if [ -z "$snapshot" ]; then
+              snapshot='absent none -'
+            fi
+            read -r status conclusion url <<< "$snapshot"
+
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then
+                echo "CI succeeded for ${SHA}: ${url}"
+                echo "CI: **success** for \`${SHA}\` — [run](${url})" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+
+              # Includes `cancelled`, which is worth failing on rather than
+              # treating as "superseded": CI groups pushes to main by SHA
+              # precisely so that every commit on main gets its own verdict, and
+              # a cancelled run is the absence of one.
+              echo "::error::CI concluded '${conclusion}' for ${SHA}. Nothing will be published or deployed. ${url}"
+              exit 1
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::CI has not reported on ${SHA} within ${WAIT_SECONDS}s (last seen: ${status}). Refusing to publish an unverified commit."
+              exit 1
+            fi
+
+            echo "CI is '${status}' for ${SHA}; waiting ${POLL_SECONDS}s"
+            sleep "$POLL_SECONDS"
+          done
+
   publish:
     name: Publish ${{ matrix.app }} image
     runs-on: ubuntu-latest
+    # No image exists for a commit CI has not passed, so there is nothing for a
+    # deploy to reference even if one were somehow triggered.
+    needs: ci-passed
 
     permissions:
       contents: read

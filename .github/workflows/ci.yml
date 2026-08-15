@@ -5,10 +5,19 @@ on:
   push:
     branches: [main]
 
-# A newer push to the same branch supersedes an in-flight run.
+# A newer push to the same pull request supersedes an in-flight run — nobody
+# wants a verdict on a commit that has already been replaced.
+#
+# **Pushes to `main` group by SHA instead, and are never cancelled.** From
+# 15 August 2026 `Release` refuses to publish a commit whose CI run did not
+# succeed, so a run that is cancelled because the next merge landed is not a
+# saved minute — it is a commit that can never be released, and therefore can
+# never be a rollback target. Grouping by SHA rather than by ref also means two
+# merges in quick succession run concurrently rather than queueing behind each
+# other.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege by default. Jobs opt in to more where they need it.
 permissions:
@@ -538,6 +547,39 @@ jobs:
 
       - name: Deploy
         run: node scripts/deploy.mjs --env staging --tag "${TAG_A}" --timeout 180
+
+      - name: The worker reports a real health status
+        run: |
+          set -euo pipefail
+
+          # `deploy.mjs` reporting success is not the assertion. Until 15 August
+          # 2026 it reported success for a worker that had crash-looped, because
+          # the image declared no HEALTHCHECK, compose's `--wait` therefore
+          # accepted "running", and the script only ever probed the API and the
+          # web app. Every part of that chain is asserted here rather than
+          # inferred: the image carries a probe, the process refreshes the file
+          # behind it, and Docker agrees.
+          health=$(docker inspect rental-staging-worker \
+                   --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+          echo "worker health: ${health}"
+
+          if [ "$health" = "none" ]; then
+            echo "::error::the worker image declares no HEALTHCHECK, so a deploy cannot gate on it"
+            exit 1
+          fi
+          if [ "$health" != "healthy" ]; then
+            echo "::error::the worker deployed but is ${health}"
+            docker inspect rental-staging-worker --format '{{json .State.Health}}'
+            docker logs rental-staging-worker 2>&1 | tail -40
+            exit 1
+          fi
+
+          # And the signal is what it claims to be: a file this process wrote,
+          # not a probe that returns 0 whatever happens. A health check asserting
+          # "the process exists" is the thing the Dockerfile spent four sessions
+          # correctly refusing to add.
+          docker exec rental-staging-worker node -e \
+            "const{statSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os');const p=join(tmpdir(),'worker-health');process.stdout.write(p+' age '+Math.round((Date.now()-statSync(p).mtimeMs)/1000)+'s')"
 
       - name: Migrations ran, and the schema is really there
         run: |

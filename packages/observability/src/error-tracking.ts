@@ -114,16 +114,45 @@ export function createRecordingErrorTracker(): RecordingErrorTracker {
   };
 }
 
+export type FatalEvent = 'unhandledRejection' | 'uncaughtException';
+
+export interface ProcessHandlerOptions {
+  /**
+   * What to do once the event has been logged and captured.
+   *
+   * **Passing nothing changes what the process does, and not for the better.**
+   * Node terminates on an uncaught exception only while no `uncaughtException`
+   * listener exists; installing one and returning makes the process carry on
+   * from an unknown state, and — because `restart: unless-stopped` never
+   * fires — an orchestrator sees a healthy container serving corrupted work.
+   * The same is true of `unhandledRejection`, which under Node's default
+   * `--unhandled-rejections=throw` would otherwise have become an uncaught
+   * exception and ended the process.
+   *
+   * So every composition root passes a terminator. It is optional only because
+   * a test must be able to observe these handlers without ending the runner.
+   */
+  readonly onFatal?: (event: FatalEvent, error: unknown) => void;
+}
+
 /**
  * Catch what would otherwise terminate the process silently.
  *
  * An unhandled rejection in a background job — a booking expiry, a payout
  * release — would otherwise vanish. Returns a function that removes the
  * handlers, so tests do not leak listeners between cases.
+ *
+ * **This existed and was called by nothing until 15 August 2026.** Both
+ * bootstraps now install it, which is what turns "the process died and printed a
+ * stack trace to stdout" into a structured, correlated, redacted record — and,
+ * equally, gives a Sentry adapter somewhere to be swapped in when there is an
+ * account to point it at (ADR 0008). The provider was deferred; the seam being
+ * unwired was not a decision, it was an omission.
  */
 export function installProcessHandlers(
   logger: Logger,
   tracker: ErrorTracker,
+  options: ProcessHandlerOptions = {},
 ): () => void {
   const onUnhandledRejection = (reason: unknown): void => {
     logger.error('unhandled promise rejection', { error: reason });
@@ -131,6 +160,7 @@ export function installProcessHandlers(
       operation: 'unhandledRejection',
       severity: 'fatal',
     });
+    options.onFatal?.('unhandledRejection', reason);
   };
 
   const onUncaughtException = (error: Error): void => {
@@ -139,6 +169,7 @@ export function installProcessHandlers(
       operation: 'uncaughtException',
       severity: 'fatal',
     });
+    options.onFatal?.('uncaughtException', error);
   };
 
   process.on('unhandledRejection', onUnhandledRejection);

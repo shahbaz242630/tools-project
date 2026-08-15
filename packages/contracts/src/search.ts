@@ -212,6 +212,51 @@ export const searchCategorySchema = z
   .default(null);
 
 /**
+ * Whether we managed to place the origin at all — **the difference between "we
+ * looked and found nothing" and "we never looked"**.
+ *
+ * **This is the field slice 3.1a promised and 3.1b never built.** The API
+ * deliberately answers an unplaceable origin with a 200 and an empty list, and
+ * that part is right: the postcode was well formed so a 400 would be wrong, and
+ * a third party's outage is not ours to return as a 500. What was missing is
+ * that the *reason* stopped at the controller. `results: []` is a claim about
+ * the world, and the page rendered it as one — *"There is nothing listed near
+ * you yet. We are just getting started"* — so an hour of postcodes.io being down
+ * was served to every searcher as a confident statement that the catalogue is
+ * empty. Nothing alerted, because from outside it looked exactly like a quiet
+ * area, which is `geocode_duration_seconds{outcome="unavailable"}`'s whole
+ * reason for existing.
+ *
+ * - **`placed`** — the origin geocoded and the radius query ran. An empty
+ *   `results` here is a fact about the area.
+ * - **`unplaceable`** — the origin did not geocode, so no radius query ran at
+ *   all. `results` is empty because there was nowhere to search *from*, and it
+ *   says nothing whatever about what is near that postcode.
+ *
+ * **Two values rather than three, and the missing third is deliberate.** A
+ * geocoder that is *down* and a valid postcode the geocoder does not *recognise*
+ * want different advice — "try again shortly" against "check the postcode" — and
+ * the difference does exist: `geocodeQuietly` distinguishes them and records
+ * both on `geocode_duration_seconds`. It is collapsed to one null before it
+ * reaches Catalogue, by `ListingProximity`, whose docblock argues for the
+ * collapse. Carrying it further is a change to that port, to
+ * `ListingSearchRepository` behind it and to the composition root that joins
+ * them — worth doing, and a wider change than this one. **When it happens, this
+ * union grows to `'placed' | 'unknown_postcode' | 'geocoder_unavailable'` and
+ * every reader becomes a compile error**, which is the point of a closed union
+ * rather than a boolean.
+ *
+ * **A closed vocabulary, and it must stay closed for a second reason**: BRD §17's
+ * zero-result rate is computed from search outcomes, and a status a caller can
+ * invent is a series a caller can invent. See `ListingSearchOutcome` in
+ * `@platform/observability`, which is the metric side of the same fact and is
+ * held closed by the compiler for exactly that reason.
+ */
+export const SEARCH_ORIGIN_STATUSES = ['placed', 'unplaceable'] as const;
+export type SearchOriginStatus = (typeof SEARCH_ORIGIN_STATUSES)[number];
+export const searchOriginStatusSchema = z.enum(SEARCH_ORIGIN_STATUSES);
+
+/**
  * How far away a listing is, **as a bucket rather than a number** (§8.4.1).
  *
  * §8.4.1 requires displayed distances to be coarse rather than exact, and this
@@ -485,6 +530,23 @@ export interface PublicListingSearchResults {
    * URL, and has no business leaving it.
    */
   readonly category: string | null;
+  /**
+   * Whether we could place the origin — **read this before reading `results`**.
+   *
+   * `results: []` means two opposite things and this is the field that separates
+   * them. With `placed` it is a fact about the area and the page may say so; with
+   * `unplaceable` the search never ran, and any sentence about what is or is not
+   * near that postcode is invented. See `SearchOriginStatus`.
+   *
+   * **Required rather than defaulted, which is the same argument `page` won.**
+   * A response that forgets to say is the exact defect this field was added for
+   * — an absent statement read as a confident one — so it is refused at the
+   * parser rather than assumed to be `placed`. The cost is that a version skew
+   * between the two containers renders *"Search is unavailable at the moment"*
+   * for a few seconds during a deploy, which is the honest failure; the
+   * alternative fails open into the bug.
+   */
+  readonly originStatus: SearchOriginStatus;
 }
 
 const publicListingSearchResultsSchema = z.object({
@@ -503,6 +565,12 @@ const publicListingSearchResultsSchema = z.object({
   radiusMiles: searchRadiusMilesSchema,
   page: searchPageSchema,
   category: searchCategorySchema,
+  // No `.default`, unlike `category` two lines up, and the asymmetry is the
+  // decision rather than an oversight: an absent category legitimately means
+  // "all of them", whereas an absent origin status means the server did not
+  // tell us whether it looked — which is precisely the thing that must never be
+  // guessed. Same treatment as `page`, for the same reason.
+  originStatus: searchOriginStatusSchema,
 });
 
 /**

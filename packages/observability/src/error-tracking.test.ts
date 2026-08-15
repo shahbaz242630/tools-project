@@ -160,6 +160,52 @@ describe('process handlers', () => {
     }
   });
 
+  it('terminates after logging, not instead of it', () => {
+    // The ordering is the whole point. A handler that exits first loses the
+    // record it was installed to produce, and a handler that never exits turns
+    // a crash-and-restart into a container that reads healthy while the process
+    // carries on from an unknown state.
+    const { logger, lines } = capture();
+    const tracker = createRecordingErrorTracker();
+    const fatal: Array<{ event: string; logged: number; captured: number }> = [];
+
+    const uninstall = installProcessHandlers(logger, tracker, {
+      onFatal: (event) => {
+        fatal.push({ event, logged: lines.length, captured: tracker.events.length });
+      },
+    });
+
+    try {
+      process.emit('uncaughtException', new Error('fatal'));
+      process.emit('unhandledRejection', new Error('orphaned'), Promise.resolve());
+
+      expect(fatal).toEqual([
+        { event: 'uncaughtException', logged: 1, captured: 1 },
+        { event: 'unhandledRejection', logged: 2, captured: 2 },
+      ]);
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('hands the terminator the error it is dying of', () => {
+    const { logger } = capture();
+    const tracker = createRecordingErrorTracker();
+    const error = new Error('fatal');
+    const seen: unknown[] = [];
+
+    const uninstall = installProcessHandlers(logger, tracker, {
+      onFatal: (_event, reason) => seen.push(reason),
+    });
+
+    try {
+      process.emit('uncaughtException', error);
+      expect(seen).toEqual([error]);
+    } finally {
+      uninstall();
+    }
+  });
+
   it('removes its listeners on uninstall so tests do not leak them', () => {
     const { logger } = capture();
     const tracker = createRecordingErrorTracker();

@@ -212,11 +212,18 @@ export function ModerationNotice({ listing }: { readonly listing: OwnerListing }
         again. The branch exists because a page must not render "why: null", and
         because the honest sentence for a state that somehow arrived without one is
         that we cannot show what we were not given.
+
+        **And it no longer says "ask us", which is what it said until the Phase
+        0–3 audit.** There is nobody to ask: no contact page, no email channel
+        until Phase 6, and by this platform's own principle no support desk after
+        it either. Pointing somebody at a door that does not open is a worse
+        answer than saying the page holds everything we have — especially here,
+        where the reader has just been refused and is looking for a person.
       */}
       {listing.moderationReason === null ? (
         <p>
-          No reason was recorded, which should not happen. Ask us and we will tell you
-          what we know.
+          No reason was recorded, which should not happen. This page holds everything we
+          can show you about the decision.
         </p>
       ) : (
         <>
@@ -225,10 +232,23 @@ export function ModerationNotice({ listing }: { readonly listing: OwnerListing }
         </>
       )}
 
+      {/*
+        **Neither branch offers a channel, and the refused one used to.** It read
+        "If you think this is wrong, get in touch" — an appeal route with nothing
+        behind it: there is no contact page, messaging is Phase 6, and the
+        platform's own rule is that no support desk is coming. The reader most
+        likely to act on that sentence is the one most owed a true answer, so it
+        now says plainly that there is nowhere to appeal yet and that this page
+        is where a reversal would show up.
+
+        **The reviewing branch is unchanged**, because "check back here" was
+        already the honest instruction rather than a promise — the same reasoning
+        that keeps both branches from implying an email.
+      */}
       <p>
         {reviewing
           ? 'Check back here — this page shows the current decision. We do not send an email about it yet.'
-          : 'If you think this is wrong, get in touch. This page shows the current decision; we do not send an email about it yet.'}
+          : 'There is no way to challenge this yet. This page shows the current decision, and it is where a reversal would appear; we do not send an email about it.'}
       </p>
     </section>
   );

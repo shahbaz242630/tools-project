@@ -22,6 +22,16 @@ import {
 /** Longer than a read: this assembles several tables and decrypts an address. */
 export const EXPORT_TIMEOUT_MS = 10_000;
 
+/**
+ * **A `forbidden` member is owed here too**, for the reason written out in
+ * `activity.ts`. It cannot land on its own: `app/account/data/download/route.ts`
+ * funnels everything that is not `ready` into one 502 and reads `outcome.reason`
+ * off it, so a member without a reason is a compile error there — which is the
+ * type system pointing at the copy that has to be written, not an obstacle.
+ *
+ * Export survives suspension by design (ADR 0024), so nothing produces a 403
+ * here today.
+ */
 export type ExportOutcome =
   | { readonly kind: 'ready'; readonly body: string; readonly exportedAt: string }
   | { readonly kind: 'signed-out' }

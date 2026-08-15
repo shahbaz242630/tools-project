@@ -82,9 +82,12 @@ function Body({
   readonly categories: Awaited<ReturnType<typeof fetchCategoryOptions>>;
 }) {
   if (listing.kind === 'signed-out' || categories.kind === 'signed-out') {
+    // The state first, the likeliest cause second — an expiry stated as fact is
+    // a claim about a session we cannot vouch for.
     return (
       <p role="alert">
-        Your session has expired. <Link href="/sign-in">Sign in again</Link>.
+        You are not signed in. Your session may have expired —{' '}
+        <Link href="/sign-in">sign in</Link> to edit this listing.
       </p>
     );
   }
@@ -108,11 +111,22 @@ function Body({
      * picker's bound cut it (ADR 0035). Rare, and the honest answer is to say so
      * rather than draw a form with no category-specific fields: saving that
      * would clear every answer the owner had given.
+     *
+     * **It used to end "Please get in touch".** There is no contact page, no
+     * email channel until Phase 6, and by this project's own principle there
+     * will not be a support desk after it either — we are an online platform
+     * with no manual operations. Pointing somebody at a channel that will not
+     * answer is worse than telling them plainly that nothing can be done yet,
+     * because they wait for a reply instead of reading the rest of the sentence.
      */
     return (
       <p role="alert">
         This listing&rsquo;s category is not available at the moment, so it cannot be
-        edited. Nothing has been changed. Please get in touch.
+        edited. Nothing has been changed and nothing has been lost — the listing and
+        every answer on it are still stored, and{' '}
+        <Link href={listingPath(listing.value.id)}>its own page</Link> still shows them.
+        Editing returns on its own if the category comes back. There is no way to force
+        it from here, and we do not send an email when it does.
       </p>
     );
   }

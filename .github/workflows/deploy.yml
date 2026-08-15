@@ -9,6 +9,15 @@ name: Deploy
 # A push to `main` starts Release and Deploy at the same moment, and Deploy would
 # then ask the box to pull image tags that are still being built — a failure that
 # looks like a broken deploy and is really a race. See ADR 0040.
+#
+# **Release now waits for CI's verdict on the commit it publishes**, so the full
+# path is branch → CI → Release → Deploy and every arrow is a real dependency.
+# Nothing here changed to achieve that, and that is the point: `Release` stayed
+# `push`-triggered and gates internally, so `github.event.workflow_run.head_sha`
+# below still means "the commit that was pushed to main". A `workflow_run` chain
+# off CI would have made this workflow read the head_sha of a run that was itself
+# `workflow_run`-triggered, whose value GitHub does not define. See the `ci-passed`
+# job in release.yml.
 
 on:
   workflow_run:

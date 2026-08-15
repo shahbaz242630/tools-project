@@ -3274,6 +3274,84 @@ describe('searching for listings near a postcode', () => {
       expect(results.results).toEqual([]);
       expect(results.truncated).toBe(false);
     });
+
+    /**
+     * **The test that fails without the fix, at the HTTP boundary.**
+     *
+     * The empty page above is correct and stays correct — a well-formed postcode
+     * is not a 400, and a provider outage is not our 500. What was wrong is that
+     * the response said nothing else, so `{ results: [] }` here was byte-identical
+     * to `{ results: [] }` from a genuinely quiet area, and Browse rendered the
+     * outage as *"There is nothing listed near you yet. We are just getting
+     * started"*. Confirmed in a browser on staging.
+     *
+     * **Asserted at the route rather than on the service** deliberately, and for
+     * the reason slice 3.1f gives about its own counters: this distinction had
+     * been available on the service since 3.1a — it returns null — and died in the
+     * controller, which is precisely the layer a service-level test cannot see.
+     * The listing seeded a metre away is the teeth: it is inside the radius and
+     * must still not come back, so nothing here can pass by accidentally finding
+     * nothing.
+     */
+    it('says it could not place the origin, rather than implying an empty area', async () => {
+      await givenAListing(800);
+      listings.proximity.cannotPlace('BS7 8AA');
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.originStatus).toBe('unplaceable');
+    });
+
+    it('still echoes the radius, page and category it was asked about', async () => {
+      /*
+       * The page has to keep drawing its own form and its own links from this
+       * response, so a search that could not run still has to say what was asked
+       * — otherwise correcting a postcode would silently drop the radius and the
+       * filter the searcher had already chosen.
+       */
+      listings.proximity.cannotPlace('BS7 8AA');
+
+      const results = parsePublicListingSearchResults(
+        (await search({ radiusMiles: 20, category: 'outdoor-gardening' })).json(),
+      );
+
+      expect(results.radiusMiles).toBe(20);
+      expect(results.category).toBe('outdoor-gardening');
+      expect(results.page).toBe(1);
+      expect(results.originStatus).toBe('unplaceable');
+    });
+  });
+
+  /**
+   * The other half of the same distinction, and the half that is easy to leave
+   * untested.
+   *
+   * A field that only ever reports failure is one nobody notices is stuck; these
+   * pin that a search which *did* run says so, whether or not it found anything.
+   * The second case is the one that carries the meaning — an empty result with
+   * `placed` is the platform saying "we looked, and there is nothing", which is
+   * the only circumstance in which the page is entitled to say so.
+   */
+  describe('an origin it could place', () => {
+    it('says the origin was placed when it found something', async () => {
+      await givenAListing(800);
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toHaveLength(1);
+      expect(results.originStatus).toBe('placed');
+    });
+
+    it('says the origin was placed even when the radius is empty', async () => {
+      // The combination the whole field exists to separate from the one above:
+      // no results, and they mean something.
+      await givenAListing(milesToMetres(8));
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results).toEqual([]);
+      expect(results.originStatus).toBe('placed');
+    });
   });
 
   /**

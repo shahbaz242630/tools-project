@@ -342,13 +342,29 @@ describe('parsing search results', () => {
     ownerStatus: 'private_owner',
   };
 
+  /**
+   * A complete, valid response — the base each case below deviates from by one
+   * field.
+   *
+   * **Written when `originStatus` was added, and it fixed something on the way
+   * in.** Three of the refusal tests here built their fixture by hand and left
+   * `page` out of it, so *"refuses a fractional distance"* was in fact passing on
+   * the missing page and would have gone on passing with the distance rule
+   * deleted. A refusal test that can be satisfied by the wrong field is a test
+   * about nothing in particular; one deliberate deviation from a known-good base
+   * is what makes it about what it says.
+   */
+  const RESULTS = {
+    results: [RESULT],
+    truncated: false,
+    radiusMiles: 5,
+    page: 1,
+    category: null,
+    originStatus: 'placed',
+  };
+
   it('accepts a page of results', () => {
-    const parsed = parsePublicListingSearchResults({
-      results: [RESULT],
-      truncated: false,
-      radiusMiles: 5,
-      page: 1,
-    });
+    const parsed = parsePublicListingSearchResults(RESULTS);
 
     expect(parsed.results[0]?.distance).toEqual({ kind: 'under_a_mile' });
     expect(parsed.truncated).toBe(false);
@@ -358,10 +374,10 @@ describe('parsing search results', () => {
 
   it('accepts an approximate distance', () => {
     const parsed = parsePublicListingSearchResults({
+      ...RESULTS,
       results: [{ ...RESULT, distance: { kind: 'approximate', miles: 3 } }],
       truncated: true,
       radiusMiles: 20,
-      page: 1,
     });
 
     expect(parsed.results[0]?.distance).toEqual({ kind: 'approximate', miles: 3 });
@@ -369,23 +385,28 @@ describe('parsing search results', () => {
 
   it('carries which page it is, so the pager steps from a fact', () => {
     expect(
-      parsePublicListingSearchResults({
-        results: [RESULT],
-        truncated: true,
-        radiusMiles: 5,
-        page: 7,
-      }).page,
+      parsePublicListingSearchResults({ ...RESULTS, truncated: true, page: 7 }).page,
     ).toBe(7);
   });
 
+  /**
+   * A valid response with one field taken out.
+   *
+   * **Removal rather than a hand-built partial**, so the two tests about a
+   * missing field cannot drift from what a complete response looks like. A
+   * hand-built one is how *"refuses a fractional distance"* came to be passing on
+   * an absent `page`: the fixture went stale as the shape grew, and the test kept
+   * reporting green about something it was no longer exercising.
+   */
+  const withoutTheField = (field: 'page' | 'originStatus'): Record<string, unknown> => {
+    const copy: Record<string, unknown> = { ...RESULTS };
+    if (field === 'page') delete copy.page;
+    else delete copy.originStatus;
+    return copy;
+  };
+
   it('refuses a response with no page, which would leave the pager guessing', () => {
-    expect(() =>
-      parsePublicListingSearchResults({
-        results: [RESULT],
-        truncated: false,
-        radiusMiles: 5,
-      }),
-    ).toThrow();
+    expect(() => parsePublicListingSearchResults(withoutTheField('page'))).toThrow();
   });
 
   /*
@@ -397,9 +418,8 @@ describe('parsing search results', () => {
   it('refuses a fractional distance, which would mean an exact one leaked', () => {
     expect(() =>
       parsePublicListingSearchResults({
+        ...RESULTS,
         results: [{ ...RESULT, distance: { kind: 'approximate', miles: 2.4 } }],
-        truncated: false,
-        radiusMiles: 5,
       }),
     ).toThrow();
   });
@@ -407,10 +427,67 @@ describe('parsing search results', () => {
   it('refuses an unknown distance shape', () => {
     expect(() =>
       parsePublicListingSearchResults({
+        ...RESULTS,
         results: [{ ...RESULT, distance: { kind: 'exact', metres: 812 } }],
-        truncated: false,
-        radiusMiles: 5,
       }),
     ).toThrow();
+  });
+
+  /**
+   * Whether the origin was placed at all.
+   *
+   * **The field exists because an empty `results` was being read as a fact about
+   * the world.** A postcodes.io outage was answered with a 200 and no listings,
+   * and Browse rendered *"There is nothing listed near you yet"* — a claim about
+   * the whole catalogue, made without a single query having run.
+   */
+  describe('whether the origin could be placed', () => {
+    it('accepts a page that says the origin could not be placed', () => {
+      const parsed = parsePublicListingSearchResults({
+        ...RESULTS,
+        results: [],
+        originStatus: 'unplaceable',
+      });
+
+      expect(parsed.originStatus).toBe('unplaceable');
+      expect(parsed.results).toEqual([]);
+    });
+
+    it('says a search that ran and found nothing is still a placed origin', () => {
+      // The combination the whole field turns on: no results, and they mean
+      // something. If this could not be expressed there would be no difference
+      // left to carry.
+      const parsed = parsePublicListingSearchResults({ ...RESULTS, results: [] });
+
+      expect(parsed.originStatus).toBe('placed');
+    });
+
+    /**
+     * **This is the test that fails without the fix**, at the contract layer.
+     *
+     * Before `originStatus` existed, a response with no statement about the
+     * origin parsed cleanly and every reader assumed the search had run. Refused
+     * rather than defaulted, and the direction of the default is the argument:
+     * assuming `placed` is assuming we looked, which is exactly the assumption
+     * that put *"we are just getting started"* in front of somebody during a
+     * provider outage.
+     */
+    it('refuses a response that does not say whether the origin was placed', () => {
+      expect(() =>
+        parsePublicListingSearchResults(withoutTheField('originStatus')),
+      ).toThrow();
+    });
+
+    /*
+     * The vocabulary is closed, and it has to stay closed: BRD §17's zero-result
+     * rate is computed from these outcomes, so a status a server can invent is a
+     * bucket nobody is counting. A third value is a deliberate change here and a
+     * compile error in every reader, which is the point.
+     */
+    it('refuses a status outside the closed vocabulary', () => {
+      expect(() =>
+        parsePublicListingSearchResults({ ...RESULTS, originStatus: 'searched' }),
+      ).toThrow();
+    });
   });
 });

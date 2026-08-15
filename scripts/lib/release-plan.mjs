@@ -203,9 +203,47 @@ export function planRollback(state) {
     action: 'rollback',
     target: previous,
     from: state.current,
+    /*
+     * Deliberately null, and it does not mean the same thing as a first deploy's
+     * null. There *is* an earlier release here — it is `state.current`, the one
+     * being abandoned — and returning to it would be reverting to the thing
+     * somebody just decided was broken. So a rollback has nowhere automatic to
+     * go, on purpose.
+     *
+     * What that used to cost is defect 5 of the August 2026 audit: `deploy.mjs`
+     * read this null, printed the first-deploy message, and **wrote no state at
+     * all**. The older release was left serving while `state.current` still
+     * named the newer one — and because history was also untouched, running
+     * `--rollback` again re-deployed the very release that had just failed,
+     * which during an incident looks like a command that did nothing. See
+     * `planFailureResponse`.
+     */
     fallback: null,
     isRedeploy: false,
   };
+}
+
+/**
+ * What to do when a release fails its health check.
+ *
+ * Three genuinely different situations, and the difference is what to tell the
+ * operator and what to record — not merely which message to print.
+ *
+ * - **revert** — an ordinary deploy over a known-good release. Go back to it.
+ *   Recorded state is already correct and must not be touched.
+ * - **stuck** — the first deploy to this environment. Nothing has ever served
+ *   here, so there is nowhere to go and the broken release stays up.
+ * - **stranded** — a rollback whose target is also unhealthy. The older release
+ *   is what is serving, badly, and recorded state still names the newer one.
+ *   Recording the move is not a claim that it is healthy; it is the difference
+ *   between `--status` describing the box and `--status` describing a wish, and
+ *   it is what makes a second `--rollback` walk one step further back instead of
+ *   redeploying the release that just failed.
+ */
+export function planFailureResponse(plan) {
+  if (plan.action === 'rollback') return { response: 'stranded' };
+  if (plan.fallback === null) return { response: 'stuck' };
+  return { response: 'revert', target: plan.fallback };
 }
 
 /**
@@ -407,6 +445,68 @@ export function interpretProbe({ exitCode, stdout }) {
   // Container not up yet, HTTP server not listening, or exec failed. All
   // indistinguishable from here and all worth retrying.
   return { outcome: 'starting', detail: body };
+}
+
+/**
+ * The same three outcomes for the worker, read from Docker rather than from the
+ * application.
+ *
+ * The worker answers no port, so there is nothing to fetch. What it does have
+ * from slice 0.9's remediation is a container HEALTHCHECK that goes stale unless
+ * the process refreshes a file behind a Redis PING — so the question here is what
+ * Docker thinks of it, which is `docker inspect` and two fields.
+ *
+ * **Two fields rather than one, because they fail differently.** A crash-looping
+ * worker is `restarting` with no useful health status at all; a connected-to-
+ * nothing worker is `running` and `unhealthy`. Reading only health would call the
+ * first one starting forever, and reading only state would call the second one
+ * ready.
+ *
+ * **An image with no HEALTHCHECK reports ready, and says so.** Every image built
+ * before this existed is a legitimate rollback target, and a probe added later
+ * must not be what stops an incident being ended. The alternative — treating an
+ * absent probe as failure — would mean the first rollback after this shipped
+ * could not complete.
+ */
+export function interpretWorkerProbe({ exitCode, stdout }) {
+  const body = (stdout ?? '').trim();
+
+  if (exitCode !== 0 || body === '') {
+    // No container yet, or docker could not answer. Both worth retrying.
+    return { outcome: 'starting', detail: body };
+  }
+
+  const [state, health] = body.split(/\s+/);
+
+  if (state !== 'running') {
+    // `restarting` is a crash loop and `exited` is a process that gave up.
+    // Neither is going to be fixed by waiting, but `created` and `restarting`
+    // can still resolve, so only a dead one is definitive.
+    if (state === 'exited' || state === 'dead') {
+      return { outcome: 'unhealthy', detail: `the worker container is ${state}` };
+    }
+    return { outcome: 'starting', detail: `the worker container is ${state}` };
+  }
+
+  if (health === 'none') {
+    return {
+      outcome: 'ready',
+      unverified: true,
+      detail: 'the worker image declares no health check',
+    };
+  }
+
+  if (health === 'healthy') return { outcome: 'ready' };
+
+  if (health === 'unhealthy') {
+    return {
+      outcome: 'unhealthy',
+      detail:
+        'the worker is running but its health check is failing — it is most likely not connected to Redis',
+    };
+  }
+
+  return { outcome: 'starting', detail: `worker health is ${health ?? 'unknown'}` };
 }
 
 /**

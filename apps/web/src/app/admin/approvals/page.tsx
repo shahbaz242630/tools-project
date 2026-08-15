@@ -1,9 +1,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { headers } from 'next/headers';
-import Link from 'next/link';
 import { ApprovalQueue } from '../../../components/approval-queue';
 import type { QueueOutcome } from '../../../components/approval-queue';
 import { RoleChangeForm } from '../../../components/role-change-form';
+import { AdminNav } from '../../../components/admin-nav';
+import { AdminAccessNotice, accessFrom } from '../admin-access';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchPendingApprovals } from '../../../lib/admin-approvals';
 import { fetchAccount } from '../../../lib/account';
@@ -40,6 +41,8 @@ export default async function ApprovalsPage() {
     fetchAccount(api, token, undefined, clientIp),
   ]);
 
+  const access = accessFrom(queue);
+
   return (
     <main>
       <h1>Role changes</h1>
@@ -63,18 +66,26 @@ export default async function ApprovalsPage() {
 
       <section aria-labelledby="propose">
         <h2 id="propose">Propose a change</h2>
-        <RoleChangeForm />
+        {/*
+          Only offered to somebody who could actually use it.
+
+          The queue read above is the gate, so this page pays for no extra
+          request: it is refused by exactly the guard that will refuse the
+          proposal — the role, a second factor verified in the last 12 hours
+          (ADR 0021), and not being suspended (ADR 0024). Until this, the queue
+          correctly said "you do not have access" and a complete, enabled form
+          sat underneath inviting the same person to propose a role change.
+        */}
+        {access.kind === 'permitted' ? (
+          <RoleChangeForm />
+        ) : (
+          <AdminAccessNotice access={access} controls="this form" />
+        )}
       </section>
 
       <ApprovalQueue outcome={toQueueOutcome(queue)} viewerId={viewerIdFrom(account)} />
 
-      <p>
-        <Link href="/admin/users">Look up an account</Link> ·{' '}
-        <Link href="/admin/activity">Look up an account&rsquo;s activity</Link> ·{' '}
-        <Link href="/admin/categories">Categories</Link> ·{' '}
-        <Link href="/admin/listings">Listing moderation</Link> ·{' '}
-        <Link href="/account">Back to your account</Link>
-      </p>
+      <AdminNav current="/admin/approvals" />
     </main>
   );
 }

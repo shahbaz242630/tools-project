@@ -35,6 +35,13 @@ const WAIVER = /invariant-ok:\s*([\w-]+)\s*[—-]\s*\S+/;
  * @property {string} message
  * @property {string} why
  * @property {(path: string) => boolean} [exempt]
+ * @property {(contents: string) => boolean} [scope]
+ *
+ * `exempt` decides from the path alone and is what keeps this checker fast.
+ * `scope` reads the file, and exists for the one rule whose subject is a
+ * *directive* rather than a location: scoping by filename meant a `'use server'`
+ * file named anything else was never checked, which is a rule that enforces a
+ * naming convention while claiming to enforce a Next.js constraint.
  */
 
 /** @type {Rule[]} */
@@ -54,13 +61,36 @@ const RULES = [
   },
   {
     id: 'no-direct-env',
-    pattern: /process\.env\s*[.[]/,
+    /*
+     * **The object, not only a property read off it.** This was
+     * `process\.env\s*[.[]`, which required a `.` or a `[` to follow — so
+     * `const { DATABASE_URL } = process.env` and `const e = process.env` were
+     * both invisible, and destructuring is the more idiomatic of the two. A
+     * word boundary catches every way of getting hold of it while still not
+     * matching `process.environment`.
+     */
+    pattern: /process\.env\b/,
     message: 'direct process.env access',
     why: 'Environment access goes through @platform/config so it is validated once at startup and connection strings are composed rather than read (ADR 0006).',
+    /*
+     * **The files that are allowed to read it, named.** The exemption was
+     * `p.includes('.config.')`, which exempted any path anywhere containing
+     * that substring — application code included, since nothing stops a file
+     * being called `fee.config.ts`. Only one config file in the tree actually
+     * reads the environment, and it is Prisma's, which a CLI loads outside our
+     * process before `loadEnv` could have run.
+     *
+     * `packages/config/src/*env.ts` rather than `.../env`: the schema is four
+     * modules now — the base one plus web, identity and personal-data — and
+     * three of them take `process.env` as a default parameter, which the old
+     * pattern happened not to match. Widening the exemption alongside the
+     * pattern keeps the rule's meaning ("only @platform/config reads the
+     * environment") rather than its previous accident.
+     */
     exempt: (p) =>
-      p.includes('packages/config/src/env') ||
+      /^packages\/config\/src\/[\w-]*env\.ts$/.test(p) ||
       p.startsWith('scripts/') ||
-      p.includes('.config.'),
+      p === 'packages/database/prisma.config.ts',
   },
   {
     id: 'no-console',
@@ -94,14 +124,42 @@ const RULES = [
     pattern: /^export (const|let|var) (?!\w+\s*(:[^=]+)?=\s*async)/,
     message: 'a non-function export from a "use server" file',
     why: "Next turns every export of a `'use server'` file into a server action, and an exported object makes the route's generated action loader throw \"A 'use server' file can only export async functions, found object\". **It throws when the action is invoked, not when the page renders**, so the form looks perfect until somebody presses the button — which is how this was found, after it had been merged in six files. Put the state type and its initial value in a sibling `state.ts`.",
-    // Only actions files under app/ declare `'use server'` in this codebase.
-    // Scoping by path keeps the rule line-based, which is what makes the whole
-    // checker fast enough to sit on a pre-commit hook.
-    exempt: (p) => !/app\/.*actions\.ts$/.test(p.replace(/\\/g, '/')),
+    /*
+     * **The directive, not the filename.** This was
+     * `exempt: (p) => !/app\/.*actions\.ts$/.test(p)`, which is a rule about
+     * where server actions have been put rather than about what makes an export
+     * a server action. Every `'use server'` file in the tree happens to be named
+     * `actions.ts` today; the next one to be named anything else — `mutations.ts`,
+     * `submit.ts`, a route handler — would have been unchecked, and the failure
+     * mode is the reason the rule exists: it throws when the button is pressed,
+     * not when the page renders.
+     *
+     * Reading the file costs nothing measurable here — `tracked` has already
+     * read it for the line scan — so the "keeps the checker fast" argument the
+     * old comment made was never paying for anything.
+     *
+     * Deliberately conservative about *where* the directive appears: a
+     * function-level `'use server'` also brings the file into scope, which can
+     * only over-report. Over-reporting is waivable on the line; under-reporting
+     * shipped in six files once already.
+     */
+    scope: (contents) => /^\s*(['"])use server\1\s*;?\s*$/m.test(contents),
   },
   {
     id: 'seller-tax-profile-is-inactive',
-    pattern: /\bsellerTaxProfile\b/,
+    /*
+     * **Both cases and both numbers.** `\bsellerTaxProfile\b` is the Prisma
+     * client accessor and nothing else: it missed `SellerTaxProfile`, which is
+     * how the type is imported, and `sellerTaxProfiles`, which is how a relation
+     * or a `findMany` result is named. Any of the three would be application
+     * code reaching an entity that must stay empty.
+     *
+     * Not the snake-case table name: `seller_tax_profiles` appears in prose
+     * across the contracts package and the migrations, explaining what this
+     * table is *not*, and a rule that fires on documentation of itself gets
+     * waived everywhere and then means nothing.
+     */
+    pattern: /\b[sS]ellerTaxProfiles?\b/,
     message: 'application code reading or writing the seller tax profile',
     why: 'BRD §8.14.2 requires this entity to exist but stay inactive while every category is flagged `none`, so activating reporting is a configuration switch rather than a rebuild. Nothing should reach it yet. When it does activate, it becomes the fourth table holding personal data — and nothing enumerates those, so it must arrive together with `PersonalDataEraser` and both `PersonalDataSource` projections, or it will be silently missing from account deletion and from the data export.',
   },
@@ -158,6 +216,9 @@ for (const file of files) {
 
   for (const rule of RULES) {
     if (rule.exempt?.(file.replace(/\\/g, '/'))) continue;
+    // A rule may also decide from the file's own contents — see the Rule
+    // typedef. Checked after `exempt` so a path-based skip still costs nothing.
+    if (rule.scope !== undefined && !rule.scope(contents)) continue;
 
     lines.forEach((raw, index) => {
       const code = stripNoise(raw);

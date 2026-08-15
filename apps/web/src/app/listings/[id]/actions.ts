@@ -82,10 +82,27 @@ export async function publishListingAction(
       };
 
     case 'signed-out':
+      /*
+       * **The state first, the likeliest cause second** — the wording
+       * `listings/new/actions.ts` settled on, for the reason recorded there:
+       * "your session has expired" is a claim about a session we cannot vouch
+       * for, and it was being shown to people who had never had one.
+       *
+       * **The trailing clause names the button they pressed**, because the two
+       * actions in this file are not interchangeable and a generic "try once
+       * more" would leave somebody wondering whether a half-published listing
+       * is now visible to strangers. It says what is visible rather than what
+       * the status is: this control also *resumes* a paused listing, so
+       * "it is still a draft" would be wrong half the time — but both states
+       * it can be pressed from are ones nobody else can see.
+       */
       return {
         ...INITIAL_PUBLICATION_STATE,
         status: 'error',
-        message: 'Your session has expired. Sign in again.',
+        message:
+          'You are not signed in, so this listing was not published and nobody ' +
+          'else can see it. Your session may have expired — sign in again and ' +
+          'publish it once more.',
       };
 
     case 'invalid':
@@ -203,10 +220,26 @@ export async function pauseListingAction(
       };
 
     case 'signed-out':
+      /*
+       * **The mirror of the publish action's, and the trailing clause is the
+       * half that had to change.** The refusal is identical; what it leaves
+       * behind is the opposite. Somebody who pressed Pause wanted their listing
+       * off the public site, so the fact they need first is that it is still
+       * on it — telling them only to sign in again would let them walk away
+       * believing an item they cannot lend is no longer being offered.
+       *
+       * **"Still published" rather than "still public"**: this control only
+       * renders on a `PUBLISHED` listing, but a published listing an
+       * administrator has hidden is not visible to anybody, and the stronger
+       * word would be a claim about moderation state this action never reads.
+       */
       return {
         ...INITIAL_PUBLICATION_STATE,
         status: 'error',
-        message: 'Your session has expired. Sign in again.',
+        message:
+          'You are not signed in, so this listing was not paused and is still ' +
+          'published. Your session may have expired — sign in again and pause ' +
+          'it once more.',
       };
 
     case 'invalid':

@@ -11,6 +11,13 @@ Entries in `pnpm.overrides` are recorded at the bottom. Those are fixes rather
 than exceptions, but a reviewer finding a pinned transitive dependency deserves
 to know why it is pinned and when the pin can go.
 
+**Reviewed licences are recorded in the middle section**, and follow the same
+rule: `scripts/check-licences.mjs` fails on a weak-copyleft dependency unless it
+is written down here _and_ repeated in that file's `REVIEWED` list. Two homes for
+one decision is normally a smell; here it is the point, because the list in the
+script is what the build reads and this file is what a human reads, and a
+mismatch between them is a decision somebody made without recording it.
+
 ---
 
 ## GHSA-mh99-v99m-4gvg — `brace-expansion` ReDoS
@@ -57,6 +64,62 @@ us in configuration files.
 If `brace-expansion` backports the fix to the 1.x or 2.x lines, remove this
 entry and take the patch. If either affected package ever becomes a runtime
 dependency, this exception is void and must be re-assessed immediately.
+
+---
+
+# Licences reviewed and accepted
+
+Weak copyleft is usually fine when a dependency is merely linked and unmodified,
+and it is never fine by default. `pnpm licences:check` fails on every one of them
+until the judgement below exists.
+
+Both entries are matched by **pattern** in `scripts/check-licences.mjs`, because
+the package name carries the platform: what resolves on the maintainer's Windows
+machine is not what resolves on the ubuntu CI runner or in the deployed
+`linux/amd64` image. An exact name would have passed locally and reddened CI.
+
+## `LGPL-3.0-or-later` — `@img/sharp-*`, `@img/sharp-libvips-*`
+
+|                         |                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| Added                   | 2026-08-15                                                                                   |
+| Kind                    | Weak copyleft (library)                                                                      |
+| Declared as             | `Apache-2.0 AND LGPL-3.0-or-later` on the wrapper, `LGPL-3.0-or-later` on the libvips binary |
+| Reached through         | `@app/web` → `next` → `sharp` → the platform-specific prebuilt binary                        |
+| Reachable in production | **Yes** — Next uses it for image optimisation                                                |
+| Review trigger          | Any `sharp` major, or the first time we patch, rebuild or statically link libvips            |
+
+**Why it is accepted.** The LGPL half is libvips, a native library loaded
+dynamically by `sharp` at runtime. We do not modify it, do not statically link
+it, and — the clause that actually settles it — **we distribute nothing**. The
+LGPL's obligations attach to conveying a work; we run a hosted service and the
+container image is ours to run, not something a user receives. Section 4's
+combined-work conditions are satisfied by dynamic linking in any case, and the
+unmodified library remains replaceable in the image.
+
+**What would change this.** Shipping a downloadable artefact containing it, or
+modifying libvips, voids this exception immediately and needs a fresh decision.
+So does statically linking it, which would make the "replaceable" argument false.
+
+## `EPL-2.0` — `elkjs`
+
+|                         |                                                                          |
+| ----------------------- | ------------------------------------------------------------------------ |
+| Added                   | 2026-08-15                                                               |
+| Kind                    | Weak copyleft (file-level)                                               |
+| Reached through         | `@prisma/client` → `prisma` (peer) → `@prisma/studio-core` → `elkjs`     |
+| Reachable in production | **No** — a graph-layout library inside Prisma Studio, which we never run |
+| Review trigger          | Any Prisma major, or anything that makes Prisma Studio part of a runtime |
+
+**Why it is accepted.** EPL-2.0 is file-level copyleft: the obligation is to
+publish modifications _to EPL-licensed files_, not to the program that uses them.
+We have never opened one. It arrives only as a transitive dependency of Prisma
+Studio, a local development tool — `pnpm deploy --prod` does not carry the
+`prisma` CLI into the runtime image, and nothing in `apps/*` imports it.
+
+**What would change this.** Vendoring, patching or forking `elkjs` voids this.
+So does anything that puts Prisma Studio in front of a user, which would make it
+a distributed component rather than a local tool.
 
 ---
 

@@ -288,6 +288,19 @@ services:
       # ADR 0038, and required for the same reason as on the API above.
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:?set POSTGRES_SSLMODE}
 
+    # No `healthcheck:` here, and that is not an omission — the worker image
+    # carries its own (apps/worker/Dockerfile) and compose inherits it. One home
+    # for the probe, because the test string and the interval it depends on are
+    # already split across two files and a third copy here would be the brand
+    # name lesson again.
+    #
+    # **It only started having one on 15 August 2026.** Until then this service
+    # declared nothing, so `--wait` accepted "running" and a worker that
+    # crash-looped or never reached Redis deployed as a success — the API and the
+    # web app were probed by `scripts/deploy.mjs` and the one container whose
+    # failure is invisible from outside was not. It is probed now too, last,
+    # because nothing a visitor does waits on it.
+
     # Not on `edge`. The worker serves no traffic and has no reason to be
     # addressable from the ingress.
     networks:

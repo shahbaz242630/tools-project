@@ -174,15 +174,30 @@ describe('when the listings cannot be read', () => {
     }
   });
 
-  it('sends an expired session to sign in again, rather than reporting a fault', () => {
+  it('sends somebody who is not signed in to sign in, rather than reporting a fault', () => {
     // The one failure a person can act on, so it gets its own sentence and a
     // link. Collapsing it into the generic message would leave somebody
     // retrying a page that will never load until they sign in.
     render(<ListingList outcome={{ kind: 'signed-out' }} />);
 
-    expect(
-      screen.getByRole('link', { name: 'Sign in again' }).getAttribute('href'),
-    ).toBe('/sign-in');
+    expect(screen.getByRole('link', { name: 'sign in' }).getAttribute('href')).toBe(
+      '/sign-in',
+    );
     expect(document.body.textContent).not.toContain('could not be loaded');
+  });
+
+  it('does not claim a session expired when there may never have been one', () => {
+    // The fact that is certainly true, then the expiry offered as a possible
+    // cause rather than asserted. The old copy opened "Your session has
+    // expired", which is a statement about a session nobody here can vouch for
+    // — an unauthenticated request looks identical whether it once had one.
+    render(<ListingList outcome={{ kind: 'signed-out' }} />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('You are not signed in');
+    expect(alert).toHaveTextContent('may have expired');
+    // Asserted absent rather than merely unasserted, as in
+    // `account/profile/actions.test.ts`.
+    expect(alert.textContent).not.toMatch(/session has expired/i);
   });
 });

@@ -39,9 +39,28 @@ export async function deleteAccountAction(
   );
 
   if (outcome.kind === 'signed-out') {
+    /*
+     * **The state first, the likeliest cause second**, as everywhere else —
+     * "your session has expired" is a claim about a session we cannot vouch
+     * for. But this branch carries a second obligation the others do not.
+     *
+     * **It must say outright that nothing was deleted.** The `uncertain` branch
+     * below exists precisely because a write we cannot confirm must not be
+     * reported as a failure; the inverse holds here. This *is* a confirmed
+     * failure — the API refused the token before touching anything — and the
+     * person reading it has just typed DELETE. Ambiguity about which of those
+     * two branches they are in is the difference between an account they still
+     * have and one they believe is gone, and they cannot check by signing in:
+     * being unable to sign in is what the `uncertain` message tells them the
+     * deletion *succeeded* looks like.
+     */
     return {
       status: 'error',
-      message: 'Your session has expired. Sign in again to delete your account.',
+      message:
+        'You are not signed in, so nothing was deleted — your account and ' +
+        'everything in it are exactly as they were. Your session may have ' +
+        'expired; sign in again and confirm once more if you still want to ' +
+        'delete it.',
       credentialRemains: false,
     };
   }

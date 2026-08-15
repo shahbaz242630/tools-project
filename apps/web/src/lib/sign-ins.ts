@@ -23,6 +23,17 @@ import type { SignInEntry } from '@platform/contracts';
 
 export const SIGN_INS_TIMEOUT_MS = 3_000;
 
+/**
+ * **A `forbidden` member is owed here too**, for the reason written out in
+ * `activity.ts`: a 403 is the API understanding us and refusing, which is not an
+ * outage and must not be worded as one. The comment further down about not
+ * folding 403 into `signed-out` is right and is not the same point — the fix is
+ * a third member, not a second meaning for an existing one.
+ *
+ * It lands with a branch in `components/sign-in-list.tsx`, whose switch is
+ * exhaustive by design and which `noImplicitReturns` rejects the moment this
+ * union grows.
+ */
 export type SignInsOutcome =
   | { readonly kind: 'loaded'; readonly entries: readonly SignInEntry[] }
   | { readonly kind: 'signed-out' }

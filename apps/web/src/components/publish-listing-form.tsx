@@ -89,17 +89,24 @@ function PublishControl({
             ? 'Nothing has changed — it is still paused, and only you can see it.'
             : 'Nothing has changed — it is still a draft, and only you can see it.'}{' '}
           {/*
-            **Not "edit the listing and try again", because there is no way to
-            edit one.** A listing is immutable once created — there is no PUT or
-            PATCH on the route, and no form that would call one. Telling somebody
-            to do something the application cannot do is worse than telling them
-            nothing, and it is exactly the kind of copy that survives review
-            because it describes what the feature *ought* to be. Editing is a
-            real gap, recorded in the phase handoff, and it belongs with the
-            owner dashboard in 2.9.
+            **"Edit this listing", because by 2.9b there is one.** This said the
+            exact opposite until the Phase 0–3 audit, and it was written in good
+            faith: when 2.8a shipped, a listing really was immutable, so the only
+            honest advice was to start again. 2.9b-i and 2.9b-ii added
+            `@Put(LISTING_ROUTE)` and the form that calls it, and the link that
+            reaches it sits **directly above this message on the same page** — so
+            the refusal spent a slice telling an owner to destroy and re-key work
+            that a control already in their eyeline would have fixed. Copy that
+            describes what the feature *used* to be survives review exactly as
+            easily as copy describing what it ought to be.
+
+            **It names the control rather than being a second link to it.** One
+            route to the edit form, always on screen, is what somebody learns;
+            two is what they have to choose between. Pinned by a test, because
+            this sentence has now been wrong once already.
           */}
-          Listings cannot be edited yet, so for now the way to fix these is to list the
-          item again with them filled in.
+          Use <strong>Edit this listing</strong>, just above, to fill them in and try
+          again.
         </p>
       </Outcome>
 

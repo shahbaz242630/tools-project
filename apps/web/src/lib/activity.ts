@@ -18,6 +18,19 @@ import type { ActivityEntry } from '@platform/contracts';
 
 export const ACTIVITY_TIMEOUT_MS = 3_000;
 
+/**
+ * **A `forbidden` member is owed here and is deliberately not added alone.**
+ *
+ * `profile.ts` grew one because a 403 means the API understood us and said no,
+ * and calling that `unreachable` tells somebody the site broke when what
+ * happened was a decision about their account. `/me/activity` opts in to
+ * `@AllowsSuspended` so nothing can produce one today — but the copy is wrong in
+ * advance, and the next route that does not opt in inherits it silently.
+ *
+ * Adding it is one line here and one branch in `components/activity-list.tsx`,
+ * whose switch is exhaustive by design and which `noImplicitReturns` rejects the
+ * moment this union grows. The two have to land in the same change.
+ */
 export type ActivityOutcome =
   | { readonly kind: 'loaded'; readonly entries: readonly ActivityEntry[] }
   | { readonly kind: 'signed-out' }

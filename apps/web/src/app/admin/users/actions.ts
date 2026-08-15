@@ -89,7 +89,11 @@ export async function lookUpAccountAction(
         ...INITIAL_ADMIN_USER_STATE,
         ...typed,
         status: 'error',
-        message: 'Your session has expired. Sign in again.',
+        // The state first, the likeliest cause second — see the note in
+        // `admin/approvals/actions.ts`.
+        message:
+          'You are not signed in. Your session may have expired — sign in again ' +
+          'and try once more.',
       };
 
     case 'invalid':
@@ -175,7 +179,11 @@ export async function decideSuspensionAction(
       return {
         status: 'error',
         reason,
-        message: 'Your session has expired. Sign in again.',
+        // The state first, the likeliest cause second — see the note in
+        // `admin/approvals/actions.ts`.
+        message:
+          'You are not signed in. Your session may have expired — sign in again ' +
+          'and try once more.',
       };
 
     case 'unreachable':

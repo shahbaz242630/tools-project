@@ -13,8 +13,10 @@ import {
 } from '@platform/config';
 import {
   createLogger,
+  createNoopErrorTracker,
   createNoopMetrics,
   createPrometheusMetrics,
+  installProcessHandlers,
 } from '@platform/observability';
 import type { Logger } from '@platform/observability';
 import { createPrismaClient, ping } from '@platform/database';
@@ -99,6 +101,38 @@ async function bootstrap(): Promise<void> {
   const personalDataEnv = loadPersonalDataEnv();
 
   const logger = createLogger({ service: 'api', level: env.LOG_LEVEL });
+
+  /*
+   * The error-tracking seam, installed rather than merely built.
+   *
+   * ADR 0008 defers the *provider* — there is no Sentry account, and an adapter
+   * that cannot be exercised is worse than none. It never deferred the call
+   * site, and until 15 August 2026 there was not one: an unhandled rejection or
+   * an uncaught exception ended this process with a raw stack trace on stdout,
+   * unstructured, uncorrelated and unredacted, and there was nowhere for a real
+   * adapter to be swapped in even once we had one.
+   *
+   * The noop adapter is a real adapter (see its docblock) — errors reach the
+   * logger, which is where every other diagnostic already goes.
+   */
+  const errorTracker = createNoopErrorTracker(logger);
+  installProcessHandlers(logger, errorTracker, {
+    onFatal: () => {
+      /*
+       * Exit non-zero, which is what happened before these handlers existed and
+       * is what `restart: unless-stopped` reads as "crashed". Continuing from an
+       * uncaught exception means serving requests from a process whose state
+       * nobody can describe.
+       *
+       * Exiting in the same tick as the log line is safe *here*: `process.stdout`
+       * is a pipe to the Docker daemon, and Node documents pipe writes as
+       * synchronous on Linux. On macOS they are not, so a fatal error on a
+       * developer's laptop may lose its final line — which is the one place it
+       * is also on screen.
+       */
+      process.exit(1);
+    },
+  });
 
   /*
    * Metrics are built here, in the composition root, so `prom-client` stays out

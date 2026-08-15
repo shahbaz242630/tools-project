@@ -8,8 +8,8 @@ import type { PublicationActionState } from '../app/listings/[id]/publication-st
  * The server action is mocked, as in every form test here — it imports
  * `next/headers` and Clerk. What is asserted is the component's contract with
  * the owner reading it: that a refusal names every unmet requirement, that it
- * does not promise an edit route that does not exist, and that the control
- * disappears once there is nothing left to do.
+ * points at the control which fixes them, and that the control disappears once
+ * there is nothing left to do.
  */
 const state = vi.hoisted(() => ({
   current: {
@@ -238,19 +238,29 @@ describe('a refusal', () => {
   });
 
   /**
-   * **The copy must not promise an edit route that does not exist.** A listing
-   * is immutable once created — there is no PUT on the API and no form that
-   * would call one — and "edit the listing and try again" is advice nobody can
-   * follow. Found by reading the refusal rather than by checking it appeared.
+   * **The copy must point at the control that fixes it, and this assertion used
+   * to say the reverse.** Until the Phase 0–3 audit it read *"does not tell
+   * somebody to edit a listing that cannot be edited"* and pinned the sentence
+   * *"listings cannot be edited yet"* — correct when 2.8a wrote it, and turned
+   * false by 2.9b, which shipped `@Put(LISTING_ROUTE)`, the edit form, and an
+   * "Edit this listing" link on this very page. The test then held the refusal
+   * in place: it told an owner to throw the listing away and re-key it, which
+   * the audit rated the worst single finding across four phases.
+   *
+   * **So both halves are asserted.** The new advice has to be present, and the
+   * old advice has to be gone — a component that says both would pass an
+   * assertion written only one way round, and "list it again" is the more
+   * destructive of the two instructions to leave lying about.
    */
-  it('does not tell somebody to edit a listing that cannot be edited', () => {
+  it('points at the edit form rather than telling somebody to start again', () => {
     given({ status: 'not-ready', message: 'Not ready.', blockers });
     const { container } = render(
       <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
     );
 
-    expect(container.textContent).not.toMatch(/edit the listing/i);
-    expect(container.textContent).toMatch(/cannot be edited yet/i);
+    expect(container.textContent).toMatch(/edit this listing/i);
+    expect(container.textContent).not.toMatch(/cannot be edited/i);
+    expect(container.textContent).not.toMatch(/list the item again/i);
   });
 
   it('keeps the control, because the whole point is trying again', () => {
@@ -267,14 +277,14 @@ describe('a failure that is not a refusal', () => {
   it('shows the message without a checklist', () => {
     given({
       status: 'error',
-      message: 'Your session has expired. Sign in again.',
+      message: 'You are not signed in. Your session may have expired — sign in again.',
       blockers: [],
     });
     render(
       <PublishListingForm listingId={LISTING_ID} status="DRAFT" publicationAvailable />,
     );
 
-    expect(screen.getByRole('alert').textContent).toMatch(/session has expired/i);
+    expect(screen.getByRole('alert').textContent).toMatch(/you are not signed in/i);
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);
   });
 });

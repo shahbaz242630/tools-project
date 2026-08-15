@@ -222,7 +222,13 @@ export async function createListingAction(
         ...INITIAL_LISTING_STATE,
         ...typed,
         status: 'error',
-        message: 'Your session has expired. Sign in again.',
+        // The state first, the likeliest cause second. This is the path a
+        // stranger reached from the header's "List a tool" — the most-clicked
+        // way into the product — and being told a session they never had had
+        // expired was the worst sentence in it.
+        message:
+          'You are not signed in, so nothing was saved. Your session may have ' +
+          'expired — sign in again and try once more.',
       };
 
     case 'stale-category':

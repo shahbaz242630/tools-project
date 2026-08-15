@@ -36,12 +36,30 @@ COPY --from=builder --chown=node:node /prod/worker ./
 
 USER node
 
-# No HEALTHCHECK and no exposed port. The worker serves no traffic, and a
-# liveness probe asserting only "the process exists" would be worse than none:
-# it reads as healthy while the worker sits disconnected from Redis processing
-# nothing. Queue depth and job-completion rate are the real signals, and they
-# belong in monitoring rather than in a container probe. Revisit in Phase 0.9
-# when there is somewhere to send metrics.
+# No exposed port: the worker serves no traffic.
+#
+# It had no HEALTHCHECK either until 15 August 2026, and the argument for that
+# was half right. A probe asserting only "the process exists" *is* worse than
+# none — it reads healthy while the worker sits disconnected from Redis
+# processing nothing. But the conclusion did not follow: with no probe at all,
+# compose's `--wait` accepts "running", so a worker that crash-looped or never
+# reached its broker deployed as a success and `scripts/deploy.mjs` never asked.
+#
+# So this is not a "process exists" probe. `src/main.ts` rewrites the file below
+# every HEALTH_INTERVAL_MS, and only after a command has returned over the
+# worker's own Redis connection — the same connection it takes jobs on. A stale
+# file therefore means a wedged event loop, an unreachable broker, or a process
+# that keeps restarting, which is exactly the set of failures that used to deploy
+# green. Queue depth and job-completion rate are still the richer signals and
+# still belong in monitoring; this is the one a deploy can gate on.
+#
+# 60s is six write intervals. Wide enough that a slow probe during a reconnection
+# is not an outage, narrow enough that a deploy's readiness poll sees the
+# failure. scripts/lib/worker-health-budget.test.mjs asserts that relationship,
+# because the interval is in TypeScript and the bound is in this shell string and
+# nothing else compares them.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "const{statSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os');const age=Date.now()-statSync(join(tmpdir(),'worker-health')).mtimeMs;if(age>60000)throw new Error('health signal is '+Math.round(age/1000)+'s old')"
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/main.js"]

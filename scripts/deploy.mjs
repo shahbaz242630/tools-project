@@ -29,11 +29,13 @@ import {
   assertNoRehearsalProfile,
   interpretProbe,
   interpretWebProbe,
+  interpretWorkerProbe,
   nextStateAfterDeploy,
   nextStateAfterRollback,
   parseArgs,
   parseState,
   planDeploy,
+  planFailureResponse,
   planRollback,
   ReleaseError,
   setEnvValue,
@@ -274,6 +276,34 @@ function probeWeb(env) {
 }
 
 /**
+ * Ask Docker what it thinks of the worker.
+ *
+ * `docker inspect` rather than `docker exec`, because there is nothing in the
+ * worker to ask: it answers no port and its whole job is to be attached to a
+ * queue. What it does have is a container HEALTHCHECK that goes stale unless the
+ * process refreshes a file behind a Redis PING, so the honest question is the one
+ * Docker already answers.
+ *
+ * **Until this existed a crash-looping worker deployed as a success**, and not
+ * because anything was tested badly: the worker image carried no HEALTHCHECK, so
+ * compose's `--wait` accepted "running", and this script only ever probed the API
+ * and the web app. The one container whose failure is invisible from the outside
+ * was the one nothing looked at.
+ */
+function probeWorker(env) {
+  const result = run('docker', [
+    'inspect',
+    `rental-${env}-worker`,
+    '--format',
+    // Two fields. A crash loop and a broker outage present completely
+    // differently and only one of them is visible in each.
+    '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}',
+  ]);
+
+  return interpretWorkerProbe({ exitCode: result.status, stdout: result.stdout });
+}
+
+/**
  * Poll one probe until it succeeds, fails definitively, or the budget runs out.
  *
  * The budget is per service rather than shared: they start concurrently, so the
@@ -288,6 +318,10 @@ async function waitFor(label, probe, timeoutSeconds) {
 
     if (result.outcome === 'ready') {
       say(`  ${label} ready after ${attempt * PROBE_INTERVAL_SECONDS}s`);
+      // A probe that passed because there was nothing to check must say so.
+      // Rolling back to an image built before the check existed is legitimate
+      // and must not be blocked; being quiet about it would not be.
+      if (result.unverified === true) say(`  (unverified: ${result.detail})`);
       return { ready: true };
     }
 
@@ -313,15 +347,24 @@ async function waitFor(label, probe, timeoutSeconds) {
 }
 
 /**
- * Every service a visitor depends on, in the order a failure is most usefully
+ * Every service the release consists of, in the order a failure is most usefully
  * reported: the API first, because a broken API explains a broken web app but
- * not the other way round.
+ * not the other way round, and the worker last because nothing a visitor does
+ * depends on it synchronously.
+ *
+ * **The worker is here from 15 August 2026 and was not before.** It processes
+ * booking expiries and payout releases — work whose failure nobody sees until a
+ * deadline passes — so "no visitor notices" is a reason to check it last, never
+ * a reason not to check it.
  */
 async function waitForStack(env, timeoutSeconds) {
   const api = await waitFor('api', () => probeReadiness(env), timeoutSeconds);
   if (!api.ready) return api;
 
-  return waitFor('web', () => probeWeb(env), timeoutSeconds);
+  const web = await waitFor('web', () => probeWeb(env), timeoutSeconds);
+  if (!web.ready) return web;
+
+  return waitFor('worker', () => probeWorker(env), timeoutSeconds);
 }
 
 /**
@@ -469,7 +512,52 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
     return 1;
   }
 
-  if (plan.fallback === null) {
+  const { response } = planFailureResponse(plan);
+
+  if (response === 'stranded') {
+    /*
+     * A rollback whose target is also unhealthy. There is deliberately nowhere
+     * automatic to go — the only other release is the one somebody just decided
+     * to leave — so the stack stays on `plan.target` and the job here is to be
+     * loud and to leave the record honest.
+     *
+     * **Recording the move is the fix for defect 5 of the August 2026 audit.**
+     * Before it, state was left untouched: `--status` reported the newer tag
+     * while the older one served, nothing errored, and a second `--rollback`
+     * targeted the release that had just failed rather than the one before it.
+     * Writing the state is not a claim that the release is healthy. It is a
+     * claim about which images are running, which is what the file is for.
+     */
+    const stranded = captureFailedLogs(env, plan.target);
+
+    writeState(env, nextStateAfterRollback(readState(env)));
+    recordTagInEnvFile(env, plan.target);
+
+    say('');
+    say(
+      `THE ROLLBACK FAILED AND ${env.toUpperCase()} IS SERVING AN UNHEALTHY RELEASE.`,
+    );
+    say(`  running:  ${plan.target}  (rolled back from ${plan.from})`);
+    say('');
+    say('Recorded state now says so, so --status describes the box rather than');
+    say('the intention, and another --rollback walks one release further back');
+    say('instead of redeploying the one that just failed.');
+    say('');
+    say('There is nothing left to revert to automatically: the only other');
+    say('release here is the one this rollback was leaving. Deploy an explicit');
+    say('--tag, or take the stack down deliberately:');
+    say(`  node scripts/deploy.mjs --env ${env} --tag <sha>`);
+    say(`  docker compose --env-file ${envFilePath(env)} -f ${COMPOSE_FILE} down`);
+    say('');
+    say(
+      stranded.path !== null
+        ? `The failed release logged to:  ${stranded.path}`
+        : `Logs:  node scripts/logs.mjs --env ${env}`,
+    );
+    return 1;
+  }
+
+  if (response === 'stuck') {
     // Nothing to go back to. Say so plainly rather than implying a revert
     // happened — this is the first deploy to this environment.
     say('');
