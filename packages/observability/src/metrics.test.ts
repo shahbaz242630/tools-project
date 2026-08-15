@@ -198,7 +198,7 @@ function valueOf(text: string, name: string, contains: string): string {
 describe('recording a listing search', () => {
   it('counts a search by radius and outcome', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 20, outcome: 'found' });
+    m.recordListingSearch({ radiusMiles: 20, outcome: 'found', filtered: false });
 
     const text = await m.render();
     expect(text).toContain('listing_searches_total');
@@ -208,10 +208,10 @@ describe('recording a listing search', () => {
 
   it('keeps the four outcomes apart, which is the whole point', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'found' });
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'empty' });
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'beyond_end' });
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'unplaceable' });
+    m.recordListingSearch({ radiusMiles: 5, outcome: 'found', filtered: false });
+    m.recordListingSearch({ radiusMiles: 5, outcome: 'empty', filtered: false });
+    m.recordListingSearch({ radiusMiles: 5, outcome: 'beyond_end', filtered: false });
+    m.recordListingSearch({ radiusMiles: 5, outcome: 'unplaceable', filtered: false });
 
     const text = await m.render();
     for (const outcome of ['found', 'empty', 'beyond_end', 'unplaceable']) {
@@ -222,7 +222,7 @@ describe('recording a listing search', () => {
   it('accumulates rather than replacing, so a rate can be taken', async () => {
     const m = metrics();
     for (let i = 0; i < 3; i++) {
-      m.recordListingSearch({ radiusMiles: 100, outcome: 'empty' });
+      m.recordListingSearch({ radiusMiles: 100, outcome: 'empty', filtered: false });
     }
 
     expect(valueOf(await m.render(), 'listing_searches_total', 'radius="100"')).toBe(
@@ -230,16 +230,37 @@ describe('recording a listing search', () => {
     );
   });
 
+  /*
+   * **Whether a category was chosen, never which one** (slice 3.2a). The
+   * distinction is the whole reason this label is a boolean: a slug is
+   * configuration, so a `category` label would be a series count an
+   * administrator grows through a form with nobody watching this file.
+   */
+  it('records that a search was filtered, without room for the category', async () => {
+    const m = metrics();
+    m.recordListingSearch({ radiusMiles: 5, outcome: 'empty', filtered: true });
+
+    const text = await m.render();
+    expect(text).toContain('filtered="true"');
+    expect(text).not.toContain('outdoor-gardening');
+  });
+
   /**
    * **The cardinality budget, asserted rather than described.**
    *
    * A series exists per distinct label combination and is held in process memory
    * for as long as the process lives. This is what stops "add a useful label"
-   * from being a free decision later: five radii times four outcomes is twenty
-   * series and no more, whatever traffic arrives. The compiler already refuses
-   * a sixth radius; this refuses a quietly widened label set.
+   * from being a free decision later: five radii times four outcomes times the
+   * two states of the filter is forty series and no more, whatever traffic
+   * arrives. The compiler already refuses a sixth radius and a third filter
+   * state; this refuses a quietly widened label set.
+   *
+   * **It was twenty until slice 3.2a**, and doubling it was the price of the
+   * `filtered` label — paid deliberately, and the number is written down here so
+   * that the next label is a decision somebody has to make rather than one that
+   * happens.
    */
-  it('cannot exceed twenty series however many searches arrive', async () => {
+  it('cannot exceed forty series however many searches arrive', async () => {
     const m = metrics();
     const radii = [5, 10, 20, 50, 100] as const;
     const outcomes = ['found', 'empty', 'beyond_end', 'unplaceable'] as const;
@@ -247,7 +268,9 @@ describe('recording a listing search', () => {
     for (let i = 0; i < 50; i++) {
       for (const radiusMiles of radii) {
         for (const outcome of outcomes) {
-          m.recordListingSearch({ radiusMiles, outcome });
+          for (const filtered of [true, false]) {
+            m.recordListingSearch({ radiusMiles, outcome, filtered });
+          }
         }
       }
     }
@@ -256,7 +279,7 @@ describe('recording a listing search', () => {
       .split('\n')
       .filter((line) => line.startsWith('listing_searches_total{'));
 
-    expect(series).toHaveLength(20);
+    expect(series).toHaveLength(40);
   });
 
   /**
@@ -268,12 +291,18 @@ describe('recording a listing search', () => {
    * A postcode in a label is an area of interest kept in process memory and
    * exported to a scraper with none of §10.1's retention or erasure guarantees.
    * Deletion cannot reach it and nobody would think to look.
+   *
+   * **From slice 3.2a it guards a category slug too**, which is the same rule
+   * with a different value: unbounded, configuration-driven, and personal only
+   * in aggregate — but a series per category, held forever, for a question a
+   * boolean answers.
    */
-  it('exposes no label but radius and outcome', async () => {
+  it('exposes no label but radius, outcome and whether it was filtered', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 10, outcome: 'found' });
+    m.recordListingSearch({ radiusMiles: 10, outcome: 'found', filtered: false });
 
     expect(labelsOf(await m.render(), 'listing_searches_total')).toEqual([
+      'filtered',
       'outcome',
       'radius',
       'service',
@@ -401,7 +430,7 @@ describe('metrics turned off', () => {
         durationMs: 1,
         outcome: 'completed',
       });
-      m.recordListingSearch({ radiusMiles: 5, outcome: 'empty' });
+      m.recordListingSearch({ radiusMiles: 5, outcome: 'empty', filtered: false });
       m.recordGeocode({ outcome: 'unavailable', durationMs: 2_501 });
     }).not.toThrow();
   });
@@ -414,7 +443,7 @@ describe('metrics turned off', () => {
    */
   it('leaves the exposition empty even after recording a search', async () => {
     const m = createNoopMetrics();
-    m.recordListingSearch({ radiusMiles: 100, outcome: 'found' });
+    m.recordListingSearch({ radiusMiles: 100, outcome: 'found', filtered: false });
     m.recordGeocode({ outcome: 'found', durationMs: 10 });
 
     expect(await m.render()).toBe('');

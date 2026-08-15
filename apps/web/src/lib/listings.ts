@@ -27,12 +27,12 @@ import type {
   CategoryOption,
   ListingDraftInput,
   ListingEditInput,
+  ListingSearchQuery,
   OwnedListings,
   OwnerListing,
   PublicListing,
   PublicListingSearchResults,
   PublicationBlocker,
-  SearchRadiusMiles,
 } from '@platform/contracts';
 
 export const LISTINGS_TIMEOUT_MS = 5_000;
@@ -394,24 +394,20 @@ export function fetchPublicListing(
  * `?postcode=…&radius=…` is a page that can disagree with the server about a
  * parameter name and get an empty result instead of an error.
  *
- * The caller is expected to have parsed the postcode and radius already — see
- * the page — so this takes a `SearchRadiusMiles` rather than a number, and a
- * radius the BRD does not name cannot reach it. **`page` is the same
- * arrangement** (slice 3.1d): the page has already run it through the
- * contract's schema, and the API validates it again regardless.
+ * **It takes the parsed query whole** (slice 3.2a), which is both narrower and
+ * safer than the four arguments it replaced: every field has already been
+ * through the contract's schema, so a radius the BRD does not name and a
+ * malformed category slug cannot reach it — and there is no argument order for
+ * a caller to get wrong now that two of the fields are strings. The API
+ * validates the lot again regardless; that is the control, this is the courtesy.
  */
 export function fetchListingSearch(
   apiBaseUrl: string,
-  postcode: string,
-  radiusMiles: SearchRadiusMiles,
-  page: number,
+  search: ListingSearchQuery,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
 ): Promise<ListingSearchOutcome> {
   return publicCall(
-    new URL(
-      publicListingSearchPath(postcode, radiusMiles, page),
-      apiBaseUrl,
-    ).toString(),
+    new URL(publicListingSearchPath(search), apiBaseUrl).toString(),
     fetchImpl,
     parsePublicListingSearchResults,
   );

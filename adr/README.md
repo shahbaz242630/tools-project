@@ -73,3 +73,5 @@ Never delete or rewrite an accepted ADR. Supersede it, so the reasoning trail su
 | [0042](0042-a-listing-pins-its-questions-not-its-fees.md)                           | Pin a listing's questions, not its fees; re-pin by editing, not by asking         | Accepted — supersedes 0029's open question |
 | [0043](0043-trader-status-belongs-to-the-person-not-the-listing.md)                 | Private-owner or professional-trader status lives on the account, not the listing | Accepted — amends BRD §8.3                 |
 | [0044](0044-the-radius-query-crosses-two-boundaries.md)                             | Site the radius query in Search, reading ids only and joining what it must        | Accepted                                   |
+| [0045](0045-search-pages-by-number-not-by-cursor.md)                                | Page search by number, not by a cursor carrying an exact distance                 | Accepted                                   |
+| [0046](0046-the-category-filter-is-a-predicate-not-a-second-pass.md)                | Filter category inside the radius query; compose an absent filter to nothing      | Accepted — extends 0044                    |

@@ -103,6 +103,31 @@ describe('lifting the query out of the adapter', () => {
     expect(() => buildQuery(grown, PARAMETERS)).toThrow(/does not know/);
   });
 
+  /*
+   * **The unfiltered statement must stay the one slice 3.1c measured** (slice
+   * 3.2a). The whole reason the adapter composes the filter as a fragment rather
+   * than writing `($1 IS NULL OR ...)` is that a dead predicate would change the
+   * plan of every search — and the gate number in the phase handoff would then
+   * describe a query nobody runs.
+   */
+  it('leaves no category predicate at all when none was asked for', () => {
+    const sql = buildQuery(source, PARAMETERS);
+
+    expect(sql).not.toContain('categoryId');
+  });
+
+  it('substitutes the category predicate when one is asked for', () => {
+    const sql = buildQuery(source, {
+      ...PARAMETERS,
+      categoryId: '00000000-0000-4000-8000-000000000001',
+    });
+
+    expect(sql).toContain(
+      `AND l."categoryId" = '00000000-0000-4000-8000-000000000001'::uuid`,
+    );
+    expect(sql).not.toContain('${');
+  });
+
   it('says so when there is no query to find', () => {
     expect(() => buildQuery('export class Nothing {}', PARAMETERS)).toThrow(
       /No \$queryRaw/,

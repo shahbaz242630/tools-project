@@ -1,10 +1,11 @@
 import {
   FIRST_SEARCH_PAGE,
+  listingSearchQueryString,
   nextSearchPage,
   previousSearchPage,
   widerRadius,
 } from '@platform/contracts';
-import type { SearchRadiusMiles } from '@platform/contracts';
+import type { ListingSearchQuery, SearchRadiusMiles } from '@platform/contracts';
 
 /**
  * Where things live **in this application**, as distinct from where they live in
@@ -45,24 +46,22 @@ export function hirePath(id: string): string {
 /**
  * A search, as a link.
  *
- * `encodeURIComponent` rather than `URLSearchParams` for the reason
- * `publicListingSearchPath` gives — and the parameter names are deliberately the
- * contract's, because this URL is parsed by the page using the contract's own
- * schema.
+ * **It takes the whole search rather than a field per parameter** (slice 3.2a),
+ * and that is a defect-prevention decision rather than tidiness. Four functions
+ * in this file build a search URL, and a filter one of them forgets does not
+ * fail: the searcher gets results from every category with nothing on screen or
+ * in a log saying the narrowing was dropped. Passing `ListingSearchQuery` whole
+ * means a new filter is a compile error in each of them — which is what has to
+ * hold when price, rating and Phase 4's dates arrive behind category.
+ *
+ * **The query string itself comes from the contract** (`listingSearchQueryString`),
+ * shared with the API's own path builder, so a page URL and an API URL cannot
+ * disagree about how a search is spelled. It is also what keeps `?page=1` and
+ * `?category=` from ever being minted — one search, one URL, which is half of
+ * what slice 2.12 needs for §8.17's canonicals.
  */
-export function browseHref(
-  postcode: string,
-  radiusMiles: SearchRadiusMiles,
-  page: number = FIRST_SEARCH_PAGE,
-): string {
-  const query = `postcode=${encodeURIComponent(postcode)}&radiusMiles=${String(radiusMiles)}`;
-  /*
-   * **The first page carries no `page` parameter**, matching
-   * `publicListingSearchPath` — one search, one URL. It is what keeps every link
-   * written before slice 3.1d byte-identical, and it is half of the answer slice
-   * 2.12 needs for §8.17's canonical URLs.
-   */
-  return `${BROWSE_PATH}?${page === FIRST_SEARCH_PAGE ? query : `${query}&page=${String(page)}`}`;
+export function browseHref(search: ListingSearchQuery): string {
+  return `${BROWSE_PATH}?${listingSearchQueryString(search)}`;
 }
 
 /**
@@ -78,27 +77,23 @@ export function browseHref(
  * other half: whether we are *allowed* to go there.
  */
 export function nextSearchHref(
-  postcode: string,
-  radiusMiles: SearchRadiusMiles,
-  page: number,
+  search: ListingSearchQuery,
   hasMore: boolean,
 ): { readonly href: string; readonly page: number } | null {
-  const next = nextSearchPage(page);
+  const next = nextSearchPage(search.page);
   if (!hasMore || next === null) return null;
 
-  return { href: browseHref(postcode, radiusMiles, next), page: next };
+  return { href: browseHref({ ...search, page: next }), page: next };
 }
 
 /** The same search, one page back — or null on the first. */
 export function previousSearchHref(
-  postcode: string,
-  radiusMiles: SearchRadiusMiles,
-  page: number,
+  search: ListingSearchQuery,
 ): { readonly href: string; readonly page: number } | null {
-  const previous = previousSearchPage(page);
+  const previous = previousSearchPage(search.page);
   if (previous === null) return null;
 
-  return { href: browseHref(postcode, radiusMiles, previous), page: previous };
+  return { href: browseHref({ ...search, page: previous }), page: previous };
 }
 
 /**
@@ -109,17 +104,25 @@ export function previousSearchHref(
  * 20, and 100 offers nothing at all. That last case is why this is a function —
  * the alternative is a control that silently re-runs the identical search.
  *
- * **It drops back to the first page**, which falls out of `browseHref`'s default
- * rather than being decided here — widening the radius changes which listings
- * exist and how they are ordered, so carrying page four across would land
- * somebody in the middle of a set they have never seen the start of.
+ * **It drops back to the first page**, and from slice 3.2a that is stated here
+ * rather than inherited from a default argument: widening the radius changes
+ * which listings exist and how they are ordered, so carrying page four across
+ * would land somebody in the middle of a set they have never seen the start of.
+ *
+ * **The category is carried across**, which is the opposite treatment and the
+ * right one — widening the radius is the answer to *"nothing near me"*, and
+ * silently dropping the filter at the same time would answer a question the
+ * searcher did not ask. Dropping the filter is its own offer, and it belongs to
+ * the empty state rather than to this link.
  */
 export function widerSearchHref(
-  postcode: string,
-  radiusMiles: SearchRadiusMiles,
+  search: ListingSearchQuery,
 ): { readonly href: string; readonly miles: SearchRadiusMiles } | null {
-  const wider = widerRadius(radiusMiles);
+  const wider = widerRadius(search.radiusMiles);
   if (wider === null) return null;
 
-  return { href: browseHref(postcode, wider), miles: wider };
+  return {
+    href: browseHref({ ...search, radiusMiles: wider, page: FIRST_SEARCH_PAGE }),
+    miles: wider,
+  };
 }

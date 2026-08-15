@@ -12,6 +12,25 @@ import { PrismaClient } from '../generated/client.js';
 
 export type { PrismaClient };
 
+/**
+ * Prisma's own namespace, re-exported for **one** thing: composing a raw
+ * statement out of fragments (slice 3.2a).
+ *
+ * The tagged-template and empty-fragment helpers on it are what let the radius
+ * query carry an *optional* predicate without either assembling the statement by
+ * string concatenation — which loses parameterisation and invites injection — or
+ * writing `($1 IS NULL OR "categoryId" = $1)`, which would change the plan of
+ * **every** search including the unfiltered one slice 3.1c measured the Phase 3
+ * exit gate against.
+ *
+ * **Exporting it does not widen what anybody may do.** The
+ * `no-raw-sql-outside-search` invariant matches the tagged template as well as
+ * the query methods, so using either of these outside
+ * `apps/api/src/search-location/` fails the check — the same boundary BRD §4.2
+ * draws and ADR 0044 records.
+ */
+export { Prisma } from '../generated/client.js';
+
 export interface DatabaseOptions {
   /** Composed by @platform/config. Never read from a committed file. */
   readonly connectionString: string;

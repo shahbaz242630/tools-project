@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { MAX_SEARCH_PAGE } from '@platform/contracts';
 import type {
+  ListingSearchQuery,
   PublicListingSearchResults,
   PublicListingSummary,
 } from '@platform/contracts';
@@ -29,6 +30,22 @@ const page = (
   truncated: false,
   radiusMiles: 5,
   page: 1,
+  category: null,
+  ...over,
+});
+
+/**
+ * The search these results answer.
+ *
+ * From slice 3.2a this component takes the whole query rather than a prop per
+ * parameter — see `BrowseResults` for why — so the helper supplies the defaults
+ * and a test names only what it is about.
+ */
+const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery => ({
+  postcode: 'BS7 8AA',
+  radiusMiles: 5,
+  page: 1,
+  category: null,
   ...over,
 });
 
@@ -42,7 +59,12 @@ const full = (count: number): PublicListingSummary[] =>
 
 describe('a page of results', () => {
   it('renders a card per listing, linking to the listing itself', () => {
-    render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(screen.getByRole('link', { name: /Petrol lawn scarifier/ })).toHaveAttribute(
       'href',
@@ -56,20 +78,35 @@ describe('a page of results', () => {
      * exposure rather than a UX preference. The owner's £22.00 must not appear:
      * the number on a card is the number a renter pays.
      */
-    render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(screen.getByText('£23.76')).toBeInTheDocument();
     expect(screen.queryByText(/£22\.00/)).not.toBeInTheDocument();
   });
 
   it('shows the district and the town, and nothing finer (§8.4.1)', () => {
-    render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(screen.getByText('Bristol · BS7')).toBeInTheDocument();
   });
 
   it('shows a bucketed distance', () => {
-    render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(screen.getByText('Less than a mile away')).toBeInTheDocument();
   });
@@ -80,8 +117,7 @@ describe('a page of results', () => {
         results={page({
           results: [{ ...SCARIFIER, distance: { kind: 'approximate', miles: 12 } }],
         })}
-        postcode="BA1 1AA"
-        radiusMiles={20}
+        search={searchFor({ postcode: 'BA1 1AA', radiusMiles: 20 })}
       />,
     );
 
@@ -93,14 +129,22 @@ describe('a page of results', () => {
     // rather than a fallback — the initial is hidden from assistive technology
     // because it is decoration, not the title read twice.
     const { container } = render(
-      <BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />,
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
     );
 
     expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent('P');
   });
 
   it('counts what it found, in words that survive one result', () => {
-    render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
     expect(
       screen.getByRole('heading', { name: '1 tool near you' }),
     ).toBeInTheDocument();
@@ -110,8 +154,7 @@ describe('a page of results', () => {
     render(
       <BrowseResults
         results={page({ truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -125,7 +168,12 @@ describe('a page of results', () => {
     // Neither end exists, so the whole nav goes rather than rendering two
     // disabled controls — a greyed-out link that does nothing is a dead control
     // in a different coat (BRD §15).
-    render(<BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
@@ -135,7 +183,10 @@ describe('a page of results', () => {
     // of this data that gets scraped hardest, so the check is against everything
     // rendered rather than against named fields.
     const { container } = render(
-      <BrowseResults results={page()} postcode="BS7 8AA" radiusMiles={5} />,
+      <BrowseResults
+        results={page()}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
     );
     const html = container.innerHTML;
 
@@ -150,8 +201,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ results: full(24), page: 2, truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -166,8 +216,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ results: full(24), truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -180,8 +229,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ page: 3, truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -197,8 +245,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ page: 2, truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -212,8 +259,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -224,8 +270,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ page: 4, truncated: false })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -242,8 +287,7 @@ describe('paging between results (slice 3.1d)', () => {
     render(
       <BrowseResults
         results={page({ page: MAX_SEARCH_PAGE, truncated: true })}
-        postcode="BS7 8AA"
-        radiusMiles={5}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
       />,
     );
 
@@ -263,7 +307,12 @@ describe('past the last page', () => {
    * them what is in it.
    */
   it('does not offer a wider radius, because the area was not empty', () => {
-    render(<BrowseResults results={beyond} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={beyond}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(
       screen.queryByRole('link', { name: /Search within/ }),
@@ -271,7 +320,12 @@ describe('past the last page', () => {
   });
 
   it('offers the way back to the first page', () => {
-    render(<BrowseResults results={beyond} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={beyond}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(
       screen.getByRole('link', { name: /Start again from the first page/ }),
@@ -279,11 +333,110 @@ describe('past the last page', () => {
   });
 });
 
+/**
+ * Carrying the category filter (slice 3.2a).
+ *
+ * **Every link this component builds is a place the filter can be dropped**, and
+ * dropping it does not fail — the searcher simply gets results from categories
+ * they excluded, with nothing on screen or in a log saying so. That is why the
+ * builders take the whole query, and this is the assertion that the plumbing
+ * actually holds.
+ */
+describe('carrying a category through the links', () => {
+  const filtered = (over: Partial<PublicListingSearchResults> = {}) =>
+    page({ category: 'outdoor-gardening', ...over });
+
+  it('keeps the filter on the next page', () => {
+    render(
+      <BrowseResults
+        results={filtered({ truncated: true })}
+        search={searchFor({ category: 'outdoor-gardening' })}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Next 24 tools/ })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&category=outdoor-gardening&page=2',
+    );
+  });
+
+  it('keeps the filter on the previous page', () => {
+    render(
+      <BrowseResults
+        results={filtered({ page: 3, truncated: true })}
+        search={searchFor({ category: 'outdoor-gardening' })}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Previous 24 tools/ })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&category=outdoor-gardening&page=2',
+    );
+  });
+
+  /*
+   * **Widening the radius keeps the category**, which is the one that could
+   * reasonably have gone either way. It is the answer to "nothing near me", so
+   * silently dropping the filter at the same moment would answer a question the
+   * searcher did not ask — and they would have no way to tell which of the two
+   * changes produced the results.
+   */
+  it('keeps the filter when offering a wider radius', () => {
+    render(
+      <BrowseResults
+        results={filtered({ results: [] })}
+        search={searchFor({ category: 'outdoor-gardening' })}
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Search within 10 miles' }),
+    ).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=10&category=outdoor-gardening',
+    );
+  });
+
+  it('keeps the filter when offering the way back from past the end', () => {
+    render(
+      <BrowseResults
+        results={filtered({ results: [], page: 4 })}
+        search={searchFor({ category: 'outdoor-gardening' })}
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: /Start again from the first page/ }),
+    ).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&category=outdoor-gardening',
+    );
+  });
+
+  /*
+   * **And an unfiltered search mints no `category=` at all.** One search, one
+   * URL — the same rule that keeps `?page=1` out of the canonical, and the half
+   * of §8.17's duplicate-content question this slice must not make worse.
+   */
+  it('writes no category parameter when there is no filter', () => {
+    const { container } = render(
+      <BrowseResults results={page({ truncated: true })} search={searchFor()} />,
+    );
+
+    expect(container.innerHTML).not.toContain('category=');
+  });
+});
+
 describe('when a radius has nothing in it', () => {
   const nothing = page({ results: [] });
 
   it('says so with the radius that was searched', () => {
-    render(<BrowseResults results={nothing} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={nothing}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(
       screen.getByRole('heading', { name: 'Nothing within 5 miles' }),
@@ -291,7 +444,12 @@ describe('when a radius has nothing in it', () => {
   });
 
   it('offers the next radius up, carrying the postcode with it', () => {
-    render(<BrowseResults results={nothing} postcode="BS7 8AA" radiusMiles={5} />);
+    render(
+      <BrowseResults
+        results={nothing}
+        search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+      />,
+    );
 
     expect(
       screen.getByRole('link', { name: 'Search within 10 miles' }),
@@ -299,7 +457,12 @@ describe('when a radius has nothing in it', () => {
   });
 
   it('climbs the ladder one rung at a time', () => {
-    render(<BrowseResults results={nothing} postcode="BS7 8AA" radiusMiles={20} />);
+    render(
+      <BrowseResults
+        results={page({ results: [], radiusMiles: 20 })}
+        search={searchFor({ radiusMiles: 20 })}
+      />,
+    );
 
     expect(
       screen.getByRole('link', { name: 'Search within 50 miles' }),
@@ -312,7 +475,12 @@ describe('when a radius has nothing in it', () => {
      * worse than no control — and the honest reading at a hundred miles is that
      * nobody near them has listed yet, which is a supply problem we own.
      */
-    render(<BrowseResults results={nothing} postcode="BS7 8AA" radiusMiles={100} />);
+    render(
+      <BrowseResults
+        results={page({ results: [], radiusMiles: 100 })}
+        search={searchFor({ radiusMiles: 100 })}
+      />,
+    );
 
     expect(
       screen.queryByRole('link', { name: /Search within/ }),

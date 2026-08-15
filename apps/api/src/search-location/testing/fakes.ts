@@ -1,4 +1,3 @@
-import type { SearchRadiusMiles } from '@platform/contracts';
 import { Paging } from '@platform/core';
 import { GeocoderUnavailableError } from '../geocoder.js';
 import type { GeocodedPostcode, PostcodeGeocoder } from '../geocoder.js';
@@ -6,6 +5,7 @@ import { bucketDistance, milesToMetres } from '../distance-bucket.js';
 import type {
   ListingSearchRepository,
   NearbyListingPage,
+  NearbySearch,
   ResultWindow,
 } from '../listing-search.js';
 
@@ -82,6 +82,18 @@ export interface PlacedListing {
   readonly listingId: string;
   /** From the origin, in metres. What the real query gets back from PostGIS. */
   readonly metresFromOrigin: number;
+  /**
+   * Which category it is in (slice 3.2a).
+   *
+   * **Null means "in no category a filter can name"**, which is what a listing
+   * placed by a test that does not care about categories gets. It is not the
+   * same as the *search's* null: an unfiltered search matches everything
+   * including these, and a filtered one matches none of them. A test that wants
+   * a listing to survive a category filter has to say which category it is in,
+   * which is the right way round — the alternative would let a filter test pass
+   * against a fixture that was never categorised.
+   */
+  readonly categoryId: string | null;
 }
 
 /**
@@ -113,9 +125,23 @@ export class FakeListingSearch implements ListingSearchRepository {
    */
   readonly windows: ResultWindow[] = [];
 
+  /**
+   * Every category it was asked to narrow to, in order (slice 3.2a).
+   *
+   * Recorded for the reason `windows` is: a service that resolves a slug to the
+   * wrong id, or drops the filter on the way down, returns a page that looks
+   * entirely reasonable. Asserting on the results alone cannot tell "the filter
+   * was applied and matched everything" from "the filter was never passed".
+   */
+  readonly categories: (string | null)[] = [];
+
   /** Put a listing at a distance from wherever the search starts. */
-  places(listingId: string, metresFromOrigin: number): this {
-    this.placed.push({ listingId, metresFromOrigin });
+  places(
+    listingId: string,
+    metresFromOrigin: number,
+    categoryId: string | null = null,
+  ): this {
+    this.placed.push({ listingId, metresFromOrigin, categoryId });
     return this;
   }
 
@@ -131,21 +157,31 @@ export class FakeListingSearch implements ListingSearchRepository {
     return this;
   }
 
-  findWithin(
-    originPostcode: string,
-    radiusMiles: SearchRadiusMiles,
-    window: ResultWindow,
-  ): Promise<NearbyListingPage | null> {
-    this.asked.push(originPostcode);
-    this.windows.push(window);
+  findWithin(search: NearbySearch): Promise<NearbyListingPage | null> {
+    const { window } = search;
 
-    if (this.unplaceable.has(originPostcode.toUpperCase())) {
+    this.asked.push(search.originPostcode);
+    this.windows.push(window);
+    this.categories.push(search.categoryId);
+
+    if (this.unplaceable.has(search.originPostcode.toUpperCase())) {
       return Promise.resolve(null);
     }
 
-    const radiusMetres = milesToMetres(radiusMiles);
+    const radiusMetres = milesToMetres(search.radiusMiles);
     const inside = this.placed
       .filter((listing) => listing.metresFromOrigin <= radiusMetres)
+      /*
+       * **The filter runs before the skip, exactly as the SQL does** (slice
+       * 3.2a). Filtering after slicing would be the filter-after-paginate bug
+       * modelled into the fake, so a service that produced it would pass — and
+       * the fake would be certifying the defect the port's docblock exists to
+       * forbid.
+       */
+      .filter(
+        (listing) =>
+          search.categoryId === null || listing.categoryId === search.categoryId,
+      )
       .sort(byDistanceThenId)
       /*
        * **The skip, then the probe** — the real statement's `OFFSET` and `LIMIT`

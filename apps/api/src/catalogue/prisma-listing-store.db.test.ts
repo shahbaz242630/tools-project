@@ -2430,7 +2430,24 @@ describe('the public read', () => {
     expect(serialised).not.toContain('51.47');
     expect(serialised).not.toContain('51.46');
     expect(serialised).not.toContain('2.59');
-    expect(serialised).not.toContain('138');
+    /*
+     * **The fuzz distance as a JSON *value*, not as any three digits anywhere**
+     * — fixed in slice 3.2a after this line failed a full integration run for
+     * the second time.
+     *
+     * `138` is the listing's fuzz offset in metres, but `not.toContain('138')`
+     * searched the whole serialised object, and this record carries several
+     * random UUIDs: `"ownerId":"…-b620-f138d36fbc9d"` matched, and the test went
+     * red on a run that had nothing wrong with it. Three hex characters land in
+     * roughly ninety positions here, so it is about a one-in-fifty flake — often
+     * enough to cost CI re-runs, rare enough to be blamed on whatever diff was
+     * in flight.
+     *
+     * The leak this guards is a *field* (`fuzzDistanceMetres`), so the assertion
+     * is now shaped like one. The coordinates above need no such treatment: a
+     * decimal point cannot occur inside a UUID.
+     */
+    expect(serialised).not.toMatch(/:\s*138\b/);
   });
 
   it('prices from the category’s current version, not the pinned one', async () => {

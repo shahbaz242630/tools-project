@@ -337,10 +337,16 @@ async function bootstrap(): Promise<void> {
      * the public read and deals in ids and buckets. Neither can be used to do
      * the other's job.
      */
-    {
-      findWithin: (postcode, radiusMiles, limit) =>
-        listingSearch.findWithin(postcode, radiusMiles, limit),
-    },
+    /*
+     * **Passed straight through, and from slice 3.2a that is a property rather
+     * than a convenience.** `ProximitySearch` and `NearbySearch` are structurally
+     * identical by design — one module states what it needs, the other states
+     * what it offers, and neither imports the other (BRD §5.1). Handing the
+     * object over whole means a field added to one and forgotten on the other
+     * fails to compile here, at the seam, rather than silently arriving as
+     * `undefined` in the SQL.
+     */
+    { findWithin: (search) => listingSearch.findWithin(search) },
     // What a search did (slice 3.1f). The same instance the geocoder above was
     // given and the same one the HTTP hook records into — see the note where it
     // is built.

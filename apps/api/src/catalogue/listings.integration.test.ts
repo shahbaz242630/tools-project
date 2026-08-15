@@ -3013,29 +3013,43 @@ describe('searching for listings near a postcode', () => {
     rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
   };
 
-  function search(postcode = 'BS7 8AA', radiusMiles = 5, page = 1) {
+  function search({
+    postcode = 'BS7 8AA',
+    radiusMiles = 5 as 5 | 10 | 20 | 50 | 100,
+    page = 1,
+    category = null as string | null,
+  } = {}) {
     // **No authorization header**, which is the whole point of the route. A
     // test that passed a token would prove nothing about the case that matters.
     return app.inject({
       method: 'GET',
-      url: publicListingSearchPath(
-        postcode,
-        radiusMiles as 5 | 10 | 20 | 50 | 100,
-        page,
-      ),
+      url: publicListingSearchPath({ postcode, radiusMiles, page, category }),
     });
   }
 
   /** A published listing, placed a given distance from wherever a search starts. */
-  async function givenAListing(metresAway: number, token = 'alice-token') {
-    const created = parseOwnerListing((await createListing(token, PUBLISHABLE)).json());
+  async function givenAListing(
+    metresAway: number,
+    { token = 'alice-token', categorySlug = 'outdoor-gardening' } = {},
+  ) {
+    const created = parseOwnerListing(
+      (await createListing(token, { ...PUBLISHABLE, categorySlug })).json(),
+    );
     const published = await app.inject({
       method: 'POST',
       url: listingPublicationPath(created.id),
       headers: auth(token),
     });
     expect(published.statusCode).toBe(201);
-    listings.proximity.places(created.id, metresAway);
+
+    /*
+     * **The listing is placed *in its category* as well as at a distance**
+     * (slice 3.2a). The real query applies both predicates in one statement, so
+     * a fake that knew only the distance would let a service that dropped the
+     * category filter pass every test here.
+     */
+    const category = await listings.categories.findBySlug(categorySlug);
+    listings.proximity.places(created.id, metresAway, category?.id ?? null);
     return created;
   }
 
@@ -3061,7 +3075,7 @@ describe('searching for listings near a postcode', () => {
     const created = await givenAListing(milesToMetres(8));
 
     const results = parsePublicListingSearchResults(
-      (await search('BS7 8AA', 10)).json(),
+      (await search({ radiusMiles: 10 })).json(),
     );
 
     expect(results.results.map((result) => result.id)).toEqual([created.id]);
@@ -3262,10 +3276,10 @@ describe('searching for listings near a postcode', () => {
     it('counts a search that found something, with the radius it used', async () => {
       await givenAListing(3_000);
 
-      await search('BS7 8AA', 20);
+      await search({ radiusMiles: 20 });
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 20, outcome: 'found' },
+        { radiusMiles: 20, outcome: 'found', filtered: false },
       ]);
     });
 
@@ -3277,10 +3291,10 @@ describe('searching for listings near a postcode', () => {
        */
       await givenAListing(milesToMetres(8));
 
-      await search('BS7 8AA', 5);
+      await search();
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'empty' },
+        { radiusMiles: 5, outcome: 'empty', filtered: false },
       ]);
     });
 
@@ -3299,7 +3313,7 @@ describe('searching for listings near a postcode', () => {
       await search();
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'unplaceable' },
+        { radiusMiles: 5, outcome: 'unplaceable', filtered: false },
       ]);
     });
 
@@ -3311,10 +3325,10 @@ describe('searching for listings near a postcode', () => {
        */
       await givenAListing(3_000);
 
-      await search('BS7 8AA', 5, 4);
+      await search({ page: 4 });
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'beyond_end' },
+        { radiusMiles: 5, outcome: 'beyond_end', filtered: false },
       ]);
     });
 
@@ -3334,6 +3348,40 @@ describe('searching for listings near a postcode', () => {
       });
 
       expect(listings.metrics.listingSearches).toEqual([]);
+    });
+
+    /*
+     * **A category we do not have is a refusal, so it is not a search either**
+     * (slice 3.2a). It is the same rule as the radius of 7 one line up, and it
+     * is worth its own test because the refusal happens a layer deeper — inside
+     * the service rather than in the query parser — which is exactly where a
+     * counter could have been placed before the throw.
+     */
+    it('records nothing for a category it refused', async () => {
+      await givenAListing(800);
+
+      const response = await search({ category: 'no-such-category' });
+
+      expect(response.statusCode).toBe(400);
+      expect(listings.metrics.listingSearches).toEqual([]);
+    });
+
+    /*
+     * **Whether, never which** — the cardinality rule as a test. A category slug
+     * is configuration, so a label carrying one is a series count an
+     * administrator grows through a form.
+     */
+    it('marks a filtered search without recording which category', async () => {
+      await givenAListing(800);
+
+      await search({ category: 'outdoor-gardening' });
+
+      expect(listings.metrics.listingSearches).toEqual([
+        { radiusMiles: 5, outcome: 'found', filtered: true },
+      ]);
+      expect(JSON.stringify(listings.metrics.listingSearches)).not.toContain(
+        'outdoor-gardening',
+      );
     });
 
     it('counts the geocode as well as the search, through one shared helper', async () => {
@@ -3400,6 +3448,130 @@ describe('searching for listings near a postcode', () => {
   });
 
   /**
+   * Narrowing to a category (slice 3.2a) — BRD §8.4's second filter.
+   *
+   * Driven at the route a stranger drives, because the slug→id resolution is
+   * the part that has no other home: the contract can only tell whether a slug
+   * is *shaped* like one, and the repository is handed an id it never has to
+   * question. Only this path exercises the step between them.
+   */
+  describe('narrowing to a category', () => {
+    beforeEach(async () => {
+      await givenACategory('power-tools', SCHEMA, TRANSPORT);
+    });
+
+    it('returns only listings in the category asked for', async () => {
+      const wanted = await givenAListing(800, { categorySlug: 'outdoor-gardening' });
+      await givenAListing(900, { categorySlug: 'power-tools' });
+
+      const results = parsePublicListingSearchResults(
+        (await search({ category: 'outdoor-gardening' })).json(),
+      );
+
+      expect(results.results.map((result) => result.id)).toEqual([wanted.id]);
+    });
+
+    it('returns every category when none is asked for', async () => {
+      const near = await givenAListing(800, { categorySlug: 'outdoor-gardening' });
+      const far = await givenAListing(900, { categorySlug: 'power-tools' });
+
+      const results = parsePublicListingSearchResults((await search()).json());
+
+      expect(results.results.map((result) => result.id)).toEqual([near.id, far.id]);
+    });
+
+    /*
+     * **The response says which question it answered**, the same reason the
+     * radius and the page are echoed. An unfiltered search that looked filtered
+     * would make a supply problem read as a filter problem.
+     */
+    it('echoes the category it filtered by, as the slug', async () => {
+      await givenAListing(800);
+
+      const filtered = parsePublicListingSearchResults(
+        (await search({ category: 'outdoor-gardening' })).json(),
+      );
+      const unfiltered = parsePublicListingSearchResults((await search()).json());
+
+      expect(filtered.category).toBe('outdoor-gardening');
+      expect(unfiltered.category).toBeNull();
+    });
+
+    /*
+     * **A 400, and the alternative is the one wrong answer available.** Serving
+     * an empty page would tell somebody there is nothing near them in a category
+     * we have never had — indistinguishable from a genuinely quiet area, and
+     * counted as one.
+     */
+    it('refuses a slug that names no category rather than searching every category', async () => {
+      const created = await givenAListing(800);
+
+      const response = await search({ category: 'no-such-category' });
+
+      expect(response.statusCode).toBe(400);
+      // The listing is findable — so the refusal is about the category, not
+      // about there being nothing to find.
+      const results = parsePublicListingSearchResults((await search()).json());
+      expect(results.results.map((result) => result.id)).toEqual([created.id]);
+    });
+
+    it('refuses a malformed slug in the same words as an unknown one', async () => {
+      const malformed = await search({ category: 'Not A Slug' });
+      const unknown = await search({ category: 'no-such-category' });
+
+      expect(malformed.statusCode).toBe(400);
+      expect(unknown.statusCode).toBe(400);
+      // For a searcher the two are one fact, and the message says so — see
+      // `SEARCH_CATEGORY_MESSAGE`.
+      expect(malformed.json().message).toContain('is not a category we have');
+      expect(unknown.json().message).toContain('is not a category we have');
+    });
+
+    /*
+     * **An empty `category=` is every category, not a bad request** — the case a
+     * plain GET form produces the moment 3.2b gives this filter a `select` with
+     * an "All categories" option. Asserted here rather than only in the contract
+     * because it is the whole route that has to survive it.
+     */
+    it('treats an empty category parameter as no filter', async () => {
+      const created = await givenAListing(800);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=BS7%208AA&radiusMiles=5&category=',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const results = parsePublicListingSearchResults(response.json());
+      expect(results.results.map((result) => result.id)).toEqual([created.id]);
+      expect(results.category).toBeNull();
+    });
+
+    /*
+     * **The filter reaches the query rather than being applied afterwards.**
+     * Asserting on results alone cannot tell "the filter was passed and matched
+     * everything" from "the filter was never passed" — which is why the fake
+     * records what it was asked to narrow to.
+     */
+    it('passes the resolved category id down to the query, not the slug', async () => {
+      await givenAListing(800);
+      const category = await listings.categories.findBySlug('outdoor-gardening');
+
+      await search({ category: 'outdoor-gardening' });
+
+      expect(listings.proximity.categories).toEqual([category?.id]);
+    });
+
+    it('passes null down when nothing was asked for', async () => {
+      await givenAListing(800);
+
+      await search();
+
+      expect(listings.proximity.categories).toEqual([null]);
+    });
+  });
+
+  /**
    * Paging through results (slice 3.1d).
    *
    * **The properties worth asserting are the ones offset pagination gets wrong
@@ -3423,7 +3595,7 @@ describe('searching for listings near a postcode', () => {
       const created = await givenAPageAndOne();
 
       const second = parsePublicListingSearchResults(
-        (await search('BS7 8AA', 5, 2)).json(),
+        (await search({ page: 2 })).json(),
       );
 
       expect(second.results.map((result) => result.id)).toEqual([
@@ -3438,7 +3610,7 @@ describe('searching for listings near a postcode', () => {
 
       const first = parsePublicListingSearchResults((await search()).json());
       const second = parsePublicListingSearchResults(
-        (await search('BS7 8AA', 5, 2)).json(),
+        (await search({ page: 2 })).json(),
       );
       const seen = [...first.results, ...second.results].map((result) => result.id);
 
@@ -3464,7 +3636,7 @@ describe('searching for listings near a postcode', () => {
       // near you" and offers the way back instead of a wider radius.
       await givenAListing(800);
 
-      const response = await search('BS7 8AA', 5, 3);
+      const response = await search({ page: 3 });
 
       expect(response.statusCode).toBe(200);
       const results = parsePublicListingSearchResults(response.json());

@@ -17,6 +17,8 @@ import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { LISTING_STATUSES, MODERATION_STATES } from '@platform/contracts';
 import type { ListingStatus, ModerationState } from '@platform/contracts';
+import type { CategoryRecord } from '../catalogue/category-store.js';
+import type { NearbySearch } from './listing-search.js';
 import {
   createRecordingLogger,
   createRecordingMetrics,
@@ -134,6 +136,30 @@ function nthPage(page: number, size: number) {
   return { limit: size, offset: (page - 1) * size };
 }
 
+/**
+ * One search, with the ordinary answer to everything a test is not about
+ * (slice 3.2a).
+ *
+ * **Defaults rather than repetition, because the defaults are what most of this
+ * file is testing around.** Nearly every test here is about the geometry or the
+ * visibility predicate, and spelling out an origin, a radius, a null category
+ * and a window at each of thirty call sites would bury the one field that
+ * differs.
+ *
+ * **`categoryId: null` is the default deliberately**, so every test written
+ * before this slice keeps asserting exactly what it asserted: an unfiltered
+ * search. The filter tests are the ones that say so.
+ */
+function searchFor(overrides: Partial<NearbySearch> = {}): NearbySearch {
+  return {
+    originPostcode: ORIGIN_POSTCODE,
+    radiusMiles: 5,
+    categoryId: null,
+    window: PAGE_ONE,
+    ...overrides,
+  };
+}
+
 async function newUser(): Promise<string> {
   const user = await client.user.create({
     data: {
@@ -160,6 +186,17 @@ async function newCategory(authorId: string) {
 }
 
 /**
+ * A category with an owner of its own (slice 3.2a).
+ *
+ * Categories need an author, and a filter test needs a category *before* it has
+ * a listing — so this exists rather than reaching into `givenAListing`, which
+ * mints one per listing precisely so that tests about geometry cannot collide.
+ */
+async function givenACategory(): Promise<CategoryRecord> {
+  return newCategory(await newUser());
+}
+
+/**
  * A publicly visible listing, placed by **where it is published**.
  *
  * The published point is the argument rather than the true one, because that is
@@ -174,14 +211,29 @@ async function givenAListing(
   {
     truePoint = publishedPoint === null ? null : southOf(publishedPoint, ORDINARY_FUZZ),
     visible = true,
-  }: { truePoint?: Point | null; visible?: boolean } = {},
+    category = null,
+  }: {
+    truePoint?: Point | null;
+    visible?: boolean;
+    /**
+     * Which category to list in (slice 3.2a).
+     *
+     * **Null means "one of its own"**, which is what every test written before
+     * this slice gets and is why they are unaffected: a listing in a category
+     * nothing else shares cannot be accidentally included or excluded by a
+     * filter test running beside it. A filter test passes the same category to
+     * two listings on purpose, which is the only way to write one that would
+     * fail if the predicate were dropped.
+     */
+    category?: CategoryRecord | null;
+  } = {},
 ): Promise<string> {
   const owner = await newUser();
-  const category = await newCategory(owner);
+  const inCategory = category ?? (await newCategory(owner));
 
   const listing = await store.createDraft({
     ownerId: owner,
-    categorySlug: category.slug,
+    categorySlug: inCategory.slug,
     title: 'Petrol lawn scarifier',
     description: 'Serviced last spring.',
     replacementValue: { amount: 24_999, currency: 'GBP' },
@@ -247,7 +299,7 @@ describe('what falls inside a radius', () => {
   it('finds a listing well within it', async () => {
     const id = await givenAListing(northOf(3_000));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
   });
@@ -255,7 +307,7 @@ describe('what falls inside a radius', () => {
   it('leaves out a listing well outside it', async () => {
     await givenAListing(northOf(milesToMetres(9)));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     expect(page?.matches).toEqual([]);
   });
@@ -263,7 +315,7 @@ describe('what falls inside a radius', () => {
   it('finds the same listing at a wider radius', async () => {
     const id = await givenAListing(northOf(milesToMetres(9)));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 10, PAGE_ONE);
+    const page = await search.findWithin(searchFor({ radiusMiles: 10 }));
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
   });
@@ -274,7 +326,7 @@ describe('what falls inside a radius', () => {
     // metres over this distance — hence fifty rather than one.
     const id = await givenAListing(northOf(milesToMetres(5) - 50));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
   });
@@ -282,7 +334,7 @@ describe('what falls inside a radius', () => {
   it('holds at the boundary, on the outside', async () => {
     await givenAListing(northOf(milesToMetres(5) + 50));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     expect(page?.matches).toEqual([]);
   });
@@ -293,7 +345,7 @@ describe('what falls inside a radius', () => {
     // true, because `ST_DWithin` against NULL is the thing keeping it out.
     await givenAListing(null);
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 100, PAGE_ONE);
+    const page = await search.findWithin(searchFor({ radiusMiles: 100 }));
 
     expect(page?.matches).toEqual([]);
   });
@@ -324,7 +376,7 @@ describe('the trilateration defence', () => {
 
     await givenAListing(publishedPoint, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     /*
      * **If this comes back with the listing, the filter is on the true point**
@@ -341,7 +393,7 @@ describe('the trilateration defence', () => {
 
     const id = await givenAListing(publishedPoint, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     // The mirror image, and it is worth having separately: a filter that ANDed
     // the two points together would pass the test above and fail this one.
@@ -355,7 +407,7 @@ describe('the trilateration defence', () => {
     await givenAListing(northOf(3_000 + FUZZ), { truePoint: northOf(3_000) });
 
     const probes = await Promise.all(
-      Array.from({ length: 5 }, () => search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE)),
+      Array.from({ length: 5 }, () => search.findWithin(searchFor())),
     );
 
     const distances = probes.map((page) => JSON.stringify(page?.matches));
@@ -371,7 +423,7 @@ describe('the trilateration defence', () => {
 
     await givenAListing(publishedPoint, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     expect(page?.matches[0]?.distance).toEqual({ kind: 'approximate', miles: 4 });
   });
@@ -384,7 +436,7 @@ describe('the trilateration defence', () => {
     const truePoint = southOf(published, ORDINARY_FUZZ);
     await givenAListing(published, { truePoint });
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
     const serialised = JSON.stringify(page?.matches);
 
     expect(Object.keys(page?.matches[0] ?? {}).sort()).toEqual([
@@ -416,12 +468,159 @@ describe('what a search may see', () => {
         const id = await givenAListing(northOf(2_000), { visible: false });
         await setState(id, status, state);
 
-        const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+        const page = await search.findWithin(searchFor());
         if ((page?.matches.length ?? 0) > 0) visible.push(`${status}/${state}`);
       }
     }
 
     expect(visible).toEqual(['PUBLISHED/APPROVED']);
+  });
+});
+
+describe('narrowing to one category (slice 3.2a)', () => {
+  it('returns only listings in the category asked for', async () => {
+    const wanted = await givenACategory();
+    const other = await givenACategory();
+
+    const inWanted = await givenAListing(northOf(1_000), { category: wanted });
+    await givenAListing(northOf(2_000), { category: other });
+
+    const page = await search.findWithin(searchFor({ categoryId: wanted.id }));
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([inWanted]);
+  });
+
+  it('returns every category when asked for none', async () => {
+    const wanted = await givenACategory();
+    const other = await givenACategory();
+
+    const near = await givenAListing(northOf(1_000), { category: wanted });
+    const far = await givenAListing(northOf(2_000), { category: other });
+
+    const page = await search.findWithin(searchFor());
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([near, far]);
+  });
+
+  /*
+   * **The category filter does not loosen the other two**, which is the failure
+   * a predicate added to a `WHERE` clause in the wrong place produces: an `AND`
+   * that binds to the wrong side of an `OR`, or a rewrite that drops a clause
+   * while the tests about it are all unfiltered.
+   */
+  it('still excludes a listing the visibility predicate refuses', async () => {
+    const category = await givenACategory();
+
+    const hidden = await givenAListing(northOf(1_000), {
+      category,
+      visible: false,
+    });
+    await setState(hidden, 'PUBLISHED', 'REJECTED');
+
+    const page = await search.findWithin(searchFor({ categoryId: category.id }));
+
+    expect(page?.matches).toEqual([]);
+  });
+
+  /*
+   * **And it does not loosen the radius either.** Both predicates sit in the
+   * same statement, and a listing in the right category but the wrong place is
+   * the case that would pass if the geo clause were accidentally made
+   * conditional alongside the category one.
+   */
+  it('still excludes a listing outside the radius', async () => {
+    const category = await givenACategory();
+    await givenAListing(northOf(milesToMetres(20)), { category });
+
+    const page = await search.findWithin(searchFor({ categoryId: category.id }));
+
+    expect(page?.matches).toEqual([]);
+  });
+
+  /*
+   * **A category that exists but holds nothing near here is an empty page, not
+   * an error** — the same treatment as an empty radius. Refusing an id that
+   * resolves is the service's job only when the *slug* names nothing; by the
+   * time an id reaches this repository it is a real category, and "no listings"
+   * is an answer rather than a fault.
+   */
+  it('is an empty page for a real category with nothing in it', async () => {
+    const empty = await givenACategory();
+    await givenAListing(northOf(1_000));
+
+    const page = await search.findWithin(searchFor({ categoryId: empty.id }));
+
+    expect(page).not.toBeNull();
+    expect(page?.matches).toEqual([]);
+    expect(page?.truncated).toBe(false);
+  });
+
+  /*
+   * **The filter runs inside the query, not after it** (ADR 0044, extended by
+   * slice 3.2a). This is the filter-after-paginate bug written as a test: with a
+   * page size of two and three listings in the wanted category interleaved with
+   * three in another, a filter applied *after* the page was cut would return one
+   * result and claim there was nothing more.
+   */
+  it('pages over the filtered set, not over the unfiltered one', async () => {
+    const wanted = await givenACategory();
+    const other = await givenACategory();
+
+    const first = await givenAListing(northOf(1_000), { category: wanted });
+    await givenAListing(northOf(1_500), { category: other });
+    const second = await givenAListing(northOf(2_000), { category: wanted });
+    await givenAListing(northOf(2_500), { category: other });
+    const third = await givenAListing(northOf(3_000), { category: wanted });
+
+    const page = await search.findWithin(
+      searchFor({ categoryId: wanted.id, window: nthPage(1, 2) }),
+    );
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([first, second]);
+    expect(page?.truncated).toBe(true);
+
+    const next = await search.findWithin(
+      searchFor({ categoryId: wanted.id, window: nthPage(2, 2) }),
+    );
+
+    expect(next?.matches.map((match) => match.listingId)).toEqual([third]);
+    expect(next?.truncated).toBe(false);
+  });
+
+  /*
+   * **The projection is unchanged by filtering**, which is the disclosure check
+   * repeated for the new code path. Slice 3.1a proved the unfiltered statement
+   * returns nothing but an id and a bucket; a composed statement is a second
+   * statement, and the whole argument for `Prisma.sql` over string-building is
+   * that it cannot widen a `SELECT` — proved here rather than asserted.
+   */
+  it('returns nothing but an id and a bucket when filtered', async () => {
+    const category = await givenACategory();
+    await givenAListing(northOf(1_000), { category });
+
+    const page = await search.findWithin(searchFor({ categoryId: category.id }));
+    const match = page?.matches[0];
+
+    expect(match).toBeDefined();
+    expect(Object.keys(match ?? {}).sort()).toEqual(['distance', 'listingId']);
+    expect(JSON.stringify(page)).not.toContain('Ashley Down');
+    expect(JSON.stringify(page)).not.toContain('BS7 8AA');
+  });
+
+  /*
+   * **A slug-shaped value cannot become SQL.** The id is a bound parameter
+   * inside the `Prisma.sql` fragment rather than interpolated text, so a value
+   * that is not a uuid is refused by Postgres as a bad cast — not executed. It
+   * cannot reach here through the application, because the service resolves a
+   * slug to an id it read from the database; this asserts the fragment is
+   * parameterised anyway, because that is the property the whole shape rests on.
+   */
+  it('refuses a category id that is not an identifier rather than running it', async () => {
+    await givenAListing(northOf(1_000));
+
+    await expect(
+      search.findWithin(searchFor({ categoryId: "' OR 1=1 --" })),
+    ).rejects.toThrow();
   });
 });
 
@@ -433,7 +632,7 @@ describe('ordering and bounds', () => {
     const nearId = await givenAListing(northOf(1_000));
     const middleId = await givenAListing(northOf(4_000));
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    const page = await search.findWithin(searchFor());
 
     expect(page?.matches.map((match) => match.listingId)).toEqual([
       nearId,
@@ -447,7 +646,7 @@ describe('ordering and bounds', () => {
       await givenAListing(northOf(1_000 + index * 100));
     }
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
+    const page = await search.findWithin(searchFor({ window: nthPage(1, 2) }));
 
     expect(page?.matches).toHaveLength(2);
     expect(page?.truncated).toBe(true);
@@ -458,7 +657,7 @@ describe('ordering and bounds', () => {
       await givenAListing(northOf(1_000 + index * 100));
     }
 
-    const page = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
+    const page = await search.findWithin(searchFor({ window: nthPage(1, 2) }));
 
     expect(page?.matches).toHaveLength(2);
     expect(page?.truncated).toBe(false);
@@ -487,8 +686,8 @@ describe('paging through the results', () => {
   it('serves the second page from where the first stopped', async () => {
     const ids = await givenSix();
 
-    const first = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
-    const second = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(2, 2));
+    const first = await search.findWithin(searchFor({ window: nthPage(1, 2) }));
+    const second = await search.findWithin(searchFor({ window: nthPage(2, 2) }));
 
     expect(first?.matches.map((match) => match.listingId)).toEqual(ids.slice(0, 2));
     expect(second?.matches.map((match) => match.listingId)).toEqual(ids.slice(2, 4));
@@ -498,7 +697,9 @@ describe('paging through the results', () => {
     const ids = await givenSix();
 
     const pages = await Promise.all(
-      [1, 2, 3].map((page) => search.findWithin(ORIGIN_POSTCODE, 5, nthPage(page, 2))),
+      [1, 2, 3].map((page) =>
+        search.findWithin(searchFor({ window: nthPage(page, 2) })),
+      ),
     );
     const seen = pages.flatMap(
       (page) => page?.matches.map((match) => match.listingId) ?? [],
@@ -511,8 +712,8 @@ describe('paging through the results', () => {
   it('says there is more until the last page, and not on it', async () => {
     await givenSix();
 
-    const second = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(2, 2));
-    const third = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(3, 2));
+    const second = await search.findWithin(searchFor({ window: nthPage(2, 2) }));
+    const third = await search.findWithin(searchFor({ window: nthPage(3, 2) }));
 
     expect(second?.truncated).toBe(true);
     expect(third?.truncated).toBe(false);
@@ -521,7 +722,7 @@ describe('paging through the results', () => {
   it('is an empty page past the end, not an error', async () => {
     await givenSix();
 
-    const past = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(9, 2));
+    const past = await search.findWithin(searchFor({ window: nthPage(9, 2) }));
 
     expect(past?.matches).toEqual([]);
     expect(past?.truncated).toBe(false);
@@ -557,8 +758,8 @@ describe('paging through the results', () => {
       ids.push(await givenAListing(samePoint));
     }
 
-    const first = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(1, 2));
-    const second = await search.findWithin(ORIGIN_POSTCODE, 5, nthPage(2, 2));
+    const first = await search.findWithin(searchFor({ window: nthPage(1, 2) }));
+    const second = await search.findWithin(searchFor({ window: nthPage(2, 2) }));
     const seen = [...(first?.matches ?? []), ...(second?.matches ?? [])].map(
       (match) => match.listingId,
     );
@@ -572,7 +773,9 @@ describe('an origin that cannot be placed', () => {
   it('is null rather than an error', async () => {
     await givenAListing(northOf(1_000));
 
-    await expect(search.findWithin('ZZ99 9ZZ', 5, PAGE_ONE)).resolves.toBeNull();
+    await expect(
+      search.findWithin(searchFor({ originPostcode: 'ZZ99 9ZZ' })),
+    ).resolves.toBeNull();
   });
 
   it('is null rather than a throw when the provider is unreachable', async () => {
@@ -580,7 +783,7 @@ describe('an origin that cannot be placed', () => {
     // a search into a 500.
     geocoder.failsOnce();
 
-    await expect(search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE)).resolves.toBeNull();
+    await expect(search.findWithin(searchFor())).resolves.toBeNull();
   });
 
   /**
@@ -595,10 +798,10 @@ describe('an origin that cannot be placed', () => {
   it('records which of the two reasons it was', async () => {
     const before = metrics.geocodes.length;
 
-    await search.findWithin('ZZ99 9ZZ', 5, PAGE_ONE);
+    await search.findWithin(searchFor({ originPostcode: 'ZZ99 9ZZ' }));
     geocoder.failsOnce();
-    await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
-    await search.findWithin(ORIGIN_POSTCODE, 5, PAGE_ONE);
+    await search.findWithin(searchFor());
+    await search.findWithin(searchFor());
 
     expect(metrics.geocodes.slice(before).map((sample) => sample.outcome)).toEqual([
       'unknown',

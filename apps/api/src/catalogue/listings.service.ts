@@ -13,11 +13,11 @@ import type {
   DistanceBucket,
   ExportedListingsSection,
   ListingCollectionLocation,
+  ListingSearchQuery,
   ListingStatus,
   ListingTransition,
   ModerationState,
   PublicationBlocker,
-  SearchRadiusMiles,
   TransportRequirement,
 } from '@platform/contracts';
 import { Paging, Time } from '@platform/core';
@@ -821,12 +821,37 @@ export class ListingsService {
    * empty area from our own geocoder being down. The repository below cannot do
    * it either: it is handed an offset, not a page number, so it cannot tell a
    * genuinely empty radius from somebody walking off the end of a result set.
+   *
+   * **The category slug is resolved here too, and nowhere below** (slice 3.2a).
+   * Catalogue owns categories, so it is Catalogue that turns the slug a searcher
+   * gave into the id the proximity predicate needs — which is what keeps Search
+   * & Location from ever joining `categories` or learning that slugs exist.
+   *
+   * **Takes the whole parsed query rather than four arguments.** `postcode` and
+   * `category` are both `string | null`-ish strings, and a signature carrying
+   * them side by side type checks with them swapped while returning a perfectly
+   * plausible empty page. Same reasoning as `ProximitySearch`, one layer up.
+   *
+   * **Throws `UnknownCategoryError` for a slug naming no category.** It is not
+   * an empty result: answering an unresolvable filter with an unfiltered search
+   * would show somebody every category while their address bar names one.
    */
-  async searchNearby(
-    originPostcode: string,
-    radiusMiles: SearchRadiusMiles,
-    pageNumber: number,
-  ): Promise<NearbySearchResults | null> {
+  async searchNearby(search: ListingSearchQuery): Promise<NearbySearchResults | null> {
+    const { radiusMiles, page: pageNumber } = search;
+
+    /*
+     * **Resolved before anything else happens, including the geocode** (slice
+     * 3.2a). A search that is going to be refused should not cost a call to a
+     * third-party provider, and — the part that shows up in the numbers — a
+     * refused request must not reach `recordSearch`. "A refused request is not a
+     * search" is the rule 3.1f established for a 400 on the radius, and an
+     * unknown category is the same kind of refusal.
+     */
+    const categoryId =
+      search.category === null
+        ? null
+        : await this.resolveSearchCategory(search.category);
+
     /*
      * **The page number becomes an offset here and nowhere else** (slice 3.1d).
      * This is the only layer that knows both how large a page is and which page
@@ -840,12 +865,17 @@ export class ListingsService {
      * omits, and the omission is invisible until somebody is on page three
      * being served page one.
      */
-    const page = await this.proximity.findWithin(originPostcode, radiusMiles, {
-      limit: SEARCH_RESULT_LIMIT,
-      offset: resultsToSkip(pageNumber),
+    const page = await this.proximity.findWithin({
+      originPostcode: search.postcode,
+      radiusMiles,
+      categoryId,
+      window: {
+        limit: SEARCH_RESULT_LIMIT,
+        offset: resultsToSkip(pageNumber),
+      },
     });
     if (page === null) {
-      this.recordSearch(radiusMiles, 'unplaceable');
+      this.recordSearch(search, 'unplaceable');
       return null;
     }
 
@@ -896,9 +926,29 @@ export class ListingsService {
      * zero-result rate would report a navigation artefact as missing inventory,
      * which is the exact number BRD §17 says to watch.
      */
-    this.recordSearch(radiusMiles, searchOutcome(results.length, pageNumber));
+    this.recordSearch(search, searchOutcome(results.length, pageNumber));
 
     return { results, truncated: page.truncated };
+  }
+
+  /**
+   * A category slug, as the id the proximity predicate needs (slice 3.2a).
+   *
+   * **Its own store method rather than reading `findOption`'s record**, because
+   * `CategoryOptionRecord` has no id and giving it one would widen a port that
+   * exists to be narrow — it carries what an owner needs to fill in a form, and
+   * every consumer of it would inherit an identifier none of them should be
+   * handling. One question, one method, one indexed lookup on a unique column.
+   *
+   * **A missing category throws rather than returning null**, so the one
+   * call site cannot accidentally treat "no such category" as "no filter". That
+   * is the whole failure this method exists to prevent: null is already a
+   * meaningful value on this path and it means the opposite.
+   */
+  private async resolveSearchCategory(slug: string): Promise<string> {
+    const id = await this.categories.findCategoryId(slug);
+    if (id === null) throw new UnknownCategoryError(slug);
+    return id;
   }
 
   /**
@@ -915,13 +965,25 @@ export class ListingsService {
    * has to remember. A postcode in a label is an area of interest kept in
    * process memory and exported to a scraper that has none of §10.1's retention
    * or erasure guarantees.
+   *
+   * **From slice 3.2a the same sentence covers the category, and more sharply.**
+   * A postcode is at least a fixed vocabulary somebody could bound; a category
+   * slug is *configuration*, so `category` as a label would be a series count an
+   * administrator can grow through a form with no deploy. What is recorded is
+   * the boolean — **whether** a filter was applied, never which — and it is
+   * derived here from the search rather than passed in, so the two call sites
+   * cannot disagree about what "filtered" meant.
    */
   private recordSearch(
-    radiusMiles: SearchRadiusMiles,
+    search: ListingSearchQuery,
     outcome: ListingSearchOutcome,
   ): void {
     try {
-      this.metrics.recordListingSearch({ radiusMiles, outcome });
+      this.metrics.recordListingSearch({
+        radiusMiles: search.radiusMiles,
+        outcome,
+        filtered: search.category !== null,
+      });
     } catch {
       /* deliberately nothing */
     }

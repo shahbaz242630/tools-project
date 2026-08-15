@@ -723,6 +723,20 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return category === null ? null : toOption(category);
   }
 
+  /**
+   * The slug's category id, or null (slice 3.2a).
+   *
+   * **It reads the same store `findOption` does, and returns only the id** — a
+   * double that answered from a separate map could disagree with `createDraft`
+   * about which categories exist, and the test asserting that a search filter
+   * finds a listing would then be asserting nothing about the listing's actual
+   * category.
+   */
+  async findCategoryId(slug: string): Promise<string | null> {
+    const category = await this.categories.findBySlug(slug);
+    return category?.id ?? null;
+  }
+
   /** Everything stored, for asserting that a refused write left nothing behind. */
   all(): readonly ListingRecord[] {
     return [...this.listings];

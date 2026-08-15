@@ -6,9 +6,9 @@ import {
   resultsToSkip,
 } from '@platform/contracts';
 import type {
+  ListingSearchQuery,
   PublicListingSearchResults,
   PublicListingSummary,
-  SearchRadiusMiles,
 } from '@platform/contracts';
 import { distanceLabel } from '../lib/distance';
 import {
@@ -34,13 +34,39 @@ import styles from './browse.module.css';
  */
 export function BrowseResults({
   results,
-  postcode,
-  radiusMiles,
+  search,
 }: {
   readonly results: PublicListingSearchResults;
-  readonly postcode: string;
-  readonly radiusMiles: SearchRadiusMiles;
+  /**
+   * The search these results answer (slice 3.2a).
+   *
+   * **The whole query rather than a prop per parameter**, so that every link
+   * built below — the pager both ways, the wider radius — carries every filter
+   * without this component having to remember which ones exist. A filter added
+   * to the contract and forgotten here would not break a link; it would build
+   * one to a *different search* that renders perfectly.
+   */
+  readonly search: ListingSearchQuery;
 }) {
+  /*
+   * **One search object for the whole component, and the response wins on every
+   * field it echoes** (slice 3.2a).
+   *
+   * The API echoes the radius, the page and the category precisely so that a
+   * response says which question it answered — so those three are read from the
+   * response, and only the postcode, which is not echoed, comes from the
+   * request. Before this slice the heading read `results.page` while the pager
+   * was handed a page separately, which is two sources for one value: they agree
+   * by contract, and the day they did not, a pager would step from a page other
+   * than the one on screen with nothing to show for it.
+   */
+  const current: ListingSearchQuery = {
+    postcode: search.postcode,
+    radiusMiles: results.radiusMiles,
+    page: results.page,
+    category: results.category,
+  };
+
   if (results.results.length === 0) {
     /*
      * **Two different empty pages, and telling them apart is the point** (slice
@@ -50,14 +76,14 @@ export function BrowseResults({
      * telling somebody their area is empty immediately after showing them what
      * is in it.
      */
-    return results.page === FIRST_SEARCH_PAGE ? (
-      <NothingFound postcode={postcode} radiusMiles={radiusMiles} />
+    return current.page === FIRST_SEARCH_PAGE ? (
+      <NothingFound search={current} />
     ) : (
-      <NothingFurther postcode={postcode} radiusMiles={radiusMiles} />
+      <NothingFurther search={current} />
     );
   }
 
-  const first = resultsToSkip(results.page) + 1;
+  const first = resultsToSkip(current.page) + 1;
   const last = first + results.results.length - 1;
 
   return (
@@ -71,7 +97,7 @@ export function BrowseResults({
           "tools 1–24" is a worse sentence than "24 tools" for the only page most
           searches will ever have.
         */}
-        {results.page === FIRST_SEARCH_PAGE
+        {current.page === FIRST_SEARCH_PAGE
           ? results.results.length === 1
             ? '1 tool near you'
             : `${String(results.results.length)} tools near you`
@@ -86,12 +112,7 @@ export function BrowseResults({
         ))}
       </ul>
 
-      <Pager
-        postcode={postcode}
-        radiusMiles={radiusMiles}
-        page={results.page}
-        truncated={results.truncated}
-      />
+      <Pager search={current} truncated={results.truncated} />
     </section>
   );
 }
@@ -114,18 +135,14 @@ export function BrowseResults({
  * the same dead control in a different coat.
  */
 function Pager({
-  postcode,
-  radiusMiles,
-  page,
+  search,
   truncated,
 }: {
-  readonly postcode: string;
-  readonly radiusMiles: SearchRadiusMiles;
-  readonly page: number;
+  readonly search: ListingSearchQuery;
   readonly truncated: boolean;
 }) {
-  const previous = previousSearchHref(postcode, radiusMiles, page);
-  const next = nextSearchHref(postcode, radiusMiles, page, truncated);
+  const previous = previousSearchHref(search);
+  const next = nextSearchHref(search, truncated);
 
   if (previous === null && next === null) return null;
 
@@ -169,13 +186,7 @@ function Pager({
  * It offers the way back rather than the way wider, which is the distinction
  * `NothingFound` cannot make: this person has already seen results.
  */
-function NothingFurther({
-  postcode,
-  radiusMiles,
-}: {
-  readonly postcode: string;
-  readonly radiusMiles: SearchRadiusMiles;
-}) {
+function NothingFurther({ search }: { readonly search: ListingSearchQuery }) {
   return (
     <section className={styles.empty} aria-labelledby="results-heading">
       <h2 id="results-heading" className={styles.emptyHeading}>
@@ -183,7 +194,13 @@ function NothingFurther({
       </h2>
       <p className={styles.emptyBody}>
         You have reached the end of the results.{' '}
-        <Link href={browseHref(postcode, radiusMiles)}>
+        {/*
+          **Back to the first page of *this* search**, filter included — the
+          spread resets only the page. Dropping the category here would send
+          somebody who paged too far into a different, wider search than the one
+          they were reading.
+        */}
+        <Link href={browseHref({ ...search, page: FIRST_SEARCH_PAGE })}>
           Start again from the first page
         </Link>
         .
@@ -255,19 +272,13 @@ function ListingCard({ listing }: { readonly listing: PublicListingSummary }) {
  * At 100 miles it offers nothing, because a control that re-runs the identical
  * search is worse than no control.
  */
-function NothingFound({
-  postcode,
-  radiusMiles,
-}: {
-  readonly postcode: string;
-  readonly radiusMiles: SearchRadiusMiles;
-}) {
-  const wider = widerSearchHref(postcode, radiusMiles);
+function NothingFound({ search }: { readonly search: ListingSearchQuery }) {
+  const wider = widerSearchHref(search);
 
   return (
     <section className={styles.empty} aria-labelledby="results-heading">
       <h2 id="results-heading" className={styles.emptyHeading}>
-        Nothing within {String(radiusMiles)} miles
+        Nothing within {String(search.radiusMiles)} miles
       </h2>
 
       {wider === null ? (
