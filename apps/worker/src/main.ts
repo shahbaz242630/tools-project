@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { closeSync, constants, openSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,6 +47,36 @@ const SHUTDOWN_TIMEOUT_MS = 30_000;
  */
 const HEALTH_FILE = join(tmpdir(), 'worker-health');
 const HEALTH_INTERVAL_MS = 10_000;
+
+/**
+ * How the health signal is written, and why it is not a plain `writeFileSync`.
+ *
+ * **CodeQL flagged the plain version on PR #118, correctly.** In the deployed
+ * container the temp directory is a tmpfs of our own with nothing else in it,
+ * so the predictable name costs nothing. On a developer laptop `tmpdir()` is
+ * the genuinely shared one — `/tmp` or `%TEMP%` — where anything else running
+ * as the same user can pre-create `worker-health` as a **symlink** to a file it
+ * wants overwritten, and `writeFileSync` would cheerfully follow it and write
+ * through. That is `js/insecure-temporary-file`, and it is a real hole even
+ * though the only machine it opens is one we own.
+ *
+ * `O_NOFOLLOW` closes it: the open fails with `ELOOP` rather than following a
+ * symlink, so a planted link makes the health signal go stale — which the probe
+ * already treats as unhealthy — instead of making us the attacker's write
+ * primitive. `O_CREAT | O_TRUNC | O_WRONLY` is what `flag: 'w'` already meant.
+ *
+ * **`?? 0` because Windows has no `O_NOFOLLOW`.** `fs.constants` simply omits
+ * it there, and `undefined` in a bitwise OR would poison the whole mask to
+ * `NaN` and break every write. Falling back to zero drops the protection on the
+ * one platform that cannot express it rather than dropping the file.
+ *
+ * Mode `0o600` for the same reason the flag is here: nothing but this process
+ * has any business reading or writing it.
+ */
+const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const HEALTH_FILE_FLAGS =
+  constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | NOFOLLOW;
+const HEALTH_FILE_MODE = 0o600;
 
 /**
  * How long to let the queue drain before giving up on it. Shorter than
@@ -121,7 +151,15 @@ function main(): void {
         }
         await connection.info();
 
-        writeFileSync(HEALTH_FILE, 'ok\n');
+        // `openSync` rather than `writeFileSync`'s `flag` option: the option is
+        // typed `string` and the string flags have no spelling for `O_NOFOLLOW`,
+        // so the numeric mask has to be passed to `open` itself.
+        const file = openSync(HEALTH_FILE, HEALTH_FILE_FLAGS, HEALTH_FILE_MODE);
+        try {
+          writeFileSync(file, 'ok\n');
+        } finally {
+          closeSync(file);
+        }
       } catch (error) {
         // Never fatal. The file simply stops being refreshed and the container
         // probe draws the conclusion — which is the right place for it, because

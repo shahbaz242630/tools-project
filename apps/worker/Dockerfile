@@ -59,7 +59,7 @@ USER node
 # because the interval is in TypeScript and the bound is in this shell string and
 # nothing else compares them.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "const{statSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os');const age=Date.now()-statSync(join(tmpdir(),'worker-health')).mtimeMs;if(age>60000)throw new Error('health signal is '+Math.round(age/1000)+'s old')"
+  CMD node -e "const{lstatSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os');const age=Date.now()-lstatSync(join(tmpdir(),'worker-health')).mtimeMs;if(age>60000)throw new Error('health signal is '+Math.round(age/1000)+'s old')"
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/main.js"]
