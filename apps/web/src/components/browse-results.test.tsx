@@ -63,6 +63,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -82,6 +83,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -94,6 +96,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -105,6 +108,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -118,6 +122,7 @@ describe('a page of results', () => {
           results: [{ ...SCARIFIER, distance: { kind: 'approximate', miles: 12 } }],
         })}
         search={searchFor({ postcode: 'BA1 1AA', radiusMiles: 20 })}
+        categoryName={null}
       />,
     );
 
@@ -132,6 +137,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -143,6 +149,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
     expect(
@@ -155,6 +162,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page({ truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -172,6 +180,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -186,6 +195,7 @@ describe('a page of results', () => {
       <BrowseResults
         results={page()}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
     const html = container.innerHTML;
@@ -202,6 +212,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ results: full(24), page: 2, truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -217,6 +228,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ results: full(24), truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -230,6 +242,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ page: 3, truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -246,6 +259,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ page: 2, truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -260,6 +274,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -271,6 +286,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ page: 4, truncated: false })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -288,6 +304,7 @@ describe('paging between results (slice 3.1d)', () => {
       <BrowseResults
         results={page({ page: MAX_SEARCH_PAGE, truncated: true })}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -311,6 +328,7 @@ describe('past the last page', () => {
       <BrowseResults
         results={beyond}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -324,6 +342,7 @@ describe('past the last page', () => {
       <BrowseResults
         results={beyond}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -351,6 +370,7 @@ describe('carrying a category through the links', () => {
       <BrowseResults
         results={filtered({ truncated: true })}
         search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName={null}
       />,
     );
 
@@ -365,6 +385,7 @@ describe('carrying a category through the links', () => {
       <BrowseResults
         results={filtered({ page: 3, truncated: true })}
         search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName={null}
       />,
     );
 
@@ -386,6 +407,7 @@ describe('carrying a category through the links', () => {
       <BrowseResults
         results={filtered({ results: [] })}
         search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName={null}
       />,
     );
 
@@ -402,6 +424,7 @@ describe('carrying a category through the links', () => {
       <BrowseResults
         results={filtered({ results: [], page: 4 })}
         search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName={null}
       />,
     );
 
@@ -420,10 +443,169 @@ describe('carrying a category through the links', () => {
    */
   it('writes no category parameter when there is no filter', () => {
     const { container } = render(
-      <BrowseResults results={page({ truncated: true })} search={searchFor()} />,
+      <BrowseResults
+        results={page({ truncated: true })}
+        search={searchFor()}
+        categoryName={null}
+      />,
     );
 
     expect(container.innerHTML).not.toContain('category=');
+  });
+});
+
+/**
+ * §8.4's *"category alternatives"* (slice 3.2b).
+ *
+ * The BRD requires an empty result to offer *"nearby radius expansion and
+ * category alternatives"*. With a launch catalogue of one category, a list of
+ * other categories is a list of nothing — so the alternative that exists is the
+ * same search without the narrowing.
+ */
+describe('when a filtered radius has nothing in it', () => {
+  const filteredEmpty = (over: Partial<PublicListingSearchResults> = {}) =>
+    page({ results: [], category: 'outdoor-gardening', ...over });
+
+  it('names the category, so the reader can see they narrowed it', () => {
+    render(
+      <BrowseResults
+        results={filteredEmpty()}
+        search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Nothing in Outdoor and gardening within 5 miles',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  /*
+   * **The name is used exactly as typed.** The first version lower-cased it to
+   * fit the sentence, which is fine for "Outdoor and gardening" and mangles
+   * "DIY tools" — and a category name is configuration, so its capitalisation is
+   * somebody's decision rather than ours to normalise. Found by looking at the
+   * rendered page, not by a test.
+   */
+  it('does not re-case a name an administrator chose', () => {
+    render(
+      <BrowseResults
+        results={filteredEmpty()}
+        search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName="DIY tools"
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'Nothing in DIY tools within 5 miles' }),
+    ).toBeInTheDocument();
+  });
+
+  /*
+   * The category read failed, so the filter is applied but unnamed. It falls
+   * back to wording that needs no name rather than rendering the slug — a slug
+   * on screen is a URL segment shown to a person.
+   */
+  it('falls back to the plain wording when the name is unknown', () => {
+    render(
+      <BrowseResults
+        results={filteredEmpty()}
+        search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'Nothing within 5 miles' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/outdoor-gardening/)).not.toBeInTheDocument();
+  });
+
+  it('offers the same search without the filter', () => {
+    render(
+      <BrowseResults
+        results={filteredEmpty()}
+        search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Search all categories' })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5',
+    );
+  });
+
+  /*
+   * **Dropping the filter is offered before widening the radius**, because
+   * staying local is the product: a renter wants the thing near them more than
+   * a different thing forty miles away.
+   */
+  it('offers dropping the filter before widening the radius', () => {
+    const { container } = render(
+      <BrowseResults
+        results={filteredEmpty()}
+        search={searchFor({ category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    const links = [...container.querySelectorAll('a')].map((a) => a.textContent);
+    expect(links[0]).toBe('Search all categories');
+    expect(links[1]).toBe('Search within 10 miles');
+  });
+
+  it('offers no such link when nothing was filtered', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [] })}
+        search={searchFor()}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('link', { name: 'Search all categories' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /*
+   * **The claim at the top of the ladder must not overreach**, and this is the
+   * one place the filter changes a *statement* rather than a control. "There is
+   * nothing listed near you yet" is about the whole catalogue; with a category
+   * on, all we know is that this category is empty within a hundred miles.
+   */
+  it('does not claim the whole catalogue is empty at a hundred miles', () => {
+    render(
+      <BrowseResults
+        results={filteredEmpty({ radiusMiles: 100 })}
+        search={searchFor({ radiusMiles: 100, category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(screen.queryByText(/nothing listed near you yet/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Nothing in this category is listed within a hundred miles/),
+    ).toBeInTheDocument();
+    // The way out is still offered — that is what makes the narrower claim safe.
+    expect(
+      screen.getByRole('link', { name: 'Search all categories' }),
+    ).toBeInTheDocument();
+  });
+
+  it('still claims it when nothing was filtered', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [], radiusMiles: 100 })}
+        search={searchFor({ radiusMiles: 100 })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.getByText(/nothing listed near you yet/)).toBeInTheDocument();
   });
 });
 
@@ -435,6 +617,7 @@ describe('when a radius has nothing in it', () => {
       <BrowseResults
         results={nothing}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -448,6 +631,7 @@ describe('when a radius has nothing in it', () => {
       <BrowseResults
         results={nothing}
         search={searchFor({ postcode: 'BS7 8AA', radiusMiles: 5 })}
+        categoryName={null}
       />,
     );
 
@@ -461,6 +645,7 @@ describe('when a radius has nothing in it', () => {
       <BrowseResults
         results={page({ results: [], radiusMiles: 20 })}
         search={searchFor({ radiusMiles: 20 })}
+        categoryName={null}
       />,
     );
 
@@ -479,6 +664,7 @@ describe('when a radius has nothing in it', () => {
       <BrowseResults
         results={page({ results: [], radiusMiles: 100 })}
         search={searchFor({ radiusMiles: 100 })}
+        categoryName={null}
       />,
     );
 

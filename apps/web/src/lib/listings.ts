@@ -12,11 +12,13 @@ import {
   CATEGORY_OPTIONS_PATH,
   CLIENT_IP_HEADER,
   LISTINGS_PATH,
+  PUBLIC_CATEGORIES_PATH,
   listingPath,
   listingPublicationPath,
   parseCategoryOptions,
   parseOwnedListings,
   parseOwnerListing,
+  parsePublicCategories,
   parsePublicListing,
   parsePublicListingSearchResults,
   parsePublicationRefusal,
@@ -30,6 +32,7 @@ import type {
   ListingSearchQuery,
   OwnedListings,
   OwnerListing,
+  PublicCategory,
   PublicListing,
   PublicListingSearchResults,
   PublicationBlocker,
@@ -401,6 +404,30 @@ export function fetchPublicListing(
  * a caller to get wrong now that two of the fields are strings. The API
  * validates the lot again regardless; that is the control, this is the courtesy.
  */
+/**
+ * The categories a searcher can narrow to (slice 3.2b).
+ *
+ * **Unauthenticated, like the search beside it** — Browse is the page a
+ * signed-out stranger meets first, so a filter that needed a token would be a
+ * control that works only once you have an account.
+ *
+ * **The caller must treat a failure as "no filter", never as a broken page.**
+ * That is stated here because it is the whole risk of adding this read to
+ * Browse: search does not depend on the category list, and a page that refused
+ * to render a search because a `select` could not be populated would turn a
+ * cosmetic outage into a total one. `/browse` renders without the control.
+ */
+export function fetchPublicCategories(
+  apiBaseUrl: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+): Promise<PublicOutcome<readonly PublicCategory[]>> {
+  return publicCall(
+    new URL(PUBLIC_CATEGORIES_PATH, apiBaseUrl).toString(),
+    fetchImpl,
+    (raw) => parsePublicCategories(raw).categories,
+  );
+}
+
 export function fetchListingSearch(
   apiBaseUrl: string,
   search: ListingSearchQuery,

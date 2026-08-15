@@ -1,5 +1,5 @@
 import { SEARCH_RADII_MILES } from '@platform/contracts';
-import type { SearchRadiusMiles } from '@platform/contracts';
+import type { PublicCategory, SearchRadiusMiles } from '@platform/contracts';
 import { BROWSE_PATH } from '../lib/page-paths';
 import styles from './browse.module.css';
 
@@ -29,6 +29,7 @@ export function BrowseSearch({
   postcode,
   radiusMiles,
   category,
+  categories,
   error,
   className,
 }: {
@@ -38,14 +39,29 @@ export function BrowseSearch({
   /**
    * Which category the search is narrowed to, or null for all (slice 3.2a).
    *
-   * **Carried through a hidden field until slice 3.2b gives it a control.** The
-   * filter is reachable by URL from 3.2a, and a form that dropped it on every
-   * submission would mean changing the radius silently widened the search to
-   * every category — a control quietly undoing a filter the address bar still
-   * claims. That is a worse failure than having no filter at all, because it
+   * **It survives every submission**, whether or not there is a control for it.
+   * A form that dropped it would mean changing the radius silently widened the
+   * search to every category — a control quietly undoing a filter the address
+   * bar still claims, which is worse than having no filter at all because it
    * looks like it worked.
    */
   readonly category: string | null;
+  /**
+   * What the filter may be set to (slice 3.2b).
+   *
+   * **Empty means no control, and that is a real state rather than a
+   * placeholder.** Two callers pass it empty on purpose: the landing hero, which
+   * asks the one question it must and would otherwise put a second decision in
+   * front of somebody who has not made the first (3.1e's reasoning); and Browse
+   * itself when the category read failed, because search does not depend on this
+   * list and a page that refused to render results over an unpopulated `select`
+   * would turn a cosmetic outage into a total one.
+   *
+   * **The filter still survives an empty list** — through the hidden field
+   * below — so a URL carrying a category is not silently widened by a category
+   * read that happened to fail.
+   */
+  readonly categories: readonly PublicCategory[];
   /** What was wrong with it, shown against the field rather than at the top. */
   readonly error: string | null;
   /**
@@ -124,19 +140,52 @@ export function BrowseSearch({
         </select>
       </div>
 
-      {/*
-        **Only rendered when there is one**, rather than always present with an
-        empty value. An empty `category=` is accepted by the contract and means
-        the same as absent, but emitting it would put a second URL in front of
-        every unfiltered search — the duplicate-content problem slice 2.12 has to
-        answer for §8.17, arriving through the back door of a form.
+      {categories.length > 0 ? (
+        <div className={styles.categoryField}>
+          <label htmlFor="category">Category</label>
+          {/*
+            **"All categories" is an option, not the absence of one**, and its
+            value is the empty string — which is exactly why the contract accepts
+            an empty `category=` as meaning every category. A plain GET form
+            submits every named control, so choosing this sends `category=`, and
+            a schema that refused it would 400 the most ordinary search on the
+            page. That is the case `searchCategorySchema` exists to swallow.
 
-        **No `page`**, deliberately: submitting the form is a new search, and
-        carrying page four into it would land somebody in the middle of a set
-        they have not seen the start of. `widerSearchHref` drops the page for the
-        same reason.
+            **First in the list**, because it is the default and because a filter
+            somebody has to scroll to un-set is a filter they end up stuck in.
+          */}
+          <select id="category" name="category" defaultValue={category ?? ''}>
+            <option value="">All categories</option>
+            {categories.map((option) => (
+              <option key={option.slug} value={option.slug}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        /*
+          **No control, but the filter still travels** — a hidden field, which is
+          what this was in 3.2a before there was a `select`. Reached in two ways:
+          the landing hero, which passes no categories on purpose, and Browse
+          when the category read failed. In both, dropping a category the URL
+          carries would silently widen the search on the next submission.
+
+          Rendered only when there is a category, rather than always with an
+          empty value: emitting `category=` for an unfiltered search would mint a
+          second URL for it, which is §8.17's duplicate-content problem arriving
+          through a form. The `select` above has the opposite treatment because
+          it is a control a person operates, and it needs a way to say "all".
+        */
+        category !== null && <input type="hidden" name="category" value={category} />
+      )}
+
+      {/*
+        **No `page` in either branch**, deliberately: submitting the form is a
+        new search, and carrying page four into it would land somebody in the
+        middle of a set they have not seen the start of. `widerSearchHref` drops
+        the page for the same reason.
       */}
-      {category !== null && <input type="hidden" name="category" value={category} />}
 
       <button type="submit" className={styles.searchSubmit}>
         Search

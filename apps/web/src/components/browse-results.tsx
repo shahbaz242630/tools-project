@@ -35,8 +35,24 @@ import styles from './browse.module.css';
 export function BrowseResults({
   results,
   search,
+  categoryName,
 }: {
   readonly results: PublicListingSearchResults;
+  /**
+   * What the filtered category is called, or null (slice 3.2b).
+   *
+   * **The name, resolved by the page, because the API returns the slug.** The
+   * response echoes `category` as the stable identity — which is what every URL
+   * is built from — and a person needs the label an administrator typed. The
+   * page already holds the list, so it resolves it there rather than having the
+   * search response carry a second representation of the same fact.
+   *
+   * **Null is legitimate and is not an error**: no filter is set, or the
+   * category read failed and the page is rendering without the control. The
+   * empty state falls back to wording that needs no name rather than showing a
+   * slug, which would be a URL segment on screen.
+   */
+  readonly categoryName: string | null;
   /**
    * The search these results answer (slice 3.2a).
    *
@@ -77,7 +93,7 @@ export function BrowseResults({
      * is in it.
      */
     return current.page === FIRST_SEARCH_PAGE ? (
-      <NothingFound search={current} />
+      <NothingFound search={current} categoryName={categoryName} />
     ) : (
       <NothingFurther search={current} />
     );
@@ -272,14 +288,65 @@ function ListingCard({ listing }: { readonly listing: PublicListingSummary }) {
  * At 100 miles it offers nothing, because a control that re-runs the identical
  * search is worse than no control.
  */
-function NothingFound({ search }: { readonly search: ListingSearchQuery }) {
+function NothingFound({
+  search,
+  categoryName,
+}: {
+  readonly search: ListingSearchQuery;
+  readonly categoryName: string | null;
+}) {
   const wider = widerSearchHref(search);
 
   return (
     <section className={styles.empty} aria-labelledby="results-heading">
       <h2 id="results-heading" className={styles.emptyHeading}>
-        Nothing within {String(search.radiusMiles)} miles
+        {/*
+          **The heading names the filter when there is one**, because "nothing
+          within 5 miles" is a different and much worse sentence when the reason
+          is a narrowing the reader chose. Without it the honest reading — *"you
+          filtered this"* — is invisible, and a searcher concludes the area is
+          empty when in fact they asked a narrow question.
+
+          It falls back to the plain wording when the *name* is unknown, which
+          happens when the category read failed: the filter is still applied and
+          still honest, and inventing a label from the slug would show somebody a
+          URL segment.
+
+          **The name is used exactly as an administrator typed it**, and the
+          sentence is built around that rather than the other way round. The
+          first version read *"No {name} within 5 miles"* and lower-cased the
+          name to make it fit — which is fine for "Outdoor and gardening" and
+          mangles "DIY tools" and "PPE". A category name is configuration, so its
+          capitalisation is somebody's decision and not ours to normalise; "in"
+          costs one word and reads correctly whatever they typed.
+        */}
+        {categoryName === null
+          ? `Nothing within ${String(search.radiusMiles)} miles`
+          : `Nothing in ${categoryName} within ${String(search.radiusMiles)} miles`}
       </h2>
+
+      {/*
+        **§8.4's "category alternatives", and dropping the filter comes before
+        widening the radius.** The BRD asks an empty result to offer both. With a
+        launch catalogue of one category, "try these other categories" is a list
+        of nothing — so the alternative that exists is the same search without
+        the narrowing, and it is offered *first* because staying local is the
+        product: a renter wants the thing near them more than they want a
+        different thing forty miles away.
+
+        Only rendered when a filter is set, so an unfiltered empty search is
+        unchanged from 3.1b.
+      */}
+      {search.category !== null && (
+        <p className={styles.emptyBody}>
+          <Link
+            href={browseHref({ ...search, category: null, page: FIRST_SEARCH_PAGE })}
+          >
+            Search all categories
+          </Link>{' '}
+          within {String(search.radiusMiles)} miles instead.
+        </p>
+      )}
 
       {wider === null ? (
         /*
@@ -287,11 +354,27 @@ function NothingFound({ search }: { readonly search: ListingSearchQuery }) {
           that the search failed**, because at a hundred miles the honest reading
           is that nobody near them has listed yet — and that is a supply problem
           we own, not a query they got wrong.
+
+          **From slice 3.2b it must not say that while a filter is on**, and this
+          is the one place the filter changes a *claim* rather than a control.
+          "There is nothing listed near you yet" is a statement about the whole
+          catalogue; with a category selected, all we know is that nothing in
+          *that* category is within a hundred miles, and the rest of the
+          catalogue may be full. Saying the broader thing would be telling
+          somebody the platform is empty on the strength of a narrowing they
+          chose — and the "Search all categories" link above is right there
+          disproving it.
         */
-        <p className={styles.emptyBody}>
-          There is nothing listed near you yet. We are just getting started — if you
-          have a tool sitting idle, you could be the first.
-        </p>
+        search.category === null ? (
+          <p className={styles.emptyBody}>
+            There is nothing listed near you yet. We are just getting started — if you
+            have a tool sitting idle, you could be the first.
+          </p>
+        ) : (
+          <p className={styles.emptyBody}>
+            Nothing in this category is listed within a hundred miles.
+          </p>
+        )
       ) : (
         <p className={styles.emptyBody}>
           <Link href={wider.href}>Search within {String(wider.miles)} miles</Link>{' '}

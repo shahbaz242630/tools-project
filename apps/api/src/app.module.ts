@@ -49,6 +49,7 @@ import { AdminListingsController } from './catalogue/admin-listings.controller.j
 import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
 import { PublicListingsController } from './catalogue/public-listings.controller.js';
 import { PublicListingSearchController } from './catalogue/public-listing-search.controller.js';
+import { PublicCategoriesController } from './catalogue/public-categories.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
 import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
@@ -188,24 +189,32 @@ export class AppModule implements NestModule {
         AdminFeatureFlagsController,
         OwnerListingsController,
         AdminListingsController,
-        // **Unguarded by design, all three**, and kept together at the end of
+        // **Unguarded by design, all four**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
-        // requires the same; §8.4 makes search the point of the whole product.
-        // Each is a separate controller so the decision is visible rather than
-        // looking like a missing decorator — see the docblock on each class.
+        // requires the same; §8.4 makes search the point of the whole product,
+        // and from slice 3.2b makes its category filter usable without an
+        // account. Each is a separate controller so the decision is visible
+        // rather than looking like a missing decorator — see the docblock on
+        // each class.
         //
-        // **Anything added here is world-readable.** Three entries is a number
-        // somebody can check by eye at review time; that is the whole reason
-        // they sit together, and it is why slice 3.1a added a class rather than
-        // a second route to the one below it.
+        // **Anything added here is world-readable.** Four entries is still a
+        // number somebody can check by eye at review time; that is the whole
+        // reason they sit together, and it is why slice 3.1a added a class
+        // rather than a second route to the one below it — and why 3.2b did the
+        // same rather than hanging `/public/categories` off the search
+        // controller it serves.
         //
-        // The newest one is also the most exposed: it returns a *collection*
-        // from an origin the caller picks, where the other two answer about one
-        // thing the caller had to already know the id of.
+        // **The two collections are the ones to watch.** Search returns rows for
+        // an origin the caller picks; categories returns every row of a small
+        // configuration table. The other two answer about one thing whose id the
+        // caller had to already know. All four are unmetered until the WAF
+        // exists (`SECURITY.md`), and the collections are what a limit lands on
+        // first.
         PublicProfileController,
         PublicListingsController,
         PublicListingSearchController,
+        PublicCategoriesController,
       ],
       providers: [
         ReadinessService,

@@ -298,6 +298,54 @@ export function listingSearchQueryString(search: ListingSearchQuery): string {
 }
 
 /**
+ * Where anybody reads the categories they can narrow a search to (slice 3.2b).
+ *
+ * **A public sibling of `/categories`, not a relaxation of it.** That route is
+ * behind `AuthGuard` and answers a different question for a different person —
+ * it carries the attribute schema and the transport options an owner needs to
+ * *fill in a form*. A searcher needs a name and a value, and Browse is the page
+ * a signed-out stranger meets first, so it cannot use the guarded one at all.
+ *
+ * **In `search.ts` rather than `listings.ts`**, beside the query it parameterises
+ * rather than beside the owner's routes: this exists for the filter and for
+ * nothing else, and §8.17's landing pages are the only other thing that will
+ * want it.
+ */
+export const PUBLIC_CATEGORIES_PATH = '/public/categories';
+export const PUBLIC_CATEGORIES_ROUTE = '/public/categories';
+
+/**
+ * One category, as a stranger may see it.
+ *
+ * **Two fields, built field by field rather than by narrowing `CategoryOption`**
+ * — the rule `PublicListingSummary` records. The owner's shape carries the
+ * attribute schema, the transport options and the version number, and every one
+ * of those is a thing this page would have to remember not to render. Here there
+ * is nothing to remember: a value for the control and a label for the person.
+ *
+ * **The risk level and the reportable-activity flag are absent and must stay
+ * absent.** They are administrative configuration (ADR 0028) — what the platform
+ * thinks of a category, not what it is called — and they live on `AdminCategory`
+ * where a role and a second factor guard them.
+ */
+export interface PublicCategory {
+  /** The stable public identity, and the value the filter carries. */
+  readonly slug: string;
+  /** What a person reads. Renamed by an administrator; the slug never moves. */
+  readonly name: string;
+}
+
+const publicCategoriesSchema = z.object({
+  categories: z.array(z.object({ slug: z.string(), name: z.string() })),
+});
+
+export function parsePublicCategories(raw: unknown): {
+  readonly categories: readonly PublicCategory[];
+} {
+  return parseWith(publicCategoriesSchema, 'The categories response', raw);
+}
+
+/**
  * What a searcher asks, as it arrives on the query string.
  *
  * **The postcode is validated, not merely accepted.** A malformed one is a 400

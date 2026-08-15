@@ -12,10 +12,22 @@
  * **A row on a desktop, a stack on a phone, and the postcode field takes the
  * slack.** The radius is a five-option select that never needs to be wide, and
  * a postcode field that shrinks to fit a long label is the one people mistype.
+ *
+ * **Four columns from slice 3.2b, and the category is auto rather than fixed.**
+ * Its widest option is a category name an administrator types, so a fixed track
+ * would either truncate a long one or leave a gap after a short one — and the
+ * launch catalogue is one category, where a 160px track next to a 160px radius
+ * would read as two controls of equal importance. `auto` lets the content decide
+ * and keeps the postcode taking the slack, which is the rule this row already
+ * followed.
+ *
+ * **The form is unchanged when there is no category control**: the hidden input
+ * it renders instead is not a grid item, so three columns is still three
+ * columns. That matters because the landing hero passes no categories.
  */
 .search {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px auto;
+  grid-template-columns: minmax(0, 1fr) 160px auto auto;
   gap: 12px;
   align-items: end;
   margin-bottom: 32px;
@@ -27,8 +39,19 @@
 }
 
 .searchField,
-.radiusField {
+.radiusField,
+.categoryField {
   min-width: 0;
+}
+
+/*
+ * **Capped, because the label is somebody else's text.** A category name is
+ * configuration typed by an administrator, and §8.2's only bound on it is 120
+ * characters — enough to push the postcode field down to nothing on a laptop.
+ * The select truncates instead; the full name is still in the option list.
+ */
+.categoryField select {
+  max-width: 220px;
 }
 
 /*
@@ -50,6 +73,14 @@
 @media (max-width: 744px) {
   .search {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /*
+   * Full width once the row becomes a stack — the cap above exists to stop the
+   * select crowding its neighbours, and on a phone it has none.
+   */
+  .categoryField select {
+    max-width: none;
   }
 
   .searchSubmit {

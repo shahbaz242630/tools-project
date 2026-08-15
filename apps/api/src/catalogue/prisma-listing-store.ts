@@ -6,6 +6,7 @@ import type {
   ListingCollectionLocation,
   ListingStatus,
   ModerationState,
+  PublicCategory,
   TransportRequirement,
 } from '@platform/contracts';
 import {
@@ -704,6 +705,40 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     });
 
     return category?.id ?? null;
+  }
+
+  /**
+   * Slug and name, and deliberately nothing that hangs off the version
+   * (slice 3.2b).
+   *
+   * **`select` rather than `include: LATEST_VERSION`**, which is what makes this
+   * narrower than `listOptions` in the database rather than only in the type: the
+   * attributes JSON is never read, so it cannot reach a public response through
+   * a `console.log`, an error report or a later widening of the projection. The
+   * ordering, the take and the "highest version wins" rule are the same.
+   *
+   * **A category with no version is skipped**, matching `listOptions` — it has no
+   * name to show, and a filter option labelled with a slug would be the only
+   * place in the product where a URL segment is shown to a person.
+   */
+  async listCategoryNames(limit: number): Promise<readonly PublicCategory[]> {
+    const categories = await this.prisma.category.findMany({
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      select: {
+        slug: true,
+        versions: {
+          orderBy: { versionNumber: 'desc' },
+          take: 1,
+          select: { name: true },
+        },
+      },
+    });
+
+    return categories.flatMap((category) => {
+      const current = category.versions[0];
+      return current === undefined ? [] : [{ slug: category.slug, name: current.name }];
+    });
   }
 
   /**

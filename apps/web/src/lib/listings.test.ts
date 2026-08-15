@@ -5,6 +5,7 @@ import {
   fetchListing,
   fetchOwnedListings,
   fetchListingSearch,
+  fetchPublicCategories,
   fetchPublicListing,
   pauseListing,
   publishListing,
@@ -952,6 +953,58 @@ describe('fetchListingSearch', () => {
 
     expect(calls[0]?.url).toContain('category=outdoor-gardening');
     expect(calls[1]?.url).not.toContain('category');
+  });
+
+  /**
+   * The category list (slice 3.2b).
+   *
+   * **Unauthenticated, like the search beside it.** Browse is the page a
+   * signed-out stranger meets first, so a filter needing a token would be a
+   * control that only works once you have an account.
+   */
+  describe('fetchPublicCategories', () => {
+    const CATEGORIES = JSON.stringify({
+      categories: [{ slug: 'outdoor-gardening', name: 'Outdoor and gardening' }],
+    });
+
+    it('reads the list with no token at all', async () => {
+      const { calls, fetchImpl } = capturing(200, CATEGORIES);
+      const outcome = await fetchPublicCategories(API, fetchImpl);
+
+      expect(calls[0]?.url).toContain('/public/categories');
+      expect(Object.keys(calls[0]?.init?.headers ?? {})).toEqual([]);
+      expect(outcome).toEqual({
+        kind: 'loaded',
+        value: [{ slug: 'outdoor-gardening', name: 'Outdoor and gardening' }],
+      });
+    });
+
+    /*
+     * **A failure is an outcome the page turns into "no control"**, never an
+     * error it renders. Search does not depend on this read, and a page that
+     * refused to show results because a `select` could not be populated would
+     * turn a cosmetic outage into a total one.
+     */
+    it('reports a failure rather than throwing, so the page can carry on', async () => {
+      expect((await fetchPublicCategories(API, responds(500))).kind).toBe(
+        'unreachable',
+      );
+      expect((await fetchPublicCategories(API, responds(200, 'not json'))).kind).toBe(
+        'malformed',
+      );
+    });
+
+    it('refuses a response carrying more than a slug and a name', async () => {
+      // The disclosure guarantee, checked on the way in as well as on the way
+      // out: a server that started sending the attribute schema should surface
+      // as a shape this build cannot vouch for.
+      const outcome = await fetchPublicCategories(
+        API,
+        responds(200, JSON.stringify({ categories: [{ slug: 'x' }] })),
+      );
+
+      expect(outcome.kind).toBe('malformed');
+    });
   });
 
   it('reads a 400 as unreachable rather than as an empty area', async () => {
