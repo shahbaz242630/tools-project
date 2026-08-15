@@ -28,12 +28,24 @@ import styles from './browse.module.css';
 export function BrowseSearch({
   postcode,
   radiusMiles,
+  category,
   error,
   className,
 }: {
   /** What was searched for, so the field is not cleared by its own results. */
   readonly postcode: string;
   readonly radiusMiles: SearchRadiusMiles;
+  /**
+   * Which category the search is narrowed to, or null for all (slice 3.2a).
+   *
+   * **Carried through a hidden field until slice 3.2b gives it a control.** The
+   * filter is reachable by URL from 3.2a, and a form that dropped it on every
+   * submission would mean changing the radius silently widened the search to
+   * every category — a control quietly undoing a filter the address bar still
+   * claims. That is a worse failure than having no filter at all, because it
+   * looks like it worked.
+   */
+  readonly category: string | null;
   /** What was wrong with it, shown against the field rather than at the top. */
   readonly error: string | null;
   /**
@@ -111,6 +123,20 @@ export function BrowseSearch({
           ))}
         </select>
       </div>
+
+      {/*
+        **Only rendered when there is one**, rather than always present with an
+        empty value. An empty `category=` is accepted by the contract and means
+        the same as absent, but emitting it would put a second URL in front of
+        every unfiltered search — the duplicate-content problem slice 2.12 has to
+        answer for §8.17, arriving through the back door of a form.
+
+        **No `page`**, deliberately: submitting the form is a new search, and
+        carrying page four into it would land somebody in the middle of a set
+        they have not seen the start of. `widerSearchHref` drops the page for the
+        same reason.
+      */}
+      {category !== null && <input type="hidden" name="category" value={category} />}
 
       <button type="submit" className={styles.searchSubmit}>
         Search

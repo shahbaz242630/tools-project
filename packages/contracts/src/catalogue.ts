@@ -99,6 +99,23 @@ export function activatesSellerReporting(
 export const MIN_CATEGORY_SLUG_LENGTH = 2;
 export const MAX_CATEGORY_SLUG_LENGTH = 64;
 
+/**
+ * What a slug may be made of — **the shape, separated from the wording** (slice
+ * 3.2a).
+ *
+ * Named and exported because a second reader arrived with a different audience.
+ * `categorySlugSchema` below is an administrator typing into a configuration
+ * form, and its message tells them the rule; `searchCategorySchema` in
+ * `search.ts` is a searcher whose URL carries a slug they never typed, and
+ * telling *them* about lowercase letters and single hyphens would be answering a
+ * question they did not ask.
+ *
+ * **One pattern, two messages.** The alternative — restating the regex — is how
+ * a slug the configuration form accepts becomes one the search refuses, with
+ * nothing anywhere reporting the disagreement.
+ */
+export const CATEGORY_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export const categorySlugSchema = z
   .string()
   .trim()
@@ -108,7 +125,7 @@ export const categorySlugSchema = z
   )
   .max(MAX_CATEGORY_SLUG_LENGTH)
   .regex(
-    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    CATEGORY_SLUG_PATTERN,
     'must be lowercase letters, digits and single hyphens, e.g. "outdoor-gardening"',
   );
 

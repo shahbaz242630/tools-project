@@ -56,6 +56,44 @@ export interface ResultWindow {
   readonly offset: number;
 }
 
+/**
+ * One search, as this port takes it (slice 3.2a).
+ *
+ * **A request object rather than four positional arguments, and the reason is
+ * the same one `ResultWindow` gives about two numbers.** `originPostcode` and
+ * `categoryId` are both `string`, so a signature carrying them side by side type
+ * checks with them the wrong way round — and the result is not an error but a
+ * plausible empty page: nothing is near the postcode "8fe74923-…", and no
+ * category is named "BS7 8AA". The compiler cannot tell two strings apart; it
+ * can tell two fields apart.
+ *
+ * It is also the shape the filters behind this one need. §8.4 lists price,
+ * rating, delivery and verified-owner status beside category, and dates arrive
+ * with Phase 4's calendar — each of those is a field here rather than another
+ * argument every call site has to be edited to pass.
+ */
+export interface ProximitySearch {
+  readonly originPostcode: string;
+  readonly radiusMiles: SearchRadiusMiles;
+  /**
+   * Narrow to one category, or **null for all of them** (§8.4, slice 3.2a).
+   *
+   * **An id, not a slug**, and that is where the module boundary is drawn.
+   * Catalogue owns categories, so Catalogue resolves the slug a searcher gave
+   * into the id this predicate needs — and Search & Location never learns that
+   * slugs exist, never joins `categories`, and gains exactly one more column of
+   * Catalogue's table to compare (ADR 0044's concession, extended by the
+   * narrowest step available).
+   *
+   * **Null is "no filter", never "a category that does not exist".** An
+   * unresolvable slug is refused above this port, because answering it with an
+   * unfiltered search would show somebody every category while their URL says
+   * one.
+   */
+  readonly categoryId: string | null;
+  readonly window: ResultWindow;
+}
+
 export interface ProximityPage {
   /**
    * Matches, **nearest first**, at most the requested limit.
@@ -91,10 +129,13 @@ export interface ListingProximity {
    * authority (ADR 0043) lives in another module's table and is applied by
    * Catalogue on hydration; ADR 0044 records why the two are treated
    * differently.
+   *
+   * **`categoryId` is applied here for that same reason** (slice 3.2a).
+   * Filtering by category after the geo query would be the filter-after-paginate
+   * bug in its second form: ask for twenty-four listings inside the radius,
+   * discard the ones in other categories, and show four — with a truncation flag
+   * that has stopped meaning anything and a pager that walks off the end of a
+   * set nobody can count.
    */
-  findWithin(
-    originPostcode: string,
-    radiusMiles: SearchRadiusMiles,
-    window: ResultWindow,
-  ): Promise<ProximityPage | null>;
+  findWithin(search: ProximitySearch): Promise<ProximityPage | null>;
 }

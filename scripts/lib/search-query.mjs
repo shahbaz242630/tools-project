@@ -50,7 +50,7 @@ export const DEEPEST_OFFSET = (20 - 1) * PAGE_SIZE;
  */
 export function buildQuery(
   source,
-  { longitude, latitude, radiusMetres, limit, offset },
+  { longitude, latitude, radiusMetres, limit, offset, categoryId = null },
 ) {
   const start = source.indexOf('$queryRaw');
   if (start === -1) throw new Error('No $queryRaw found in the adapter.');
@@ -88,6 +88,22 @@ export function buildQuery(
     // are the adapter's expressions verbatim — that is the whole contract.
     ['Paging.probe(window.limit)', String(limit + 1)],
     ['window.offset', String(offset)],
+    /*
+     * **A whole predicate rather than a value** — slice 3.2a, and it is the one
+     * substitution here that is not a scalar.
+     *
+     * The adapter composes the category filter as a `Prisma.sql` fragment that
+     * is `Prisma.empty` when nothing was chosen, so an unfiltered search runs a
+     * statement **byte-identical to the one slice 3.1c measured the exit gate
+     * against**. Reproducing that here means substituting the empty string,
+     * which is why `categoryId` defaults to null: the numbers in the phase
+     * handoff are for the unfiltered query, and this keeps measuring exactly it
+     * unless a caller asks otherwise.
+     */
+    [
+      'inCategory',
+      categoryId === null ? '' : `AND l."categoryId" = '${categoryId}'::uuid`,
+    ],
   ]);
 
   return source

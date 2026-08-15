@@ -1,6 +1,7 @@
 import { BadRequestException, Controller, Get, Inject, Query } from '@nestjs/common';
 import {
   PUBLIC_LISTING_SEARCH_ROUTE,
+  SEARCH_CATEGORY_MESSAGE,
   parseListingSearchQuery,
 } from '@platform/contracts';
 import type {
@@ -8,6 +9,7 @@ import type {
   PublicListingSummary,
 } from '@platform/contracts';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
+import { UnknownCategoryError } from './listing-store.js';
 import { LISTINGS_SERVICE } from './catalogue.tokens.js';
 import type { ListingsService } from './listings.service.js';
 import type { NearbyListingView } from './listings.service.js';
@@ -66,11 +68,32 @@ export class PublicListingSearchController {
       );
     }
 
-    const found = await this.listings.searchNearby(
-      request.postcode,
-      request.radiusMiles,
-      request.page,
-    );
+    let found;
+    try {
+      found = await this.listings.searchNearby(request);
+    } catch (error) {
+      /*
+       * **A 400, where the same error is a 404 on the write path** (slice 3.2a),
+       * and the difference is the caller rather than the fact.
+       *
+       * `OwnerListingsController` answers 404 because an owner chose that
+       * category from a list we rendered, and it stopped existing between the
+       * form loading and the save — nothing they typed is wrong and the fix is
+       * to choose again. Here the slug arrived in a URL as a *filter*, alongside
+       * a radius and a page number that are refused with 400 for naming values
+       * we do not serve. This is that same refusal: the request describes a
+       * search that does not exist.
+       *
+       * **The alternative — an empty page — is the one wrong answer available.**
+       * It tells somebody there is nothing near them in a category we have never
+       * had, which is indistinguishable from a genuinely quiet area and would be
+       * counted as one.
+       */
+      if (error instanceof UnknownCategoryError) {
+        throw new BadRequestException(`Category ${SEARCH_CATEGORY_MESSAGE}`);
+      }
+      throw error;
+    }
 
     /*
      * **An unplaceable origin is an empty page, not an error**, and the two are
@@ -92,21 +115,29 @@ export class PublicListingSearchController {
         truncated: false,
         radiusMiles: request.radiusMiles,
         page: request.page,
+        category: request.category,
       };
     }
 
     /*
-     * **The radius and the page are echoed from the request, not from the
-     * result.** Both were defaulted if absent, and a response that did not say
-     * which values it used reads as an answer to a different question — a
-     * five-mile search looking like a national one, or page one looking like
-     * all of them.
+     * **The radius, the page and the category are echoed from the request, not
+     * from the result.** All three were defaulted if absent, and a response that
+     * did not say which values it used reads as an answer to a different
+     * question — a five-mile search looking like a national one, page one
+     * looking like all of them, or an unfiltered search looking like a filtered
+     * one that found nothing.
+     *
+     * **The category is echoed as the searcher's slug**, not as the id it was
+     * resolved to. The id never leaves the server: it is an internal identifier
+     * with no place in a public response, and the slug is what every URL, link
+     * and canonical (§8.17) is built from.
      */
     return {
       results: found.results.map(toSummary),
       truncated: found.truncated,
       radiusMiles: request.radiusMiles,
       page: request.page,
+      category: request.category,
     };
   }
 }

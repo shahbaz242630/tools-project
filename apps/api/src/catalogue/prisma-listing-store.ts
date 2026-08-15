@@ -684,6 +684,29 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
   }
 
   /**
+   * One column, on a unique index (slice 3.2a).
+   *
+   * **No `include: LATEST_VERSION`, deliberately** — the other two reads in this
+   * pair both need the current configuration and pay a second query for it. This
+   * one runs on the public search path before the geo query, so it reads the
+   * `categories` row and nothing hanging off it. `select` rather than the whole
+   * row for the same reason: it is a covering read of an indexed unique column.
+   *
+   * **A category with no version still resolves here, unlike `findOption`.**
+   * That is correct rather than an oversight: a listing pinned to that category
+   * exists and is publicly visible, so a search naming it must find it. Refusing
+   * would hide real inventory because of a configuration row nobody looked at.
+   */
+  async findCategoryId(slug: string): Promise<string | null> {
+    const category = await this.prisma.category.findUnique({
+      where: { slug },
+      select: { id: true },
+    });
+
+    return category?.id ?? null;
+  }
+
+  /**
    * The listing id is bound into the ciphertext as additional authenticated
    * data.
    *

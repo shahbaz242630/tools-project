@@ -191,6 +191,51 @@ function main() {
   const deepRow = `${'London'.padEnd(9)} 100 mi   p50 ${percentile(deepTimings, 0.5).toFixed(1).padStart(7)} ms   p95 ${deepP95.toFixed(1).padStart(7)} ms   ${deepP95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (offset ${String(DEEPEST_OFFSET)}, the last page)`;
   console.log(deepRow);
 
+  /*
+   * **What the category filter costs** — slice 3.2a.
+   *
+   * The claim it has to answer is that no index was needed on
+   * `listings."categoryId"`: slice 3.1c found the widest search dominated by the
+   * per-row primary-key lookup into `listings` for the visibility predicate, so
+   * an equality check on a column of a row already being fetched should be free.
+   * That is a claim about the database, and this project has been caught once by
+   * a performance claim nobody measured.
+   *
+   * **Measured against the category holding every seeded listing, which is the
+   * worst case for a filter** — the predicate is evaluated on every candidate row
+   * and excludes none of them. A selective filter can only be cheaper.
+   */
+  const loadCategory = psql(
+    database,
+    `SELECT id FROM "categories" WHERE slug = 'loadtest-example-category' LIMIT 1;`,
+  );
+
+  if (loadCategory === '') {
+    console.log(
+      '\nNo load-test category present, so the category filter was not measured.',
+    );
+  } else {
+    const filtered = buildQuery(source, {
+      longitude: ORIGINS[0][2],
+      latitude: ORIGINS[0][1],
+      radiusMetres: 100 * METRES_PER_MILE,
+      limit: PAGE_SIZE,
+      offset: 0,
+      categoryId: loadCategory,
+    });
+    timeOnce(database, filtered);
+    const filteredTimings = [];
+    for (let run = 0; run < runs; run += 1) {
+      filteredTimings.push(timeOnce(database, filtered));
+    }
+    const filteredP95 = percentile(filteredTimings, 0.95);
+    worst = Math.max(worst, filteredP95);
+
+    // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
+    const filteredRow = `${'London'.padEnd(9)} 100 mi   p50 ${percentile(filteredTimings, 0.5).toFixed(1).padStart(7)} ms   p95 ${filteredP95.toFixed(1).padStart(7)} ms   ${filteredP95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (filtered by category)`;
+    console.log(filteredRow);
+  }
+
   // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
   const summary = `\nWorst p95: ${worst.toFixed(1)} ms (target ${TARGET_P95_MS} ms)`;
   console.log(summary);

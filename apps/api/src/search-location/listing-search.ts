@@ -52,6 +52,25 @@ export interface ResultWindow {
   readonly offset: number;
 }
 
+/**
+ * One search, as this repository takes it (slice 3.2a).
+ *
+ * **A request object rather than positional arguments**, for the reason
+ * `ResultWindow` gives about two numbers — `originPostcode` and `categoryId` are
+ * both strings, and swapping them type checks while producing a plausible empty
+ * page rather than an error.
+ *
+ * `categoryId` is **an id, never a slug**: resolving a slug is Catalogue's, so
+ * this module never joins `categories` and never learns that slugs exist. Null
+ * means every category.
+ */
+export interface NearbySearch {
+  readonly originPostcode: string;
+  readonly radiusMiles: SearchRadiusMiles;
+  readonly categoryId: string | null;
+  readonly window: ResultWindow;
+}
+
 export interface ListingSearchRepository {
   /**
    * Publicly visible listings within `radiusMiles` of `originPostcode`, or null
@@ -60,9 +79,5 @@ export interface ListingSearchRepository {
    * Null covers an unrecognised postcode and an unreachable provider alike, and
    * implementations must not throw for either.
    */
-  findWithin(
-    originPostcode: string,
-    radiusMiles: SearchRadiusMiles,
-    window: ResultWindow,
-  ): Promise<NearbyListingPage | null>;
+  findWithin(search: NearbySearch): Promise<NearbyListingPage | null>;
 }

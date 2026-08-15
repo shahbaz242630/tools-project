@@ -13,6 +13,7 @@ import {
   resultsToSkip,
   widerRadius,
 } from './search.js';
+import type { ListingSearchQuery } from './search.js';
 
 describe('the search radius vocabulary', () => {
   it('is BRD §8.4 five values, ascending', () => {
@@ -70,7 +71,7 @@ describe('the search page vocabulary', () => {
 describe('parsing a search request', () => {
   it('accepts a postcode and one of the five radii', () => {
     expect(parseListingSearchQuery({ postcode: 'BS7 8AA', radiusMiles: '20' })).toEqual(
-      { postcode: 'BS7 8AA', radiusMiles: 20, page: FIRST_SEARCH_PAGE },
+      { postcode: 'BS7 8AA', radiusMiles: 20, page: FIRST_SEARCH_PAGE, category: null },
     );
   });
 
@@ -79,6 +80,7 @@ describe('parsing a search request', () => {
       postcode: 'BS7 8AA',
       radiusMiles: 5,
       page: FIRST_SEARCH_PAGE,
+      category: null,
     });
   });
 
@@ -187,8 +189,25 @@ describe('parsing a search request', () => {
 });
 
 describe('the search path', () => {
+  /**
+   * A search with everything at its default but the two fields a test names.
+   *
+   * The builder takes the whole query from slice 3.2a — see
+   * `ListingSearchQuery` for why — so a test that cares about the radius should
+   * not have to restate the page and the category to say so.
+   */
+  function searchFor(overrides: Partial<ListingSearchQuery> = {}): ListingSearchQuery {
+    return {
+      postcode: 'BS7 8AA',
+      radiusMiles: 10,
+      page: FIRST_SEARCH_PAGE,
+      category: null,
+      ...overrides,
+    };
+  }
+
   it('carries both parameters', () => {
-    expect(publicListingSearchPath('BS7 8AA', 10)).toBe(
+    expect(publicListingSearchPath(searchFor())).toBe(
       '/public/listings?postcode=BS7%208AA&radiusMiles=10',
     );
   });
@@ -200,20 +219,41 @@ describe('the search path', () => {
    * changed no URL that already existed.
    */
   it('leaves the page out of the first page, so the canonical URL is unchanged', () => {
-    expect(publicListingSearchPath('BS7 8AA', 10, FIRST_SEARCH_PAGE)).toBe(
-      publicListingSearchPath('BS7 8AA', 10),
+    expect(publicListingSearchPath(searchFor({ page: FIRST_SEARCH_PAGE }))).toBe(
+      publicListingSearchPath(searchFor()),
     );
-    expect(publicListingSearchPath('BS7 8AA', 10, 1)).not.toContain('page');
+    expect(publicListingSearchPath(searchFor({ page: 1 }))).not.toContain('page');
   });
 
   it('carries the page from the second on', () => {
-    expect(publicListingSearchPath('BS7 8AA', 10, 3)).toBe(
+    expect(publicListingSearchPath(searchFor({ page: 3 }))).toBe(
       '/public/listings?postcode=BS7%208AA&radiusMiles=10&page=3',
     );
   });
 
+  /*
+   * **The same rule for the category** (slice 3.2a), and it is the half that
+   * would otherwise be easy to get wrong: `?category=` is accepted by the parser
+   * and means "all", so a builder that always emitted the parameter would mint
+   * a second URL for every unfiltered search — §8.17's duplicate-content problem
+   * arriving through a URL builder rather than through a form.
+   */
+  it('leaves an absent category out entirely', () => {
+    expect(publicListingSearchPath(searchFor({ category: null }))).not.toContain(
+      'category',
+    );
+  });
+
+  it('carries a category when there is one', () => {
+    expect(publicListingSearchPath(searchFor({ category: 'outdoor-gardening' }))).toBe(
+      '/public/listings?postcode=BS7%208AA&radiusMiles=10&category=outdoor-gardening',
+    );
+  });
+
   it('round-trips through the parser, which is the only thing that matters', () => {
-    const path = publicListingSearchPath('BS7 8AA', 50, 4);
+    const path = publicListingSearchPath(
+      searchFor({ radiusMiles: 50, page: 4, category: 'outdoor-gardening' }),
+    );
     const query = Object.fromEntries(
       path
         .slice(path.indexOf('?') + 1)
@@ -225,7 +265,64 @@ describe('the search path', () => {
       postcode: 'BS7 8AA',
       radiusMiles: 50,
       page: 4,
+      category: 'outdoor-gardening',
     });
+  });
+});
+
+describe('the category filter (slice 3.2a)', () => {
+  /*
+   * **All three ways of saying "every category" mean the same thing**, and the
+   * middle one is the case that matters: a plain GET form always submits every
+   * named control, so choosing "All categories" sends `category=`. A schema that
+   * refused it would 400 the most ordinary search on the page.
+   */
+  it.each([
+    ['absent', {}],
+    ['empty', { category: '' }],
+    ['whitespace', { category: '   ' }],
+  ])('treats a %s category as every category', (_name, extra) => {
+    expect(parseListingSearchQuery({ postcode: 'BS7 8AA', ...extra }).category).toBe(
+      null,
+    );
+  });
+
+  it('keeps a well-formed slug', () => {
+    expect(
+      parseListingSearchQuery({ postcode: 'BS7 8AA', category: 'outdoor-gardening' })
+        .category,
+    ).toBe('outdoor-gardening');
+  });
+
+  /*
+   * **Refused rather than ignored.** A slug that could never name a category is
+   * a URL claiming something we do not serve — the same treatment as a radius of
+   * seven — and answering it with an unfiltered search would show somebody every
+   * category while their address bar names one.
+   */
+  it.each(['Outdoor Gardening', 'outdoor_gardening', '-leading', 'a', 'x'.repeat(65)])(
+    'refuses %s',
+    (slug) => {
+      expect(() =>
+        parseListingSearchQuery({ postcode: 'BS7 8AA', category: slug }),
+      ).toThrow(/is not a category we have/);
+    },
+  );
+
+  /*
+   * **The searcher's message, not the administrator's** — slice 3.1d's lesson,
+   * which was a zod internal message rendered to a person. `categorySlugSchema`
+   * explains lowercase letters and single hyphens because somebody is typing
+   * into a configuration form; nobody types this one.
+   */
+  it('never explains slug syntax to a searcher', () => {
+    expect(() =>
+      parseListingSearchQuery({ postcode: 'BS7 8AA', category: 'Bad Slug' }),
+    ).toThrow(/is not a category we have/);
+
+    expect(() =>
+      parseListingSearchQuery({ postcode: 'BS7 8AA', category: 'Bad Slug' }),
+    ).not.toThrow(/lowercase/);
   });
 });
 

@@ -94,6 +94,7 @@ export default async function BrowsePage({
         <BrowseSearch
           postcode=""
           radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
+          category={categoryFrom(params.category)}
           error={null}
         />
         <p className={styles.prompt}>
@@ -114,6 +115,13 @@ export default async function BrowsePage({
     // one would be showing somebody results they did not ask for while the
     // address bar says otherwise.
     page: first(params.page) ?? undefined,
+    /*
+     * **And the same again for the category** (slice 3.2a) — but note this
+     * schema can only refuse a slug that is *malformed*. A well-formed slug
+     * naming no category is refused by the API, because only the server knows
+     * what exists; the page cannot tell the difference and must not pretend to.
+     */
+    category: first(params.category) ?? undefined,
   });
 
   if (!parsed.success) {
@@ -122,33 +130,26 @@ export default async function BrowsePage({
         <BrowseSearch
           postcode={submitted}
           radiusMiles={radiusFrom(params.radiusMiles)}
+          category={categoryFrom(params.category)}
           error={messageFor(parsed.error.issues)}
         />
       </Page>
     );
   }
 
-  const outcome = await fetchListingSearch(
-    webEnv().API_BASE_URL,
-    parsed.data.postcode,
-    parsed.data.radiusMiles,
-    parsed.data.page,
-  );
+  const outcome = await fetchListingSearch(webEnv().API_BASE_URL, parsed.data);
 
   return (
     <Page>
       <BrowseSearch
         postcode={parsed.data.postcode}
         radiusMiles={parsed.data.radiusMiles}
+        category={parsed.data.category}
         error={null}
       />
 
       {outcome.kind === 'loaded' ? (
-        <BrowseResults
-          results={outcome.value}
-          postcode={parsed.data.postcode}
-          radiusMiles={parsed.data.radiusMiles}
-        />
+        <BrowseResults results={outcome.value} search={parsed.data} />
       ) : (
         /*
          * **One message for every way the read can fail**, and `not-found` is
@@ -207,6 +208,24 @@ function radiusFrom(value: string | string[] | undefined): SearchRadiusMiles {
 }
 
 /**
+ * The same, for the category (slice 3.2a).
+ *
+ * **A malformed category falls back to "all" rather than being echoed**, which
+ * is the opposite of what the postcode field does — and deliberately. The
+ * postcode is echoed because it is what the person typed and they need to see
+ * it to fix it; a category is chosen from a control, so a slug that is not one
+ * of ours is not something anybody can correct by reading it back. Putting it
+ * into the form would also mean the next submission carries the same broken
+ * value forward.
+ */
+function categoryFrom(value: string | string[] | undefined): string | null {
+  const parsed = listingSearchQuerySchema.shape.category.safeParse(
+    first(value) ?? undefined,
+  );
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * What each field is called when something is wrong with it.
  *
  * A map rather than a conditional, which is what slice 3.1d's third field
@@ -218,6 +237,7 @@ const FIELD_LABELS: Record<string, string> = {
   postcode: 'Postcode',
   radiusMiles: 'Radius',
   page: 'Page',
+  category: 'Category',
 };
 
 /**

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { coarseLocationSchema, postcodeSchema } from './address.js';
 import type { CoarseLocation } from './address.js';
+import {
+  CATEGORY_SLUG_PATTERN,
+  MAX_CATEGORY_SLUG_LENGTH,
+  MIN_CATEGORY_SLUG_LENGTH,
+} from './catalogue.js';
 import { inclusiveDailyPriceSchema } from './pricing.js';
 import type { InclusiveDailyPrice } from './pricing.js';
 import { ownerStatusSchema } from './profiles.js';
@@ -163,6 +168,50 @@ export function previousSearchPage(page: number): number | null {
 }
 
 /**
+ * Narrowing a search to one category — **BRD §8.4's second filter** (slice
+ * 3.2a).
+ *
+ * **A slug rather than an id**, for the reason `Category.slug` exists at all: it
+ * is the category's stable public identity, it is what §8.17's landing pages
+ * will be built on, and it survives a rename where a display name does not. The
+ * id is resolved on the server and never appears in a URL.
+ *
+ * **`null` means every category, and it is a real value rather than an absent
+ * one.** Three inputs all arrive here meaning the same thing and all must be
+ * accepted: the parameter missing entirely (a link written before this slice),
+ * `?category=` empty (**what a plain GET form submits when "All categories" is
+ * chosen** — the case that would otherwise 400 the ordinary path), and
+ * whitespace. Only a *malformed* slug is refused.
+ *
+ * **The message is the searcher's, not the administrator's**, which is slice
+ * 3.1d's lesson applied before it could bite: `categorySlugSchema` says
+ * *"must be lowercase letters, digits and single hyphens"*, which is a rule for
+ * somebody typing into a configuration form. A searcher never typed this — it
+ * came from a `select` or a pasted URL — so the only useful thing to tell them
+ * is that it names nothing we have. **The pattern is shared and only the wording
+ * differs** (`CATEGORY_SLUG_PATTERN`), so the two cannot disagree about what a
+ * slug is.
+ *
+ * **A well-formed slug naming no category says the same sentence**, and is
+ * refused by the service rather than here — this schema cannot know what exists
+ * without a database. Both are one message on purpose: for a searcher,
+ * "malformed" and "unknown" are the same fact.
+ */
+export const SEARCH_CATEGORY_MESSAGE = 'is not a category we have';
+
+export const searchCategorySchema = z
+  .preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+    z
+      .string(SEARCH_CATEGORY_MESSAGE)
+      .min(MIN_CATEGORY_SLUG_LENGTH, SEARCH_CATEGORY_MESSAGE)
+      .max(MAX_CATEGORY_SLUG_LENGTH, SEARCH_CATEGORY_MESSAGE)
+      .regex(CATEGORY_SLUG_PATTERN, SEARCH_CATEGORY_MESSAGE)
+      .nullable(),
+  )
+  .default(null);
+
+/**
  * How far away a listing is, **as a bucket rather than a number** (§8.4.1).
  *
  * §8.4.1 requires displayed distances to be coarse rather than exact, and this
@@ -211,21 +260,41 @@ export const PUBLIC_LISTING_SEARCH_ROUTE = '/public/listings';
  * libs on purpose, because it is imported by the web app and the API alike and
  * a type that exists in only one of them is a build that breaks in the other.
  */
-export function publicListingSearchPath(
-  postcode: string,
-  radiusMiles: SearchRadiusMiles,
-  page: number = FIRST_SEARCH_PAGE,
-): string {
-  const query = `postcode=${encodeURIComponent(postcode)}&radiusMiles=${String(radiusMiles)}`;
-  /*
-   * **The first page carries no `page` parameter**, which is deliberate rather
-   * than tidiness: one search must have one URL. `?page=1` and the bare URL
-   * returning identical results is the duplicate-content problem slice 2.12 has
-   * to answer for §8.17, and the cheapest answer is not to mint the second URL
-   * in the first place. It also means slice 3.1d changed no existing link.
-   */
-  const paged = page === FIRST_SEARCH_PAGE ? query : `${query}&page=${String(page)}`;
-  return `${PUBLIC_LISTING_SEARCH_ROUTE}?${paged}`;
+export function publicListingSearchPath(search: ListingSearchQuery): string {
+  return `${PUBLIC_LISTING_SEARCH_ROUTE}?${listingSearchQueryString(search)}`;
+}
+
+/**
+ * One search as a query string — **the single place either side writes one**
+ * (slice 3.2a).
+ *
+ * Shared with the web app's own link builders through `browseHref`, so an API
+ * URL and a page URL cannot disagree about how a search is spelled. They are
+ * different paths carrying identical questions, and the failure of letting them
+ * drift is silent on both: a parameter the other side ignores produces results
+ * for a search nobody asked for.
+ *
+ * **Two parameters are omitted when they carry the default, and both for the
+ * same reason: one search must have one URL.** `?page=1` and `?category=`
+ * return exactly what the bare URL returns, so minting them creates the
+ * duplicate-content problem slice 2.12 has to answer for §8.17 — and the
+ * cheapest answer is not to mint them. It is also what kept slice 3.1d from
+ * changing a single existing link, and what keeps this slice from doing so.
+ */
+export function listingSearchQueryString(search: ListingSearchQuery): string {
+  const parts = [
+    `postcode=${encodeURIComponent(search.postcode)}`,
+    `radiusMiles=${String(search.radiusMiles)}`,
+  ];
+
+  if (search.category !== null) {
+    parts.push(`category=${encodeURIComponent(search.category)}`);
+  }
+  if (search.page !== FIRST_SEARCH_PAGE) {
+    parts.push(`page=${String(search.page)}`);
+  }
+
+  return parts.join('&');
 }
 
 /**
@@ -241,12 +310,35 @@ export function publicListingSearchPath(
  * pastes without it is a search, not a bad request. **`page` defaults the same
  * way**, and for a stronger reason: nobody types it, so its absence is the
  * normal case rather than an omission.
+ *
+ * **`category` defaults to null the same way** — the third parameter in a row
+ * whose absence is the ordinary case. See `searchCategorySchema` for why an
+ * *empty* one is absent too, which is the case a plain GET form produces.
  */
 export const listingSearchQuerySchema = z.object({
   postcode: postcodeSchema,
   radiusMiles: searchRadiusMilesSchema.default(DEFAULT_SEARCH_RADIUS_MILES),
   page: searchPageSchema.default(FIRST_SEARCH_PAGE),
+  category: searchCategorySchema,
 });
+
+/**
+ * One search, as every layer names it.
+ *
+ * **This type is the reason slice 3.2a changed the URL builders' shape.** Before
+ * it, a search was three positional arguments threaded through five functions
+ * that each rebuild the query string — `publicListingSearchPath` here, and
+ * `browseHref`, `nextSearchHref`, `previousSearchHref` and `widerSearchHref` in
+ * the web app. Adding a fourth would have compiled everywhere while four of them
+ * silently dropped the filter, and **a dropped filter is not an error**: the
+ * searcher gets other categories back, with no message, no log line and nothing
+ * to notice. Passing the whole search means adding a field makes the *compiler*
+ * find every builder, which is the property that has to survive the price and
+ * date filters behind this one.
+ *
+ * It is `z.infer` of the query schema rather than a hand-written interface, so
+ * the thing parsed off a query string is exactly the thing that builds one.
+ */
 export type ListingSearchQuery = z.infer<typeof listingSearchQuerySchema>;
 
 export function parseListingSearchQuery(raw: unknown): ListingSearchQuery {
@@ -331,6 +423,20 @@ export interface PublicListingSearchResults {
   readonly radiusMiles: SearchRadiusMiles;
   /** Which page this is, one-based. */
   readonly page: number;
+  /**
+   * Which category this was narrowed to, or null for all of them (slice 3.2a).
+   *
+   * **Echoed for `radiusMiles`' reason, which applies to every defaulted
+   * parameter**: absent means null, and a response that did not say which
+   * question it answered reads as an answer to a different one. Here that would
+   * be an unfiltered search looking like a filtered one that found little — the
+   * exact misreading that would make a supply problem look like a filter
+   * problem.
+   *
+   * The **slug**, never the id: the id is resolved on the server, is not in the
+   * URL, and has no business leaving it.
+   */
+  readonly category: string | null;
 }
 
 const publicListingSearchResultsSchema = z.object({
@@ -348,6 +454,7 @@ const publicListingSearchResultsSchema = z.object({
   truncated: z.boolean(),
   radiusMiles: searchRadiusMilesSchema,
   page: searchPageSchema,
+  category: searchCategorySchema,
 });
 
 /**

@@ -10,6 +10,7 @@ import {
   publishListing,
   updateListing,
 } from './listings';
+import type { ListingSearchQuery } from '@platform/contracts';
 import type { FetchLike } from './listings';
 
 const API = 'http://api.internal:3001';
@@ -841,14 +842,22 @@ describe('fetchListingSearch', () => {
     truncated: false,
     radiusMiles: 5,
     page: 1,
+    category: null,
   };
+
+  /** One search, defaulted — the shape `fetchListingSearch` takes from 3.2a. */
+  const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery => ({
+    postcode: 'BS7 8AA',
+    radiusMiles: 5,
+    page: 1,
+    category: null,
+    ...over,
+  });
 
   it('reads a page of results with no token at all', async () => {
     const outcome = await fetchListingSearch(
       API,
-      'BS7 8AA',
-      5,
-      1,
+      searchFor(),
       responds(200, JSON.stringify(RESULTS)),
     );
 
@@ -859,7 +868,7 @@ describe('fetchListingSearch', () => {
     // Same reasoning as `fetchPublicListing`, and it matters more here: this is
     // the route somebody hits repeatedly while narrowing a search.
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 5, 1, fetchImpl);
+    await fetchListingSearch(API, searchFor(), fetchImpl);
 
     expect(Object.keys(calls[0]?.init?.headers ?? {})).toEqual([]);
   });
@@ -872,7 +881,7 @@ describe('fetchListingSearch', () => {
      * parameter name â€” and the failure is an empty page rather than an error.
      */
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 20, 1, fetchImpl);
+    await fetchListingSearch(API, searchFor({ radiusMiles: 20 }), fetchImpl);
 
     expect(calls[0]?.url).toContain(
       '/public/listings?postcode=BS7%208AA&radiusMiles=20',
@@ -881,7 +890,7 @@ describe('fetchListingSearch', () => {
 
   it('does not cache, so a listing taken down stops appearing', async () => {
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 5, 1, fetchImpl);
+    await fetchListingSearch(API, searchFor(), fetchImpl);
 
     expect(calls[0]?.init?.cache).toBe('no-store');
   });
@@ -891,15 +900,13 @@ describe('fetchListingSearch', () => {
     // must not arrive looking like "we could not look".
     const outcome = await fetchListingSearch(
       API,
-      'BS7 8AA',
-      5,
-      1,
+      searchFor(),
       responds(200, JSON.stringify({ ...RESULTS, results: [] })),
     );
 
     expect(outcome).toEqual({
       kind: 'loaded',
-      value: { results: [], truncated: false, radiusMiles: 5, page: 1 },
+      value: { results: [], truncated: false, radiusMiles: 5, page: 1, category: null },
     });
   });
 
@@ -908,9 +915,7 @@ describe('fetchListingSearch', () => {
     // a shape this build cannot vouch for is not one to render.
     const outcome = await fetchListingSearch(
       API,
-      'BS7 8AA',
-      5,
-      1,
+      searchFor(),
       responds(
         200,
         JSON.stringify({ results: [{ id: LISTING.id }], truncated: false }),
@@ -922,13 +927,31 @@ describe('fetchListingSearch', () => {
 
   it('carries the page into the query string, and leaves it off the first', async () => {
     const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
-    await fetchListingSearch(API, 'BS7 8AA', 5, 3, fetchImpl);
-    await fetchListingSearch(API, 'BS7 8AA', 5, 1, fetchImpl);
+    await fetchListingSearch(API, searchFor({ page: 3 }), fetchImpl);
+    await fetchListingSearch(API, searchFor(), fetchImpl);
 
     expect(calls[0]?.url).toContain('page=3');
     // One search, one URL — `?page=1` is a duplicate of the canonical rather
     // than the canonical, which is slice 2.12's problem not to have.
     expect(calls[1]?.url).not.toContain('page');
+  });
+
+  /*
+   * **The category rides the same builder** (slice 3.2a), so this asserts the
+   * one thing a hand-written query string would get wrong: an unfiltered search
+   * mints no `category=` at all, and a filtered one carries the slug.
+   */
+  it('carries the category into the query string, and leaves it off when absent', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(RESULTS));
+    await fetchListingSearch(
+      API,
+      searchFor({ category: 'outdoor-gardening' }),
+      fetchImpl,
+    );
+    await fetchListingSearch(API, searchFor(), fetchImpl);
+
+    expect(calls[0]?.url).toContain('category=outdoor-gardening');
+    expect(calls[1]?.url).not.toContain('category');
   });
 
   it('reads a 400 as unreachable rather than as an empty area', async () => {
@@ -937,7 +960,7 @@ describe('fetchListingSearch', () => {
      * what is valid. Reporting "nothing near you" would be telling somebody
      * their area is empty when we never managed to look.
      */
-    const outcome = await fetchListingSearch(API, 'BS7 8AA', 5, 1, responds(400));
+    const outcome = await fetchListingSearch(API, searchFor(), responds(400));
 
     expect(outcome.kind).toBe('unreachable');
   });

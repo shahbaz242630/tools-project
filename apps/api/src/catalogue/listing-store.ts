@@ -798,4 +798,26 @@ export interface CategoryOptionSource {
    * listing has.
    */
   findOption(slug: string): Promise<CategoryOptionRecord | null>;
+
+  /**
+   * The id of the category with this slug, or null if none has it (slice 3.2a).
+   *
+   * **An id and nothing else, which is the whole point of it being separate
+   * from `findOption`.** The search path needs one thing — a value to compare
+   * `listings."categoryId"` against — and `CategoryOptionRecord` carries none:
+   * it holds the attribute schema and the transport options, because it exists
+   * to render a form. Adding an id to that record so this caller could reach it
+   * would hand an identifier to every consumer of a port whose docblock says it
+   * returns *"what an owner needs to pick a category and fill in its fields, and
+   * nothing else"*.
+   *
+   * **Not `findOption(slug) !== null` either**, which is the tempting reuse:
+   * that reads the whole configuration — the attributes JSON and the transport
+   * options — on the hottest public read in the system, to answer a question a
+   * unique-index lookup answers.
+   *
+   * Null means no category, never "every category". The caller must not be able
+   * to confuse the two, and `resolveSearchCategory` is where that is enforced.
+   */
+  findCategoryId(slug: string): Promise<string | null>;
 }

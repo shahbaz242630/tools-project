@@ -88,6 +88,26 @@ export interface ListingSearchSample {
    */
   readonly radiusMiles: SearchRadiusMiles;
   readonly outcome: ListingSearchOutcome;
+  /**
+   * Whether the searcher narrowed to a category (slice 3.2a).
+   *
+   * **A boolean, and never the category itself — this is the cardinality rule
+   * doing the work it exists for.** Radius and outcome are closed unions the
+   * compiler holds at twenty series. A category slug is *configuration*: an
+   * administrator adds one through a form, with no deploy and nobody watching
+   * this file, so a `category` label is a series count the business grows. It
+   * would also be the first label in this system whose values are not fixed at
+   * compile time, in a store that has none of §10.1's retention or erasure
+   * rules.
+   *
+   * What is worth knowing is not *which* category was filtered but **whether
+   * filtering is what emptied the page** — BRD §17's zero-result rate is the
+   * number this file exists to answer, and a filter is a new way to make a
+   * search return nothing. Two values, so the twenty series become forty and
+   * `sum(listing_searches_total{outcome="empty"}) / sum(listing_searches_total)`
+   * keeps working unchanged.
+   */
+  readonly filtered: boolean;
 }
 
 /**
@@ -300,8 +320,8 @@ export function createPrometheusMetrics(options: {
    */
   const listingSearches = new Counter({
     name: 'listing_searches_total',
-    help: 'Public listing searches, by radius and what the searcher got back.',
-    labelNames: ['radius', 'outcome'],
+    help: 'Public listing searches, by radius, category filtering and what the searcher got back.',
+    labelNames: ['radius', 'outcome', 'filtered'],
     registers: [registry],
   });
 
@@ -348,9 +368,12 @@ export function createPrometheusMetrics(options: {
       listingSearches.inc({
         // A label value is a string in the exposition either way; converting it
         // here rather than at the call site keeps the caller's type the closed
-        // numeric union, which is what bounds this to twenty series.
+        // numeric union, which is what bounds this to forty series.
         radius: String(sample.radiusMiles),
         outcome: sample.outcome,
+        // Likewise a boolean at the call site, so the only two values this can
+        // ever take are the two the type allows.
+        filtered: String(sample.filtered),
       });
     },
 

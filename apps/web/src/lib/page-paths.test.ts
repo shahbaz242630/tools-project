@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_SEARCH_PAGE, SEARCH_RADII_MILES } from '@platform/contracts';
+import type { ListingSearchQuery, SearchRadiusMiles } from '@platform/contracts';
 import {
   BROWSE_PATH,
   browseHref,
@@ -8,29 +9,66 @@ import {
   widerSearchHref,
 } from './page-paths';
 
+/**
+ * One search, with everything a test is not about left at its default.
+ *
+ * From slice 3.2a these builders take the whole query rather than a parameter
+ * each — see `browseHref` for why — so a test about the pager should not have to
+ * restate a postcode and a category to say what it means.
+ */
+const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery => ({
+  postcode: 'BS7 8AA',
+  radiusMiles: 5,
+  page: 1,
+  category: null,
+  ...over,
+});
+
 describe('where search lives', () => {
   it('is one path, so the nav and the form cannot disagree', () => {
     expect(BROWSE_PATH).toBe('/browse');
   });
 
   it('escapes the space in a postcode', () => {
-    expect(browseHref('BS7 8AA', 5)).toBe('/browse?postcode=BS7%208AA&radiusMiles=5');
+    expect(browseHref(searchFor())).toBe('/browse?postcode=BS7%208AA&radiusMiles=5');
   });
 
   it('leaves the page off the first one, so no URL changed in slice 3.1d', () => {
-    expect(browseHref('BS7 8AA', 5, 1)).toBe(browseHref('BS7 8AA', 5));
+    expect(browseHref(searchFor({ page: 1 }))).toBe(browseHref(searchFor()));
   });
 
   it('carries the page from the second on', () => {
-    expect(browseHref('BS7 8AA', 5, 2)).toBe(
+    expect(browseHref(searchFor({ page: 2 }))).toBe(
       '/browse?postcode=BS7%208AA&radiusMiles=5&page=2',
     );
+  });
+
+  /*
+   * **The same rule for the category, and it is the one that matters for
+   * §8.17** (slice 3.2a): `?category=` returns exactly what the bare URL
+   * returns, so minting it would create a duplicate of the canonical for every
+   * unfiltered search on the one indexable collection page we have.
+   */
+  it('leaves an absent category out entirely', () => {
+    expect(browseHref(searchFor({ category: null }))).not.toContain('category');
+  });
+
+  it('carries a category when there is one', () => {
+    expect(browseHref(searchFor({ category: 'outdoor-gardening' }))).toBe(
+      '/browse?postcode=BS7%208AA&radiusMiles=5&category=outdoor-gardening',
+    );
+  });
+
+  it('escapes a category, for the reason it escapes a postcode', () => {
+    // Not reachable through the contract's slug rules, which is the point: the
+    // builder must not depend on its input having been validated elsewhere.
+    expect(browseHref(searchFor({ category: 'a b' }))).toContain('category=a%20b');
   });
 });
 
 describe('the pager’s ends', () => {
   it('offers the next page when the server found more', () => {
-    expect(nextSearchHref('BS7 8AA', 5, 1, true)).toEqual({
+    expect(nextSearchHref(searchFor(), true)).toEqual({
       href: '/browse?postcode=BS7%208AA&radiusMiles=5&page=2',
       page: 2,
     });
@@ -39,7 +77,7 @@ describe('the pager’s ends', () => {
   it('offers nothing when the server found no more', () => {
     // `truncated` is measured by probing for one row past the page, so this is
     // a fact rather than an inference from a full page.
-    expect(nextSearchHref('BS7 8AA', 5, 1, false)).toBeNull();
+    expect(nextSearchHref(searchFor(), false)).toBeNull();
   });
 
   /*
@@ -48,24 +86,38 @@ describe('the pager’s ends', () => {
    * clothes. The boundary is decided here rather than at the call site.
    */
   it('offers nothing past the cap, however much more there is', () => {
-    expect(nextSearchHref('BS7 8AA', 5, MAX_SEARCH_PAGE, true)).toBeNull();
+    expect(nextSearchHref(searchFor({ page: MAX_SEARCH_PAGE }), true)).toBeNull();
   });
 
   it('steps back one page, and drops the parameter at the first', () => {
-    expect(previousSearchHref('BS7 8AA', 5, 3)?.page).toBe(2);
-    expect(previousSearchHref('BS7 8AA', 5, 2)?.href).toBe(
+    expect(previousSearchHref(searchFor({ page: 3 }))?.page).toBe(2);
+    expect(previousSearchHref(searchFor({ page: 2 }))?.href).toBe(
       '/browse?postcode=BS7%208AA&radiusMiles=5',
     );
   });
 
   it('offers nothing before the first page', () => {
-    expect(previousSearchHref('BS7 8AA', 5, 1)).toBeNull();
+    expect(previousSearchHref(searchFor({ page: 1 }))).toBeNull();
+  });
+
+  /*
+   * **Both ends keep every filter**, which is the property the object-shaped
+   * argument exists for. A pager that dropped the category would not break — it
+   * would page through a *different search*, silently.
+   */
+  it('carries the category in both directions', () => {
+    const filtered = searchFor({ page: 3, category: 'outdoor-gardening' });
+
+    expect(nextSearchHref(filtered, true)?.href).toContain(
+      'category=outdoor-gardening',
+    );
+    expect(previousSearchHref(filtered)?.href).toContain('category=outdoor-gardening');
   });
 });
 
 describe('the empty state’s ladder', () => {
   it('offers the next radius up, keeping the postcode', () => {
-    expect(widerSearchHref('BS7 8AA', 5)).toEqual({
+    expect(widerSearchHref(searchFor())).toEqual({
       href: '/browse?postcode=BS7%208AA&radiusMiles=10',
       miles: 10,
     });
@@ -75,20 +127,34 @@ describe('the empty state’s ladder', () => {
     // Read from the contract rather than written out, so a change to §8.4's
     // list moves the ladder rather than leaving it pointing at a dead radius.
     const climbed = SEARCH_RADII_MILES.slice(0, -1).map(
-      (miles) => widerSearchHref('BS7 8AA', miles)?.miles,
+      (miles: SearchRadiusMiles) =>
+        widerSearchHref(searchFor({ radiusMiles: miles }))?.miles,
     );
 
     expect(climbed).toEqual([...SEARCH_RADII_MILES].slice(1));
   });
 
   it('offers nothing at the top', () => {
-    expect(widerSearchHref('BS7 8AA', 100)).toBeNull();
+    expect(widerSearchHref(searchFor({ radiusMiles: 100 }))).toBeNull();
   });
 
   it('drops back to the first page when it widens', () => {
     // Widening changes which listings exist and how they are ordered, so
     // carrying page four across would land somebody in the middle of a set they
     // have never seen the start of.
-    expect(widerSearchHref('BS7 8AA', 5)?.href).not.toContain('page');
+    expect(widerSearchHref(searchFor({ page: 4 }))?.href).not.toContain('page');
+  });
+
+  /*
+   * **But it keeps the category, which is the opposite treatment and the right
+   * one** (slice 3.2a). Widening is the answer to "nothing near me"; dropping
+   * the filter at the same moment would change two things at once and leave the
+   * searcher unable to tell which produced the results. Dropping the filter is
+   * its own offer, and it belongs to the empty state.
+   */
+  it('keeps the category when it widens', () => {
+    expect(
+      widerSearchHref(searchFor({ category: 'outdoor-gardening' }))?.href,
+    ).toContain('category=outdoor-gardening');
   });
 });

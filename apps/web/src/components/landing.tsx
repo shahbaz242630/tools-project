@@ -92,9 +92,16 @@ export function Landing() {
           docblock has the three ways we could have guessed and why each was
           rejected.
         */}
+        {/*
+          **No category either, and for the same reason as the postcode** (slice
+          3.2a): we know nothing about whoever is reading this, and a filter
+          nobody chose is a narrower search than they asked for. The landing hero
+          asks the one question it has to ask; the rest is Browse's.
+        */}
         <BrowseSearch
           postcode=""
           radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
+          category={null}
           error={null}
           className={styles.heroSearch}
         />
