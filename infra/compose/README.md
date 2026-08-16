@@ -259,14 +259,48 @@ Retention is what the json-file driver holds: three files of 10 MB per service, 
 
 `--since` is validated rather than passed through, because Docker silently ignores a value it does not understand and returns the entire log — which reads exactly like a quiet incident window.
 
+## The env file is not a shell script — never source it
+
+`/opt/rental/<env>.env` is read by **Docker Compose**, which takes everything
+after the first `=` as a literal value. It is not shell, and `source`ing it or
+`. `-ing it is wrong in two ways.
+
+**It does not work.** `CLERK_JWT_PUBLIC_KEY` is a PEM on one line, so its value
+contains spaces — bash reads `CLERK_JWT_PUBLIC_KEY=-----BEGIN` as an assignment
+and then tries to run `PUBLIC` as a command. You get
+`line 117: PUBLIC: command not found`, which looks like a corrupt file and is
+not one. Everything before and after still loads, so you end up with a
+_partially_ populated shell and no indication of it — which is the worse half.
+
+**And it is arbitrary code execution.** These values come from providers and
+from `openssl rand`. A secret containing `$(…)` or a backtick runs on this box
+the moment somebody sources the file. Nothing in this repository does it;
+`deploy.mjs` passes the path to `docker compose --env-file` and rewrites
+`IMAGE_TAG` as text.
+
+To read one value, ask for that one value:
+
+```sh
+# One variable, no shell interpretation, no partial environment.
+value() { sed -n "s/^$1=//p" /opt/rental/production.env; }
+
+value POSTGRES_DIRECT_HOST
+```
+
 ## Other things you will want
 
 ```sh
 # A psql shell. There is no Postgres container — the database is on Neon
-# (ADR 0037). Connect to its endpoint directly, with the credentials from
-# /opt/rental/production.env. Use the DIRECT host for anything holding a
-# session-level lock; the pooler will drop it.
-psql "postgresql://$POSTGRES_USER@$POSTGRES_DIRECT_HOST/$POSTGRES_DB?sslmode=verify-full"
+# (ADR 0037) — and **there is no psql on this box either**, deliberately: the
+# host carries Docker and Node and nothing else it does not need. Run the
+# client in a container.
+#
+# Use the DIRECT host for anything holding a session-level lock or issuing DDL;
+# the pooler will drop it. `value` is defined in the section above — the env
+# file must not be sourced.
+docker run --rm -it -e PGPASSWORD="$(value POSTGRES_PASSWORD)" postgres:17-alpine \
+  psql -h "$(value POSTGRES_DIRECT_HOST)" -p "$(value POSTGRES_PORT)" \
+       -U "$(value POSTGRES_USER)" -d "$(value POSTGRES_DB)"
 
 # When did the current release start?
 docker inspect rental-production-api --format '{{.State.StartedAt}}'
