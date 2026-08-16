@@ -499,6 +499,27 @@ export interface ListingStore {
   findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null>;
 
   /**
+   * Whether this owner owns this listing — the question, without the listing
+   * (slice 4.3b).
+   *
+   * **A separate method rather than `findOwnedBy(…) !== null` at the call
+   * site**, and it is the collection address that makes it worth one. That
+   * record carries the decrypted street lines, so answering a yes/no question
+   * with it means decrypting somebody's address to throw it away — and putting
+   * it, however briefly, in a module that has no business holding one. Booking
+   * asks this through a port and gets a boolean back (§8.4.1, BRD §5.1).
+   *
+   * **It reads nothing but the id**, so it cannot grow a projection later: a
+   * caller that wants a field has to go and ask for the listing, in the place
+   * that is entitled to it.
+   *
+   * True for a listing in any state. Ownership is not visibility — an owner may
+   * manage a draft, a paused listing and one the platform has hidden, and the
+   * routes that care about `status` or `moderationState` check them by name.
+   */
+  existsOwnedBy(id: string, ownerId: string): Promise<boolean>;
+
+  /**
    * Rewrite what this owner wrote about their item (slice 2.9b-i, ADR 0042).
    *
    * **Re-pins to the category's current version as it writes**, which is the

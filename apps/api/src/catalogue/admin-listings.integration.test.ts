@@ -23,6 +23,7 @@ import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import type { ListingFakes } from './testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { FakeGeocoder } from '../search-location/testing/fakes.js';
+import { createBookingFakes } from '../booking/testing/fakes.js';
 
 /**
  * Moderation through the real application (§8.3, §9, ADR 0041, slice 2.8c-i).
@@ -109,6 +110,7 @@ beforeEach(async () => {
         ),
         featureFlags: createFeatureFlagFakes().service,
         listings: listings.service,
+        availability: createBookingFakes().service,
       }),
     ],
   }).compile();

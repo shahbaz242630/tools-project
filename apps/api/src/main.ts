@@ -50,6 +50,8 @@ import { ListingsService } from './catalogue/listings.service.js';
 import { LocationService } from './search-location/location.service.js';
 import { PostcodesIoGeocoder } from './search-location/postcodes-io-geocoder.js';
 import { PrismaBookingStore } from './booking/prisma-booking-store.js';
+import { PrismaAvailabilityStore } from './booking/prisma-availability-store.js';
+import { AvailabilityService } from './booking/availability.service.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -414,6 +416,21 @@ async function bootstrap(): Promise<void> {
     { findBookedListings: (ids) => bookingStore.findBookedListings(ids) },
   );
 
+  /*
+   * The owner's calendar (slice 4.3b). Built *after* listings, because it takes
+   * the ownership port they answer — the mirror of the ordering above, where
+   * listings had to be built after bookings for `findBookedListings`.
+   *
+   * **`isOwnedBy` narrowed to one method at the seam**, like every other port
+   * across this boundary. It is the first one Booking declares and Catalogue
+   * answers; the three before it all pointed the other way. A boolean is the
+   * whole answer, so the calendar cannot reach a collection address through it
+   * — see `existsOwnedBy`, which reads one column rather than decrypting one.
+   */
+  const availability = new AvailabilityService(new PrismaAvailabilityStore(database), {
+    isOwnedBy: (listingId, ownerId) => listings.isOwnedBy(listingId, ownerId),
+  });
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       // The same instance the services above were given (slice 3.1f). One
@@ -440,6 +457,7 @@ async function bootstrap(): Promise<void> {
       catalogue,
       featureFlags,
       listings,
+      availability,
     }),
     /*
      * **One hop, not all of them, and not none.**

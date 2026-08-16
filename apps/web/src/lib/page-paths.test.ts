@@ -6,6 +6,7 @@ import {
   browseHref,
   editListingPath,
   hirePath,
+  listingCalendarPath,
   nextSearchHref,
   ownerListingPath,
   previousSearchHref,
@@ -88,11 +89,25 @@ describe('where a listing lives', () => {
     expect(editListingPath(ID)).toBe(`${ownerListingPath(ID)}/edit`);
   });
 
+  it('builds the calendar from the listing page too (slice 4.3b)', () => {
+    // Same reasoning as the edit form: 2.12 moves the id out of this URL, and
+    // deriving it means every owner-facing page moves with it or none does.
+    expect(listingCalendarPath(ID)).toBe(`${ownerListingPath(ID)}/calendar`);
+  });
+
+  it('is the page, not the API route it reads from', () => {
+    // `listingAvailabilityPath` in the contracts package is
+    // `/listings/:id/availability` and returns JSON. The two differ by one word
+    // and one of them renders — the confusion this whole module exists about.
+    expect(listingCalendarPath(ID)).not.toContain('availability');
+  });
+
   it('escapes the id, for the reason `hirePath` does', () => {
     // Ids are uuids today and will be slugs from 2.12. A builder must not
     // depend on its input having been validated somewhere else.
     expect(ownerListingPath('a b')).toBe('/listings/a%20b');
     expect(editListingPath('a b')).toBe('/listings/a%20b/edit');
+    expect(listingCalendarPath('a b')).toBe('/listings/a%20b/calendar');
   });
 });
 

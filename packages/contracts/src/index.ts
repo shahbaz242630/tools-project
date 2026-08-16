@@ -2,6 +2,7 @@ export * from './address.js';
 export * from './admin.js';
 export * from './attribute-values.js';
 export * from './audit.js';
+export * from './availability.js';
 export * from './booking.js';
 export * from './catalogue.js';
 export * from './export.js';

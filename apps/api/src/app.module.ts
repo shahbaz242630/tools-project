@@ -51,6 +51,9 @@ import { PublicListingsController } from './catalogue/public-listings.controller
 import { PublicListingSearchController } from './catalogue/public-listing-search.controller.js';
 import { PublicCategoriesController } from './catalogue/public-categories.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
+import { OwnerAvailabilityController } from './booking/owner-availability.controller.js';
+import { AVAILABILITY_SERVICE } from './booking/booking.tokens.js';
+import type { AvailabilityService } from './booking/availability.service.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
 import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
 import type { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -154,6 +157,17 @@ export interface AppModuleOptions {
    * would find out is by reaching for one during an incident.
    */
   readonly featureFlags: FeatureFlagsService;
+
+  /**
+   * The owner's availability calendar (slice 4.3b).
+   *
+   * The first thing the Booking module puts on the wire. Assembled outside like
+   * everything else, and required for the reason `listings` is: an optional
+   * dependency is one that ten boot sites forget, and the failure arrives as an
+   * undefined injection at request time rather than as a compile error listing
+   * every place to fix.
+   */
+  readonly availability: AvailabilityService;
 }
 
 /**
@@ -189,6 +203,10 @@ export class AppModule implements NestModule {
         AdminFeatureFlagsController,
         OwnerListingsController,
         AdminListingsController,
+        // The owner's calendar (slice 4.3b) — authenticated, owner-scoped, and
+        // sitting with the other two for that reason rather than with the
+        // public four below.
+        OwnerAvailabilityController,
         // **Unguarded by design, all four**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
@@ -253,6 +271,7 @@ export class AppModule implements NestModule {
         { provide: CATALOGUE_SERVICE, useValue: options.catalogue },
         { provide: LISTINGS_SERVICE, useValue: options.listings },
         { provide: FEATURE_FLAGS_SERVICE, useValue: options.featureFlags },
+        { provide: AVAILABILITY_SERVICE, useValue: options.availability },
       ],
     };
   }
