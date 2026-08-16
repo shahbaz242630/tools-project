@@ -28,5 +28,5 @@
   // vitest-setup.ts is listed because its `@testing-library/jest-dom/vitest`
   // import is what declares the DOM matchers on `expect`. Left out, the tests
   // run fine and `tsc` rejects every `toBeInTheDocument`.
-  "include": ["src", "vitest-setup.ts", "next-env.d.ts", ".next/types/**/*.ts"]
+  "include": ["src", "vitest-setup.tsx", "next-env.d.ts", ".next/types/**/*.ts"]
 }
