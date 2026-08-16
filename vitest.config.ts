@@ -255,6 +255,18 @@ export default defineConfig({
         // live in `distance-bucket.ts`, which is counted, and logic worth
         // counting belongs there rather than here.
         '**/api/src/search-location/prisma-listing-search.ts',
+        // And the booking store (slice 4.2), which is the strongest case in
+        // this list after the radius query. What it does is write two
+        // timestamps and translate one error — and the error it translates is
+        // one **only a real race produces**: two inserts contending on an
+        // exclusion constraint make Postgres report `40P01 deadlock detected`
+        // rather than a constraint violation, about one race in three. A double
+        // cannot raise that, so a unit test here would be asserting the shape
+        // of an error it invented. `prisma-booking-store.db.test.ts` opens two
+        // connections and races them ten times, which is the only thing that
+        // can. Keep this exclusion narrow — the state machine beside it is pure
+        // and is counted.
+        '**/api/src/booking/prisma-booking-store.ts',
       ],
       thresholds: {
         lines: 90,

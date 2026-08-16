@@ -203,6 +203,9 @@ const ADDRESS: ListingCollectionLocation = {
 };
 
 beforeEach(async () => {
+  // Bookings sit above listings from slice 4.2, so they truncate first or the
+  // foreign key refuses — children before parents, this suite's standing rule.
+  await client.booking.deleteMany();
   await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();
@@ -950,7 +953,7 @@ describe('erasing an owner', () => {
       draft(owner, category.slug, { collectionLocation: ADDRESS }),
     );
 
-    await store.deleteAllOwnedBy(owner);
+    await store.eraseOwnedBy(owner, new Set());
 
     // **The row is gone**, which is the change 2.8b made. Until then this
     // asserted the opposite — that the listing survived with its address
@@ -969,7 +972,7 @@ describe('erasing an owner', () => {
       draft(owner, category.slug, { collectionLocation: ADDRESS }),
     );
 
-    await store.deleteAllOwnedBy(owner);
+    await store.eraseOwnedBy(owner, new Set());
 
     // The delete is one statement against `listings`, so this asserts the
     // foreign key is doing the rest. If somebody ever changes that key away
@@ -992,7 +995,7 @@ describe('erasing an owner', () => {
       draft(theirs, category.slug, { collectionLocation: ADDRESS }),
     );
 
-    await store.deleteAllOwnedBy(mine);
+    await store.eraseOwnedBy(mine, new Set());
 
     // The one that matters most on a `deleteMany`: a missing owner filter here
     // would delete the whole table, and every other assertion in this file
@@ -1003,14 +1006,76 @@ describe('erasing an owner', () => {
     );
   });
 
+  /*
+   * **The branch slice 4.2 added, and the one §10.1 requires.** A listing a
+   * booking points at is a record the platform must retain: deleting it would
+   * destroy the *renter's* history, and the `RESTRICT` foreign key would refuse
+   * anyway — failing an account deletion, which is a statutory obligation.
+   */
+  it('keeps a listing something has booked, and takes its address', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    await store.eraseOwnedBy(owner, new Set([created.id]));
+
+    // The listing survives with the district and town it was always published
+    // at (§8.4.1) — which is what makes a renter's history still read.
+    const surviving = await client.listing.findUnique({ where: { id: created.id } });
+    expect(surviving).not.toBeNull();
+    expect(surviving?.outwardCode).toBe('BS7');
+    expect(surviving?.town).toBe('Bristol');
+
+    // And the precise address is gone, which is the whole of the personal data
+    // on a retained listing.
+    expect(
+      await client.listingLocation.findUnique({ where: { listingId: created.id } }),
+    ).toBeNull();
+  });
+
+  it('erases the unbooked ones in the same breath as keeping the booked', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+
+    const kept = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+    const gone = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    await store.eraseOwnedBy(owner, new Set([kept.id]));
+
+    expect(await client.listing.findUnique({ where: { id: kept.id } })).not.toBeNull();
+    expect(await client.listing.findUnique({ where: { id: gone.id } })).toBeNull();
+  });
+
+  it('is idempotent over a collapsed listing too', async () => {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await store.createDraft(
+      draft(owner, category.slug, { collectionLocation: ADDRESS }),
+    );
+
+    // A retry after a partial failure looks exactly like this, and deleting an
+    // already-deleted location must not throw.
+    await store.eraseOwnedBy(owner, new Set([created.id]));
+    await expect(
+      store.eraseOwnedBy(owner, new Set([created.id])),
+    ).resolves.toBeUndefined();
+  });
+
   it('succeeds when there is nothing to erase', async () => {
     const owner = await newUser();
 
     // Idempotence is what `PersonalDataEraser` requires, and the case that
     // matters is a retry after a partial failure — which looks exactly like
     // this second call.
-    await expect(store.deleteAllOwnedBy(owner)).resolves.toBeUndefined();
-    await expect(store.deleteAllOwnedBy(owner)).resolves.toBeUndefined();
+    await expect(store.eraseOwnedBy(owner, new Set())).resolves.toBeUndefined();
+    await expect(store.eraseOwnedBy(owner, new Set())).resolves.toBeUndefined();
   });
 });
 
@@ -1259,7 +1324,7 @@ describe('the geocoded point', () => {
       }),
     );
 
-    await store.deleteAllOwnedBy(owner);
+    await store.eraseOwnedBy(owner, new Set());
 
     // The whole row goes, so the point goes with the street. A deletion that
     // removed the address and left a coordinate on somebody's house would be

@@ -53,6 +53,9 @@ beforeEach(async () => {
   // listings reference both users and category_versions, ON DELETE RESTRICT
   // (slice 2.4a) — so they clear before either. Children before parents, in
   // every file.
+  // Bookings sit above listings from slice 4.2, so they truncate first or the
+  // foreign key refuses — children before parents, this suite's standing rule.
+  await client.booking.deleteMany();
   await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();

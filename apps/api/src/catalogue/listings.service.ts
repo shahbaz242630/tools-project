@@ -33,6 +33,7 @@ import {
 import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
+import type { BookingReferences } from './booking-references.js';
 import type { ListingProximity } from './listing-proximity.js';
 import type { PublicationSwitch } from './publication-switch.js';
 import type { OwnerStatusSource } from './owner-status-source.js';
@@ -450,6 +451,21 @@ export class ListingsService {
      * a marketplace nobody is using.
      */
     private readonly metrics: Metrics,
+    /**
+     * Which of this owner's listings a booking points at (slice 4.2).
+     *
+     * The fourth port this module declares, answered by Booking. It exists for
+     * erasure and nothing else: §10.1 lets us delete a listing nobody has
+     * booked and requires us to keep the record of one somebody has, and those
+     * are different erasures of the same row.
+     *
+     * Required rather than optional, for the reason every dependency here is,
+     * and this one has the worst failure of them: a boot site that forgot it
+     * would either delete listings out from under other people's rental
+     * history, or — once the foreign key refuses — fail account deletion
+     * outright, which is a statutory obligation.
+     */
+    private readonly bookings: BookingReferences,
   ) {}
 
   /**
@@ -1406,16 +1422,25 @@ export class ListingsService {
    * a deleted owner's listing stays visible — is answered by there being no
    * listing to show.
    *
-   * **§10.1 permits this today and will not permit it forever**, and the
-   * difference is worth stating precisely because it is a legal line rather than
-   * a preference. §10.1 distinguishes erasable personal data from records the
-   * platform is *required to retain*. Nothing refers to a listing today, so
-   * nothing requires retaining one. From Phase 4 a booking does, and a renter's
-   * rental history, receipts and any dispute evidence all point at the listing —
-   * at which point deleting it destroys the other party's records, which is the
-   * carve-out's whole purpose. The rule then becomes delete-if-unreferenced,
-   * hide-if-referenced. `ListingStore.deleteAllOwnedBy` carries the same warning
-   * where whoever adds the booking foreign key will meet it.
+   * **That "entirely" stopped being true in slice 4.2, and this is the change
+   * §10.1 always required.** The section distinguishes erasable personal data
+   * from records the platform is *required to retain*. Nothing referred to a
+   * listing until Phase 4; now a booking does, and a renter's rental history
+   * points at it — so deleting the row would destroy **the other party's**
+   * records, which is exactly what the carve-out exists to prevent. It would
+   * also simply fail: the foreign key is `RESTRICT`, and account deletion is a
+   * statutory obligation that must not error.
+   *
+   * **So: delete the listings nobody has booked, collapse the ones somebody
+   * has.** A collapsed listing loses its `listing_locations` row — the street
+   * lines and the full postcode — and keeps the district and town it was always
+   * published at (§8.4.1). The owner's personal data goes either way.
+   *
+   * **The order is two reads then one write, and it must stay that way.** Ask
+   * the store which listings this owner has, ask Booking which of those are
+   * referenced, then erase. Doing it per-listing would be an N+1 across a module
+   * boundary on the erasure path, and worse, would make a partial failure leave
+   * half an account erased.
    *
    * **Unaudited, deliberately.** `ProfilesService.eraseFor` writes a
    * `profile.erased` entry; there is no equivalent here because Identity writes
@@ -1424,7 +1449,10 @@ export class ListingsService {
    * in a trail retained six years, about rows that no longer exist.
    */
   async eraseFor(actor: Actor): Promise<void> {
-    await this.store.deleteAllOwnedBy(actor.userId);
+    const owned = await this.store.listIdsOwnedBy(actor.userId);
+    const booked = await this.bookings.findBookedListings(owned);
+
+    await this.store.eraseOwnedBy(actor.userId, booked);
   }
 }
 

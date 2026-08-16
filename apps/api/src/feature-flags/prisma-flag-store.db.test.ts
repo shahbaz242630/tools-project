@@ -44,6 +44,9 @@ async function newUser(): Promise<string> {
 
 beforeEach(async () => {
   await client.featureFlagOverride.deleteMany();
+  // Bookings sit above listings from slice 4.2, so they truncate first or the
+  // foreign key refuses — children before parents, this suite's standing rule.
+  await client.booking.deleteMany();
   await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();

@@ -649,8 +649,46 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
    * Scoped by `ownerId` directly rather than by reading the ids first, so there
    * is no window in which a listing created between two statements survives.
    */
-  async deleteAllOwnedBy(ownerId: string): Promise<void> {
-    await this.prisma.listing.deleteMany({ where: { ownerId } });
+  async listIdsOwnedBy(ownerId: string): Promise<readonly string[]> {
+    const rows = await this.prisma.listing.findMany({
+      where: { ownerId },
+      select: { id: true },
+    });
+
+    return rows.map((row) => row.id);
+  }
+
+  async eraseOwnedBy(ownerId: string, retain: ReadonlySet<string>): Promise<void> {
+    const retained = [...retain];
+
+    /*
+     * **One transaction, and the order inside it matters.** The location rows
+     * go first: if the delete of the unreferenced listings failed after the
+     * locations had gone, a retry would find nothing left to erase and report
+     * success with street addresses still in the database. Doing both together
+     * makes a partial erasure unrepresentable rather than merely unlikely.
+     */
+    await this.prisma.$transaction([
+      /*
+       * The precise address, for the listings that survive. This is the whole
+       * of the personal data on a retained listing — `outwardCode` and `town`
+       * live on `listings` and have never held anything finer than a postal
+       * district covering thousands of homes (§8.4.1).
+       */
+      this.prisma.listingLocation.deleteMany({
+        where: { listingId: { in: retained } },
+      }),
+      /*
+       * And the listings nothing has booked, which take their own location
+       * rows with them by cascade. `notIn` rather than a second query: the set
+       * came from `listIdsOwnedBy` a moment ago, and a listing created between
+       * the two would be outside `retain` and therefore deleted — which is the
+       * right answer, because nothing can have booked it yet.
+       */
+      this.prisma.listing.deleteMany({
+        where: { ownerId, id: { notIn: retained } },
+      }),
+    ]);
   }
 
   async listOptions(limit: number): Promise<readonly CategoryOptionRecord[]> {
