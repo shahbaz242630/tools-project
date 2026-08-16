@@ -64,6 +64,7 @@ import type {
 } from '../category-store.js';
 import { CatalogueService } from '../catalogue.service.js';
 import { createAuditFakes } from '../../audit/testing/fakes.js';
+import { createBookingFakes } from '../../booking/testing/fakes.js';
 import type { AuditFakes } from '../../audit/testing/fakes.js';
 
 interface StoredVersion {
@@ -705,12 +706,49 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return this.hydrate(moderated);
   }
 
-  deleteAllOwnedBy(ownerId: string): Promise<void> {
+  listIdsOwnedBy(ownerId: string): Promise<readonly string[]> {
+    return Promise.resolve(
+      this.listings.filter((listing) => listing.ownerId === ownerId).map((l) => l.id),
+    );
+  }
+
+  eraseOwnedBy(ownerId: string, retain: ReadonlySet<string>): Promise<void> {
+    /*
+     * **Both halves modelled, because a fake that only deleted would certify
+     * the bug this slice exists to prevent** (4.2). A service that passed an
+     * empty `retain` — or forgot to ask Booking at all — would look correct
+     * against a fake that ignores the argument, and would delete listings out
+     * from under other people's rental history against the real one.
+     */
+    const survivors = this.listings.filter(
+      (listing) => listing.ownerId !== ownerId || retain.has(listing.id),
+    );
     // Spliced in place rather than reassigned, because the array is `readonly`
     // — the field, not its contents — and because a test holding a reference to
     // it should see the same emptying the store sees.
-    const survivors = this.listings.filter((listing) => listing.ownerId !== ownerId);
     this.listings.splice(0, this.listings.length, ...survivors);
+
+    /*
+     * **A retained listing loses its precise address and keeps the district and
+     * town**, which is what the real adapter does by deleting the
+     * `listing_locations` row — the street lines, the full postcode and the
+     * fuzz offset all live there, while `outwardCode` and `town` are columns on
+     * the listing itself (§8.4.1).
+     *
+     * **The first version of this dropped only the offset and left the address
+     * standing**, which is the mismatch a fake exists to avoid: the service test
+     * failed against it while the real store was correct. `collectionLocation`
+     * is on the record here rather than in a second table, so modelling the
+     * delete means nulling it.
+     */
+    for (const id of retain) this.offsets.delete(id);
+
+    for (const [index, listing] of this.listings.entries()) {
+      if (listing.ownerId === ownerId && retain.has(listing.id)) {
+        this.listings[index] = { ...listing, collectionLocation: null };
+      }
+    }
+
     return Promise.resolve();
   }
 
@@ -799,6 +837,14 @@ export interface ListingFakes {
    * where anything is, and should see nothing rather than everything.
    */
   readonly proximity: FakeListingSearch;
+  /**
+   * Booking's fakes (slice 4.2), for the erasure tests.
+   *
+   * Exposed whole rather than as the narrowed port Catalogue declares, because
+   * a test needs to *seed* a booking against a listing — `bookings.store.holds(id)`
+   * — and the port deliberately offers no way to.
+   */
+  readonly bookings: ReturnType<typeof createBookingFakes>;
   /**
    * What the service recorded about each search (slice 3.1f).
    *
@@ -937,6 +983,11 @@ export function createListingFakes(
   const publication = new SwitchableFlag();
   const ownerStatuses = new DeclaredOwnerStatuses();
   const proximity = new FakeListingSearch();
+  // Booking's own fakes rather than a stub, so an erasure test goes through the
+  // real "which listings are referenced" answer (slice 4.2). A stub returning an
+  // empty set would let a service that never asked pass — which is precisely the
+  // defect that would delete listings out from under other people's history.
+  const bookings = createBookingFakes();
 
   return {
     categories,
@@ -947,6 +998,7 @@ export function createListingFakes(
     audit,
     ownerStatuses,
     proximity,
+    bookings,
     metrics,
     service: new ListingsService(
       listings,
@@ -967,6 +1019,7 @@ export function createListingFakes(
       // assert on the search outcome and the geocode in one place — which is
       // also how the real application is wired.
       metrics.metrics,
+      bookings.references,
     ),
   };
 }

@@ -49,6 +49,7 @@ import { PrismaCategoryStore } from './catalogue/prisma-category-store.js';
 import { ListingsService } from './catalogue/listings.service.js';
 import { LocationService } from './search-location/location.service.js';
 import { PostcodesIoGeocoder } from './search-location/postcodes-io-geocoder.js';
+import { PrismaBookingStore } from './booking/prisma-booking-store.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -316,6 +317,10 @@ async function bootstrap(): Promise<void> {
   // fuzzing that service exists to guarantee. Handing it the service instead
   // would have meant widening `LocationService.geocode` to public, and its
   // docblock explains what happens next.
+  // Bookings (slice 4.2). Built before listings, because listings takes the
+  // booking-references port — the same ordering feature flags already needed.
+  const bookingStore = new PrismaBookingStore(database);
+
   const listingSearch = new PrismaListingSearch(
     database,
     geocoder,
@@ -398,6 +403,15 @@ async function bootstrap(): Promise<void> {
     // given and the same one the HTTP hook records into — see the note where it
     // is built.
     metrics,
+    /*
+     * Which listings a booking points at (slice 4.2), answered by Booking.
+     *
+     * **Narrowed to one method, like the three ports above it**, so the erasure
+     * path cannot reach further into another module's bookings than the one
+     * question it is entitled to ask. It is the only thing Catalogue knows about
+     * bookings at all.
+     */
+    { findBookedListings: (ids) => bookingStore.findBookedListings(ids) },
   );
 
   const app = await NestFactory.create<NestFastifyApplication>(

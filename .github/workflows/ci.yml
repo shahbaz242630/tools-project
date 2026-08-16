@@ -1015,6 +1015,30 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # Extensions come before migrations, because from slice 4.2 a migration
+      # needs one. `CREATE EXTENSION` is deliberately not in a migration --
+      # infra/postgres/init/01-extensions.sql explains why: it needs superuser
+      # rights the application role should not hold, so "production
+      # provisioning must run the equivalent". This job is that equivalent for
+      # CI, and it did not exist until the booking overlap constraint failed
+      # here with "data type uuid has no default operator class for access
+      # method gist" -- btree_gist is what supplies it.
+      #
+      # The `Database invariants` job above does the same thing for its own
+      # service container. Two copies because they are two jobs with two
+      # databases; there is no shared step to hang it on.
+      - name: Install client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Create the extensions the migrations need
+        run: |
+          set -euo pipefail
+          for ext in postgis btree_gist pg_trgm citext; do
+            psql -h localhost -U rental -d rental_test -v ON_ERROR_STOP=1               -q -c "CREATE EXTENSION IF NOT EXISTS $ext;"
+          done
+        env:
+          PGPASSWORD: ci
+
       # The suite asserts what the migrations built, so they have to have been
       # applied -- and applying them here also proves they run cleanly against a
       # database that has never seen them, which is the case that matters on a

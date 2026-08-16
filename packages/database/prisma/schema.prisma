@@ -162,6 +162,16 @@ model User {
   /// What this person has put up for rent. `ON DELETE RESTRICT` — see `Listing`.
   listings Listing[]
 
+  /// What this person has rented, or asked to (BRD §7, slice 4.2).
+  ///
+  /// **`ON DELETE RESTRICT`, and here that is load-bearing rather than a
+  /// default.** Accounts are soft-deleted with a tombstoned email precisely so
+  /// that a counterparty can never be lost — a renter's history has to keep
+  /// naming who they rented from, and the other side's history has to keep
+  /// naming them. A cascade from this relation would erase one party's record
+  /// of a transaction because the *other* party asked to leave.
+  bookings Booking[]
+
   /// Listings this administrator has moderated (ADR 0041). Declared because
   /// Prisma requires both ends of a relation; nothing reads a moderator's
   /// listings *through the user*, and if something ever needs to — "show me
@@ -1125,6 +1135,17 @@ model Listing {
   /// search nobody widened.
   searchDocument Unsupported("tsvector")?
 
+  /// Every booking and request against this item (slice 4.2).
+  ///
+  /// **`ON DELETE RESTRICT`, and it is what changes how a listing is erased.**
+  /// Until this relation existed, deleting an account deleted its listings
+  /// outright (product owner's decision, 10 August 2026). A booking now points
+  /// here, and deleting the row would destroy the *renter's* record of what
+  /// they hired — so `deleteAllOwnedBy` deletes only the listings nothing has
+  /// booked, and collapses the rest to the district and town they were always
+  /// published at. That inversion was predicted in the decision itself.
+  bookings Booking[]
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
@@ -1267,6 +1288,111 @@ model ListingLocation {
   /// BRD §4.2 requires.
   @@index([fuzzedPoint], type: Gist)
   @@map("listing_locations")
+}
+
+/// A rental transaction, from the moment a renter asks (BRD §6.2, §7, slice 4.2).
+///
+/// **Deliberately minimal, and the omissions are scheduled rather than
+/// forgotten.** §6.2 lists totals, config versions and an expiry on this
+/// entity. All three are produced by the quote (slice 4.4) and the request
+/// (4.5), and columns nothing fills for two slices are columns whose meaning
+/// nobody can check. Expand-and-contract is the project's migration rule and
+/// this is what it looks like applied forward.
+///
+/// **What it does carry is what the overlap constraint needs**, because that
+/// constraint is the reason this slice exists and it is the one guarantee in
+/// Phase 4 that cannot be added later without a lock on a populated table.
+///
+/// **A binding note for slice 4.4, from the product owner on 16 August 2026:**
+/// *"if the booking is done, it should show in history, all details."* So the
+/// money and the item description are **copied onto this row** when a booking
+/// is made, not read back through `listing` — §8.2 already requires a booking
+/// to keep the terms it was made under, and history is the second reason.
+/// A renter's completed booking has to render in full when the owner has
+/// deleted their account and the listing has collapsed to a district.
+model Booking {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What is being hired. `ON DELETE RESTRICT` — see `Listing.bookings`.
+  listingId String  @db.Uuid
+  listing   Listing @relation(fields: [listingId], references: [id])
+
+  /// Who is hiring it. `ON DELETE RESTRICT` — accounts are soft-deleted, so
+  /// this never fires in production and exists to make sure it never can.
+  ///
+  /// **The owner is not a column here.** It is `listing.ownerId`, and
+  /// duplicating it would create a row that can disagree with itself about who
+  /// is owed the money. Where a *display* copy of the owner is needed for
+  /// history, that is 4.4's business along with the totals.
+  renterId String @db.Uuid
+  renter   User   @relation(fields: [renterId], references: [id])
+
+  /// One of §7's twenty-three states, as text with the vocabulary in code —
+  /// exactly like `listings.status` and for the same reason: a Postgres enum
+  /// needs a migration to add a value, and §7's table is the kind of thing that
+  /// gains a row when a phase discovers one.
+  ///
+  /// **The database does not police which value this holds, and one part of it
+  /// deliberately does**: the `EXCLUDE` constraint below is scoped by a `WHERE`
+  /// over the nine calendar-occupying states of §8.5.1, so an unknown value
+  /// would silently fall outside the overlap guarantee rather than erroring.
+  /// `booking-state-machine.ts` is what keeps the vocabulary honest, and the db
+  /// test asserts the constraint's list against it.
+  state String @db.Text
+
+  /// The hire period, in UTC (ADR 0003).
+  ///
+  /// **Stored as two instants and compared as a range.** `period` below is the
+  /// range, and it is derived from these two rather than being the source of
+  /// truth, because Prisma can read and write a `timestamptz` and cannot touch
+  /// a `tstzrange` at all.
+  startAt DateTime @db.Timestamptz(3)
+  endAt   DateTime @db.Timestamptz(3)
+
+  /// The IANA zone the rental is counted in (ADR 0003).
+  ///
+  /// **Redundant today and carried anyway**, in that ADR's own words:
+  /// everything is `Europe/London`, and retrofitting a zone onto historical
+  /// bookings once any exist elsewhere means guessing what they meant. A
+  /// rental "day" is a local calendar day, so this is what makes a two-day hire
+  /// across a BST transition still two days.
+  timeZone String @db.Text
+
+  /// The period as a range, for the overlap constraint (BRD §8.5.1, ADR 0004).
+  ///
+  /// **The third `Unsupported` column in this schema, and the same shape as the
+  /// other two** — `listing_locations.fuzzedPoint` and `listings.searchDocument`
+  /// — maintained by trigger from the columns above and never written by
+  /// application code. Nullable here because a *required* `Unsupported` column
+  /// blocks ordinary Prisma writes on the model, which is §4.2's rule and is
+  /// why all three are declared this way.
+  ///
+  /// **Unlike the other two, a null here would be a silent hole**, so the
+  /// database refuses one: an `EXCLUDE` constraint ignores NULL, so a booking
+  /// with no range would escape the overlap check entirely — the one guarantee
+  /// this table exists to provide. A `CHECK` in the migration makes it
+  /// impossible; it is invisible to Prisma, exactly as
+  /// `location_is_geocoded_or_not` already is.
+  ///
+  /// **`[)` — inclusive start, exclusive end.** A hire ending at 09:00 and one
+  /// starting at 09:00 do not overlap, because the item genuinely changes
+  /// hands. There is **no turnaround buffer**: whether an owner needs an hour
+  /// between hires is category configuration and a product decision, not a
+  /// range bound quietly widened here.
+  period Unsupported("tstzrange")?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// Both dashboards in slice 4.8 read one side's bookings, newest first.
+  @@index([renterId, createdAt(sort: Desc)])
+  @@index([listingId, createdAt(sort: Desc)])
+  /// Declared so the datamodel and the database agree — the same note
+  /// `listings.searchDocument` and `listing_locations.fuzzedPoint` carry. The
+  /// `EXCLUDE` constraint creates an index of its own that Prisma cannot see;
+  /// this one is what `migrate diff` compares against.
+  @@index([period], type: Gist)
+  @@map("bookings")
 }
 
 /// A seller's tax position for statutory reporting — **present and inactive**.

@@ -712,36 +712,46 @@ export interface ListingStore {
    */
   moderate(input: ModerationDecision): Promise<ListingRecord | null>;
 
+  /** Every listing id this owner has, for the erasure path to ask about. */
+  listIdsOwnedBy(ownerId: string): Promise<readonly string[]>;
+
   /**
-   * Delete this owner's listings outright, and everything hanging off them.
+   * Erase this owner's listings — **deleting the ones nothing has booked, and
+   * collapsing the ones something has** (slice 4.2).
    *
-   * **This deletes listings, and until 2.8b it deliberately did not.** It was
-   * `eraseLocationsFor`, which removed the precise address and left the listing
-   * standing, on the reasoning that a listing must outlive its owner's account
-   * because a booking will reference it. The product owner's decision of
-   * 10 August 2026 is that deleting an account means the account and its
-   * listings are gone, and §10.1 permits exactly that: it distinguishes erasable
-   * personal data from **records the platform is required to retain**, and today
-   * nothing refers to a listing, so nothing requires retaining one.
+   * **The day predicted in 2.8b has arrived, and this is what it changed.**
+   * That slice deleted listings outright on the product owner's decision of
+   * 10 August 2026, and §10.1 permitted it because nothing referred to a
+   * listing — while warning, in this very docblock, that *"whoever adds the
+   * booking foreign key must come back here"*. Slice 4.2 added it. A booking
+   * now points at a listing, so deleting the row would leave a **renter's**
+   * rental history pointing at nothing — which is what §10.1's carve-out for
+   * records the platform must retain exists to prevent — and, more bluntly,
+   * the foreign key would simply refuse and account deletion would fail.
    *
-   * **That changes the day bookings exist, and this method must change with
-   * it.** From Phase 4 a booking references a listing, and deleting the row
-   * would leave a renter's rental history and payment records pointing at
-   * nothing — which §10.1's own carve-out is there to prevent. The rule then
-   * becomes delete-if-unreferenced, hide-if-referenced, and the hiding is what
-   * `PAUSED` and the visibility check already exist for. **Whoever adds the
-   * booking foreign key must come back here**; a cascade delete or a foreign-key
-   * error at erasure time are both worse than deciding it deliberately.
+   * **So the rule is delete-if-unreferenced, collapse-if-referenced.** For a
+   * referenced listing the `listing_locations` row goes — that is where the
+   * street lines and the full postcode live — and the listing itself stays,
+   * holding the district and town it was always published at (§8.4.1). The
+   * owner's personal data is gone either way; what survives is the shell a
+   * renter's history needs to still make sense.
    *
-   * The `listing_locations` row goes with the listing rather than being erased
-   * separately — the location is the listing's, and a location whose listing has
-   * gone is not something to keep tidy.
+   * **`retain` is a set of ids rather than a predicate this store evaluates**,
+   * because bookings are another module's table (BRD §5.1). Catalogue asks
+   * through `BookingReferences` and passes the answer down; the store is told
+   * which rows to keep and never learns why.
    *
    * **Idempotent**, as `PersonalDataEraser` requires: deleting what is already
-   * gone is a success, because a retry after a partial failure has to be able to
-   * finish the job.
+   * gone is a success, because a retry after a partial failure has to finish
+   * the job. Collapsing an already-collapsed listing is likewise a no-op.
+   *
+   * **What this does not do is unpublish.** A collapsed listing keeps its
+   * `status`, and slice 4.3's calendar and 4.6's acceptance are where a listing
+   * whose owner no longer exists stops being bookable — that is a lifecycle
+   * decision with a product answer, not something to smuggle into an erasure.
+   * Recorded because the omission looks like a bug from here.
    */
-  deleteAllOwnedBy(ownerId: string): Promise<void>;
+  eraseOwnedBy(ownerId: string, retain: ReadonlySet<string>): Promise<void>;
 }
 
 /**

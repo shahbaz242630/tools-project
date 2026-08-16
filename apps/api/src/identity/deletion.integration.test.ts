@@ -1202,6 +1202,29 @@ describe('a listing address, in the personal-data paths', () => {
     });
   });
 
+  /*
+   * **The branch slice 4.2 added, at the level that matters most.** This is the
+   * whole deletion flow rather than the store — so it proves the *service*
+   * asks Booking which listings are referenced, not merely that the store
+   * honours an answer somebody hands it. A service that forgot to ask would
+   * pass every store test and delete a listing out from under a renter's
+   * history here.
+   */
+  it('keeps a booked listing, without its address, so a renter’s history survives', async () => {
+    const listingId = await givenAListingWithAnAddress();
+    listings.bookings.store.holds(listingId);
+
+    await requestDeletion('alice-token');
+
+    const surviving = listings.listings
+      .all()
+      .find((listing) => listing.id === listingId);
+    expect(surviving).toBeDefined();
+    // The precise address is gone; the district and town it was always
+    // published at remain (§8.4.1).
+    expect(surviving?.collectionLocation).toBeNull();
+  });
+
   it('leaves another owner’s address alone', async () => {
     await givenAListingWithAnAddress();
     const bob = await idOf('bob-token');
