@@ -204,7 +204,23 @@ function readError(raw: string): { issues?: readonly string[]; message?: string 
   }
 }
 
-async function call<T, E422 = never, E503 = never, E409 = never>(
+/**
+ * One request to a guarded API route, as an outcome rather than an exception.
+ *
+ * **Exported from slice 4.3b, for the availability client next door.** It was
+ * private while this file was the only caller, and the alternative — a second
+ * copy of the status mapping in `availability.ts` — is the shape this codebase
+ * has been bitten by twice: H3a found a 503 that fell through to *"API answered
+ * 503"* because one client had been taught about it and the code path another
+ * used had not. One mapping, one place, and a route that needs a status to mean
+ * something particular says so with the hooks below.
+ *
+ * The calendar is the owner's view of their own listing, so it shares the
+ * outcome vocabulary deliberately: `signed-out`, `forbidden` and `not-found`
+ * mean exactly what they mean here. `stale-category` is the one member it can
+ * never receive, and its page says so where it handles the rest.
+ */
+export async function call<T, E422 = never, E503 = never, E409 = never>(
   url: string,
   token: string | null,
   clientIp: string | null,
@@ -290,6 +306,23 @@ async function call<T, E422 = never, E503 = never, E409 = never>(
 
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'unreachable', reason: `API answered ${String(response.status)}` };
+  }
+
+  /*
+   * **204 has no body, by definition** (slice 4.3b, for the calendar's delete).
+   *
+   * Without this the success path below reads an empty string and hands it to
+   * `JSON.parse`, which throws — so a route that worked perfectly would come
+   * back as `malformed` and the page would report a failure for something it
+   * had just done. The parser is still called, with `null`, so a caller that
+   * genuinely expects content on a 204 finds out rather than receiving one.
+   */
+  if (response.status === 204) {
+    try {
+      return { kind: 'loaded', value: parse(null) };
+    } catch (error) {
+      return { kind: 'malformed', reason: describe(error) };
+    }
   }
 
   let raw: string;

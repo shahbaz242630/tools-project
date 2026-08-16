@@ -1,0 +1,29 @@
+/*
+ * The owner's availability calendar (slice 4.3b).
+ *
+ * Beside the page rather than in `components/`, because everything here is
+ * layout for this one route — the calendar itself is styled with the component,
+ * where a test can reach it.
+ */
+
+.page {
+  /* The listing page's width. A seven-column grid needs it, and the two pages
+     link to each other constantly — a change in measure between them reads as a
+     change of place. */
+  --page-width: 720px;
+}
+
+.title {
+  margin-bottom: 16px;
+}
+
+/* The item's name, secondary to the word that says what this page is. */
+.item {
+  color: var(--ink-secondary);
+  font-weight: 400;
+}
+
+.footnote {
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}

@@ -12,6 +12,7 @@ import { createCatalogueFakes, createListingFakes } from './catalogue/testing/fa
 import { createProfileFakes } from './profiles/testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from './feature-flags/testing/fakes.js';
+import { createBookingFakes } from './booking/testing/fakes.js';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
   const { sessionVerifier, service, accountData, accountAdmin, roleApprovals } =
@@ -38,6 +39,7 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes().service,
+        availability: createBookingFakes().service,
         ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
       }),
     ],

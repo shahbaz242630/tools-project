@@ -165,6 +165,115 @@ export function isDstTransitionDay(
   return nextDayStart.diff(dayStart, 'hours').hours !== 24;
 }
 
+/**
+ * The instant a local calendar date begins (slice 4.3b).
+ *
+ * **The inverse of `toLocalDateString`, and the direction that had been
+ * missing.** Everything above turns an instant into a date; nothing turned a
+ * date a person chose into an instant, so every caller wanting one would have
+ * reached for `new Date('2026-08-20')` — which `fromIsoUtc` exists to prevent,
+ * and which is wrong here in a second way: it is midnight *UTC*, an hour adrift
+ * from midnight in London for seven months of the year.
+ *
+ * **Why this is a primitive rather than three lines in the booking module.** A
+ * date is what an owner picks and an instant is what the database stores, so
+ * the conversion sits on the boundary every date-shaped feature in Phase 4
+ * crosses — availability now, quotes and rental periods next. Written once, it
+ * is one thing to get right across a BST transition; written per module it is
+ * one thing to get wrong per module.
+ *
+ * **Strict about the format on purpose.** `DateTime.fromISO` accepts `2026-08`
+ * and reads it as the first of the month, so a truncated value would silently
+ * become a real date three weeks from the one intended. `fromFormat` refuses
+ * that, and refuses `2026-02-30` with it.
+ */
+export function startOfLocalDay(
+  date: string,
+  timeZone: string = PLATFORM_TIMEZONE,
+): Date {
+  const parsed = DateTime.fromFormat(date, 'yyyy-MM-dd', { zone: timeZone });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid calendar date: ${date}`);
+  }
+  // `startOf('day')` rather than trusting the parse, because on a day the clocks
+  // go forward in a zone that skips midnight itself, 00:00 does not exist and
+  // luxon resolves it forwards. Asking for the start of the day is the question
+  // we actually mean, and it has an answer on every day in every zone.
+  return parsed.startOf('day').toJSDate();
+}
+
+/**
+ * Whole calendar days added to a local date, as a local date (slice 4.3b).
+ *
+ * **Civil arithmetic on a date, not on an instant** — no timezone is taken and
+ * none is needed, because *"the day after the 20th"* is the 21st everywhere.
+ * That is the distinction from `addRentalDays`, which moves an instant and
+ * preserves its wall-clock time. Use this where the answer is a date on a
+ * calendar; use that where the answer is a moment somebody has to be somewhere.
+ *
+ * The half-open period a block occupies is the first caller: an owner who says
+ * *"the 20th to the 22nd"* means three days, which ends at the start of the
+ * 23rd.
+ */
+export function addLocalDays(date: string, days: number): string {
+  if (!Number.isInteger(days)) {
+    throw new TimeError(`Days must be a whole number, received ${days}`);
+  }
+  return shiftLocalDate(date, { days });
+}
+
+/**
+ * Whole calendar months added to a local date, as a local date (slice 4.3b).
+ *
+ * For moving between months on a calendar — *"the month before this one"* — and
+ * deliberately not for anything with a deadline in it. Luxon clamps a day that
+ * the target month does not have, so 31 January plus one month is 28 February;
+ * every caller here works from the first of a month, where there is nothing to
+ * clamp.
+ */
+export function addLocalMonths(date: string, months: number): string {
+  if (!Number.isInteger(months)) {
+    throw new TimeError(`Months must be a whole number, received ${months}`);
+  }
+  return shiftLocalDate(date, { months });
+}
+
+/**
+ * Which day of the week a local date falls on — 1 is Monday, 7 is Sunday
+ * (slice 4.3b).
+ *
+ * **A civil fact about a date, so no timezone is taken.** 20 August 2026 is a
+ * Thursday everywhere. The alternative a calendar component would otherwise
+ * reach for is `new Date(date).getDay()`, which is wrong twice over: it reads
+ * the string as midnight UTC and then reports the weekday in whatever zone the
+ * machine rendering the page is in — so a date near either end of the month can
+ * come out a day adrift, and it would do so only for readers in some timezones.
+ *
+ * **Monday-first, as ISO 8601 has it**, which is also how a British calendar is
+ * drawn. It is the numbering a grid offset is computed from, so getting the
+ * convention from the standard rather than from JavaScript's Sunday-first
+ * `getDay` is what stops the first week being shifted by one.
+ */
+export function weekdayOf(date: string): number {
+  const parsed = DateTime.fromFormat(date, 'yyyy-MM-dd', { zone: 'utc' });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid calendar date: ${date}`);
+  }
+  return parsed.weekday;
+}
+
+/** One parse, one format, shared by the two shifts above. */
+function shiftLocalDate(date: string, by: { days?: number; months?: number }): string {
+  const parsed = DateTime.fromFormat(date, 'yyyy-MM-dd', { zone: 'utc' });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid calendar date: ${date}`);
+  }
+  const shifted = parsed.plus(by).toISODate();
+  /* c8 ignore next */
+  if (shifted === null) throw new TimeError('Could not derive local date');
+  return shifted;
+}
+
 /** Local calendar date as `YYYY-MM-DD`. Used for grouping and display. */
 export function toLocalDateString(
   instant: Date,
@@ -183,6 +292,42 @@ export function formatLocal(
   locale = 'en-GB',
 ): string {
   return toDateTime(instant, timeZone).setLocale(locale).toFormat('d LLL yyyy, HH:mm');
+}
+
+/**
+ * A local calendar date as a person reads it, e.g. "20 Aug 2026" (slice 4.3b).
+ *
+ * **Takes the date string, not an instant**, which is what separates it from
+ * `formatLocal` above. That one renders a moment — a due time, a saved-at
+ * stamp — and must say which day it was in the platform's timezone. This
+ * renders a day that was never a moment: an owner's block runs from a date to a
+ * date, and turning it into an instant to print it would be inventing a time of
+ * day in order to throw it away.
+ *
+ * Here rather than in a component so that one function formats a date across
+ * the whole product. A component doing it with an array of month names is how
+ * two surfaces come to spell August differently.
+ */
+export function formatLocalDate(date: string, locale = 'en-GB'): string {
+  const parsed = DateTime.fromFormat(date, 'yyyy-MM-dd', { zone: 'utc' });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid calendar date: ${date}`);
+  }
+  return parsed.setLocale(locale).toFormat('d LLL yyyy');
+}
+
+/**
+ * A month as a person reads it, e.g. "August 2026" (slice 4.3b).
+ *
+ * The heading of a calendar. Spelled in full where a date is abbreviated,
+ * because it appears once at the top rather than in a list.
+ */
+export function formatLocalMonth(month: string, locale = 'en-GB'): string {
+  const parsed = DateTime.fromFormat(`${month}-01`, 'yyyy-MM-dd', { zone: 'utc' });
+  if (!parsed.isValid) {
+    throw new TimeError(`Not a valid month: ${month}`);
+  }
+  return parsed.setLocale(locale).toFormat('LLLL yyyy');
 }
 
 /** True when `instant` falls inside [start, end). Half-open by design. */

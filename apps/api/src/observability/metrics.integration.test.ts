@@ -16,6 +16,7 @@ import {
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
+import { createBookingFakes } from '../booking/testing/fakes.js';
 
 /**
  * Metrics through the real application (slice H1).
@@ -66,6 +67,7 @@ beforeEach(async () => {
         ),
         featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes(categories).service,
+        availability: createBookingFakes().service,
       }),
     ],
   }).compile();

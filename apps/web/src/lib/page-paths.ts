@@ -84,6 +84,24 @@ export function editListingPath(id: string): string {
 }
 
 /**
+ * The owner's availability calendar (slice 4.3b).
+ *
+ * **Built from `ownerListingPath`, like the edit form above**, so 2.12 moving
+ * the id out of the listing URL moves this with it. It is also the reason this
+ * is not `` `${ownerListingPath(id)}/calendar` `` written at the call site: the
+ * listing page links here, the calendar page links back, and a third place will
+ * appear the moment the dashboard grows a column.
+ *
+ * **Not the API route.** `listingAvailabilityPath` in `@platform/contracts` is
+ * `/listings/:id/availability` and returns JSON — the exact pair this module's
+ * docblock exists about. A month is a query parameter on this page too, and the
+ * page reads it; it is not part of the path.
+ */
+export function listingCalendarPath(id: string): string {
+  return `${ownerListingPath(id)}/calendar`;
+}
+
+/**
  * A search, as a link.
  *
  * **It takes the whole search rather than a field per parameter** (slice 3.2a),

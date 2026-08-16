@@ -436,6 +436,17 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return listing === undefined ? null : this.hydrate(listing);
   }
 
+  existsOwnedBy(id: string, ownerId: string): Promise<boolean> {
+    // Answered off the raw array rather than through `findOwnedBy`, mirroring
+    // the adapter's `select: { id: true }` — a double that hydrated the record
+    // would hide the fact that the real one never reads an address (slice 4.3b).
+    return Promise.resolve(
+      this.listings.some(
+        (candidate) => candidate.id === id && candidate.ownerId === ownerId,
+      ),
+    );
+  }
+
   /**
    * The public read (slice 2.10).
    *

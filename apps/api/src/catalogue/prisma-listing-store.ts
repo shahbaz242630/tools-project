@@ -170,6 +170,25 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return listing === null ? null : this.toRecord(listing);
   }
 
+  async existsOwnedBy(id: string, ownerId: string): Promise<boolean> {
+    /*
+     * **`select: { id: true }`, and the narrowness is the point** (slice 4.3b).
+     * `LISTING_CATEGORY` joins `listing_locations`, so reusing `findOwnedBy` here
+     * would fetch and decrypt somebody's street address to answer a question
+     * whose whole answer is a boolean. This reads one indexed column.
+     *
+     * The owner is inside the `where` for `findOwnedBy`'s reason: a read that
+     * fetches first and compares afterwards is one somebody later refactors into
+     * a read that forgets to compare.
+     */
+    const listing = await this.prisma.listing.findFirst({
+      where: { id, ownerId },
+      select: { id: true },
+    });
+
+    return listing !== null;
+  }
+
   async update(
     id: string,
     ownerId: string,

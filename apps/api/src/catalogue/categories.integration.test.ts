@@ -21,6 +21,7 @@ import { CatalogueService } from './catalogue.service.js';
 import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
+import { createBookingFakes } from '../booking/testing/fakes.js';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -116,6 +117,7 @@ beforeEach(async () => {
         // category created through the admin routes here is one an owner could
         // then list in.
         listings: createListingFakes(store, audit).service,
+        availability: createBookingFakes().service,
       }),
     ],
   }).compile();

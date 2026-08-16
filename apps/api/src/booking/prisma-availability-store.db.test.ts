@@ -20,6 +20,7 @@ import { PrismaListingStore } from '../catalogue/prisma-listing-store.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaAvailabilityStore } from './prisma-availability-store.js';
 import { PrismaBookingStore } from './prisma-booking-store.js';
+import { AvailabilityService } from './availability.service.js';
 
 const env = loadEnv();
 
@@ -406,5 +407,108 @@ describe('when the listing goes', () => {
     await client.listing.delete({ where: { id: listingId } });
 
     expect(await client.availabilityBlock.count({ where: { listingId } })).toBe(0);
+  });
+});
+
+/**
+ * The calendar service against the real database (slice 4.3b).
+ *
+ * **The third place the `[)` bound is now stated**, and the one that turns the
+ * other two into a round trip a person would recognise: an owner types two
+ * dates, and what has to be true is that the day after the last one is still
+ * bookable. The store tests above prove the trigger and `overlaps()` agree; this
+ * proves the *conversion into* them is right, which no test using instants
+ * directly can — every one of those hands the store the answer.
+ */
+describe('the service, from local dates to stored instants', () => {
+  const ADA = 'owner-ada';
+
+  const serviceFor = (listingId: string): AvailabilityService =>
+    new AvailabilityService(
+      store,
+      // The port Catalogue answers in production. Stubbed here on purpose: this
+      // file is about the conversion and the SQL, and a real listing store would
+      // add a category, an encryptor and a geocoder to a test about dates.
+      {
+        isOwnedBy: (id, ownerId) =>
+          Promise.resolve(id === listingId && ownerId === ADA),
+      },
+      // A fixed clock, so the "already finished" refusal cannot overtake these
+      // fixtures the way a real one would.
+      () => new Date('2026-08-01T09:00:00Z'),
+    );
+
+  it('stores local midnights, not UTC ones', async () => {
+    const listingId = await newListing();
+
+    await serviceFor(listingId).block(listingId, ADA, {
+      startDate: '2026-09-07',
+      endDate: '2026-09-11',
+      reason: 'Away that week',
+    });
+
+    const [row] = await client.$queryRaw<{ lower: Date; upper: Date }[]>`
+      SELECT lower("period") AS lower, upper("period") AS upper
+      FROM "availability_blocks" WHERE "listingId" = ${listingId}::uuid
+    `;
+
+    // 23:00Z is midnight in London during BST. The trigger built this range from
+    // the columns the service wrote, so this is the whole path in one assertion.
+    expect(row?.lower.toISOString()).toBe('2026-09-06T23:00:00.000Z');
+    expect(row?.upper.toISOString()).toBe('2026-09-11T23:00:00.000Z');
+  });
+
+  it('occupies the last day and frees the one after it', async () => {
+    const listingId = await newListing();
+    const service = serviceFor(listingId);
+
+    await service.block(listingId, ADA, {
+      startDate: '2026-09-07',
+      endDate: '2026-09-11',
+      reason: null,
+    });
+
+    // Asked of the real SQL, with `&&` doing the comparing rather than
+    // JavaScript. The 11th is blocked; the 12th is free — which is what makes a
+    // back-to-back hire possible.
+    expect(
+      await store.reasonUnavailable(
+        listingId,
+        new Date('2026-09-11T08:00:00Z'),
+        new Date('2026-09-11T17:00:00Z'),
+      ),
+    ).toBe('blocked');
+    expect(
+      await store.reasonUnavailable(
+        listingId,
+        new Date('2026-09-12T08:00:00Z'),
+        new Date('2026-09-12T17:00:00Z'),
+      ),
+    ).toBeNull();
+  });
+
+  it('reads back the dates it was given, through Postgres', async () => {
+    const listingId = await newListing();
+    const service = serviceFor(listingId);
+
+    await service.block(listingId, ADA, {
+      startDate: '2026-10-24',
+      endDate: '2026-10-26',
+      reason: null,
+    });
+
+    // Across the autumn transition, where the period is 73 hours rather than 72.
+    // A day's worth of milliseconds anywhere in this path would come back as the
+    // 25th or the 27th.
+    const calendar = await service.readMonth(listingId, ADA, '2026-10');
+
+    expect(calendar?.blocks).toEqual([
+      {
+        id: expect.any(String),
+        startDate: '2026-10-24',
+        endDate: '2026-10-26',
+        reason: null,
+      },
+    ]);
   });
 });

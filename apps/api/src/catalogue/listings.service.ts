@@ -758,6 +758,25 @@ export class ListingsService {
   }
 
   /**
+   * Whether this owner owns this listing (slice 4.3b).
+   *
+   * **What Catalogue answers for another module, and the only thing it answers
+   * about ownership.** Booking's calendar has to refuse somebody else's listing
+   * and may not read the `listings` table to find out (BRD §5.1), so it declares
+   * a port and this is what fills it — narrowed to a boolean at the seam in
+   * `main.ts`, exactly as `findBookedListings` is narrowed in the other
+   * direction.
+   *
+   * **Not `findOwned(…) !== null`.** That record carries the decrypted
+   * collection address, so the convenient version of this method would decrypt
+   * somebody's street lines in order to discard them, in a module whose whole
+   * subject is dates. `existsOwnedBy` reads one column.
+   */
+  isOwnedBy(id: string, ownerId: string): Promise<boolean> {
+    return this.store.existsOwnedBy(id, ownerId);
+  }
+
+  /**
    * One listing, as anybody may see it, or null (slice 2.10).
    *
    * **Two lines long and it is still the right place for this to exist.** The

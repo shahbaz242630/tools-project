@@ -12,7 +12,7 @@ import {
 import type { CategoryAttribute, OwnerListing } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
-import { editListingPath } from '../../../lib/page-paths';
+import { editListingPath, listingCalendarPath } from '../../../lib/page-paths';
 import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
 import { ModerationNotice, StatusLine } from '../../../components/listing-visibility';
@@ -354,6 +354,17 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
       <div className={styles.actions}>
         <Link href={editListingPath(listing.id)} className={styles.edit}>
           Edit this listing
+        </Link>
+
+        {/*
+          **The way in to the calendar** (slice 4.3b). Beside the edit link
+          rather than below the publication control, because both are things an
+          owner does *to* their listing — where publishing is what the platform
+          does with it. Without this the calendar would be reachable only by
+          typing a URL, which is the state 2.9a found the listing page itself in.
+        */}
+        <Link href={listingCalendarPath(listing.id)} className={styles.edit}>
+          Manage availability
         </Link>
 
         <PublishListingForm

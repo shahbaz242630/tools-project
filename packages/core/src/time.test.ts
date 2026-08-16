@@ -106,6 +106,158 @@ describe('addRentalDays', () => {
   });
 });
 
+describe('startOfLocalDay', () => {
+  it('is midnight in London, not midnight UTC', () => {
+    // The whole reason this function exists. During BST the two are an hour
+    // apart, so `new Date('2026-08-20')` would put the start of an owner's day
+    // at 01:00 — and every period built from it would be a day out at one end.
+    expect(T.toIsoUtc(T.startOfLocalDay('2026-08-20'))).toBe(
+      '2026-08-19T23:00:00.000Z',
+    );
+  });
+
+  it('is midnight UTC in winter, when the two agree', () => {
+    expect(T.toIsoUtc(T.startOfLocalDay('2026-01-15'))).toBe(
+      '2026-01-15T00:00:00.000Z',
+    );
+  });
+
+  it('round-trips through toLocalDateString on both transition days', () => {
+    // The spring-forward day is 23 hours long and the autumn one 25. A start
+    // instant that lands on the wrong side of either would come back as the
+    // neighbouring date.
+    for (const date of [SPRING_FORWARD, AUTUMN_BACK, '2026-07-27', '2026-01-15']) {
+      expect(T.toLocalDateString(T.startOfLocalDay(date))).toBe(date);
+    }
+  });
+
+  it('spans 23 hours across spring forward and 25 across autumn back', () => {
+    // What a half-open block of exactly one day is worth in elapsed time.
+    // Anything computing a period as `days * 24h` gets both of these wrong.
+    const springHours =
+      (T.startOfLocalDay('2026-03-30').getTime() -
+        T.startOfLocalDay(SPRING_FORWARD).getTime()) /
+      3_600_000;
+    const autumnHours =
+      (T.startOfLocalDay('2026-10-26').getTime() -
+        T.startOfLocalDay(AUTUMN_BACK).getTime()) /
+      3_600_000;
+
+    expect(springHours).toBe(23);
+    expect(autumnHours).toBe(25);
+  });
+
+  it('honours a non-default timezone', () => {
+    expect(T.toIsoUtc(T.startOfLocalDay('2026-08-20', 'Europe/Berlin'))).toBe(
+      '2026-08-19T22:00:00.000Z',
+    );
+  });
+
+  it('refuses a truncated date rather than reading it as the first of the month', () => {
+    // `DateTime.fromISO('2026-08')` is valid and means 1 August, which is how a
+    // truncated value becomes a real date three weeks from the intended one.
+    expect(() => T.startOfLocalDay('2026-08')).toThrow(T.TimeError);
+  });
+
+  it('refuses a date that does not exist, and a loosely written one', () => {
+    expect(() => T.startOfLocalDay('2026-02-30')).toThrow(T.TimeError);
+    expect(() => T.startOfLocalDay('2026-8-1')).toThrow(T.TimeError);
+    expect(() => T.startOfLocalDay('20 August 2026')).toThrow(T.TimeError);
+    expect(() => T.startOfLocalDay('')).toThrow(T.TimeError);
+  });
+
+  it('refuses an unknown timezone rather than silently using UTC', () => {
+    expect(() => T.startOfLocalDay('2026-08-20', 'Mars/Olympus_Mons')).toThrow(
+      T.TimeError,
+    );
+  });
+});
+
+describe('addLocalDays', () => {
+  it('moves a date by whole calendar days', () => {
+    expect(T.addLocalDays('2026-08-20', 1)).toBe('2026-08-21');
+    expect(T.addLocalDays('2026-08-20', 3)).toBe('2026-08-23');
+    expect(T.addLocalDays('2026-08-20', -1)).toBe('2026-08-19');
+  });
+
+  it('crosses month and year boundaries', () => {
+    expect(T.addLocalDays('2026-08-31', 1)).toBe('2026-09-01');
+    expect(T.addLocalDays('2026-12-31', 1)).toBe('2027-01-01');
+    expect(T.addLocalDays('2028-02-28', 1)).toBe('2028-02-29');
+  });
+
+  it('is unmoved by the clocks changing', () => {
+    // Civil arithmetic: the day after the 28th is the 29th whatever the clocks
+    // did overnight. This is the distinction from `addRentalDays`.
+    expect(T.addLocalDays('2026-03-28', 1)).toBe(SPRING_FORWARD);
+    expect(T.addLocalDays('2026-10-24', 1)).toBe(AUTUMN_BACK);
+  });
+
+  it('rejects a fractional shift and an unparseable date', () => {
+    expect(() => T.addLocalDays('2026-08-20', 1.5)).toThrow(T.TimeError);
+    expect(() => T.addLocalDays('nonsense', 1)).toThrow(T.TimeError);
+  });
+});
+
+describe('addLocalMonths', () => {
+  it('moves a date by whole calendar months', () => {
+    expect(T.addLocalMonths('2026-08-01', 1)).toBe('2026-09-01');
+    expect(T.addLocalMonths('2026-08-01', -1)).toBe('2026-07-01');
+    expect(T.addLocalMonths('2026-12-01', 1)).toBe('2027-01-01');
+    expect(T.addLocalMonths('2026-01-01', -1)).toBe('2025-12-01');
+  });
+
+  it('clamps a day the target month does not have', () => {
+    // Documented rather than relied on — every caller works from the first.
+    expect(T.addLocalMonths('2026-01-31', 1)).toBe('2026-02-28');
+  });
+
+  it('rejects a fractional shift and an unparseable date', () => {
+    expect(() => T.addLocalMonths('2026-08-01', 0.5)).toThrow(T.TimeError);
+    expect(() => T.addLocalMonths('2026-13-01', 1)).toThrow(T.TimeError);
+  });
+});
+
+describe('formatLocalDate and formatLocalMonth', () => {
+  it('renders a date and a month the way a British reader expects', () => {
+    expect(T.formatLocalDate('2026-08-20')).toBe('20 Aug 2026');
+    expect(T.formatLocalDate('2026-01-01')).toBe('1 Jan 2026');
+    expect(T.formatLocalMonth('2026-08')).toBe('August 2026');
+  });
+
+  it('does not invent a time of day', () => {
+    // The distinction from `formatLocal`: a block runs from a date to a date and
+    // was never a moment, so there is no midnight to show or to get wrong.
+    expect(T.formatLocalDate('2026-08-20')).not.toContain(':');
+  });
+
+  it('rejects a value that is not one', () => {
+    expect(() => T.formatLocalDate('2026-08')).toThrow(T.TimeError);
+    expect(() => T.formatLocalMonth('2026-13')).toThrow(T.TimeError);
+  });
+});
+
+describe('weekdayOf', () => {
+  it('is Monday-first, as ISO 8601 and a British calendar have it', () => {
+    // 17 August 2026 is a Monday. `new Date(…).getDay()` would say 1 for a
+    // Monday too — and 0 for the Sunday, which is what shifts a grid by a week.
+    expect(T.weekdayOf('2026-08-17')).toBe(1);
+    expect(T.weekdayOf('2026-08-20')).toBe(4);
+    expect(T.weekdayOf('2026-08-23')).toBe(7);
+  });
+
+  it('does not depend on the machine’s timezone', () => {
+    // The failure this exists to prevent: read as midnight UTC and rendered in a
+    // zone behind it, the 1st becomes the previous month's last day.
+    expect(T.weekdayOf('2026-08-01')).toBe(6);
+    expect(T.weekdayOf('2026-08-31')).toBe(1);
+  });
+
+  it('rejects a date that is not one', () => {
+    expect(() => T.weekdayOf('2026-08')).toThrow(T.TimeError);
+  });
+});
+
 describe('isDstTransitionDay', () => {
   it('detects both UK transitions', () => {
     expect(T.isDstTransitionDay(london(`${SPRING_FORWARD}T12:00`))).toBe(true);
