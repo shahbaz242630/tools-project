@@ -5,6 +5,7 @@ import {
   reconfigureCategory,
 } from './admin-categories';
 import type { FetchLike } from './admin-categories';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -30,6 +31,7 @@ const CATEGORY = {
   reportableActivity: 'none',
   attributes: [],
   feePolicy: FEE_POLICY,
+  maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-03T09:00:00.000Z',
@@ -44,6 +46,7 @@ const DRAFT = {
   reportingDutiesAcknowledged: false,
   attributes: [],
   feePolicy: FEE_POLICY,
+  maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   transportOptions: [],
 } as const;
 
@@ -208,6 +211,7 @@ describe('reconfigureCategory', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       'renamed after the taxonomy review',
@@ -232,6 +236,7 @@ describe('reconfigureCategory', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       'renamed after the taxonomy review',
@@ -254,6 +259,7 @@ describe('reconfigureCategory', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       REASON,
@@ -275,6 +281,7 @@ describe('reconfigureCategory', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       REASON,

@@ -17,6 +17,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { CategorySlugTakenError } from './category-store.js';
 import { CATEGORY_LIST_LIMIT } from './limits.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -101,6 +102,7 @@ describe('create', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -126,6 +128,7 @@ describe('create', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -142,6 +145,7 @@ describe('create', () => {
           reportableActivity: 'none',
           attributes: [],
           feePolicy: FEE_POLICY,
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           transportOptions: [],
         },
         author,
@@ -160,6 +164,7 @@ describe('create', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -173,6 +178,7 @@ describe('create', () => {
           reportableActivity: 'none',
           attributes: [],
           feePolicy: FEE_POLICY,
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           transportOptions: [],
         },
         author,
@@ -194,6 +200,7 @@ describe('the immutability trigger', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -221,6 +228,7 @@ describe('the immutability trigger', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -252,6 +260,7 @@ describe('the immutability trigger', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -276,6 +285,7 @@ describe('addVersion', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -289,6 +299,7 @@ describe('addVersion', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -319,6 +330,7 @@ describe('addVersion', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -348,6 +360,7 @@ describe('addVersion', () => {
           reportableActivity: 'none',
           attributes: [],
           feePolicy: FEE_POLICY,
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           transportOptions: [],
         },
         author,
@@ -367,6 +380,7 @@ describe('the author foreign key', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -391,6 +405,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -403,6 +418,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -415,6 +431,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -438,6 +455,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -450,6 +468,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -477,6 +496,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -489,6 +509,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -521,6 +542,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -576,6 +598,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -605,6 +628,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -641,6 +665,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -653,6 +678,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -682,6 +708,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -710,6 +737,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -743,6 +771,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -778,6 +807,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -804,6 +834,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -834,6 +865,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -847,6 +879,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -877,6 +910,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -915,6 +949,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: TRANSPORT,
       },
       author,
@@ -936,6 +971,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [{ requirement: 'trailer_required' }],
       },
       author,
@@ -960,6 +996,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: TRANSPORT,
       },
       author,
@@ -996,6 +1033,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: TRANSPORT,
       },
       author,
@@ -1008,6 +1046,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -1036,6 +1075,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -1072,6 +1112,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -1117,6 +1158,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -1149,6 +1191,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -1162,6 +1205,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_200 },
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -1290,5 +1334,134 @@ describe('the fee policy', () => {
 
     await expect(store.findBySlug(identity)).rejects.toThrow(identity);
     await expect(store.findBySlug(identity)).rejects.toThrow(/EUR/);
+  });
+});
+
+/**
+ * The maximum rental duration (§8.5.3, slice 4.4a).
+ *
+ * **The one thing only this file can prove** is that the bound is enforced by
+ * the *database* as well as by the contract. Everything above it — the schema,
+ * the form, `refusePeriod` — can be bypassed by anything that writes a row
+ * another way; a `CHECK` cannot.
+ */
+describe('the maximum rental duration', () => {
+  const config = (maximumRentalDays: number) => ({
+    slug: slug(),
+    name: 'Outdoor and gardening',
+    riskLevel: 'medium' as const,
+    reportableActivity: 'none' as const,
+    attributes: [],
+    transportOptions: [],
+    feePolicy: FEE_POLICY,
+    maximumRentalDays,
+  });
+
+  it('round-trips what was configured', async () => {
+    const created = await store.create(config(30), await newUser());
+
+    expect(created.maximumRentalDays).toBe(30);
+    expect((await store.findBySlug(created.slug))?.maximumRentalDays).toBe(30);
+  });
+
+  it('defaults an existing row to 88, which is the specification’s own number', async () => {
+    /*
+     * The backfill, asserted from the database rather than from the migration
+     * file. Written by dropping to SQL that omits the column entirely — which is
+     * what every row created before this migration effectively did.
+     */
+    const author = await newUser();
+    const categorySlug = slug();
+    const category = await client.category.create({ data: { slug: categorySlug } });
+
+    await client.$executeRaw`
+      INSERT INTO "category_versions"
+        ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById")
+      VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Legacy', 'medium', ${author}::uuid)
+    `;
+
+    expect((await store.findBySlug(categorySlug))?.maximumRentalDays).toBe(88);
+  });
+
+  it('refuses a cap above the statutory ceiling, even in raw SQL', async () => {
+    /*
+     * **The check that makes this a control rather than a validation.** A cap
+     * above 88 would let the platform arrange a hire capable of subsisting
+     * beyond three months — a regulated consumer hire agreement under the
+     * Consumer Credit Act 1974 — so it must be impossible to store, not merely
+     * hard to submit.
+     */
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById", "maximumRentalDays")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Too long', 'medium', ${author}::uuid, 89)
+      `,
+    ).rejects.toThrow(/maximum_rental_days_is_lawful/);
+  });
+
+  it('refuses a cap of zero days', async () => {
+    // Not a legal bound but a coherence one: a category permitting no hire at
+    // all would disable itself silently, bypassing the moderation controls that
+    // exist to take things out of service visibly.
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById", "maximumRentalDays")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'No hire', 'medium', ${author}::uuid, 0)
+      `,
+    ).rejects.toThrow(/maximum_rental_days_is_lawful/);
+  });
+
+  it('keeps each version’s own cap when the category is reconfigured', async () => {
+    /*
+     * §8.2's rule doing legal work rather than commercial work: a booking made
+     * under a 30-day cap must still read as compliant after somebody raises the
+     * category to 88. A value that could be overwritten could not show that.
+     */
+    const author = await newUser();
+    const created = await store.create(config(30), author);
+
+    await store.addVersion(
+      created.slug,
+      {
+        name: created.name,
+        riskLevel: created.riskLevel,
+        reportableActivity: created.reportableActivity,
+        attributes: [],
+        transportOptions: [],
+        feePolicy: FEE_POLICY,
+        maximumRentalDays: 88,
+      },
+      author,
+    );
+
+    const versions = await client.categoryVersion.findMany({
+      where: { categoryId: created.id },
+      orderBy: { versionNumber: 'asc' },
+    });
+
+    expect(versions.map((version) => version.maximumRentalDays)).toEqual([30, 88]);
+  });
+
+  it('still refuses an UPDATE after the column was added', async () => {
+    // The same assertion slice 2.2 made for its own column, re-made because this
+    // one has legal consequences: a migration that silently disarmed the
+    // immutability trigger would look exactly like this one.
+    const author = await newUser();
+    const created = await store.create(config(88), author);
+
+    await expect(
+      client.categoryVersion.updateMany({
+        where: { categoryId: created.id },
+        data: { maximumRentalDays: 30 },
+      }),
+    ).rejects.toThrow(/immutable/i);
   });
 });

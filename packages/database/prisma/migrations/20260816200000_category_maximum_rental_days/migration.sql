@@ -1,0 +1,76 @@
+-- Migration: category_maximum_rental_days
+--
+-- Slice 4.4a. A category version gains the maximum rental duration BRD §8.5.3
+-- requires: "Every category carries a maximum rental duration as versioned
+-- configuration. Default 88 days."
+--
+-- Why this is a legal control and not a preference
+-- -----------------------------------------------
+-- Under the Consumer Credit Act 1974 a hire of goods to an *individual* — which
+-- includes sole traders and unincorporated partnerships — is a **regulated
+-- consumer hire agreement** where the agreement is *capable of subsisting for
+-- more than three months*. Entering into those by way of business requires FCA
+-- authorisation.
+--
+-- The operative words are "capable of subsisting", not "actually lasts". A hire
+-- with no upper bound satisfies the test the moment it is made, however short it
+-- turns out to be. So the bound has to exist, and it has to be enforced before a
+-- booking is taken rather than noticed afterwards.
+--
+-- Why 88, and why 88 is also the ceiling
+-- --------------------------------------
+-- 88 days is what the established UK hire operators use; it clears three months
+-- on every month-length combination with margin. §8.5.3 permits a *higher* cap
+-- for categories hired predominantly to incorporated businesses, because the
+-- three-month rule is about hires to individuals — but ADR 0043 makes this
+-- platform peer-to-peer only and refuses to let a business publish at all, so
+-- every hire here is to an individual and a cap above 88 is never correct today.
+--
+-- The CHECK therefore bounds the column at 88 rather than merely defaulting to
+-- it. §8.5.3 says the cap "must not be altered without legal review", and a
+-- ceiling in the schema is the only form of that requirement which is actually
+-- enforced: raising it needs a migration and an ADR, which is the review.
+--
+-- Data impact
+-- -----------
+-- One column and one CHECK. In PostgreSQL 11 and later, ADD COLUMN with a
+-- non-volatile DEFAULT is a catalogue-only change — existing rows are not
+-- rewritten and the default is materialised on read.
+--
+-- **Every existing version becomes 88, and that is the specification's own
+-- number rather than a guess.** This is the opposite treatment from slice 2.2's
+-- attribute schema, which defaulted to empty precisely so it would not invent
+-- configuration nobody chose. Here there is a right answer and §8.5.3 states it:
+-- a category with no cap is the unbounded case the Act is about, so leaving one
+-- unset is not the conservative option — it is the only genuinely wrong one.
+--
+-- **The immutability trigger is unaffected.** It is `BEFORE UPDATE ... FOR EACH
+-- ROW`, and DDL does not fire row-level triggers — so this migration needs no
+-- exemption from it, and the trigger still refuses an UPDATE the moment this
+-- finishes. The db test asserts both halves rather than trusting the reasoning,
+-- which is the same thing slice 2.2 said and is worth re-proving on a column
+-- whose value has legal consequences.
+--
+-- The table takes a brief ACCESS EXCLUSIVE lock. There are two categories.
+--
+-- Rollback
+-- --------
+--   ALTER TABLE "category_versions" DROP CONSTRAINT "maximum_rental_days_is_lawful";
+--   ALTER TABLE "category_versions" DROP COLUMN "maximumRentalDays";
+--
+-- **Rolling this back removes a legal bound**, which makes it unlike every other
+-- rollback note in this directory. It is safe only while nothing can create a
+-- booking — true until slice 4.5 — because after that the quote engine would
+-- stop refusing over-long hires and the platform would be arranging regulated
+-- agreements. From 4.5 onward the answer is roll forward, not back.
+
+-- AlterTable
+ALTER TABLE "category_versions"
+  ADD COLUMN "maximumRentalDays" INTEGER NOT NULL DEFAULT 88;
+
+-- A hire of at least a day, and never long enough to be regulated. The upper
+-- bound is the statutory one; the lower is what stops a category being
+-- configured to permit no hire at all, which would be a silent way to disable a
+-- whole category without using the moderation controls built for it.
+ALTER TABLE "category_versions" ADD CONSTRAINT "maximum_rental_days_is_lawful"
+  CHECK ("maximumRentalDays" BETWEEN 1 AND 88);

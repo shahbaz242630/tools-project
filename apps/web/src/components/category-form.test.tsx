@@ -2,6 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { UNCONFIGURED_FEE_POLICY } from '@platform/contracts';
 import type { AdminCategory } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  MAXIMUM_RENTAL_DAYS_WARNING,
+  MAX_MAXIMUM_RENTAL_DAYS,
+} from '@platform/contracts';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -57,6 +62,7 @@ const CATEGORY: AdminCategory = {
   reportableActivity: 'none',
   attributes: [],
   feePolicy: FEE_POLICY,
+  maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-04T09:00:00.000Z',
@@ -339,5 +345,61 @@ describe('the fee fields', () => {
 
     expect(screen.getByText(/Recommended 12–20%/)).toBeTruthy();
     expect(screen.getByText(/Recommended 5–12%/)).toBeTruthy();
+  });
+});
+
+/**
+ * The maximum rental duration (§8.5.3, slice 4.4a).
+ *
+ * **The warning is asserted, not just the input.** §8.5.3 requires the admin
+ * interface to warn on change, and a required sentence that no test names is one
+ * a later tidy-up removes without anything going red — which is exactly how the
+ * three false sentences in the Phase 0–3 audit survived.
+ */
+describe('the maximum rental duration', () => {
+  it('seeds 88 when creating, because the specification names it', () => {
+    render(<CreateCategoryForm />);
+
+    const field = screen.getByLabelText(/longest hire/i) as HTMLInputElement;
+    expect(field.value).toBe(String(DEFAULT_MAXIMUM_RENTAL_DAYS));
+    // Bounded in the markup as well as in the schema: the browser refuses 89
+    // before a round trip, and the API refuses it again.
+    expect(field.max).toBe(String(MAX_MAXIMUM_RENTAL_DAYS));
+    expect(field.min).toBe('1');
+  });
+
+  it('seeds what the category currently permits when reconfiguring', () => {
+    // Not the default. Reconfiguring the fees must not silently reset a category
+    // that was deliberately capped shorter.
+    render(
+      <ReconfigureCategoryForm category={{ ...CATEGORY, maximumRentalDays: 30 }} />,
+    );
+
+    expect((screen.getByLabelText(/longest hire/i) as HTMLInputElement).value).toBe(
+      '30',
+    );
+  });
+
+  it('warns, in the words §8.5.3 requires, on both forms', () => {
+    const { unmount } = render(<CreateCategoryForm />);
+    expect(
+      screen.getByText(new RegExp(MAXIMUM_RENTAL_DAYS_WARNING.slice(0, 40))),
+    ).toBeTruthy();
+    unmount();
+
+    render(<ReconfigureCategoryForm category={CATEGORY} />);
+    expect(
+      screen.getByText(new RegExp(MAXIMUM_RENTAL_DAYS_WARNING.slice(0, 40))),
+    ).toBeTruthy();
+  });
+
+  it('says whose rule it is, rather than reading as our own caution', () => {
+    // An administrator who thinks this is a policy setting will ask for it to be
+    // raised. One who knows it is the Consumer Credit Act will not.
+    render(<CreateCategoryForm />);
+
+    const warning = screen.getByRole('note');
+    expect(warning.textContent).toMatch(/Consumer Credit Act 1974/);
+    expect(warning.textContent).toMatch(/FCA authorisation/);
   });
 });

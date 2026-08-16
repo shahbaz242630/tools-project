@@ -35,6 +35,20 @@ function readAcknowledgement(form: FormData): boolean {
 }
 
 /**
+ * The category's maximum hire length, as typed (§8.5.3, slice 4.4a).
+ *
+ * **`NaN` for anything unparseable rather than a fallback to 88**, and the
+ * absence of that fallback is the decision. A default here would mean a blank or
+ * mangled field silently became *the most permissive value the law allows* —
+ * which is the wrong direction for a bound whose whole purpose is to stop the
+ * platform arranging a regulated agreement. `maximumRentalDaysSchema` refuses
+ * `NaN`, so the administrator is told, and the API refuses it again.
+ */
+function readMaximumRentalDays(form: FormData): number {
+  return Number(String(form.get('maximumRentalDays') ?? '').trim());
+}
+
+/**
  * Whatever was chosen, unvalidated.
  *
  * Cast rather than checked here because the contract schema below is what
@@ -187,6 +201,7 @@ export async function createCategoryAction(
     attributes: schema.attributes,
     transportOptions: transport.options,
     feePolicy: fees.value,
+    maximumRentalDays: readMaximumRentalDays(form),
   });
   if (!parsed.success) {
     return {
@@ -279,6 +294,7 @@ export async function reconfigureCategoryAction(
     attributes: schema.attributes,
     transportOptions: transport.options,
     feePolicy: fees.value,
+    maximumRentalDays: readMaximumRentalDays(form),
   });
   if (!parsed.success) {
     return {

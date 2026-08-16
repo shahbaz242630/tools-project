@@ -19,6 +19,7 @@ import {
 import { INITIAL_CATEGORY_STATE } from '../app/admin/categories/state';
 import { AttributeSchemaEditor } from './attribute-schema-editor';
 import { FeePolicyEditor } from './fee-policy-editor';
+import { MaximumRentalDaysField } from './maximum-rental-days-field';
 import { TransportOptionsEditor } from './transport-options-editor';
 
 /** Human wording for the vocabulary. The values themselves are the contract's. */
@@ -280,6 +281,8 @@ export function CreateCategoryForm() {
 
       <FeePolicyEditor idPrefix="create" />
 
+      <MaximumRentalDaysField idPrefix="create" />
+
       <p>
         <label htmlFor="create-reason">Why</label>
         <input
@@ -377,6 +380,13 @@ export function ReconfigureCategoryForm({
           category seeds blank rates, which is what it has — not a zero it
           never chose. */}
       <FeePolicyEditor idPrefix={category.slug} initial={category.feePolicy} />
+
+      {/* Seeded with what this category currently permits, so reconfiguring
+          something else does not silently reset the cap to the default. */}
+      <MaximumRentalDaysField
+        idPrefix={category.slug}
+        initial={category.maximumRentalDays}
+      />
 
       <p>
         <label htmlFor={id('reason')}>Why</label>

@@ -388,6 +388,68 @@ export function parseCategoryAttributes(raw: unknown): readonly CategoryAttribut
 }
 
 /**
+ * How long a hire in this category may run (BRD §8.5.3, slice 4.4a).
+ *
+ * **A legal boundary expressed as configuration, and the only reason it is
+ * configuration is that the boundary itself is category-dependent.** Under the
+ * Consumer Credit Act 1974 a hire of goods to an *individual* — which includes
+ * sole traders — is a **regulated consumer hire agreement** where it is *capable
+ * of subsisting* for more than three months, and entering into those by way of
+ * business requires FCA authorisation. The operative words are "capable of
+ * subsisting", not "actually lasts": an unbounded period satisfies the test from
+ * the outset, whatever any individual rental does.
+ *
+ * **88 days, which is what the established UK hire operators use** — it leaves
+ * margin below three months on every month-length combination.
+ *
+ * **It is also the ceiling, not merely the default, and that is a deliberate
+ * narrowing of §8.5.3.** That section permits a *higher* cap for categories
+ * hired predominantly to incorporated businesses, because the three-month rule
+ * is about hires to individuals. We do not have that case: ADR 0043 makes this
+ * platform peer-to-peer only and **refuses to let a business publish at all**,
+ * so every hire here is to an individual and a cap above 88 is never correct.
+ *
+ * Making 88 the maximum is what stops the platform being configured into an
+ * unauthorised regulated activity through an admin form. §8.5.3 requires the cap
+ * *"not be altered without legal review"*, and a ceiling in code is the only
+ * version of that requirement which is actually enforced — raising it needs a
+ * code change and an ADR, which is precisely the review it asks for.
+ */
+export const DEFAULT_MAXIMUM_RENTAL_DAYS = 88;
+export const MAX_MAXIMUM_RENTAL_DAYS = 88;
+export const MIN_MAXIMUM_RENTAL_DAYS = 1;
+
+export const maximumRentalDaysSchema = z
+  .number()
+  .int()
+  .min(MIN_MAXIMUM_RENTAL_DAYS, {
+    message: `must be at least ${String(MIN_MAXIMUM_RENTAL_DAYS)} day`,
+  })
+  .max(MAX_MAXIMUM_RENTAL_DAYS, {
+    // Names the Act rather than the number. An administrator meeting this needs
+    // to know it is not a setting somebody chose to be cautious with.
+    message:
+      `must be at most ${String(MAX_MAXIMUM_RENTAL_DAYS)} days — the Consumer ` +
+      'Credit Act 1974 regulates a consumer hire capable of lasting beyond three months',
+  });
+
+/**
+ * The warning §8.5.3 requires the admin interface to carry on change.
+ *
+ * **Here rather than in the form, for the reason the reporting acknowledgement
+ * is**: a sentence that lives only in a component is one the next surface to
+ * render this field will not have. Unlike that one it is *not* a required
+ * assertion on the request — §8.5.3 asks for a warning, not a confirmation, and
+ * inventing a second mandatory tick box would make the one that does exist
+ * (statutory reporting) easier to click through.
+ */
+export const MAXIMUM_RENTAL_DAYS_WARNING =
+  'This cap is a legal boundary, not a policy preference. Under the Consumer ' +
+  'Credit Act 1974 a hire that is capable of lasting more than three months is a ' +
+  'regulated consumer hire agreement, and arranging those without FCA ' +
+  'authorisation is an offence. Do not raise it without legal advice.';
+
+/**
  * The confirmation §8.14.2 requires — *"the admin interface must warn on
  * category creation that a non-`none` flag triggers statutory reporting duties,
  * registration and an annual deadline, and must require explicit
@@ -475,6 +537,20 @@ export interface AdminCategory {
    * rate nobody agreed to.
    */
   readonly feePolicy: CategoryFeePolicy;
+  /**
+   * The longest hire this category permits, in local calendar days (§8.5.3).
+   *
+   * On the version with everything else, and here that is not only §8.2's rule
+   * about a booking keeping its terms — it is the audit trail for a **legal**
+   * bound. A rental made under a 30-day cap must still read as compliant after
+   * somebody raises the category to 88, and a value that could be overwritten
+   * could not show that.
+   *
+   * Every category configured before slice 4.4a carries
+   * `DEFAULT_MAXIMUM_RENTAL_DAYS`, which is the value §8.5.3 names as the
+   * default — so the backfill asserts the specification rather than guessing.
+   */
+  readonly maximumRentalDays: number;
   readonly versionNumber: number;
   /** ISO 8601 UTC. When this *version* was written, not when the category was. */
   readonly versionCreatedAt: string;
@@ -499,6 +575,7 @@ const adminCategorySchema = z.object({
   attributes: categoryAttributesSchema,
   transportOptions: categoryTransportOptionsSchema,
   feePolicy: categoryFeePolicySchema,
+  maximumRentalDays: maximumRentalDaysSchema,
   versionNumber: z.number().int().positive(),
   versionCreatedAt: z.string(),
   createdAt: z.string(),
@@ -559,6 +636,17 @@ export const categoryDraftSchema = z
      * a different fact from having forgotten.
      */
     feePolicy: categoryFeePolicySchema,
+    /**
+     * How long a hire here may run (§8.5.3, slice 4.4a).
+     *
+     * **Required, like every other piece of configuration on this body**, and
+     * this is the field where ADR 0025's rule has legal weight rather than
+     * commercial weight. An optional cap would default silently, and the only
+     * defensible silent default is 88 — which would mean a caller who forgot it
+     * got the *most permissive* setting available. Required turns that into a
+     * 400 and makes somebody say the number.
+     */
+    maximumRentalDays: maximumRentalDaysSchema,
   })
   .superRefine(requireReportingAcknowledgement);
 
@@ -619,6 +707,14 @@ export const categoryConfigurationSchema = z
      * category, discoverable only by reconciliation.
      */
     feePolicy: categoryFeePolicySchema,
+    /**
+     * Replace semantics, like everything else here — and **this is the field
+     * §8.5.3 says the interface must warn about on change**
+     * (`MAXIMUM_RENTAL_DAYS_WARNING`). Reconfiguring mints a new version, so a
+     * raise applies to bookings made from then on and leaves every earlier
+     * booking reading under the cap it was actually made under.
+     */
+    maximumRentalDays: maximumRentalDaysSchema,
   })
   .superRefine(requireReportingAcknowledgement);
 export type CategoryConfigurationInput = Omit<

@@ -36,6 +36,8 @@ export interface CategoryRecord {
   readonly transportOptions: readonly CategoryTransportOption[];
   /** What the platform charges on a booking in this category (§8.2, §3.4). */
   readonly feePolicy: CategoryFeePolicy;
+  /** The longest hire this category permits, in local calendar days (§8.5.3). */
+  readonly maximumRentalDays: number;
   readonly versionNumber: number;
   readonly versionCreatedAt: Date;
   readonly createdAt: Date;
@@ -84,6 +86,18 @@ export interface CategoryConfiguration {
    * screen distinguishing it from a category deliberately priced at zero.
    */
   readonly feePolicy: CategoryFeePolicy;
+  /**
+   * The longest hire this category permits, in local calendar days (§8.5.3,
+   * slice 4.4a).
+   *
+   * Required, for the same reason as the three above and with a different kind
+   * of consequence: the others cost money if forgotten, and this one is a legal
+   * bound. A silent default would have to be the *most permissive* value
+   * available, so a caller that forgot it would get the longest hire the law
+   * allows rather than the shortest — which is the wrong direction for a rule
+   * about not arranging regulated credit.
+   */
+  readonly maximumRentalDays: number;
 }
 
 /**

@@ -75,6 +75,8 @@ interface StoredVersion {
   readonly attributes: readonly CategoryAttribute[];
   readonly transportOptions: readonly CategoryTransportOption[];
   readonly feePolicy: CategoryFeePolicy;
+  /** §8.5.3's cap, stored on the version like everything else (slice 4.4a). */
+  readonly maximumRentalDays: number;
   readonly createdById: string;
   readonly createdAt: Date;
 }
@@ -130,6 +132,11 @@ export class InMemoryCategoryStore implements CategoryStore {
           attributes: [...input.attributes],
           transportOptions: [...input.transportOptions],
           feePolicy: input.feePolicy,
+          // What was configured, not the default. A double that stored 88
+          // whatever it was handed would make a category configured to 30 read
+          // back as 88 — and every test of "the cap comes from configuration"
+          // would pass while proving the opposite (slice 4.4a).
+          maximumRentalDays: input.maximumRentalDays,
           createdById: authorId,
           createdAt: Time.nowUtc(),
         },
@@ -161,6 +168,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       attributes: [...configuration.attributes],
       transportOptions: [...configuration.transportOptions],
       feePolicy: configuration.feePolicy,
+      maximumRentalDays: configuration.maximumRentalDays,
       createdById: authorId,
       createdAt: Time.nowUtc(),
     });
@@ -210,6 +218,7 @@ function toRecord(category: StoredCategory): CategoryRecord {
     attributes: latest.attributes,
     transportOptions: latest.transportOptions,
     feePolicy: latest.feePolicy,
+    maximumRentalDays: latest.maximumRentalDays,
     versionNumber: latest.versionNumber,
     versionCreatedAt: latest.createdAt,
     createdAt: category.createdAt,

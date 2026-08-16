@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { ContractViolationError } from './parse.js';
 import {
   CATEGORY_REPORTABLE_ACTIVITIES,
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
   MAX_ATTRIBUTE_DECIMAL_PLACES,
   MAX_ATTRIBUTE_OPTIONS,
   MAX_ATTRIBUTE_TEXT_LENGTH,
   MAX_CATEGORY_ATTRIBUTES,
+  MAX_MAXIMUM_RENTAL_DAYS,
   activatesSellerReporting,
   parseCategoryAttributes,
   parseCategoryConfiguration,
   parseCategoryDraft,
 } from './catalogue.js';
+import { ContractViolationError } from './parse.js';
 import type { CategoryAttribute } from './catalogue.js';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
@@ -360,6 +362,7 @@ const validDraft = {
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
   feePolicy: FEE_POLICY,
+  maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   transportOptions: realisticTransportOptions,
 };
 
@@ -370,6 +373,7 @@ const validConfiguration = {
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
   feePolicy: FEE_POLICY,
+  maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   transportOptions: realisticTransportOptions,
 };
 
@@ -532,5 +536,72 @@ describe('the reportable-activity flag', () => {
     for (const activity of CATEGORY_REPORTABLE_ACTIVITIES.filter((a) => a !== 'none')) {
       expect(activatesSellerReporting(activity)).toBe(true);
     }
+  });
+});
+
+/**
+ * The maximum rental duration (§8.5.3, slice 4.4a).
+ *
+ * **The ceiling is the interesting half.** A minimum and a default are ordinary
+ * validation; refusing anything above 88 is what stops the platform being
+ * configured into arranging a regulated consumer hire agreement through a form.
+ */
+describe('the maximum rental duration', () => {
+  const withDays = (maximumRentalDays: unknown) => ({
+    ...validDraft,
+    maximumRentalDays,
+  });
+
+  it('accepts the specification’s default', () => {
+    expect(
+      parseCategoryDraft(withDays(DEFAULT_MAXIMUM_RENTAL_DAYS)).maximumRentalDays,
+    ).toBe(88);
+  });
+
+  it('accepts a shorter cap, because narrower is always lawful', () => {
+    expect(parseCategoryDraft(withDays(1)).maximumRentalDays).toBe(1);
+    expect(parseCategoryDraft(withDays(30)).maximumRentalDays).toBe(30);
+  });
+
+  it('refuses one day past the ceiling', () => {
+    expect(() => parseCategoryDraft(withDays(MAX_MAXIMUM_RENTAL_DAYS + 1))).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('names the Act rather than the number when it refuses', () => {
+    /*
+     * An administrator who reads "must be at most 88" concludes somebody chose
+     * 88 and can be argued out of it. One who reads that the Consumer Credit Act
+     * regulates a hire capable of lasting beyond three months does not. Pinned
+     * because it is the kind of message a later tidy-up shortens.
+     */
+    try {
+      parseCategoryDraft(withDays(365));
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect((error as ContractViolationError).issues.join()).toMatch(
+        /Consumer Credit Act 1974/,
+      );
+    }
+  });
+
+  it('refuses zero, a fraction and a missing value', () => {
+    // Missing is the one that matters: an absent cap must not default to the
+    // most permissive value available, which is what an optional field would do.
+    for (const bad of [0, -1, 12.5, undefined, null, '88']) {
+      expect(() => parseCategoryDraft(withDays(bad))).toThrow(ContractViolationError);
+    }
+  });
+
+  it('is required when reconfiguring too, not only when creating', () => {
+    // Reconfiguring mints a new version, so an omitted cap here would silently
+    // rewrite the bound every later booking is judged against.
+    expect(() =>
+      parseCategoryConfiguration(without(validConfiguration, 'maximumRentalDays')),
+    ).toThrow(ContractViolationError);
+    expect(
+      parseCategoryConfiguration({ ...validConfiguration }).maximumRentalDays,
+    ).toBe(88);
   });
 });
