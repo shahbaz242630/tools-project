@@ -2,6 +2,12 @@ import { Time } from '@platform/core';
 import { CALENDAR_OCCUPYING_STATES } from '../booking-state-machine.js';
 import { OverlappingBookingError } from '../booking-store.js';
 import type { BookingRecord, BookingStore, NewBooking } from '../booking-store.js';
+import type {
+  AvailabilityBlockRecord,
+  AvailabilityStore,
+  NewAvailabilityBlock,
+  UnavailableReason,
+} from '../availability-store.js';
 
 /**
  * Bookings without a database (slice 4.2).
@@ -74,6 +80,17 @@ export class InMemoryBookingStore implements BookingStore {
     );
   }
 
+  /** Whether a calendar-occupying booking holds any of this period. */
+  occupies(listingId: string, startAt: Date, endAt: Date): boolean {
+    return this.bookings.some(
+      (existing) =>
+        existing.listingId === listingId &&
+        CALENDAR_OCCUPYING_STATES.includes(existing.state) &&
+        existing.startAt < endAt &&
+        existing.endAt > startAt,
+    );
+  }
+
   /**
    * Put a booking in without going through `create`, for the erasure tests.
    *
@@ -99,18 +116,94 @@ export class InMemoryBookingStore implements BookingStore {
 }
 
 /**
+ * The owner's calendar without a database (slice 4.3a).
+ *
+ * **It reproduces the rule and not the storage**, which here is nearly all of
+ * it: the overlap arithmetic is two comparisons in the real adapter too, so a
+ * test against this and a test against Postgres are asking the same question of
+ * the same logic. What only the db test can show is that the trigger's `[)` and
+ * `overlaps`' `<`/`>` agree — the two places the bound is stated.
+ */
+export class InMemoryAvailabilityStore implements AvailabilityStore {
+  private readonly blocks: AvailabilityBlockRecord[] = [];
+  private nextId = 1;
+
+  constructor(private readonly bookings: InMemoryBookingStore) {}
+
+  block(block: NewAvailabilityBlock): Promise<AvailabilityBlockRecord> {
+    const record: AvailabilityBlockRecord = {
+      ...block,
+      id: `block-${String(this.nextId++)}`,
+    };
+    this.blocks.push(record);
+    return Promise.resolve(record);
+  }
+
+  unblock(id: string, listingId: string): Promise<boolean> {
+    const index = this.blocks.findIndex(
+      (block) => block.id === id && block.listingId === listingId,
+    );
+    if (index === -1) return Promise.resolve(false);
+
+    this.blocks.splice(index, 1);
+    return Promise.resolve(true);
+  }
+
+  listBlocks(
+    listingId: string,
+    from: Date,
+    to: Date,
+  ): Promise<readonly AvailabilityBlockRecord[]> {
+    return Promise.resolve(
+      this.blocks
+        .filter(
+          (block) =>
+            block.listingId === listingId && block.startAt < to && block.endAt > from,
+        )
+        .sort(
+          (a, b) =>
+            a.startAt.getTime() - b.startAt.getTime() || a.id.localeCompare(b.id),
+        ),
+    );
+  }
+
+  reasonUnavailable(
+    listingId: string,
+    startAt: Date,
+    endAt: Date,
+  ): Promise<UnavailableReason | null> {
+    // Blocked before booked, mirroring the adapter — the owner is told the
+    // thing they can change.
+    const blocked = this.blocks.some(
+      (block) =>
+        block.listingId === listingId && block.startAt < endAt && block.endAt > startAt,
+    );
+    if (blocked) return Promise.resolve('blocked');
+
+    return Promise.resolve(
+      this.bookings.occupies(listingId, startAt, endAt) ? 'booked' : null,
+    );
+  }
+}
+
+/**
  * The whole module's fakes, in one call — the shape every other module's
  * `testing/fakes.ts` offers, so a composition root in a test reads the same way
  * whichever module it is wiring.
  */
 export function createBookingFakes(): {
   readonly store: InMemoryBookingStore;
+  readonly availability: InMemoryAvailabilityStore;
   readonly references: { findBookedListings: BookingStore['findBookedListings'] };
 } {
   const store = new InMemoryBookingStore();
 
   return {
     store,
+    // Built over the same booking store, because "booked" is not a second fact
+    // — a calendar reading a different set of bookings than the one that
+    // enforces the overlap is a calendar that lies.
+    availability: new InMemoryAvailabilityStore(store),
     // The narrowed view Catalogue declares, built here rather than at each call
     // site so the boundary is stated once — the same arrangement `main.ts` uses
     // for `ListingProximity`.

@@ -61,6 +61,7 @@ const TABLE_OWNERS = {
   listing: 'catalogue',
   listingLocation: 'catalogue',
   booking: 'booking',
+  availabilityBlock: 'booking',
   featureFlagOverride: 'feature-flags',
   sellerTaxProfile: null,
 };
