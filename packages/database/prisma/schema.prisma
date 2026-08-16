@@ -845,6 +845,26 @@ model CategoryVersion {
   minimumPlatformFeeAmount    Int    @default(0) @db.Integer
   minimumPlatformFeeCurrency  String @default("GBP") @db.Text
 
+  /// The longest hire this category permits, in local calendar days (BRD §8.5.3,
+  /// slice 4.4a).
+  ///
+  /// **A legal bound rather than a commercial one.** Under the Consumer Credit
+  /// Act 1974 a hire to an individual that is *capable of subsisting* beyond
+  /// three months is a regulated consumer hire agreement, and arranging those
+  /// without FCA authorisation is an offence. "Capable of subsisting" is what
+  /// makes an *unbounded* period the problem, whatever any single rental does.
+  ///
+  /// **A `CHECK` bounds it at 88 in the migration, and Prisma cannot see that.**
+  /// §8.5.3 permits a higher cap for business-heavy categories; ADR 0043 refuses
+  /// to let a business publish here at all, so that case does not exist and the
+  /// ceiling stands. `refusePeriod` re-applies it in code as well, because a
+  /// value this load-bearing is worth asserting on both sides of the boundary.
+  ///
+  /// On the *version*, like every other configurable fact, so a booking is
+  /// judged against the cap it was actually made under — which is what lets a
+  /// completed rental still read as compliant after the category is changed.
+  maximumRentalDays Int @default(88) @db.Integer
+
   /// Who made this configuration what it is. BRD §6.2 puts an author on the
   /// entity; the corresponding audit entry carries the reason and the digests.
   createdById String @db.Uuid

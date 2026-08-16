@@ -30,6 +30,7 @@ import { PrismaListingStore } from './prisma-listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type { ModerationDecision } from './listing-store.js';
 import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -134,6 +135,7 @@ async function newCategory(
       reportableActivity: 'none',
       attributes,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: [],
     },
     authorId,
@@ -250,6 +252,7 @@ describe('creating a draft', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       owner,
@@ -276,6 +279,7 @@ describe('creating a draft', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       owner,
@@ -313,6 +317,7 @@ describe('creating a draft', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       owner,
@@ -419,6 +424,7 @@ describe('the attribute values', () => {
           },
         ],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       owner,
@@ -486,6 +492,7 @@ describe('the categories an owner may choose', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       owner,
@@ -624,6 +631,7 @@ describe('the category options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       author,
@@ -763,6 +771,7 @@ describe('the transport requirement', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [
           { requirement: 'car_boot', suggestedUpToKg: 25 },
           { requirement: 'van_required', suggestedUpToKg: 150 },
@@ -790,6 +799,7 @@ describe('the transport requirement', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [{ requirement: 'van_required', suggestedUpToKg: 150 }],
       },
       owner,
@@ -807,6 +817,7 @@ describe('the transport requirement', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       owner,
@@ -1466,6 +1477,7 @@ describe('the current fee policy', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       },
       owner,
     );
@@ -1504,6 +1516,7 @@ describe('the current fee policy', () => {
           attributes: SCHEMA,
           transportOptions: [],
           feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: rate },
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         },
         owner,
       );
@@ -1532,6 +1545,7 @@ describe('the current fee policy', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       },
       owner,
     );
@@ -1944,6 +1958,7 @@ describe('updating a listing', () => {
           attributes: SCHEMA,
           transportOptions: [],
           feePolicy: FEE_POLICY,
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         },
         owner,
       );
@@ -2038,6 +2053,7 @@ describe('updating a listing', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       },
       owner,
     );
@@ -2068,6 +2084,7 @@ describe('updating a listing', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       },
       owner,
     );
@@ -2532,6 +2549,7 @@ describe('the public read', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       },
       owner,
     );

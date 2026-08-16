@@ -58,6 +58,7 @@ export class PrismaCategoryStore implements CategoryStore {
               attributes: [...input.attributes],
               transportOptions: [...input.transportOptions],
               ...feePolicyColumns(input.feePolicy),
+              maximumRentalDays: input.maximumRentalDays,
               createdById: authorId,
             },
           },
@@ -107,6 +108,7 @@ export class PrismaCategoryStore implements CategoryStore {
         attributes: [...configuration.attributes],
         transportOptions: [...configuration.transportOptions],
         ...feePolicyColumns(configuration.feePolicy),
+        maximumRentalDays: configuration.maximumRentalDays,
         createdById: authorId,
       },
     });
@@ -120,6 +122,7 @@ export class PrismaCategoryStore implements CategoryStore {
       attributes: asAttributes(version.attributes, existing.slug),
       transportOptions: asTransportOptions(version.transportOptions, existing.slug),
       feePolicy: asFeePolicy(version, existing.slug),
+      maximumRentalDays: version.maximumRentalDays,
       versionNumber: version.versionNumber,
       versionCreatedAt: version.createdAt,
       createdAt: existing.createdAt,
@@ -167,6 +170,7 @@ interface CategoryRow {
     minimumBookingTotalCurrency: string;
     minimumPlatformFeeAmount: number;
     minimumPlatformFeeCurrency: string;
+    maximumRentalDays: number;
     versionNumber: number;
     createdAt: Date;
   }[];
@@ -190,6 +194,7 @@ function toRecord(category: CategoryRow): CategoryRecord {
     attributes: asAttributes(current.attributes, category.slug),
     transportOptions: asTransportOptions(current.transportOptions, category.slug),
     feePolicy: asFeePolicy(current, category.slug),
+    maximumRentalDays: current.maximumRentalDays,
     versionNumber: current.versionNumber,
     versionCreatedAt: current.createdAt,
     createdAt: category.createdAt,

@@ -28,6 +28,7 @@ import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { CALENDAR_OCCUPYING_STATES } from './booking-state-machine.js';
 import { OverlappingBookingError } from './booking-store.js';
 import { PrismaBookingStore } from './prisma-booking-store.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 const env = loadEnv();
 
@@ -106,6 +107,7 @@ async function newListing(): Promise<string> {
         minimumPlatformFee: { amount: 100, currency: 'GBP' },
       },
       transportOptions: [],
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
     },
     owner,
   );

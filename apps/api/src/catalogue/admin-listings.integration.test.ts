@@ -24,6 +24,7 @@ import type { ListingFakes } from './testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { FakeGeocoder } from '../search-location/testing/fakes.js';
 import { createBookingFakes } from '../booking/testing/fakes.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /**
  * Moderation through the real application (§8.3, §9, ADR 0041, slice 2.8c-i).
@@ -130,6 +131,7 @@ beforeEach(async () => {
       attributes: [],
       transportOptions: [],
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
     },
     'seed',
   );

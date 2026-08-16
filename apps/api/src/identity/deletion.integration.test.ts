@@ -50,6 +50,7 @@ import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { createBookingFakes } from '../booking/testing/fakes.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -1135,6 +1136,7 @@ describe('a listing address, in the personal-data paths', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
       alice,

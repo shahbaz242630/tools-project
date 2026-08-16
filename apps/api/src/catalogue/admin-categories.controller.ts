@@ -198,6 +198,7 @@ function configurationOf(body: CategoryConfigurationInput): CategoryConfiguratio
     attributes: body.attributes,
     transportOptions: body.transportOptions,
     feePolicy: body.feePolicy,
+    maximumRentalDays: body.maximumRentalDays,
   };
 }
 
@@ -223,6 +224,7 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     attributes: category.attributes,
     transportOptions: category.transportOptions,
     feePolicy: category.feePolicy,
+    maximumRentalDays: category.maximumRentalDays,
     versionNumber: category.versionNumber,
     versionCreatedAt: Time.toIsoUtc(category.versionCreatedAt),
     createdAt: Time.toIsoUtc(category.createdAt),

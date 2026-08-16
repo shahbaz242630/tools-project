@@ -1,0 +1,29 @@
+/*
+ * The maximum rental duration and its warning (slice 4.4a).
+ *
+ * **Tinted like a caution rather than styled like the fields around it**, which
+ * is the same treatment `listing-visibility.module.css` gives a moderation
+ * notice: the surrounding panel is somebody's own configuration, and this is the
+ * law telling them where the edge is.
+ */
+
+.field {
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+}
+
+.field input {
+  /* A three-digit number in a full-width control reads as an amount of money.
+     Narrow enough that it reads as a count. */
+  max-width: 120px;
+}
+
+.warning {
+  margin-bottom: 0;
+  color: var(--danger);
+  font-size: var(--text-helper);
+  line-height: 1.6;
+}

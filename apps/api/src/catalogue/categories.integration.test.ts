@@ -22,6 +22,7 @@ import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { createBookingFakes } from '../booking/testing/fakes.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -70,6 +71,7 @@ const DRAFT = {
   reportingDutiesAcknowledged: false,
   attributes: [],
   feePolicy: FEE_POLICY,
+  maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   transportOptions: [],
 } as const;
 
@@ -311,6 +313,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -335,6 +338,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -353,6 +357,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -376,6 +381,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
         slug: 'something-else',
       },
@@ -506,6 +512,7 @@ describe('the attribute schema, through the routes', () => {
         reportingDutiesAcknowledged: false,
         attributes: [SCHEMA[0]],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -649,6 +656,7 @@ describe('the reportable-activity flag', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -672,6 +680,7 @@ describe('the reportable-activity flag', () => {
         reportingDutiesAcknowledged: true,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -721,6 +730,7 @@ describe('the reportable-activity flag', () => {
         reportingDutiesAcknowledged: true,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [],
       },
     });
@@ -769,6 +779,7 @@ describe('the transport options', () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: TRANSPORT,
     });
 
@@ -784,6 +795,7 @@ describe('the transport options', () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: [
         { requirement: 'trailer_required' },
         { requirement: 'hand_carryable' },
@@ -831,6 +843,7 @@ describe('the transport options', () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: [
         { requirement: 'car_boot', suggestedUpToKg: 50 },
         { requirement: 'van_required', suggestedUpToKg: 20 },
@@ -870,6 +883,7 @@ describe('the transport options', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         transportOptions: [{ requirement: 'car_boot', suggestedUpToKg: 25 }],
       },
     });
@@ -885,6 +899,7 @@ describe('the transport options', () => {
     const response = await createCategory('bob-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: TRANSPORT,
     });
 

@@ -37,6 +37,7 @@ import type { ListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { createBookingFakes } from '../booking/testing/fakes.js';
+import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -227,6 +228,7 @@ async function givenACategory(
       // configured before slice 2.4c-i is.
       transportOptions,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
     },
     author,
   );
@@ -243,6 +245,7 @@ async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<v
       reportableActivity: 'none',
       attributes,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: [],
     },
     author,
@@ -260,6 +263,7 @@ async function reconfiguredName(name: string): Promise<void> {
       reportableActivity: 'none',
       attributes: SCHEMA,
       feePolicy: FEE_POLICY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       transportOptions: [],
     },
     author,
@@ -278,6 +282,7 @@ async function reconfiguredWithFee(renterFeeBasisPoints: number): Promise<void> 
       attributes: SCHEMA,
       transportOptions: [],
       feePolicy: { ...FEE_POLICY, renterFeeBasisPoints },
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
     },
     author,
   );
