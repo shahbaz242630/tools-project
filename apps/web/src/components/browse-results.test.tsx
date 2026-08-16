@@ -1071,14 +1071,20 @@ describe('when words have nothing matching them', () => {
  * how the results were narrowed.
  */
 describe('carrying words through the links', () => {
+  /*
+   * **One result rather than a full page, and that is a fix rather than a
+   * shortcut.** The first version rendered `full(SEARCH_PAGE_SIZE)` — twenty-four
+   * complete cards — to assert a single `href`, copied from the paging tests
+   * where the count is what the heading is about. Here it is not: `truncated`
+   * is what makes the pager appear, and one card proves the link exactly as
+   * well as twenty-four do. The waste made this the slowest render in the file
+   * and it was timing out under a loaded parallel run — the same failure the
+   * flake fix addressed, arriving through a test that simply did too much.
+   */
   it('carries the keyword to the next page', () => {
     render(
       <BrowseResults
-        results={page({
-          results: full(SEARCH_PAGE_SIZE),
-          truncated: true,
-          keyword: 'drill',
-        })}
+        results={page({ truncated: true, keyword: 'drill' })}
         search={searchFor({ keyword: 'drill' })}
         categoryName={null}
       />,

@@ -109,6 +109,25 @@ describe('adding an attribute', () => {
     expect((posted() as { key: string }[])[0]?.key).toBe('motor_spec');
   });
 
+  /*
+   * **The slowest test in this suite, and its own budget rather than the global
+   * one** (added 16 August 2026).
+   *
+   * Proving the cap means reaching it, and each click re-renders a form that
+   * has grown by one attribute — so the work is quadratic in the cap and there
+   * is no cheaper way to assert the thing that matters. It takes ~500 ms alone
+   * against a 5 s default, which is comfortable until sixteen workers contend
+   * for sixteen cores and it is not.
+   *
+   * **This is the distinction the flake fix in #121 rests on.** That change
+   * moved *wasted* work out of tests — module loads and first renders billed to
+   * whichever test came first — and deliberately did not raise the global
+   * timeout, because a timeout exists to catch a hang. This test is not wasteful
+   * and not hung; it is genuinely large, so it says so here rather than making
+   * every other test's hang take three times as long to surface. **#121's claim
+   * to have fixed the flakes was about that one class and did not cover this
+   * one**, which is recorded rather than left to be rediscovered.
+   */
   it('stops at the cap and says why', () => {
     editor();
     const add = screen.getByRole('button', { name: /add an attribute/i });
@@ -118,7 +137,7 @@ describe('adding an attribute', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       String(MAX_CATEGORY_ATTRIBUTES),
     );
-  });
+  }, 15_000);
 });
 
 describe('changing an attribute type', () => {
