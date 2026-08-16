@@ -68,19 +68,26 @@ export function BrowseResults({
    * **One search object for the whole component, and the response wins on every
    * field it echoes** (slice 3.2a).
    *
-   * The API echoes the radius, the page and the category precisely so that a
-   * response says which question it answered — so those three are read from the
-   * response, and only the postcode, which is not echoed, comes from the
-   * request. Before this slice the heading read `results.page` while the pager
-   * was handed a page separately, which is two sources for one value: they agree
-   * by contract, and the day they did not, a pager would step from a page other
-   * than the one on screen with nothing to show for it.
+   * The API echoes the radius, the page, the category and — from slice 3.3a —
+   * the keyword, precisely so that a response says which question it answered.
+   * So all four are read from the response, and only the postcode, which is not
+   * echoed, comes from the request. Before this slice the heading read
+   * `results.page` while the pager was handed a page separately, which is two
+   * sources for one value: they agree by contract, and the day they did not, a
+   * pager would step from a page other than the one on screen with nothing to
+   * show for it.
+   *
+   * **The keyword matters most here of the four**, because it is the only one
+   * the server rewrites: the contract trims it, so a searcher who typed trailing
+   * space has a request and a response that differ. Reading it from the response
+   * is what keeps the pager's links pointing at the search that actually ran.
    */
   const current: ListingSearchQuery = {
     postcode: search.postcode,
     radiusMiles: results.radiusMiles,
     page: results.page,
     category: results.category,
+    keyword: results.keyword,
   };
 
   /*

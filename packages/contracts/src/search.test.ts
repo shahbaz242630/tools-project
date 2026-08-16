@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SEARCH_RADIUS_MILES,
   FIRST_SEARCH_PAGE,
+  MAX_SEARCH_KEYWORD_LENGTH,
   MAX_SEARCH_PAGE,
   SEARCH_PAGE_SIZE,
   SEARCH_RADII_MILES,
@@ -71,7 +72,13 @@ describe('the search page vocabulary', () => {
 describe('parsing a search request', () => {
   it('accepts a postcode and one of the five radii', () => {
     expect(parseListingSearchQuery({ postcode: 'BS7 8AA', radiusMiles: '20' })).toEqual(
-      { postcode: 'BS7 8AA', radiusMiles: 20, page: FIRST_SEARCH_PAGE, category: null },
+      {
+        postcode: 'BS7 8AA',
+        radiusMiles: 20,
+        page: FIRST_SEARCH_PAGE,
+        category: null,
+        keyword: null,
+      },
     );
   });
 
@@ -81,6 +88,7 @@ describe('parsing a search request', () => {
       radiusMiles: 5,
       page: FIRST_SEARCH_PAGE,
       category: null,
+      keyword: null,
     });
   });
 
@@ -202,6 +210,7 @@ describe('the search path', () => {
       radiusMiles: 10,
       page: FIRST_SEARCH_PAGE,
       category: null,
+      keyword: null,
       ...overrides,
     };
   }
@@ -266,6 +275,56 @@ describe('the search path', () => {
       radiusMiles: 50,
       page: 4,
       category: 'outdoor-gardening',
+      keyword: null,
+    });
+  });
+
+  /*
+   * **The same "one search, one URL" rule for the keyword** (slice 3.3a). An
+   * empty box is the ordinary state of the search field, so a `keyword=` that
+   * got minted on every unkeyworded search would double the URL space of the one
+   * page we let a crawler index.
+   */
+  it('leaves an absent keyword out entirely', () => {
+    expect(publicListingSearchPath(searchFor({ keyword: null }))).not.toContain(
+      'keyword',
+    );
+  });
+
+  it('carries a keyword when there is one, encoded', () => {
+    expect(publicListingSearchPath(searchFor({ keyword: 'hedge trimmer' }))).toBe(
+      '/public/listings?postcode=BS7%208AA&radiusMiles=10&keyword=hedge%20trimmer',
+    );
+  });
+
+  /*
+   * The URL a searcher would actually copy out of the address bar with every
+   * filter on at once — worth one test, because each parameter is only ever
+   * exercised on its own above and the failure of getting the order or the
+   * separators wrong is a URL that parses to a different search.
+   */
+  it('round-trips every parameter at once', () => {
+    const path = publicListingSearchPath(
+      searchFor({
+        radiusMiles: 50,
+        page: 4,
+        category: 'outdoor-gardening',
+        keyword: 'hedge trimmer',
+      }),
+    );
+    const query = Object.fromEntries(
+      path
+        .slice(path.indexOf('?') + 1)
+        .split('&')
+        .map((pair) => pair.split('=').map(decodeURIComponent) as [string, string]),
+    );
+
+    expect(parseListingSearchQuery(query)).toEqual({
+      postcode: 'BS7 8AA',
+      radiusMiles: 50,
+      page: 4,
+      category: 'outdoor-gardening',
+      keyword: 'hedge trimmer',
     });
   });
 });
@@ -323,6 +382,98 @@ describe('the category filter (slice 3.2a)', () => {
     expect(() =>
       parseListingSearchQuery({ postcode: 'BS7 8AA', category: 'Bad Slug' }),
     ).not.toThrow(/lowercase/);
+  });
+});
+
+describe('the keyword filter (slice 3.3a)', () => {
+  /*
+   * **The same three ways of saying "no keyword"**, and the same reason the
+   * category filter needed them: Browse is a plain GET form, so an empty search
+   * box submits `keyword=` on every unkeyworded search on the page.
+   */
+  it.each([
+    ['absent', {}],
+    ['empty', { keyword: '' }],
+    ['whitespace', { keyword: '   ' }],
+  ])('treats a %s keyword as no keyword', (_name, extra) => {
+    expect(parseListingSearchQuery({ postcode: 'BS7 8AA', ...extra }).keyword).toBe(
+      null,
+    );
+  });
+
+  it('keeps the words somebody typed', () => {
+    expect(
+      parseListingSearchQuery({ postcode: 'BS7 8AA', keyword: 'hedge trimmer' })
+        .keyword,
+    ).toBe('hedge trimmer');
+  });
+
+  /*
+   * **Trimmed rather than searched as typed.** Trailing space is what a phone
+   * keyboard adds after a word, and leading space is what a paste brings with
+   * it. More to the point, the trimmed value is what the response echoes, so the
+   * page cannot display one thing while the database was asked another.
+   */
+  it('trims, so the echoed keyword is the one that ran', () => {
+    expect(
+      parseListingSearchQuery({ postcode: 'BS7 8AA', keyword: '  hedge trimmer  ' })
+        .keyword,
+    ).toBe('hedge trimmer');
+  });
+
+  /*
+   * **Nothing is refused for its content**, which is the difference between this
+   * filter and the category one and is worth pinning. A category slug names
+   * something we either have or do not; a keyword is a question, and words we
+   * hold no listing for are an ordinary empty result rather than a bad request.
+   * Punctuation matters most: `websearch_to_tsquery` accepts all of it, and a
+   * schema that rejected it here would refuse searches the database handles
+   * perfectly well.
+   */
+  it.each(['3" drill bit', "O'Brien mower", 'hedge & trimmer', '!!!', 'Bad Slug'])(
+    'accepts %s rather than lecturing somebody about syntax',
+    (keyword) => {
+      expect(parseListingSearchQuery({ postcode: 'BS7 8AA', keyword }).keyword).toBe(
+        keyword,
+      );
+    },
+  );
+
+  /*
+   * **Bounded, and this is the availability control rather than a form rule.**
+   * This is the one public route answering with a collection, from an origin the
+   * caller chooses, with nothing rate-limiting it — so no unbounded string from
+   * a query parameter reaches the planner.
+   */
+  it('refuses a keyword longer than the bound', () => {
+    expect(() =>
+      parseListingSearchQuery({
+        postcode: 'BS7 8AA',
+        keyword: 'x'.repeat(MAX_SEARCH_KEYWORD_LENGTH + 1),
+      }),
+    ).toThrow(/characters or fewer/);
+  });
+
+  it('accepts one exactly at the bound', () => {
+    expect(
+      parseListingSearchQuery({
+        postcode: 'BS7 8AA',
+        keyword: 'x'.repeat(MAX_SEARCH_KEYWORD_LENGTH),
+      }).keyword,
+    ).toHaveLength(MAX_SEARCH_KEYWORD_LENGTH);
+  });
+
+  /*
+   * The bound is applied to what will actually be searched, not to what arrived
+   * — otherwise a padded paste is refused for a length no query would ever see.
+   */
+  it('measures the bound after trimming', () => {
+    expect(
+      parseListingSearchQuery({
+        postcode: 'BS7 8AA',
+        keyword: `  ${'x'.repeat(MAX_SEARCH_KEYWORD_LENGTH)}  `,
+      }).keyword,
+    ).toHaveLength(MAX_SEARCH_KEYWORD_LENGTH);
   });
 });
 

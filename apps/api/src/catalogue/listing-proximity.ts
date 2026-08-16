@@ -91,6 +91,25 @@ export interface ProximitySearch {
    * one.
    */
   readonly categoryId: string | null;
+  /**
+   * Words to match against the listing's own text, or **null for none** (§8.4,
+   * slice 3.3a).
+   *
+   * **The one field on this port that crosses unchanged**, which is the
+   * difference between it and `categoryId` a line above. A slug has to become an
+   * id because Catalogue owns categories and Search & Location must not learn
+   * that slugs exist; a keyword is already the thing the query takes, so there
+   * is nothing to resolve and no lookup to do. Passing it straight through is
+   * the whole of Catalogue's involvement.
+   *
+   * **Trimmed, and null rather than empty** — the contract has already collapsed
+   * a blank box, a whitespace-only one and an absent parameter into this single
+   * value, so neither side has to decide what an empty string means.
+   *
+   * **It narrows what is found and never reorders it.** `ProximityPage.matches`
+   * is nearest-first whatever this holds.
+   */
+  readonly keyword: string | null;
   readonly window: ResultWindow;
 }
 

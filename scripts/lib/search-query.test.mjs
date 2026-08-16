@@ -128,6 +128,35 @@ describe('lifting the query out of the adapter', () => {
     expect(sql).not.toContain('${');
   });
 
+  /* The same pair for the keyword — slice 3.3a, same reasoning one filter on. */
+  it('leaves no keyword predicate at all when none was asked for', () => {
+    const sql = buildQuery(source, PARAMETERS);
+
+    expect(sql).not.toContain('searchDocument');
+    expect(sql).not.toContain('websearch_to_tsquery');
+  });
+
+  it('substitutes the keyword predicate when one is asked for', () => {
+    const sql = buildQuery(source, { ...PARAMETERS, keyword: 'hedge trimmer' });
+
+    expect(sql).toContain(
+      `AND l."searchDocument" @@ websearch_to_tsquery('english', 'hedge trimmer')`,
+    );
+    expect(sql).not.toContain('${');
+  });
+
+  /*
+   * **This script interpolates where the application binds**, which is safe only
+   * because the sole caller supplies its own term — and is worth a test so the
+   * escaping is not quietly dropped by somebody tidying the line. See the note
+   * beside the substitution in `search-query.mjs`.
+   */
+  it('escapes a quote rather than ending the string early', () => {
+    const sql = buildQuery(source, { ...PARAMETERS, keyword: "O'Brien mower" });
+
+    expect(sql).toContain(`websearch_to_tsquery('english', 'O''Brien mower')`);
+  });
+
   it('says so when there is no query to find', () => {
     expect(() => buildQuery('export class Nothing {}', PARAMETERS)).toThrow(
       /No \$queryRaw/,

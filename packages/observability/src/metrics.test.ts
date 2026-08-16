@@ -198,7 +198,12 @@ function valueOf(text: string, name: string, contains: string): string {
 describe('recording a listing search', () => {
   it('counts a search by radius and outcome', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 20, outcome: 'found', filtered: false });
+    m.recordListingSearch({
+      radiusMiles: 20,
+      outcome: 'found',
+      filtered: false,
+      keyworded: false,
+    });
 
     const text = await m.render();
     expect(text).toContain('listing_searches_total');
@@ -208,10 +213,30 @@ describe('recording a listing search', () => {
 
   it('keeps the four outcomes apart, which is the whole point', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'found', filtered: false });
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'empty', filtered: false });
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'beyond_end', filtered: false });
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'unplaceable', filtered: false });
+    m.recordListingSearch({
+      radiusMiles: 5,
+      outcome: 'found',
+      filtered: false,
+      keyworded: false,
+    });
+    m.recordListingSearch({
+      radiusMiles: 5,
+      outcome: 'empty',
+      filtered: false,
+      keyworded: false,
+    });
+    m.recordListingSearch({
+      radiusMiles: 5,
+      outcome: 'beyond_end',
+      filtered: false,
+      keyworded: false,
+    });
+    m.recordListingSearch({
+      radiusMiles: 5,
+      outcome: 'unplaceable',
+      filtered: false,
+      keyworded: false,
+    });
 
     const text = await m.render();
     for (const outcome of ['found', 'empty', 'beyond_end', 'unplaceable']) {
@@ -222,7 +247,12 @@ describe('recording a listing search', () => {
   it('accumulates rather than replacing, so a rate can be taken', async () => {
     const m = metrics();
     for (let i = 0; i < 3; i++) {
-      m.recordListingSearch({ radiusMiles: 100, outcome: 'empty', filtered: false });
+      m.recordListingSearch({
+        radiusMiles: 100,
+        outcome: 'empty',
+        filtered: false,
+        keyworded: false,
+      });
     }
 
     expect(valueOf(await m.render(), 'listing_searches_total', 'radius="100"')).toBe(
@@ -238,7 +268,12 @@ describe('recording a listing search', () => {
    */
   it('records that a search was filtered, without room for the category', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 5, outcome: 'empty', filtered: true });
+    m.recordListingSearch({
+      radiusMiles: 5,
+      outcome: 'empty',
+      filtered: true,
+      keyworded: false,
+    });
 
     const text = await m.render();
     expect(text).toContain('filtered="true"');
@@ -251,16 +286,19 @@ describe('recording a listing search', () => {
    * A series exists per distinct label combination and is held in process memory
    * for as long as the process lives. This is what stops "add a useful label"
    * from being a free decision later: five radii times four outcomes times the
-   * two states of the filter is forty series and no more, whatever traffic
-   * arrives. The compiler already refuses a sixth radius and a third filter
-   * state; this refuses a quietly widened label set.
+   * two states of the filter times the two states of the keyword is eighty
+   * series and no more, whatever traffic arrives. The compiler already refuses a
+   * sixth radius and a third filter state; this refuses a quietly widened label
+   * set.
    *
-   * **It was twenty until slice 3.2a**, and doubling it was the price of the
-   * `filtered` label — paid deliberately, and the number is written down here so
-   * that the next label is a decision somebody has to make rather than one that
-   * happens.
+   * **It was twenty until slice 3.2a and forty until 3.3a**, and each doubling
+   * was the price of one boolean — paid deliberately, and the number is written
+   * down here so that the next label is a decision somebody has to make rather
+   * than one that happens. **Two more booleans would put it at 320**, which is
+   * the point at which the honest answer is a different metric rather than
+   * another label.
    */
-  it('cannot exceed forty series however many searches arrive', async () => {
+  it('cannot exceed eighty series however many searches arrive', async () => {
     const m = metrics();
     const radii = [5, 10, 20, 50, 100] as const;
     const outcomes = ['found', 'empty', 'beyond_end', 'unplaceable'] as const;
@@ -269,7 +307,9 @@ describe('recording a listing search', () => {
       for (const radiusMiles of radii) {
         for (const outcome of outcomes) {
           for (const filtered of [true, false]) {
-            m.recordListingSearch({ radiusMiles, outcome, filtered });
+            for (const keyworded of [true, false]) {
+              m.recordListingSearch({ radiusMiles, outcome, filtered, keyworded });
+            }
           }
         }
       }
@@ -279,7 +319,7 @@ describe('recording a listing search', () => {
       .split('\n')
       .filter((line) => line.startsWith('listing_searches_total{'));
 
-    expect(series).toHaveLength(40);
+    expect(series).toHaveLength(80);
   });
 
   /**
@@ -296,17 +336,51 @@ describe('recording a listing search', () => {
    * with a different value: unbounded, configuration-driven, and personal only
    * in aggregate — but a series per category, held forever, for a question a
    * boolean answers.
+   *
+   * **From slice 3.3a it guards the search term, and that is the one this test
+   * exists for.** A radius is five values and a category slug is at least a set
+   * an administrator deliberately created; a search term is whatever a stranger
+   * typed into a box, so it can carry a name, a street or a full postcode. Of
+   * everything this system could put in a label, it is the only one that is
+   * unbounded *and* free text *and* supplied by the public.
    */
-  it('exposes no label but radius, outcome and whether it was filtered', async () => {
+  it('exposes no label but radius, outcome, filtered and keyworded', async () => {
     const m = metrics();
-    m.recordListingSearch({ radiusMiles: 10, outcome: 'found', filtered: false });
+    m.recordListingSearch({
+      radiusMiles: 10,
+      outcome: 'found',
+      filtered: false,
+      keyworded: false,
+    });
 
     expect(labelsOf(await m.render(), 'listing_searches_total')).toEqual([
       'filtered',
+      'keyworded',
       'outcome',
       'radius',
       'service',
     ]);
+  });
+
+  /*
+   * The consequence of the rule above, asserted the way the category one is:
+   * record a keyworded search and prove the words are nowhere in the exposition.
+   * The type is the guarantee — there is no field a term could occupy — and this
+   * is what would fail if somebody added one "just for debugging".
+   */
+  it('records that a search was keyworded, without room for the words', async () => {
+    const m = metrics();
+    m.recordListingSearch({
+      radiusMiles: 5,
+      outcome: 'empty',
+      filtered: false,
+      keyworded: true,
+    });
+
+    const text = await m.render();
+    expect(text).toContain('keyworded="true"');
+    expect(text).not.toContain('hedge');
+    expect(text).not.toContain('BS7');
   });
 });
 
@@ -430,7 +504,12 @@ describe('metrics turned off', () => {
         durationMs: 1,
         outcome: 'completed',
       });
-      m.recordListingSearch({ radiusMiles: 5, outcome: 'empty', filtered: false });
+      m.recordListingSearch({
+        radiusMiles: 5,
+        outcome: 'empty',
+        filtered: false,
+        keyworded: false,
+      });
       m.recordGeocode({ outcome: 'unavailable', durationMs: 2_501 });
     }).not.toThrow();
   });
@@ -443,7 +522,12 @@ describe('metrics turned off', () => {
    */
   it('leaves the exposition empty even after recording a search', async () => {
     const m = createNoopMetrics();
-    m.recordListingSearch({ radiusMiles: 100, outcome: 'found', filtered: false });
+    m.recordListingSearch({
+      radiusMiles: 100,
+      outcome: 'found',
+      filtered: false,
+      keyworded: false,
+    });
     m.recordGeocode({ outcome: 'found', durationMs: 10 });
 
     expect(await m.render()).toBe('');

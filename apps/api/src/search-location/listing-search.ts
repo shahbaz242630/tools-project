@@ -68,6 +68,19 @@ export interface NearbySearch {
   readonly originPostcode: string;
   readonly radiusMiles: SearchRadiusMiles;
   readonly categoryId: string | null;
+  /**
+   * Words to match, or **null for no keyword** (§8.4, slice 3.3a).
+   *
+   * **Already trimmed, and empty is not expressible.** The contract turns a
+   * blank box and a whitespace-only one into null before this point, so an
+   * implementation never has to decide what an empty string means — which is
+   * the kind of question two implementations answer differently.
+   *
+   * **Matched, never ranked.** The order of `NearbyListingPage.matches` is
+   * distance and stays distance whatever this holds; see `searchKeywordSchema`
+   * for why that is a product decision rather than a shortcut.
+   */
+  readonly keyword: string | null;
   readonly window: ResultWindow;
 }
 

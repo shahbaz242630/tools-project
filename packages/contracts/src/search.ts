@@ -212,6 +212,47 @@ export const searchCategorySchema = z
   .default(null);
 
 /**
+ * Narrowing a search to words — **BRD §8.4's free-text filter** (slice 3.3a).
+ *
+ * **A filter, never a ranking input, and that is the decision this whole slice
+ * turns on.** Results stay ordered by distance. §8.4 requires ranking to be
+ * *explainable*, and "nearest first, matching your words" is a sentence a person
+ * can be told; a blended relevance-times-distance score is one nobody can be
+ * told and nobody can predict. It also keeps `ORDER BY metres, id` intact, which
+ * is what ADR 0045 rests on for correct paging — a relevance sort would need its
+ * own tiebreak and would change page stability, silently, on a set that moves.
+ *
+ * **Absent, empty and whitespace all mean "no keyword"**, exactly as
+ * `searchCategorySchema` treats a slug and for the same reason: Browse submits a
+ * plain GET form, so an empty box is the *ordinary* case rather than an error,
+ * and 400-ing it would refuse the commonest search on the page. Whitespace is
+ * trimmed rather than searched — `websearch_to_tsquery` would find nothing for
+ * it, which is an empty page that looks like a fact about the area.
+ *
+ * **Length-bounded, and that is a denial-of-service control rather than a form
+ * rule.** This is the one public route that answers with a collection, from an
+ * origin the caller chooses, with no rate limiting anywhere in front of it
+ * (`SECURITY.md`) — so nothing unbounded from a query string should reach the
+ * query planner. A hundred characters is far past any real search and far short
+ * of anything expensive.
+ *
+ * **No message about *what* was wrong, deliberately.** Slice 3.1d's lesson: the
+ * only thing worth telling somebody who pasted an over-long URL is that it is
+ * too long to search for, not which internal bound it crossed.
+ */
+export const MAX_SEARCH_KEYWORD_LENGTH = 100;
+
+export const SEARCH_KEYWORD_MESSAGE = `must be ${String(MAX_SEARCH_KEYWORD_LENGTH)} characters or fewer`;
+
+export const searchKeywordSchema = z
+  .preprocess((value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+  }, z.string(SEARCH_KEYWORD_MESSAGE).max(MAX_SEARCH_KEYWORD_LENGTH, SEARCH_KEYWORD_MESSAGE).nullable())
+  .default(null);
+
+/**
  * Whether we managed to place the origin at all — **the difference between "we
  * looked and found nothing" and "we never looked"**.
  *
@@ -319,12 +360,18 @@ export function publicListingSearchPath(search: ListingSearchQuery): string {
  * drift is silent on both: a parameter the other side ignores produces results
  * for a search nobody asked for.
  *
- * **Two parameters are omitted when they carry the default, and both for the
- * same reason: one search must have one URL.** `?page=1` and `?category=`
- * return exactly what the bare URL returns, so minting them creates the
- * duplicate-content problem slice 2.12 has to answer for §8.17 — and the
+ * **Three parameters are omitted when they carry the default, and all for the
+ * same reason: one search must have one URL.** `?page=1`, `?category=` and
+ * `?keyword=` return exactly what the bare URL returns, so minting them creates
+ * the duplicate-content problem slice 2.12 has to answer for §8.17 — and the
  * cheapest answer is not to mint them. It is also what kept slice 3.1d from
  * changing a single existing link, and what keeps this slice from doing so.
+ *
+ * **The keyword is written first, before the filters that narrow it.** Nothing
+ * depends on the order — both sides parse by name — but a URL is read by people
+ * as well as parsed, and the words somebody typed are the most legible thing in
+ * it. Fixed here rather than left to insertion order so two identical searches
+ * cannot produce two different strings.
  */
 export function listingSearchQueryString(search: ListingSearchQuery): string {
   const parts = [
@@ -332,6 +379,9 @@ export function listingSearchQueryString(search: ListingSearchQuery): string {
     `radiusMiles=${String(search.radiusMiles)}`,
   ];
 
+  if (search.keyword !== null) {
+    parts.push(`keyword=${encodeURIComponent(search.keyword)}`);
+  }
   if (search.category !== null) {
     parts.push(`category=${encodeURIComponent(search.category)}`);
   }
@@ -407,12 +457,17 @@ export function parsePublicCategories(raw: unknown): {
  * **`category` defaults to null the same way** — the third parameter in a row
  * whose absence is the ordinary case. See `searchCategorySchema` for why an
  * *empty* one is absent too, which is the case a plain GET form produces.
+ *
+ * **`keyword` is the fourth and the only one a person types free-hand** (slice
+ * 3.3a). Same absent-means-all treatment, and see `searchKeywordSchema` for why
+ * it is bounded and why it is a filter rather than a sort.
  */
 export const listingSearchQuerySchema = z.object({
   postcode: postcodeSchema,
   radiusMiles: searchRadiusMilesSchema.default(DEFAULT_SEARCH_RADIUS_MILES),
   page: searchPageSchema.default(FIRST_SEARCH_PAGE),
   category: searchCategorySchema,
+  keyword: searchKeywordSchema,
 });
 
 /**
@@ -531,6 +586,21 @@ export interface PublicListingSearchResults {
    */
   readonly category: string | null;
   /**
+   * Which words this was narrowed by, or null for none (slice 3.3a).
+   *
+   * **Echoed for `category`'s reason, and it matters more here.** A page that
+   * found nothing has to say whether it was looking for something in
+   * particular: without this field, "no tools near you" and "no tools matching
+   * *hedge trimmer* near you" are the same response, and the first is a claim
+   * about the area we would be making on no evidence. It is also what the empty
+   * state offers to drop.
+   *
+   * **The trimmed keyword, exactly as it was searched for** — not as it was
+   * typed. A searcher who typed trailing spaces gets back what actually ran, so
+   * the page cannot echo one thing while having queried another.
+   */
+  readonly keyword: string | null;
+  /**
    * Whether we could place the origin — **read this before reading `results`**.
    *
    * `results: []` means two opposite things and this is the field that separates
@@ -565,6 +635,7 @@ const publicListingSearchResultsSchema = z.object({
   radiusMiles: searchRadiusMilesSchema,
   page: searchPageSchema,
   category: searchCategorySchema,
+  keyword: searchKeywordSchema,
   // No `.default`, unlike `category` two lines up, and the asymmetry is the
   // decision rather than an oversight: an absent category legitimately means
   // "all of them", whereas an absent origin status means the server did not

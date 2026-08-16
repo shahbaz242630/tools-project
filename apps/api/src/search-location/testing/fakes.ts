@@ -94,6 +94,29 @@ export interface PlacedListing {
    * against a fixture that was never categorised.
    */
   readonly categoryId: string | null;
+  /**
+   * The words this listing can be found by (slice 3.3a).
+   *
+   * **Given, exactly as `metresFromOrigin` is given.** The real column is a
+   * `tsvector` built from the title and description by a database trigger and
+   * matched with `websearch_to_tsquery`, which stems: `trimmers` finds
+   * `trimmer`. Reimplementing an English stemmer here would only prove that two
+   * implementations of it agree, which is the same argument this file already
+   * makes about the great-circle formula.
+   *
+   * **So what the fake models is the shape and not the semantics** — the
+   * predicate composes with the others and runs before the page is sliced — and
+   * the matching rule below is deliberately cruder than the real one. **What
+   * that means for a reader: no test using this fake is evidence about stemming,
+   * phrases or punctuation.** `prisma-listing-search.db.test.ts` is the only
+   * thing that can be, and it is where those live.
+   *
+   * Empty is the default, so a listing placed by a test that does not care about
+   * keywords matches no keyword at all — the same way round as `categoryId`, and
+   * for the same reason: a keyword test must not be able to pass against a
+   * fixture that was never given any text.
+   */
+  readonly text: string;
 }
 
 /**
@@ -135,13 +158,24 @@ export class FakeListingSearch implements ListingSearchRepository {
    */
   readonly categories: (string | null)[] = [];
 
+  /**
+   * Every keyword it was asked to narrow to, in order (slice 3.3a).
+   *
+   * Recorded for the reason `categories` is, and one more: the contract trims
+   * the term, so a service that passed the raw parameter down instead of the
+   * parsed one would search for something subtly different from what the
+   * response echoes. That is invisible in the results and visible here.
+   */
+  readonly keywords: (string | null)[] = [];
+
   /** Put a listing at a distance from wherever the search starts. */
   places(
     listingId: string,
     metresFromOrigin: number,
     categoryId: string | null = null,
+    text = '',
   ): this {
-    this.placed.push({ listingId, metresFromOrigin, categoryId });
+    this.placed.push({ listingId, metresFromOrigin, categoryId, text });
     return this;
   }
 
@@ -163,6 +197,7 @@ export class FakeListingSearch implements ListingSearchRepository {
     this.asked.push(search.originPostcode);
     this.windows.push(window);
     this.categories.push(search.categoryId);
+    this.keywords.push(search.keyword);
 
     if (this.unplaceable.has(search.originPostcode.toUpperCase())) {
       return Promise.resolve(null);
@@ -182,6 +217,13 @@ export class FakeListingSearch implements ListingSearchRepository {
         (listing) =>
           search.categoryId === null || listing.categoryId === search.categoryId,
       )
+      /*
+       * **Beside the category filter and before the slice, which is the only
+       * thing about it that is faithful** (slice 3.3a). See `PlacedListing.text`
+       * — the matching rule is deliberately cruder than `websearch_to_tsquery`
+       * and proves nothing about stemming.
+       */
+      .filter((listing) => matchesKeyword(listing.text, search.keyword))
       .sort(byDistanceThenId)
       /*
        * **The skip, then the probe** — the real statement's `OFFSET` and `LIMIT`
@@ -201,6 +243,26 @@ export class FakeListingSearch implements ListingSearchRepository {
       truncated: page.truncated,
     });
   }
+}
+
+/**
+ * Every word, case-insensitively — `websearch_to_tsquery`'s *conjunction*, and
+ * nothing else about it (slice 3.3a).
+ *
+ * The one property worth reproducing is that multi-word input means **all** the
+ * words rather than any of them, because a fake that matched any would let a
+ * service test pass while the real query returned far less. Stemming, phrases,
+ * weights and punctuation are all absent, deliberately — see `PlacedListing.text`.
+ */
+function matchesKeyword(text: string, keyword: string | null): boolean {
+  if (keyword === null) return true;
+
+  const haystack = text.toLowerCase();
+  return keyword
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word !== '')
+    .every((word) => haystack.includes(word));
 }
 
 /** The adapter's `ORDER BY`, including its tiebreak on id. */

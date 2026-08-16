@@ -887,6 +887,17 @@ export class ListingsService {
       originPostcode: search.postcode,
       radiusMiles,
       categoryId,
+      /*
+       * **Passed straight through, and that is the whole of this module's
+       * involvement** (slice 3.3a). Unlike the category a line above, there is
+       * nothing here for Catalogue to resolve: a keyword is already what the
+       * query takes, so there is no lookup, no refusal, and nothing that could
+       * fail. **Which also means there is no "unknown keyword" 400** — words
+       * naming nothing are an ordinary empty result rather than a bad request,
+       * because a searcher who types `xylophone` has asked a reasonable question
+       * and got a real answer.
+       */
+      keyword: search.keyword,
       window: {
         limit: SEARCH_RESULT_LIMIT,
         offset: resultsToSkip(pageNumber),
@@ -1046,6 +1057,10 @@ export class ListingsService {
         radiusMiles: search.radiusMiles,
         outcome,
         filtered: search.category !== null,
+        // Whether, not what. The term itself reaches no label and no log line —
+        // it is free text a stranger typed, so it can hold a name or an address,
+        // and a metrics registry has none of §10.1's erasure guarantees.
+        keyworded: search.keyword !== null,
       });
     } catch {
       /* deliberately nothing */

@@ -126,17 +126,25 @@ export class PublicListingSearchController {
         radiusMiles: request.radiusMiles,
         page: request.page,
         category: request.category,
+        keyword: request.keyword,
         originStatus: 'unplaceable',
       };
     }
 
     /*
-     * **The radius, the page and the category are echoed from the request, not
-     * from the result.** All three were defaulted if absent, and a response that
-     * did not say which values it used reads as an answer to a different
-     * question — a five-mile search looking like a national one, page one
-     * looking like all of them, or an unfiltered search looking like a filtered
-     * one that found nothing.
+     * **The radius, the page, the category and the keyword are echoed from the
+     * request, not from the result.** All four were defaulted if absent, and a
+     * response that did not say which values it used reads as an answer to a
+     * different question — a five-mile search looking like a national one, page
+     * one looking like all of them, or an unfiltered search looking like a
+     * filtered one that found nothing.
+     *
+     * **The keyword is echoed *trimmed*, which is what the parse produced and
+     * what actually ran** (slice 3.3a). Echoing the raw parameter instead would
+     * let the page display one thing while the database was asked another — a
+     * small difference that becomes a large one the moment somebody reports that
+     * a search "found nothing" and the URL they send does not describe the query
+     * that ran.
      *
      * **The category is echoed as the searcher's slug**, not as the id it was
      * resolved to. The id never leaves the server: it is an internal identifier
@@ -156,6 +164,7 @@ export class PublicListingSearchController {
       radiusMiles: request.radiusMiles,
       page: request.page,
       category: request.category,
+      keyword: request.keyword,
       originStatus: 'placed',
     };
   }
