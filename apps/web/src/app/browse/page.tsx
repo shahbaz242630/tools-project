@@ -113,6 +113,8 @@ export default async function BrowsePage({
           radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
           category={categoryFrom(params.category)}
           categories={categories}
+          keyword={keywordFrom(params.keyword)}
+          keywordField
           error={null}
         />
         <p className={styles.prompt}>
@@ -139,6 +141,13 @@ export default async function BrowsePage({
      * category is caught below, against the list this page already holds.
      */
     category: first(params.category) ?? undefined,
+    /*
+     * **And the same again for the keyword** (slice 3.3b). The only thing this
+     * schema refuses is a term past the length bound; nothing is rejected for
+     * its content, because words we hold no listing for are an ordinary empty
+     * result rather than a bad request.
+     */
+    keyword: first(params.keyword) ?? undefined,
   });
 
   if (!parsed.success) {
@@ -149,6 +158,8 @@ export default async function BrowsePage({
           radiusMiles={radiusFrom(params.radiusMiles)}
           category={categoryFrom(params.category)}
           categories={categories}
+          keyword={keywordFrom(params.keyword)}
+          keywordField
           error={messageFor(parsed.error.issues)}
         />
       </Page>
@@ -183,6 +194,8 @@ export default async function BrowsePage({
           // next submission. The postcode is echoed for the opposite reason.
           category={null}
           categories={categories}
+          keyword={parsed.data.keyword}
+          keywordField
           error={`Category ${SEARCH_CATEGORY_MESSAGE}.`}
         />
       </Page>
@@ -198,6 +211,8 @@ export default async function BrowsePage({
         radiusMiles={parsed.data.radiusMiles}
         category={parsed.data.category}
         categories={categories}
+        keyword={parsed.data.keyword}
+        keywordField
         error={null}
       />
 
@@ -326,6 +341,25 @@ function categoryFrom(value: string | string[] | undefined): string | null {
 }
 
 /**
+ * The same, for the keyword (slice 3.3b).
+ *
+ * **A too-long keyword falls back to empty rather than being echoed**, and this
+ * one sits between the other two rather than following either. Like the
+ * postcode it is text a person typed, so the instinct is to echo it; like the
+ * category it is the thing being refused, and echoing it would put a value back
+ * in the box that the next submission would be refused for again — with the
+ * error still showing and nothing on screen explaining that the box itself is
+ * the problem. The only way to reach this is a hand-edited or stale URL, since
+ * the input carries `maxLength`.
+ */
+function keywordFrom(value: string | string[] | undefined): string | null {
+  const parsed = listingSearchQuerySchema.shape.keyword.safeParse(
+    first(value) ?? undefined,
+  );
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * What each field is called when something is wrong with it.
  *
  * A map rather than a conditional, which is what slice 3.1d's third field
@@ -338,6 +372,11 @@ const FIELD_LABELS: Record<string, string> = {
   radiusMiles: 'Radius',
   page: 'Page',
   category: 'Category',
+  // "Search" rather than "Keyword", because that is what the control is called
+  // on screen — "What are you looking for?" — and nobody reading a message
+  // about a "keyword" would know which box it meant. The map's keys are the
+  // contract's field names; its values are the page's own words.
+  keyword: 'Search',
 };
 
 /**

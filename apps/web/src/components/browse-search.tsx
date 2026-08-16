@@ -1,4 +1,4 @@
-import { SEARCH_RADII_MILES } from '@platform/contracts';
+import { MAX_SEARCH_KEYWORD_LENGTH, SEARCH_RADII_MILES } from '@platform/contracts';
 import type { PublicCategory, SearchRadiusMiles } from '@platform/contracts';
 import { BROWSE_PATH } from '../lib/page-paths';
 import styles from './browse.module.css';
@@ -30,6 +30,8 @@ export function BrowseSearch({
   radiusMiles,
   category,
   categories,
+  keyword,
+  keywordField,
   error,
   className,
 }: {
@@ -62,6 +64,38 @@ export function BrowseSearch({
    * read that happened to fail.
    */
   readonly categories: readonly PublicCategory[];
+  /**
+   * The words the search is narrowed by, or null for none (slice 3.3b).
+   *
+   * Echoed back into the field so a search that found nothing does not also
+   * clear what was typed — the same reason `postcode` is echoed, and it matters
+   * more here: retyping a postcode is eight characters and retyping a phrase is
+   * the moment somebody gives up.
+   *
+   * **This is the *trimmed* value the API answered**, not the raw parameter.
+   * `BrowseResults` reads it from the response for that reason; this form is
+   * handed the parsed query, which has already been through the same schema.
+   */
+  readonly keyword: string | null;
+  /**
+   * Whether to draw a control for it (slice 3.3b).
+   *
+   * **Required rather than defaulted, because the two callers genuinely differ
+   * and a default would decide it for whichever one was written second.** Browse
+   * draws it; the landing hero deliberately does not.
+   *
+   * The hero's reasoning is slice 3.1e's, unchanged: it asks the one question
+   * that must be answered before anything can happen, and a second box in front
+   * of somebody who has not yet given us a postcode is a second decision to make
+   * on a page whose whole job is to get them to a search. A keyword is optional
+   * in a way a postcode is not. **Adding it to the hero is a reasonable product
+   * change and a deliberate one** — it is not something to slip in here.
+   *
+   * There is no hidden-field branch, which is where this differs from
+   * `categories`: the hero is an entry point and has no keyword to preserve,
+   * because nothing that links to it carries one.
+   */
+  readonly keywordField: boolean;
   /** What was wrong with it, shown against the field rather than at the top. */
   readonly error: string | null;
   /**
@@ -75,13 +109,69 @@ export function BrowseSearch({
 }) {
   return (
     <form
-      className={
-        className === undefined ? styles.search : `${styles.search} ${className}`
-      }
+      /*
+        **The keyword modifier is part of the base class rather than something a
+        caller passes**, so a form that draws the field cannot be laid out as
+        though it did not. `className` stays what it was in 3.1e — the hero's
+        own layout, applied on top.
+      */
+      className={[
+        styles.search,
+        keywordField ? styles.searchWithKeyword : undefined,
+        className,
+      ]
+        .filter((name) => name !== undefined)
+        .join(' ')}
       action={BROWSE_PATH}
       method="get"
       role="search"
     >
+      {keywordField && (
+        <div className={styles.keywordField}>
+          <label htmlFor="keyword">What are you looking for?</label>
+          {/*
+            **Optional, and the only field on this form that is.** A search with
+            no words is the ordinary case — it is what "show me everything near
+            me" looks like — so this is never `required` and an empty box is not
+            an error. `searchKeywordSchema` swallows the empty `keyword=` that a
+            plain GET form submits for exactly that case.
+
+            **A placeholder deliberately naming nothing in the fixture.** The
+            postcode field learned this the hard way in 3.1b: its placeholder was
+            the local fixture's own postcode, which made the disclosure check on
+            the rendered page unreadable because a grep could not tell a leak
+            from an example. "Pressure washer" is a plausible tool and is not the
+            title of anything we have.
+
+            **No `type="search"`.** It renders a browser-supplied clear button
+            whose behaviour and appearance differ per engine, and this form has
+            no JavaScript to react to it — clearing the box without submitting
+            would leave the results and the field disagreeing.
+          */}
+          <input
+            id="keyword"
+            /*
+              The contract's parameter name, for the postcode's reason below: a
+              name this component invented would be a parameter the API ignores,
+              and the failure is a search that quietly returns everything.
+            */
+            name="keyword"
+            type="text"
+            defaultValue={keyword ?? ''}
+            placeholder="e.g. pressure washer"
+            /*
+              The opposite of the postcode's settings, and deliberately: this is
+              ordinary prose, so autocorrect and sentence casing are help rather
+              than hindrance. `maxLength` mirrors the contract's bound so the
+              browser refuses what the API would, rather than letting somebody
+              type a paragraph and be told no afterwards.
+            */
+            maxLength={MAX_SEARCH_KEYWORD_LENGTH}
+            autoComplete="off"
+          />
+        </div>
+      )}
+
       <div className={styles.searchField}>
         <label htmlFor="postcode">Where are you looking?</label>
         <input
