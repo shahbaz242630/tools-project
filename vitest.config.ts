@@ -73,7 +73,7 @@ export default defineConfig({
           // React components need a DOM. Only this project pays for it — the
           // others stay on `node`, which is markedly faster.
           environment: 'jsdom',
-          setupFiles: ['./apps/web/vitest-setup.ts'],
+          setupFiles: ['./apps/web/vitest-setup.tsx'],
         },
         // esbuild handles the JSX, so no @vitejs/plugin-react. That plugin
         // requires vite 8 and vitest 3 pins vite 7; adding it would mean an

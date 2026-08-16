@@ -14,7 +14,7 @@
  * registry and re-imports rather than calling a function.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const KEYS = [
   'DATABASE_URL',
@@ -54,6 +54,29 @@ async function datasourceUrl(): Promise<string> {
   };
   return module.default.datasource?.url ?? '';
 }
+
+/**
+ * Load the module graph once, before anything is timed.
+ *
+ * **This is a flake fix and the diagnosis is worth keeping**, because the same
+ * shape produced the same failure in three unrelated files. This file failed
+ * intermittently under a full run with *"Test timed out in 5000ms"*, and it was
+ * always the **first** test — measured alone it takes ~700 ms while every test
+ * after it takes 2–6 ms. The difference is not the assertion; it is the first
+ * `import` of `prisma/config` and its dependency tree, which `vi.resetModules`
+ * does **not** discard because the dependency is external to the transform
+ * pipeline. So the first test was being billed for the whole file's setup, and
+ * under sixteen workers contending for sixteen cores that bill crossed five
+ * seconds often enough to be seen roughly one run in ten.
+ *
+ * A `beforeAll` is not timed against any test's budget, so the cost now lands
+ * on the file rather than on whichever assertion happens to be written first.
+ * The tests themselves are unchanged and still reset the registry — what they
+ * re-import afterwards is cheap, which those 2–6 ms figures already proved.
+ */
+beforeAll(async () => {
+  await datasourceUrl();
+});
 
 const credentials = {
   POSTGRES_HOST: 'db.internal',

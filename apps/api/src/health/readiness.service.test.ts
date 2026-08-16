@@ -95,16 +95,49 @@ describe('ReadinessService', () => {
   });
 
   it('runs checks concurrently rather than in sequence', async () => {
-    // Three 30ms checks in sequence would take 90ms. A readiness probe that
-    // costs the sum of its dependencies gets slower with every one we add.
-    const slow = (name: string): DependencyCheck => ({
-      name,
-      probe: () => new Promise<void>((resolve) => setTimeout(resolve, 30)),
+    // A readiness probe that costs the sum of its dependencies gets slower with
+    // every one we add, so the property is worth pinning.
+    //
+    // **Observed rather than timed, and the previous version is why.** This
+    // asserted that three 30 ms checks finished in under 80 ms — sequential
+    // would be 90 ms, so it had ten milliseconds of headroom. On a machine
+    // running sixteen test workers, three `setTimeout(30)` callbacks routinely
+    // take longer than 80 ms to be *scheduled*, let alone run, and the suite
+    // failed with "expected 80 to be less than 80" while the code was correct.
+    // A stopwatch cannot tell "ran in sequence" from "ran concurrently on a
+    // busy machine"; it was measuring the machine.
+    //
+    // So each probe now reports that it has started and then **waits until all
+    // three have**. Run concurrently they release each other and every check
+    // succeeds. Run in sequence the first probe waits on two that have not been
+    // called yet, `runCheck` gives up on it after `timeoutMs`, and the report
+    // comes back not ready — so the assertion is the service's own output, with
+    // no clock and no threshold to tune.
+    //
+    // **An earlier version of this counted probe invocations and had no teeth**
+    // — it was checked by making the service sequential and it still passed.
+    // Sequential execution invokes all three probes too, just one at a time, so
+    // a count can never tell the two apart. What distinguishes them is whether
+    // the three were ever in flight *together*, and only a barrier shows that.
+    let release!: () => void;
+    const allStarted = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    const { service } = build([slow('a'), slow('b'), slow('c')], 500);
+    let started = 0;
 
-    const started = Date.now();
-    await service.report();
-    expect(Date.now() - started).toBeLessThan(80);
+    const tracked = (name: string): DependencyCheck => ({
+      name,
+      probe: async () => {
+        started += 1;
+        if (started === 3) release();
+        await allStarted;
+      },
+    });
+    const { service } = build([tracked('a'), tracked('b'), tracked('c')], 500);
+
+    const report = await service.report();
+
+    expect(report.ready).toBe(true);
+    expect(report.checks).toEqual({ a: 'ok', b: 'ok', c: 'ok' });
   });
 });

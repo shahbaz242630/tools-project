@@ -1,7 +1,7 @@
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import type { DependencyCheck } from './dependency-check.js';
 import { CORRELATION_HEADER } from '../observability/correlation.middleware.js';
@@ -78,6 +78,28 @@ async function boot(
 }
 
 afterEach(async () => {
+  await app?.close();
+  app = undefined;
+});
+
+/**
+ * Build and discard one application before anything is timed.
+ *
+ * **A flake fix**, and the same one three other files needed — the diagnosis is
+ * in `packages/database/src/prisma-config.test.ts`. Measured alone, the first
+ * test here takes ~920 ms and every test after it takes 43–73 ms, because the
+ * first `boot` is what compiles the Nest module graph, resolves every provider
+ * and starts Fastify. That one-off belongs to the file, and billing it to
+ * whichever test is written first is what let a saturated parallel run push it
+ * past the five-second budget and report *"Test timed out in 5000ms"* against
+ * an endpoint that answers in milliseconds.
+ *
+ * `afterEach` closes whatever `boot` last assigned, so this leaves nothing
+ * running — and every test still builds its own application with its own
+ * checks, which is the isolation this file depends on.
+ */
+beforeAll(async () => {
+  await boot([ok('postgres')]);
   await app?.close();
   app = undefined;
 });

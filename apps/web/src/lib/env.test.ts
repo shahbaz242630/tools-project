@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * Each test imports the module fresh, because `webEnv` memoises at module
@@ -24,6 +24,26 @@ function stubRequired(): void {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+/**
+ * Load the module graph once, before anything is timed.
+ *
+ * The same flake and the same fix as `packages/database/src/prisma-config.test.ts`,
+ * whose `beforeAll` carries the full diagnosis: a dynamic `import` inside the
+ * body means the **first** test is billed for the whole file's dependency tree,
+ * `vi.resetModules` does not make the re-import expensive again, and under a
+ * saturated parallel run that one-off crosses the test timeout — surfacing as
+ * *"Test timed out in 5000ms"* on whichever file lost the race.
+ *
+ * Stubbed here too, because `loadWebEnv` throws on an incomplete environment
+ * and a warm-up that throws is a warm-up that failed to warm anything.
+ */
+beforeAll(async () => {
+  stubRequired();
+  vi.stubEnv('API_BASE_URL', 'http://localhost:3001');
+  await freshWebEnv();
   vi.unstubAllEnvs();
 });
 
