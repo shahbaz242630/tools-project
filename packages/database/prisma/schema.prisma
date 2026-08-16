@@ -1146,6 +1146,13 @@ model Listing {
   /// published at. That inversion was predicted in the decision itself.
   bookings Booking[]
 
+  /// Periods the owner has declared this item unavailable (slice 4.3a).
+  ///
+  /// `ON DELETE CASCADE`, unlike `bookings` above — see `AvailabilityBlock`.
+  /// A block is the owner's own note about their own item, so it goes when the
+  /// listing does; a booking is somebody else's record and does not.
+  availabilityBlocks AvailabilityBlock[]
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
@@ -1393,6 +1400,66 @@ model Booking {
   /// this one is what `migrate diff` compares against.
   @@index([period], type: Gist)
   @@map("bookings")
+}
+
+/// A period an owner has declared their item unavailable (BRD §8.5, slice 4.3a).
+///
+/// §8.5: *"Owner calendar supports available, unavailable and booked periods."*
+/// **Booked is `bookings`; this is unavailable; available is the absence of
+/// both.** Three concepts, two tables and a subtraction — rather than one table
+/// with a kind column, which would have put an owner's holiday and a renter's
+/// money in the same rows and made every query about either of them start by
+/// remembering which it wanted.
+///
+/// **In the booking module, not catalogue** (BRD §5.1). An owner reaches this
+/// from their listing, so the instinct is to file it with listings — but what it
+/// *means* is a booking question, it needs the same `tstzrange` machinery the
+/// overlap constraint needs, and keeping ranges in one module means one place in
+/// this system understands them.
+///
+/// **No `EXCLUDE` constraint, and that is deliberate.** Two overlapping blocks
+/// are harmless — an owner who blocks a fortnight and then blocks a week inside
+/// it has said the same thing twice, and refusing the second would be a form
+/// error about nothing. What must not overlap is two *bookings*, which is
+/// `bookings`' constraint and stays there.
+model AvailabilityBlock {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// `ON DELETE CASCADE`, which is the opposite of `bookings.listingId` and the
+  /// difference is who the row belongs to. A booking is a record of a
+  /// transaction between two people and outlives the listing (§10.1); a block is
+  /// the owner's own note about their own item, so when the listing goes it goes
+  /// — there is nobody else whose record it is.
+  listingId String  @db.Uuid
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  startAt DateTime @db.Timestamptz(3)
+  endAt   DateTime @db.Timestamptz(3)
+
+  /// The range, maintained by trigger — `bookings.period`'s shape and reasons,
+  /// including `[)` so a block ending Friday and a hire starting Friday do not
+  /// collide.
+  period Unsupported("tstzrange")?
+
+  /// What the owner called it, or null.
+  ///
+  /// **Their own words and shown to nobody else.** A renter is told a period is
+  /// unavailable and never why — "away", "lent to my brother" and "servicing"
+  /// are all somebody's private business, and a free-text field that reached a
+  /// stranger is the kind of disclosure §10.1 exists to prevent. It is here
+  /// because a calendar of unexplained grey blocks is one an owner cannot
+  /// manage after a month.
+  reason String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// The calendar reads one listing's blocks in date order.
+  @@index([listingId, startAt])
+  /// Declared so the datamodel and the database agree — the note on
+  /// `bookings.period` and `listings.searchDocument` applies here too.
+  @@index([period], type: Gist)
+  @@map("availability_blocks")
 }
 
 /// A seller's tax position for statutory reporting — **present and inactive**.
