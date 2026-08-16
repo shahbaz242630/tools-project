@@ -1,12 +1,12 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { MAX_SEARCH_PAGE } from '@platform/contracts';
+import { MAX_SEARCH_PAGE, SEARCH_PAGE_SIZE } from '@platform/contracts';
 import type {
   ListingSearchQuery,
   PublicListingSearchResults,
   PublicListingSummary,
 } from '@platform/contracts';
-import { BrowseResults } from './browse-results';
+import { BrowseResults, isNarrowed } from './browse-results';
 
 const SCARIFIER: PublicListingSummary = {
   id: '8fe74923-e424-421c-b5a2-590280af0fae',
@@ -594,7 +594,7 @@ describe('when a filtered radius has nothing in it', () => {
 
     expect(screen.queryByText(/nothing listed near you yet/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Nothing in this category is listed within a hundred miles/),
+      screen.getByText(/Nothing matching your search is listed within a hundred miles/),
     ).toBeInTheDocument();
     // The way out is still offered — that is what makes the narrower claim safe.
     expect(
@@ -818,7 +818,7 @@ describe('when the origin could not be placed', () => {
       screen.getByRole('heading', { name: 'We could not search from that postcode' }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Nothing in this category is listed/),
+      screen.queryByText(/Nothing matching your search is listed/),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: 'Search all categories' }),
@@ -847,5 +847,290 @@ describe('when the origin could not be placed', () => {
     expect(
       screen.getByRole('heading', { name: 'We could not search from that postcode' }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * When words narrowed a search to nothing (slice 3.3b).
+ *
+ * **The empty state is where a keyword changes what a page may *claim*, not
+ * just what it offers**, which is why almost every keyword test in this file is
+ * here rather than beside the results grid.
+ */
+describe('when words have nothing matching them', () => {
+  const keyworded = (over: Partial<PublicListingSearchResults> = {}) =>
+    page({ results: [], keyword: 'hedge trimmer', ...over });
+
+  it('names the words in the heading, so nobody reads it as an empty area', () => {
+    render(
+      <BrowseResults
+        results={keyworded()}
+        search={searchFor({ keyword: 'hedge trimmer' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Nothing matching “hedge trimmer” within 5 miles',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  /*
+   * **Both narrowings in one sentence, in the order they narrow.** Four
+   * combinations come out of two optional filters, and the middle two are the
+   * ones a nested ternary gets wrong — which is why the sentence is composed by
+   * a named function rather than assembled inside the JSX.
+   */
+  it('names the category and the words together when both are on', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ category: 'outdoor-gardening' })}
+        search={searchFor({ keyword: 'hedge trimmer', category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Nothing in Outdoor and gardening matching “hedge trimmer” within 5 miles',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  /*
+   * **The reader's own text, unaltered.** A category name is somebody else's
+   * configuration and must not be case-folded (3.2b); a keyword is the reader's
+   * and must not be either — showing it back changed is how somebody comes to
+   * doubt what they typed.
+   */
+  it('shows the words exactly as they were typed', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ keyword: 'SDS+ Drill' })}
+        search={searchFor({ keyword: 'SDS+ Drill' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Nothing matching “SDS+ Drill” within 5 miles',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('offers the same search without the words', () => {
+    render(
+      <BrowseResults
+        results={keyworded()}
+        search={searchFor({ keyword: 'hedge trimmer' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Search without “hedge trimmer”' }),
+    ).toHaveAttribute('href', '/browse?postcode=BS7%208AA&radiusMiles=5');
+  });
+
+  /*
+   * **Narrowest constraint first**: drop the words, then the category, then
+   * widen the radius. A phrase is anything at all — including a typo, or simply
+   * not the word this owner used — where a category is one of a handful. The
+   * radius stays last because staying local is the product.
+   */
+  it('offers dropping the words before dropping the category', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ category: 'outdoor-gardening' })}
+        search={searchFor({ keyword: 'hedge trimmer', category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    const links = screen.getAllByRole('link').map((link) => link.textContent);
+
+    expect(links[0]).toBe('Search without “hedge trimmer”');
+    expect(links[1]).toBe('Search all categories');
+  });
+
+  /*
+   * **Each offer removes exactly the constraint it names.** A link that quietly
+   * dropped both would answer a question the reader did not ask, and it would
+   * look like it worked.
+   */
+  it('keeps the category when dropping the words', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ category: 'outdoor-gardening' })}
+        search={searchFor({ keyword: 'hedge trimmer', category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Search without “hedge trimmer”' }),
+    ).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&category=outdoor-gardening',
+    );
+  });
+
+  it('keeps the words when dropping the category', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ category: 'outdoor-gardening' })}
+        search={searchFor({ keyword: 'hedge trimmer', category: 'outdoor-gardening' })}
+        categoryName="Outdoor and gardening"
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Search all categories' })).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&keyword=hedge%20trimmer',
+    );
+  });
+
+  /*
+   * **The widening link carries the words**, the treatment the category already
+   * had: widening answers "nothing near me", and silently dropping the search
+   * terms at the same time would answer a question nobody asked.
+   */
+  it('carries the words into a wider radius', () => {
+    render(
+      <BrowseResults
+        results={keyworded()}
+        search={searchFor({ keyword: 'hedge trimmer' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Search within 10 miles' }),
+    ).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=10&keyword=hedge%20trimmer',
+    );
+  });
+
+  /*
+   * **The claim at a hundred miles must not overreach for a keyword either**,
+   * and this is the generalisation rather than a second case beside the
+   * category's: a keyword finding nothing is the *weakest* possible evidence
+   * about a catalogue, because the words might simply not be the ones an owner
+   * used to describe the thing.
+   */
+  it('does not claim the whole catalogue is empty at a hundred miles', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ radiusMiles: 100 })}
+        search={searchFor({ radiusMiles: 100, keyword: 'hedge trimmer' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.queryByText(/nothing listed near you yet/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Nothing matching your search is listed within a hundred miles/),
+    ).toBeInTheDocument();
+    // The way out is still offered, which is what makes the narrower claim safe.
+    expect(
+      screen.getByRole('link', { name: 'Search without “hedge trimmer”' }),
+    ).toBeInTheDocument();
+  });
+
+  /*
+   * **The trimmed keyword from the response wins over the request**, which is
+   * the one field where the two legitimately differ: the contract trims, so
+   * somebody who typed trailing space has a request that does not describe the
+   * search that ran. Every link on this page is built from the response's value.
+   */
+  it('shows the keyword the search actually ran with, not the one requested', () => {
+    render(
+      <BrowseResults
+        results={keyworded({ keyword: 'hedge trimmer' })}
+        search={searchFor({ keyword: '  hedge trimmer  ' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'Nothing matching “hedge trimmer” within 5 miles',
+      }),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
+ * The keyword on a page that found something (slice 3.3b).
+ *
+ * Only the links matter here — the heading is a count, and says nothing about
+ * how the results were narrowed.
+ */
+describe('carrying words through the links', () => {
+  it('carries the keyword to the next page', () => {
+    render(
+      <BrowseResults
+        results={page({
+          results: full(SEARCH_PAGE_SIZE),
+          truncated: true,
+          keyword: 'drill',
+        })}
+        search={searchFor({ keyword: 'drill' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: `Next ${String(SEARCH_PAGE_SIZE)} tools →` }),
+    ).toHaveAttribute(
+      'href',
+      '/browse?postcode=BS7%208AA&radiusMiles=5&keyword=drill&page=2',
+    );
+  });
+
+  it('carries the keyword back from the past-the-end state', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [], page: 4, keyword: 'drill' })}
+        search={searchFor({ page: 4, keyword: 'drill' })}
+        categoryName={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Start again from the first page' }),
+    ).toHaveAttribute('href', '/browse?postcode=BS7%208AA&radiusMiles=5&keyword=drill');
+  });
+});
+
+/**
+ * The predicate behind the hundred-mile claim (slice 3.3b).
+ *
+ * Tested directly as well as through the page, because its whole purpose is to
+ * be the one place a new filter has to be remembered — and a wrong answer here
+ * is a false sentence about the catalogue rather than a broken page. A reader
+ * adding the price filter should find this list failing them.
+ */
+describe('whether a search was narrowed', () => {
+  it('is not narrowed by where or how far, which are the question itself', () => {
+    expect(isNarrowed(searchFor({ postcode: 'BA1 1AA', radiusMiles: 100 }))).toBe(
+      false,
+    );
+  });
+
+  it('is not narrowed by the page, which is a position in the answer', () => {
+    expect(isNarrowed(searchFor({ page: 4 }))).toBe(false);
+  });
+
+  it.each([
+    ['a category', { category: 'outdoor-gardening' }],
+    ['words', { keyword: 'hedge trimmer' }],
+    ['both', { category: 'outdoor-gardening', keyword: 'hedge trimmer' }],
+  ])('is narrowed by %s', (_name, over) => {
+    expect(isNarrowed(searchFor(over))).toBe(true);
   });
 });

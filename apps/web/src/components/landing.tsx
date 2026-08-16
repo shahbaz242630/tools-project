@@ -102,12 +102,23 @@ export function Landing() {
           be a second decision in front of somebody who has not made the first —
           the same argument that cut the "Near you" grid in 3.1e. Browse is one
           click away and has the control.
+
+          **`keywordField={false}` is the same decision for the same reason**
+          (slice 3.3b), and it is worth saying that it is a decision rather than
+          an omission: a "what are you looking for?" box here would be perfectly
+          reasonable, and every large marketplace has one. It is left out because
+          this hero's job is to get somebody to a search at all, a keyword is
+          optional where a postcode is not, and adding it is a change to the
+          landing page rather than a consequence of building the search box.
+          Turn it on deliberately, not by noticing the prop.
         */}
         <BrowseSearch
           postcode=""
           radiusMiles={DEFAULT_SEARCH_RADIUS_MILES}
           category={null}
           categories={[]}
+          keyword={null}
+          keywordField={false}
           error={null}
           className={styles.heroSearch}
         />

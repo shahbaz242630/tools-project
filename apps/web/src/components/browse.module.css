@@ -38,6 +38,27 @@
   box-shadow: var(--shadow-card);
 }
 
+/*
+ * **A modifier rather than a fifth column on `.search`, and the reason is the
+ * hero** (slice 3.3b). Grid fills declared columns in order, so adding a track
+ * to the base rule would have moved every control on any form that does not
+ * draw a keyword: the landing hero renders three items, and against a
+ * five-column template its radius would land in the keyword's flexible track
+ * and its submit button in the radius's 160px one. The hero's layout is
+ * unchanged because its template is.
+ *
+ * **The keyword takes the most slack** — it holds up to a hundred characters
+ * where the postcode holds eight. Both stay flexible rather than one becoming
+ * fixed, because the rule this row has followed since 3.1b is that the postcode
+ * must not shrink to fit its own label: "Where are you looking?" is long, and a
+ * postcode field squeezed under it is the one people mistype. `1.4fr` to `1fr`
+ * is roughly 470px and 330px at 1280px with a category present.
+ */
+.searchWithKeyword {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 160px auto auto;
+}
+
+.keywordField,
 .searchField,
 .radiusField,
 .categoryField {

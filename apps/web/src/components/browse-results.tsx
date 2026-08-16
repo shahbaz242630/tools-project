@@ -312,6 +312,59 @@ function CouldNotSearch({ postcode }: { readonly postcode: string }) {
 }
 
 /**
+ * Whether this search narrowed by anything beyond where and how far.
+ *
+ * **One predicate rather than a condition per filter** (slice 3.3b). It exists
+ * because the rule it serves is about narrowing in general: a page may not claim
+ * the catalogue is empty on the strength of a constraint the reader chose. Written
+ * inline as `search.category === null` it was correct for one filter and silently
+ * wrong for the next, which is exactly what happened — 3.2b wrote that condition
+ * and 3.3a added a filter it does not mention.
+ *
+ * **It reads every field it must, and adding a filter to `ListingSearchQuery` is
+ * the moment to add it here.** There is no compiler help for that, which is why
+ * it is one named function with a test rather than a condition inside a
+ * paragraph of JSX: a reader adding the price filter has somewhere obvious to
+ * look, and a wrong answer here is a false sentence rather than a broken page.
+ *
+ * `postcode`, `radiusMiles` and `page` are deliberately not narrowings — the
+ * first two are the question itself and the third is a position in the answer.
+ */
+export function isNarrowed(search: ListingSearchQuery): boolean {
+  return search.category !== null || search.keyword !== null;
+}
+
+/**
+ * What to call an empty result, given what was asked for (slice 3.3b).
+ *
+ * **Four sentences from two optional narrowings**, composed rather than
+ * enumerated as nested ternaries in the JSX — which is what this replaced, and
+ * which would have become eight the moment a price filter arrived.
+ *
+ * **The category name is used exactly as an administrator typed it**, which is
+ * 3.2b's finding and is why the sentence is built around the name rather than
+ * the other way round. The first version read *"No {name} within 5 miles"* and
+ * lower-cased it to fit, which is fine for "Outdoor and gardening" and mangles
+ * "DIY tools" and "PPE". A category name is configuration, so its capitalisation
+ * is somebody's decision and not ours to normalise.
+ *
+ * **The keyword is quoted and never case-folded**, for a stronger version of the
+ * same reason: it is the reader's own text, and showing it back altered makes
+ * somebody doubt what they typed. It falls back to the unnamed wording when the
+ * category *name* is unknown — which happens when the category read failed —
+ * because inventing a label from the slug would show somebody a URL segment.
+ */
+export function emptyHeading(
+  search: ListingSearchQuery,
+  categoryName: string | null,
+): string {
+  const inCategory = categoryName === null ? '' : ` in ${categoryName}`;
+  const matching = search.keyword === null ? '' : ` matching “${search.keyword}”`;
+
+  return `Nothing${inCategory}${matching} within ${String(search.radiusMiles)} miles`;
+}
+
+/**
  * One listing on the grid.
  *
  * **The whole card is a link**, so the target is the card rather than a word
@@ -406,10 +459,38 @@ function NothingFound({
           capitalisation is somebody's decision and not ours to normalise; "in"
           costs one word and reads correctly whatever they typed.
         */}
-        {categoryName === null
-          ? `Nothing within ${String(search.radiusMiles)} miles`
-          : `Nothing in ${categoryName} within ${String(search.radiusMiles)} miles`}
+        {emptyHeading(search, categoryName)}
       </h2>
+
+      {/*
+        **Dropping the words is offered before dropping the category**, which is
+        offered before widening the radius — narrowest constraint first. A
+        keyword is by far the most likely reason a search found nothing: a
+        category is one of a handful an administrator created, and a phrase is
+        anything at all, including a typo or a word this owner did not use for
+        this thing. Widening the radius stays last because staying local is the
+        product.
+
+        Only rendered when there are words to drop, so an unkeyworded empty
+        search is unchanged from 3.2b.
+      */}
+      {search.keyword !== null && (
+        <p className={styles.emptyBody}>
+          <Link
+            href={browseHref({ ...search, keyword: null, page: FIRST_SEARCH_PAGE })}
+          >
+            Search without “{search.keyword}”
+          </Link>{' '}
+          {/*
+            Says what is left rather than just what is dropped, because the two
+            offers sit next to each other and "search without X" twice over
+            would not tell a reader which search each one leads to.
+          */}
+          {categoryName === null
+            ? `within ${String(search.radiusMiles)} miles.`
+            : `in ${categoryName} within ${String(search.radiusMiles)} miles.`}
+        </p>
+      )}
 
       {/*
         **§8.4's "category alternatives", and dropping the filter comes before
@@ -442,7 +523,7 @@ function NothingFound({
           we own, not a query they got wrong.
 
           **From slice 3.2b it must not say that while a filter is on**, and this
-          is the one place the filter changes a *claim* rather than a control.
+          is the one place a filter changes a *claim* rather than a control.
           "There is nothing listed near you yet" is a statement about the whole
           catalogue; with a category selected, all we know is that nothing in
           *that* category is within a hundred miles, and the rest of the
@@ -450,15 +531,23 @@ function NothingFound({
           somebody the platform is empty on the strength of a narrowing they
           chose — and the "Search all categories" link above is right there
           disproving it.
+
+          **Slice 3.3b generalises that rather than adding a second case beside
+          it**, which is the whole reason this reads `isNarrowed` and not
+          `search.category === null`. The rule is about *any* narrowing, and
+          writing it per filter is how the third one gets forgotten — a keyword
+          search finding nothing is the weakest possible evidence about a
+          catalogue, weaker than a category, because the words might simply not
+          be the ones an owner used.
         */
-        search.category === null ? (
+        isNarrowed(search) ? (
           <p className={styles.emptyBody}>
-            There is nothing listed near you yet. We are just getting started — if you
-            have a tool sitting idle, you could be the first.
+            Nothing matching your search is listed within a hundred miles.
           </p>
         ) : (
           <p className={styles.emptyBody}>
-            Nothing in this category is listed within a hundred miles.
+            There is nothing listed near you yet. We are just getting started — if you
+            have a tool sitting idle, you could be the first.
           </p>
         )
       ) : (

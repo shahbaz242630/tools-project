@@ -1,7 +1,43 @@
-import { render, screen } from '@testing-library/react';
-import { SEARCH_RADII_MILES } from '@platform/contracts';
+import { cleanup, render, screen } from '@testing-library/react';
+import { MAX_SEARCH_KEYWORD_LENGTH, SEARCH_RADII_MILES } from '@platform/contracts';
+import type { PublicCategory, SearchRadiusMiles } from '@platform/contracts';
 import { describe, expect, it } from 'vitest';
 import { BrowseSearch } from './browse-search';
+
+/**
+ * The form with the ordinary answer to everything a test is not about.
+ *
+ * **Added in slice 3.3b, when a required prop made eighteen call sites a
+ * compile error at once.** That was the prop doing its job — `keywordField` is
+ * required precisely so neither caller inherits a default somebody else chose —
+ * but a test about the radius should not have to restate a keyword to say so.
+ *
+ * **`keywordField: true` is the default here because Browse is the caller with
+ * the control**, and the two tests about the hero's form say `false` explicitly.
+ */
+function renderSearch(
+  overrides: {
+    postcode?: string;
+    radiusMiles?: SearchRadiusMiles;
+    category?: string | null;
+    categories?: readonly PublicCategory[];
+    keyword?: string | null;
+    keywordField?: boolean;
+    error?: string | null;
+  } = {},
+) {
+  const props = {
+    postcode: '',
+    radiusMiles: 5 as SearchRadiusMiles,
+    category: null,
+    categories: [] as readonly PublicCategory[],
+    keyword: null,
+    keywordField: true,
+    error: null,
+    ...overrides,
+  };
+  return render(<BrowseSearch {...props} />);
+}
 
 describe('the search controls', () => {
   it('offers exactly the five radii BRD §8.4 names, and no others', () => {
@@ -12,15 +48,13 @@ describe('the search controls', () => {
      * attack §8.4.1 opens by describing. This asserts the whole list rather than
      * a sample, so adding a sixth option fails here.
      */
-    render(
-      <BrowseSearch
-        postcode=""
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: '',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     const options = screen
       .getAllByRole('option')
@@ -30,43 +64,37 @@ describe('the search controls', () => {
   });
 
   it('defaults to the narrowest radius', () => {
-    render(
-      <BrowseSearch
-        postcode=""
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: '',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     expect(screen.getByLabelText('Within')).toHaveValue('5');
   });
 
   it('keeps the radius that was searched, rather than resetting it', () => {
-    render(
-      <BrowseSearch
-        postcode="BS7 8AA"
-        radiusMiles={50}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: 'BS7 8AA',
+      radiusMiles: 50,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     expect(screen.getByLabelText('Within')).toHaveValue('50');
   });
 
   it('keeps the postcode in the field, so results do not clear the search', () => {
-    render(
-      <BrowseSearch
-        postcode="BS7 8AA"
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: 'BS7 8AA',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     expect(screen.getByLabelText('Where are you looking?')).toHaveValue('BS7 8AA');
   });
@@ -77,15 +105,13 @@ describe('the search controls', () => {
      * bookmarkable, the back button work, and the page usable before hydration —
      * which matters most on the one page a stranger meets first.
      */
-    const { container } = render(
-      <BrowseSearch
-        postcode=""
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    const { container } = renderSearch({
+      postcode: '',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
     const form = container.querySelector('form');
 
     expect(form).toHaveAttribute('method', 'get');
@@ -95,15 +121,13 @@ describe('the search controls', () => {
   it('uses the contract’s own parameter names', () => {
     // A renamed field sends a parameter the API ignores, and the failure is an
     // empty results page rather than an error — the quietest kind there is.
-    render(
-      <BrowseSearch
-        postcode=""
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: '',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     expect(screen.getByLabelText('Where are you looking?')).toHaveAttribute(
       'name',
@@ -113,15 +137,13 @@ describe('the search controls', () => {
   });
 
   it('shows a problem against the field rather than at the top of the page', () => {
-    render(
-      <BrowseSearch
-        postcode="nonsense"
-        radiusMiles={5}
-        error="Postcode must be a valid UK postcode."
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: 'nonsense',
+      radiusMiles: 5,
+      error: 'Postcode must be a valid UK postcode.',
+      category: null,
+      categories: [],
+    });
 
     const field = screen.getByLabelText('Where are you looking?');
     expect(field).toHaveAttribute('aria-invalid', 'true');
@@ -129,15 +151,13 @@ describe('the search controls', () => {
   });
 
   it('marks nothing invalid when there is no problem', () => {
-    render(
-      <BrowseSearch
-        postcode="BS7 8AA"
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: 'BS7 8AA',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     expect(screen.getByLabelText('Where are you looking?')).not.toHaveAttribute(
       'aria-invalid',
@@ -145,15 +165,13 @@ describe('the search controls', () => {
   });
 
   it('is a search landmark, so it can be skipped to', () => {
-    render(
-      <BrowseSearch
-        postcode=""
-        radiusMiles={5}
-        error={null}
-        category={null}
-        categories={[]}
-      />,
-    );
+    renderSearch({
+      postcode: '',
+      radiusMiles: 5,
+      error: null,
+      category: null,
+      categories: [],
+    });
 
     expect(screen.getByRole('search')).toBeInTheDocument();
   });
@@ -174,15 +192,13 @@ describe('the search controls', () => {
     ];
 
     it('offers every category, with "all" first and selected by default', () => {
-      render(
-        <BrowseSearch
-          postcode=""
-          radiusMiles={5}
-          category={null}
-          categories={CATEGORIES}
-          error={null}
-        />,
-      );
+      renderSearch({
+        postcode: '',
+        radiusMiles: 5,
+        category: null,
+        categories: CATEGORIES,
+        error: null,
+      });
 
       const control = screen.getByLabelText('Category');
       const options = [...(control as HTMLSelectElement).options].map((option) => [
@@ -199,15 +215,13 @@ describe('the search controls', () => {
     });
 
     it('keeps the category that was searched, rather than resetting it', () => {
-      render(
-        <BrowseSearch
-          postcode="BS7 8AA"
-          radiusMiles={5}
-          category="power-tools"
-          categories={CATEGORIES}
-          error={null}
-        />,
-      );
+      renderSearch({
+        postcode: 'BS7 8AA',
+        radiusMiles: 5,
+        category: 'power-tools',
+        categories: CATEGORIES,
+        error: null,
+      });
 
       expect(screen.getByLabelText('Category')).toHaveValue('power-tools');
     });
@@ -215,15 +229,13 @@ describe('the search controls', () => {
     it('uses the contract’s own parameter name', () => {
       // A renamed field sends a parameter the API ignores, and the failure is a
       // filter that silently does nothing — the quietest kind there is.
-      render(
-        <BrowseSearch
-          postcode=""
-          radiusMiles={5}
-          category={null}
-          categories={CATEGORIES}
-          error={null}
-        />,
-      );
+      renderSearch({
+        postcode: '',
+        radiusMiles: 5,
+        category: null,
+        categories: CATEGORIES,
+        error: null,
+      });
 
       expect(screen.getByLabelText('Category')).toHaveAttribute('name', 'category');
     });
@@ -236,15 +248,13 @@ describe('the search controls', () => {
      * with the lights on.
      */
     it('renders no control when there are no categories', () => {
-      render(
-        <BrowseSearch
-          postcode=""
-          radiusMiles={5}
-          category={null}
-          categories={[]}
-          error={null}
-        />,
-      );
+      renderSearch({
+        postcode: '',
+        radiusMiles: 5,
+        category: null,
+        categories: [],
+        error: null,
+      });
 
       expect(screen.queryByLabelText('Category')).not.toBeInTheDocument();
     });
@@ -255,15 +265,13 @@ describe('the search controls', () => {
      * is narrow.
      */
     it('still carries a filter when the control could not be drawn', () => {
-      const { container } = render(
-        <BrowseSearch
-          postcode="BS7 8AA"
-          radiusMiles={5}
-          category="power-tools"
-          categories={[]}
-          error={null}
-        />,
-      );
+      const { container } = renderSearch({
+        postcode: 'BS7 8AA',
+        radiusMiles: 5,
+        category: 'power-tools',
+        categories: [],
+        error: null,
+      });
 
       expect(container.querySelector('input[name="category"]')).toHaveValue(
         'power-tools',
@@ -273,15 +281,13 @@ describe('the search controls', () => {
     it('does not render both a control and a hidden field', () => {
       // Two inputs of the same name submit twice, and the page takes the first —
       // so the person's choice would lose to the value they were changing.
-      const { container } = render(
-        <BrowseSearch
-          postcode="BS7 8AA"
-          radiusMiles={5}
-          category="power-tools"
-          categories={CATEGORIES}
-          error={null}
-        />,
-      );
+      const { container } = renderSearch({
+        postcode: 'BS7 8AA',
+        radiusMiles: 5,
+        category: 'power-tools',
+        categories: CATEGORIES,
+        error: null,
+      });
 
       expect(container.querySelectorAll('[name="category"]')).toHaveLength(1);
     });
@@ -298,15 +304,13 @@ describe('the search controls', () => {
    */
   describe('the category it was searched with', () => {
     it('is carried through the form, so changing the radius does not drop it', () => {
-      const { container } = render(
-        <BrowseSearch
-          postcode="BS7 8AA"
-          radiusMiles={5}
-          category="outdoor-gardening"
-          error={null}
-          categories={[]}
-        />,
-      );
+      const { container } = renderSearch({
+        postcode: 'BS7 8AA',
+        radiusMiles: 5,
+        category: 'outdoor-gardening',
+        error: null,
+        categories: [],
+      });
 
       expect(container.querySelector('input[name="category"]')).toHaveValue(
         'outdoor-gardening',
@@ -320,15 +324,13 @@ describe('the search controls', () => {
      * form rather than through a link.
      */
     it('emits no category field at all when there is no filter', () => {
-      const { container } = render(
-        <BrowseSearch
-          postcode="BS7 8AA"
-          radiusMiles={5}
-          category={null}
-          error={null}
-          categories={[]}
-        />,
-      );
+      const { container } = renderSearch({
+        postcode: 'BS7 8AA',
+        radiusMiles: 5,
+        category: null,
+        error: null,
+        categories: [],
+      });
 
       expect(container.querySelector('input[name="category"]')).toBeNull();
     });
@@ -339,17 +341,135 @@ describe('the search controls', () => {
      * have not seen the start of.
      */
     it('never carries a page, because submitting is a new search', () => {
-      const { container } = render(
-        <BrowseSearch
-          postcode="BS7 8AA"
-          radiusMiles={5}
-          category="outdoor-gardening"
-          error={null}
-          categories={[]}
-        />,
-      );
+      const { container } = renderSearch({
+        postcode: 'BS7 8AA',
+        radiusMiles: 5,
+        category: 'outdoor-gardening',
+        error: null,
+        categories: [],
+      });
 
       expect(container.querySelector('input[name="page"]')).toBeNull();
     });
+  });
+});
+
+/**
+ * The keyword field (slice 3.3b).
+ *
+ * **The form's half of keyword search.** What it may be set to, what it does
+ * when empty, and the one caller that deliberately does not draw it.
+ */
+describe('the keyword field', () => {
+  it('asks what somebody is looking for', () => {
+    renderSearch();
+
+    expect(screen.getByLabelText('What are you looking for?')).toBeTruthy();
+  });
+
+  /*
+   * **The one optional control on this form**, and the assertion is worth
+   * having because `required` is the default instinct on a search box. A search
+   * with no words is the ordinary case — it is what "show me everything near
+   * me" looks like — and requiring words would make the commonest search on the
+   * page impossible to run.
+   */
+  it('never requires words, because a search without them is the normal case', () => {
+    renderSearch();
+
+    expect(screen.getByLabelText('What are you looking for?')).not.toBeRequired();
+  });
+
+  it('keeps the words that were searched for, so results do not clear them', () => {
+    renderSearch({ keyword: 'hedge trimmer' });
+
+    expect(screen.getByLabelText('What are you looking for?')).toHaveValue(
+      'hedge trimmer',
+    );
+  });
+
+  it('is empty when nothing was searched for', () => {
+    renderSearch({ keyword: null });
+
+    expect(screen.getByLabelText('What are you looking for?')).toHaveValue('');
+  });
+
+  /*
+   * **The contract's own parameter name.** A name invented here would send a
+   * parameter the API ignores, and the failure is not an error — it is a search
+   * that quietly returns everything, which is the quietest kind.
+   */
+  it('posts under the name the API reads', () => {
+    const { container } = renderSearch();
+
+    expect(container.querySelector('input[name="keyword"]')).not.toBeNull();
+  });
+
+  /*
+   * **The browser refuses what the API would**, rather than letting somebody
+   * type a paragraph and be told no after they submit. The bound is the
+   * contract's, so the two cannot drift.
+   */
+  it('bounds the length in the browser at the contract’s own limit', () => {
+    renderSearch();
+
+    expect(screen.getByLabelText('What are you looking for?')).toHaveAttribute(
+      'maxlength',
+      String(MAX_SEARCH_KEYWORD_LENGTH),
+    );
+  });
+
+  /*
+   * **A placeholder naming nothing in the fixture**, which is the postcode
+   * field's lesson from 3.1b: its placeholder was the local fixture's own
+   * postcode, and that made the disclosure check on the rendered page
+   * unreadable — a grep could not tell a leak from an example.
+   */
+  it('suggests a tool that is not the name of anything we have', () => {
+    renderSearch();
+
+    const placeholder = screen
+      .getByLabelText('What are you looking for?')
+      .getAttribute('placeholder');
+
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.toLowerCase()).not.toContain('trimmer');
+    expect(placeholder?.toLowerCase()).not.toContain('drill');
+  });
+
+  /*
+   * **The landing hero draws no keyword box, and that is a decision** — 3.1e's,
+   * unchanged: the hero asks the one question that must be answered before
+   * anything can happen. Pinned rather than left to the call site, the same way
+   * the absent category `select` is, so turning it on is a deliberate act with a
+   * failing test rather than a prop somebody noticed.
+   */
+  it('is absent when the caller does not ask for it, as the hero does not', () => {
+    renderSearch({ keywordField: false });
+
+    expect(screen.queryByLabelText('What are you looking for?')).toBeNull();
+  });
+
+  it('emits no keyword parameter at all when there is no control', () => {
+    const { container } = renderSearch({ keywordField: false, keyword: null });
+
+    expect(container.querySelector('input[name="keyword"]')).toBeNull();
+  });
+
+  /*
+   * **The layout modifier travels with the control rather than with a caller.**
+   * A form drawing five controls against a four-column template puts the radius
+   * in the keyword's track and the submit button in the radius's — which is
+   * what would happen if this class were something the page passed in.
+   */
+  it('lays itself out for the extra column only when it draws one', () => {
+    const { container: withField } = renderSearch({ keywordField: true });
+    const withClass = withField.querySelector('form')?.className ?? '';
+    cleanup();
+
+    const { container: without } = renderSearch({ keywordField: false });
+    const withoutClass = without.querySelector('form')?.className ?? '';
+
+    expect(withClass).not.toBe(withoutClass);
   });
 });
