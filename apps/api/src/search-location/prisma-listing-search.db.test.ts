@@ -148,13 +148,16 @@ function nthPage(page: number, size: number) {
  *
  * **`categoryId: null` is the default deliberately**, so every test written
  * before this slice keeps asserting exactly what it asserted: an unfiltered
- * search. The filter tests are the ones that say so.
+ * search. The filter tests are the ones that say so. **`keyword: null` joins it
+ * on the same terms in slice 3.3a**, and for the same reason: every test in this
+ * file predating the keyword must keep meaning what it meant.
  */
 function searchFor(overrides: Partial<NearbySearch> = {}): NearbySearch {
   return {
     originPostcode: ORIGIN_POSTCODE,
     radiusMiles: 5,
     categoryId: null,
+    keyword: null,
     window: PAGE_ONE,
     ...overrides,
   };
@@ -212,9 +215,23 @@ async function givenAListing(
     truePoint = publishedPoint === null ? null : southOf(publishedPoint, ORDINARY_FUZZ),
     visible = true,
     category = null,
+    title = 'Petrol lawn scarifier',
+    description = 'Serviced last spring.',
   }: {
     truePoint?: Point | null;
     visible?: boolean;
+    /**
+     * The words this listing can be found by (slice 3.3a).
+     *
+     * **Settable rather than fixed, and defaulted to what every earlier test
+     * already had** — so nothing written before this slice changes meaning, and
+     * a keyword test says in its own body which words it expects to match. The
+     * document itself is written by a database trigger from exactly these two
+     * columns, so a test that sets them is exercising the real derivation rather
+     * than a fixture of it.
+     */
+    title?: string;
+    description?: string;
     /**
      * Which category to list in (slice 3.2a).
      *
@@ -234,8 +251,8 @@ async function givenAListing(
   const listing = await store.createDraft({
     ownerId: owner,
     categorySlug: inCategory.slug,
-    title: 'Petrol lawn scarifier',
-    description: 'Serviced last spring.',
+    title,
+    description,
     replacementValue: { amount: 24_999, currency: 'GBP' },
     attributes: {},
     transportRequirement: null,
@@ -621,6 +638,291 @@ describe('narrowing to one category (slice 3.2a)', () => {
     await expect(
       search.findWithin(searchFor({ categoryId: "' OR 1=1 --" })),
     ).rejects.toThrow();
+  });
+});
+
+/**
+ * Narrowing to words (slice 3.3a).
+ *
+ * **This is the only file that can say anything about matching.** The unit fake
+ * models the predicate's *shape* — that it composes with the others and runs
+ * before the page is sliced — and deliberately does not model stemming, phrases
+ * or punctuation, because reimplementing an English stemmer in a fake proves
+ * only that two implementations agree. Everything below needs a real Postgres, a
+ * real `tsvector` written by the real trigger, and `websearch_to_tsquery`.
+ */
+describe('narrowing to words (slice 3.3a)', () => {
+  it('finds a listing by a word in its title', async () => {
+    const trimmer = await givenAListing(northOf(1_000), {
+      title: 'Petrol hedge trimmer',
+    });
+    await givenAListing(northOf(2_000), { title: 'SDS+ rotary hammer drill' });
+
+    const page = await search.findWithin(searchFor({ keyword: 'trimmer' }));
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([trimmer]);
+  });
+
+  /*
+   * **The description is searched too, and that is why the column is a document
+   * rather than the title.** An owner who wrote "ideal for hedges" in the prose
+   * and called the thing by its brand name is findable, which is most of what a
+   * keyword search is for on a catalogue people describe in their own words.
+   */
+  it('finds a listing by a word in its description', async () => {
+    const found = await givenAListing(northOf(1_000), {
+      title: 'Stihl HS 45',
+      description: 'Ideal for cutting a hedge.',
+    });
+    await givenAListing(northOf(2_000), { title: 'SDS+ rotary hammer drill' });
+
+    const page = await search.findWithin(searchFor({ keyword: 'hedge' }));
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([found]);
+  });
+
+  /*
+   * **The reason this is full-text search and not a `LIKE`.** Nobody types the
+   * exact inflection an owner wrote, and a substring match would find `trimmer`
+   * inside `trimmers` while failing the reverse — which is the direction a
+   * searcher actually types.
+   */
+  it.each([
+    ['trimmers', 'Petrol hedge trimmer'],
+    ['trimmer', 'Petrol hedge trimmers'],
+    ['cutting', 'Cut a hedge with it'],
+  ])('matches %j against %j, because it stems', async (keyword, title) => {
+    const id = await givenAListing(northOf(1_000), { title });
+    /*
+     * **A listing that must *not* match, and it is here because the first
+     * version of this test did not have one.** With a single seeded row the
+     * assertion held whether the predicate ran or not — deleting the keyword
+     * fragment from the adapter left all three of these green, which is how it
+     * was found. A test of a filter needs something for the filter to exclude.
+     */
+    await givenAListing(northOf(2_000), { title: 'SDS+ rotary hammer drill' });
+
+    const page = await search.findWithin(searchFor({ keyword }));
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([id]);
+  });
+
+  /*
+   * **Two words mean both of them.** `websearch_to_tsquery` reads unquoted words
+   * as a conjunction, which is what somebody typing two words expects and is the
+   * one semantic worth pinning: an implementation that used `plainto_tsquery`'s
+   * older behaviour or an OR would return a page full of near-misses.
+   */
+  it('requires every word, not any of them', async () => {
+    const both = await givenAListing(northOf(1_000), { title: 'Petrol hedge trimmer' });
+    await givenAListing(northOf(2_000), { title: 'Petrol lawn mower' });
+
+    const page = await search.findWithin(searchFor({ keyword: 'petrol trimmer' }));
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([both]);
+  });
+
+  /*
+   * **Nothing a person can type is a syntax error**, which is the whole reason
+   * for `websearch_to_tsquery` over `to_tsquery`. Each of these raises on the
+   * older function, and each is a perfectly ordinary thing to type into a box on
+   * a page anybody on the internet can load — so each would have been a 500 on
+   * the most exposed route in the system.
+   */
+  it.each(['hedge & trimmer', '!!!', 'hedge | (trimmer', '3" drill bit', '<->'])(
+    'answers %j rather than raising',
+    async (keyword) => {
+      await givenAListing(northOf(1_000), { title: 'Petrol hedge trimmer' });
+
+      await expect(search.findWithin(searchFor({ keyword }))).resolves.toBeDefined();
+    },
+  );
+
+  /*
+   * **A quote cannot end the string**, which is the injection check the category
+   * filter's twin makes about a uuid cast. The term is a bound parameter inside
+   * the `Prisma.sql` fragment, so this is a search for a strange phrase rather
+   * than a statement — and the assertion is that it *runs and finds nothing*,
+   * not that it throws.
+   */
+  it('treats SQL as words rather than as SQL', async () => {
+    await givenAListing(northOf(1_000), { title: 'Petrol hedge trimmer' });
+
+    const page = await search.findWithin(
+      searchFor({ keyword: "'; DROP TABLE listings; --" }),
+    );
+
+    expect(page?.matches).toEqual([]);
+    // The table it named is still there, which is the half worth stating out loud.
+    await expect(client.listing.count()).resolves.toBeGreaterThan(0);
+  });
+
+  /*
+   * **The keyword composes with the radius rather than replacing it.** A text
+   * search that quietly widened the search area would be the most plausible way
+   * to break this: the words are the interesting part, and it is easy to write a
+   * query where they become the only predicate.
+   */
+  it('still respects the radius', async () => {
+    await givenAListing(northOf(milesToMetres(9)), { title: 'Petrol hedge trimmer' });
+
+    const page = await search.findWithin(searchFor({ keyword: 'trimmer' }));
+
+    expect(page?.matches).toEqual([]);
+  });
+
+  /** And with the category, which is the pair a real Browse search sends. */
+  it('composes with the category filter', async () => {
+    const wanted = await givenACategory();
+    const other = await givenACategory();
+
+    const target = await givenAListing(northOf(1_000), {
+      category: wanted,
+      title: 'Petrol hedge trimmer',
+    });
+    await givenAListing(northOf(1_200), {
+      category: other,
+      title: 'Petrol hedge trimmer',
+    });
+    await givenAListing(northOf(1_400), { category: wanted, title: 'Lawn mower' });
+
+    const page = await search.findWithin(
+      searchFor({ categoryId: wanted.id, keyword: 'trimmer' }),
+    );
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([target]);
+  });
+
+  /*
+   * **And with the visibility predicate.** A keyword must not become a way to
+   * reach a listing the platform has hidden — which is the one failure here that
+   * would be a disclosure rather than a wrong result.
+   */
+  it('never surfaces a listing that is not publicly visible', async () => {
+    const hidden = await givenAListing(northOf(1_000), {
+      title: 'Petrol hedge trimmer',
+    });
+    await setState(hidden, 'PUBLISHED', 'UNDER_REVIEW');
+
+    const page = await search.findWithin(searchFor({ keyword: 'trimmer' }));
+
+    expect(page?.matches).toEqual([]);
+  });
+
+  /*
+   * **The filter runs inside the query, not after it** — the category filter's
+   * test one filter along, and the same filter-after-paginate bug.
+   */
+  it('pages over the matching set, not over the unmatched one', async () => {
+    const first = await givenAListing(northOf(1_000), {
+      title: 'Petrol hedge trimmer',
+    });
+    await givenAListing(northOf(1_500), { title: 'Lawn mower' });
+    const second = await givenAListing(northOf(2_000), {
+      title: 'Cordless hedge trimmer',
+    });
+    await givenAListing(northOf(2_500), { title: 'Rotary hammer drill' });
+    const third = await givenAListing(northOf(3_000), {
+      title: 'Long-reach hedge trimmer',
+    });
+
+    const page = await search.findWithin(
+      searchFor({ keyword: 'trimmer', window: nthPage(1, 2) }),
+    );
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([first, second]);
+    expect(page?.truncated).toBe(true);
+
+    const next = await search.findWithin(
+      searchFor({ keyword: 'trimmer', window: nthPage(2, 2) }),
+    );
+
+    expect(next?.matches.map((match) => match.listingId)).toEqual([third]);
+    expect(next?.truncated).toBe(false);
+  });
+
+  /*
+   * **Still nearest-first, and this is the product decision asserted as a test.**
+   * A keyword search returns the *nearest* match rather than the best-matching
+   * one — see `searchKeywordSchema`. The listing whose title is exactly the query
+   * is deliberately the far one, so a `ts_rank` slipped into the `ORDER BY` would
+   * fail here rather than pass unnoticed.
+   */
+  it('orders by distance and not by how well the words matched', async () => {
+    const near = await givenAListing(northOf(1_000), {
+      title: 'Petrol hedge trimmer with a long reach and other things',
+      description: 'A general description mentioning nothing in particular.',
+    });
+    const far = await givenAListing(northOf(4_000), {
+      title: 'Trimmer',
+      description: 'Trimmer trimmer trimmer.',
+    });
+
+    const page = await search.findWithin(searchFor({ keyword: 'trimmer' }));
+
+    expect(page?.matches.map((match) => match.listingId)).toEqual([near, far]);
+  });
+
+  /*
+   * **The projection is unchanged**, the disclosure check repeated for the third
+   * composed statement. `Prisma.sql` cannot widen a `SELECT`; proved rather than
+   * asserted, because the whole shape rests on it.
+   */
+  it('returns nothing but an id and a bucket when keyworded', async () => {
+    await givenAListing(northOf(1_000), { title: 'Petrol hedge trimmer' });
+
+    const page = await search.findWithin(searchFor({ keyword: 'trimmer' }));
+    const match = page?.matches[0];
+
+    expect(match).toBeDefined();
+    expect(Object.keys(match ?? {}).sort()).toEqual(['distance', 'listingId']);
+    expect(JSON.stringify(page)).not.toContain('Ashley Down');
+    expect(JSON.stringify(page)).not.toContain('BS7 8AA');
+  });
+
+  /*
+   * **The document follows an edit, because the trigger fires on UPDATE too.**
+   * The failure this guards is the quiet one: a listing renamed by its owner
+   * stays findable under its old title and unfindable under its new one, with
+   * nothing anywhere reporting it and no error to notice.
+   */
+  it('follows a retitled listing rather than remembering the old words', async () => {
+    const id = await givenAListing(northOf(1_000), { title: 'Petrol hedge trimmer' });
+    const owner = await client.listing.findUniqueOrThrow({ where: { id } });
+
+    await store.update(id, owner.ownerId, {
+      title: 'Cordless lawn mower',
+      description: 'Serviced last spring.',
+      replacementValue: { amount: 24_999, currency: 'GBP' },
+      attributes: {},
+      transportRequirement: null,
+      requiresTwoPersonLift: false,
+      // `address-only`, so the point this test searches from is left exactly
+      // where it was — the edit under test is the title and nothing else.
+      collectionLocation: {
+        kind: 'address-only',
+        location: {
+          line1: '14 Ashley Down Road',
+          line2: null,
+          town: 'Bristol',
+          postcode: 'BS7 8AA',
+        },
+      },
+      rates: { daily: { amount: 1_800, currency: 'GBP' }, weekend: null, weekly: null },
+      categoryVersionNumber: 1,
+    });
+
+    await expect(
+      search
+        .findWithin(searchFor({ keyword: 'trimmer' }))
+        .then((page) => page?.matches.length),
+    ).resolves.toBe(0);
+
+    await expect(
+      search
+        .findWithin(searchFor({ keyword: 'mower' }))
+        .then((page) => page?.matches.map((match) => match.listingId)),
+    ).resolves.toEqual([id]);
   });
 });
 

@@ -50,7 +50,15 @@ export const DEEPEST_OFFSET = (20 - 1) * PAGE_SIZE;
  */
 export function buildQuery(
   source,
-  { longitude, latitude, radiusMetres, limit, offset, categoryId = null },
+  {
+    longitude,
+    latitude,
+    radiusMetres,
+    limit,
+    offset,
+    categoryId = null,
+    keyword = null,
+  },
 ) {
   const start = source.indexOf('$queryRaw');
   if (start === -1) throw new Error('No $queryRaw found in the adapter.');
@@ -103,6 +111,25 @@ export function buildQuery(
     [
       'inCategory',
       categoryId === null ? '' : `AND l."categoryId" = '${categoryId}'::uuid`,
+    ],
+    /*
+     * **The second composed predicate, on the same terms** — slice 3.3a. Absent
+     * substitutes to the empty string so the unkeyworded statement stays the one
+     * slice 3.1c measured.
+     *
+     * **The quoting here is this file's own problem and not the adapter's.** The
+     * application binds the term as a parameter, so nothing a searcher types can
+     * become syntax; this script has no parameter binding and interpolates, so
+     * the quote is doubled. That is safe because the only caller is
+     * `measure-search.mjs` with a term it chose itself — but it is exactly the
+     * kind of asymmetry worth stating, because a reader who copies this line
+     * back into the adapter would be writing an injection.
+     */
+    [
+      'matchesKeyword',
+      keyword === null
+        ? ''
+        : `AND l."searchDocument" @@ websearch_to_tsquery('english', '${String(keyword).replaceAll("'", "''")}')`,
     ],
   ]);
 

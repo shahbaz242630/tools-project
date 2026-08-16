@@ -108,6 +108,25 @@ export interface ListingSearchSample {
    * keeps working unchanged.
    */
   readonly filtered: boolean;
+  /**
+   * Whether the searcher typed words as well as a postcode (slice 3.3a).
+   *
+   * **A boolean, and the rule above binds harder here than it did there.** A
+   * category slug is at least a closed set somebody deliberately created; a
+   * search term is free text a stranger typed, so it can contain a name, a
+   * street, a full postcode, or anything else a person puts in a box. A label is
+   * held in process memory and exported to a scraper that has none of §10.1's
+   * retention or erasure rules — a deletion request cannot reach it and nobody
+   * would think to look for personal data there. **The term must never be a
+   * label, and it is not logged either.**
+   *
+   * What is worth knowing is the same question one filter along: **whether
+   * searching for words is what emptied the page.** A marketplace whose
+   * zero-result rate is driven by keywords has a catalogue-description problem
+   * rather than the inventory-density problem BRD §17 predicts, and those want
+   * opposite responses. Forty series become eighty.
+   */
+  readonly keyworded: boolean;
 }
 
 /**
@@ -320,8 +339,8 @@ export function createPrometheusMetrics(options: {
    */
   const listingSearches = new Counter({
     name: 'listing_searches_total',
-    help: 'Public listing searches, by radius, category filtering and what the searcher got back.',
-    labelNames: ['radius', 'outcome', 'filtered'],
+    help: 'Public listing searches, by radius, whether they were filtered or keyworded, and what the searcher got back.',
+    labelNames: ['radius', 'outcome', 'filtered', 'keyworded'],
     registers: [registry],
   });
 
@@ -368,12 +387,15 @@ export function createPrometheusMetrics(options: {
       listingSearches.inc({
         // A label value is a string in the exposition either way; converting it
         // here rather than at the call site keeps the caller's type the closed
-        // numeric union, which is what bounds this to forty series.
+        // numeric union, which is what bounds this to eighty series.
         radius: String(sample.radiusMiles),
         outcome: sample.outcome,
-        // Likewise a boolean at the call site, so the only two values this can
-        // ever take are the two the type allows.
+        // Likewise booleans at the call site, so the only two values each of
+        // these can ever take are the two the type allows. Neither the category
+        // nor the search term reaches this object at all — see the field
+        // docblocks, and note that the term is the one that could carry a name.
         filtered: String(sample.filtered),
+        keyworded: String(sample.keyworded),
       });
     },
 

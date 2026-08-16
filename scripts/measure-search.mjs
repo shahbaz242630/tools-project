@@ -236,6 +236,53 @@ function main() {
     console.log(filteredRow);
   }
 
+  /*
+   * **What the keyword filter costs** — slice 3.3a, and the claim it answers is
+   * whether the GIN index earns its place.
+   *
+   * **The worst case here is the opposite of the category filter's, and that is
+   * the thing to understand before reading the number.** A filter is most
+   * expensive when it excludes nothing, so 3.2a measured against the category
+   * holding every listing. A *text* predicate that matches everything is not the
+   * expensive case — it is the one where the planner abandons the GIN index and
+   * scans, which is a different query rather than a slower one. So this measures
+   * a term the generator puts in **every** seeded title, which keeps the row
+   * count identical to the unkeyworded search and isolates the cost of the match
+   * itself.
+   *
+   * **A term matching nothing is measured too**, because it is the case a real
+   * searcher hits most and the one where the index should do the most work.
+   */
+  /*
+   * **The generator's own tag, rather than a second constant that could drift**
+   * — every seeded title is `LOADTEST tool N`, and if that ever changes the
+   * generator's `--clean` breaks in the same edit and does so loudly.
+   */
+  for (const [label, keyword] of [
+    ['matching every listing', 'loadtest'],
+    ['matching nothing', 'zzzznothingmatchesthis'],
+  ]) {
+    const keyworded = buildQuery(source, {
+      longitude: ORIGINS[0][2],
+      latitude: ORIGINS[0][1],
+      radiusMetres: 100 * METRES_PER_MILE,
+      limit: PAGE_SIZE,
+      offset: 0,
+      keyword,
+    });
+    timeOnce(database, keyworded);
+    const keywordTimings = [];
+    for (let run = 0; run < runs; run += 1) {
+      keywordTimings.push(timeOnce(database, keyworded));
+    }
+    const keywordP95 = percentile(keywordTimings, 0.95);
+    worst = Math.max(worst, keywordP95);
+
+    // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
+    const keywordRow = `${'London'.padEnd(9)} 100 mi   p50 ${percentile(keywordTimings, 0.5).toFixed(1).padStart(7)} ms   p95 ${keywordP95.toFixed(1).padStart(7)} ms   ${keywordP95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (keyword ${label})`;
+    console.log(keywordRow);
+  }
+
   // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
   const summary = `\nWorst p95: ${worst.toFixed(1)} ms (target ${TARGET_P95_MS} ms)`;
   console.log(summary);

@@ -1101,12 +1101,42 @@ model Listing {
   moderatedBy   User?     @relation("ListingModerator", fields: [moderatedById], references: [id])
   moderatedAt   DateTime? @db.Timestamptz(3)
 
+  /// The words this listing can be found by — BRD §8.4's free-text filter
+  /// (slice 3.3a).
+  ///
+  /// **Nullable and `Unsupported`, for `listing_locations.fuzzedPoint`'s exact
+  /// reason.** Prisma has no `tsvector` any more than it has `geography`, and
+  /// §4.2's rule generalises: a *required* `Unsupported` column blocks ordinary
+  /// Prisma Client writes on the model, and this is the central model of the
+  /// entire catalogue. Nullable, it stays fully writable and only the search
+  /// query needs raw SQL.
+  ///
+  /// **Derived from `title` and `description` by trigger, never written by
+  /// application code** — again the same shape as the fuzzed point, deliberately,
+  /// so there is one pattern in this schema for "a column Prisma cannot hold"
+  /// rather than two. Title is weighted above description.
+  ///
+  /// **Nothing from `listing_locations` is in it, and nothing may be added.**
+  /// That table holds the encrypted street lines and the full postcode, and a
+  /// text index over them would be exactly the disclosure §8.4.1's two-table
+  /// split exists to make structurally impossible. The publishable district and
+  /// town are not in it either — they are already a filter of their own, and
+  /// indexing them would let a keyword match a place name and quietly widen a
+  /// search nobody widened.
+  searchDocument Unsupported("tsvector")?
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   /// The only query this slice makes: this owner's listings, newest first. The
   /// owner dashboard (2.9) wants the same order.
   @@index([ownerId, createdAt(sort: Desc)])
+  /// Declared here as well as created in the migration so the datamodel and the
+  /// database agree — `listing_locations`' GiST index carries the same note and
+  /// the same warning. Without it `prisma migrate diff` reports drift and
+  /// `migrate dev` would helpfully write a migration dropping the index this
+  /// slice's whole query depends on.
+  @@index([searchDocument], type: Gin)
   @@map("listings")
 }
 

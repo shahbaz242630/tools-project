@@ -24,6 +24,7 @@ const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery =
   radiusMiles: 5,
   page: 1,
   category: null,
+  keyword: null,
   ...over,
 });
 

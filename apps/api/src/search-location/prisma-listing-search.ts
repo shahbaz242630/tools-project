@@ -53,6 +53,16 @@ import type {
  * fragment leaves the unfiltered statement **byte-identical to the one 3.1c
  * timed**, so that measurement stands unchanged and only the filtered path is
  * new work to measure.
+ *
+ * **Slice 3.3a adds a second optional fragment on the same terms**, and one
+ * thing about it is worth stating because it is what a later reader will want to
+ * "improve": **the keyword does not touch the `ORDER BY`.** A text search that
+ * did not rank by relevance looks like an oversight and is a decision — §8.4
+ * requires ranking to be explainable, this is a hyperlocal marketplace where
+ * nearest-first *is* the product, and `ts_rank` in the sort would replace a
+ * total order the paging depends on (ADR 0045) with a score that ties freely.
+ * Ranking by relevance is a change to make deliberately, with a tiebreak and a
+ * paging test, not one to slip into a `SELECT`.
  */
 export class PrismaListingSearch implements ListingSearchRepository {
   constructor(
@@ -106,6 +116,37 @@ export class PrismaListingSearch implements ListingSearchRepository {
         : Prisma.sql`AND l."categoryId" = ${search.categoryId}::uuid`;
 
     /*
+     * **The same absent-rather-than-always-true treatment, for the same reason**
+     * (slice 3.3a). An unkeyworded search must remain the statement slice 3.1c
+     * measured the exit gate against, and `(${keyword} IS NULL OR …)` would put
+     * a dead predicate on every row of every search on the platform.
+     *
+     * **`websearch_to_tsquery` rather than `to_tsquery`, and that is a
+     * robustness decision rather than a stylistic one.** `to_tsquery` raises a
+     * syntax error on input it cannot parse — so a searcher typing `&`, `!`, an
+     * unbalanced bracket or two words with a space would get a 500 from the one
+     * public route anybody on the internet can call. `websearch_to_tsquery`
+     * parses anything: it takes what a person types, treats quoted runs as
+     * phrases and bare words as an AND, and never throws.
+     *
+     * **The term is a bound parameter, never interpolated**, exactly as the
+     * category id is — `Prisma.sql` carries its placeholder into the composed
+     * statement, so this is not string-building SQL and nothing a searcher types
+     * can become syntax. That is the control; the length bound in the contract
+     * is the second one, and it is about cost rather than injection.
+     *
+     * **`'english'` as a literal here too.** The trigger that writes the column
+     * uses the same literal, and the two must agree — a session with a different
+     * `default_text_search_config` would stem the query by rules the document
+     * was not written under, and the symptom is not an error but a listing that
+     * quietly stops matching its own title.
+     */
+    const matchesKeyword =
+      search.keyword === null
+        ? Prisma.empty
+        : Prisma.sql`AND l."searchDocument" @@ websearch_to_tsquery('english', ${search.keyword})`;
+
+    /*
      * **`ST_MakePoint` takes longitude first — x then y** — which is the reverse
      * of how the pair is spoken and written everywhere else in this codebase,
      * and is the single easiest thing here to get wrong. The trigger that
@@ -147,6 +188,7 @@ export class PrismaListingSearch implements ListingSearchRepository {
       WHERE l."status" = ${PUBLICLY_VISIBLE_STATUS}
         AND l."moderationState" = ${PUBLICLY_VISIBLE_MODERATION}
         ${inCategory}
+        ${matchesKeyword}
         AND ST_DWithin(
               loc."fuzzedPoint",
               ST_SetSRID(ST_MakePoint(${origin.longitude}, ${origin.latitude}), 4326)::geography,

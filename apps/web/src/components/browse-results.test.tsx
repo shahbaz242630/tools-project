@@ -31,6 +31,7 @@ const page = (
   radiusMiles: 5,
   page: 1,
   category: null,
+  keyword: null,
   // The default is the ordinary case — we placed the origin and ran the query —
   // so every test below reads as being about what the search *found*. The one
   // group that overrides it is the one about not having searched at all.
@@ -50,6 +51,7 @@ const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery =
   radiusMiles: 5,
   page: 1,
   category: null,
+  keyword: null,
   ...over,
 });
 

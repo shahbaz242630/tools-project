@@ -3036,19 +3036,20 @@ describe('searching for listings near a postcode', () => {
     radiusMiles = 5 as 5 | 10 | 20 | 50 | 100,
     page = 1,
     category = null as string | null,
+    keyword = null as string | null,
   } = {}) {
     // **No authorization header**, which is the whole point of the route. A
     // test that passed a token would prove nothing about the case that matters.
     return app.inject({
       method: 'GET',
-      url: publicListingSearchPath({ postcode, radiusMiles, page, category }),
+      url: publicListingSearchPath({ postcode, radiusMiles, page, category, keyword }),
     });
   }
 
   /** A published listing, placed a given distance from wherever a search starts. */
   async function givenAListing(
     metresAway: number,
-    { token = 'alice-token', categorySlug = 'outdoor-gardening' } = {},
+    { token = 'alice-token', categorySlug = 'outdoor-gardening', text = '' } = {},
   ) {
     const created = parseOwnerListing(
       (await createListing(token, { ...PUBLISHABLE, categorySlug })).json(),
@@ -3066,8 +3067,19 @@ describe('searching for listings near a postcode', () => {
      * a fake that knew only the distance would let a service that dropped the
      * category filter pass every test here.
      */
+    /*
+     * **And with its searchable text** (slice 3.3a), for the reason above one
+     * filter along. `text` defaults to empty, so a listing created by a test
+     * that is not about keywords matches no keyword — which is what makes a
+     * keyword test that passes mean something.
+     *
+     * **This proves the term is passed and applied, and nothing about matching.**
+     * The fake's rule is cruder than `websearch_to_tsquery` on purpose;
+     * stemming, phrases and punctuation live in
+     * `prisma-listing-search.db.test.ts` and can only live there.
+     */
     const category = await listings.categories.findBySlug(categorySlug);
-    listings.proximity.places(created.id, metresAway, category?.id ?? null);
+    listings.proximity.places(created.id, metresAway, category?.id ?? null, text);
     return created;
   }
 
@@ -3407,7 +3419,7 @@ describe('searching for listings near a postcode', () => {
       await search({ radiusMiles: 20 });
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 20, outcome: 'found', filtered: false },
+        { radiusMiles: 20, outcome: 'found', filtered: false, keyworded: false },
       ]);
     });
 
@@ -3422,7 +3434,7 @@ describe('searching for listings near a postcode', () => {
       await search();
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'empty', filtered: false },
+        { radiusMiles: 5, outcome: 'empty', filtered: false, keyworded: false },
       ]);
     });
 
@@ -3441,7 +3453,7 @@ describe('searching for listings near a postcode', () => {
       await search();
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'unplaceable', filtered: false },
+        { radiusMiles: 5, outcome: 'unplaceable', filtered: false, keyworded: false },
       ]);
     });
 
@@ -3456,7 +3468,7 @@ describe('searching for listings near a postcode', () => {
       await search({ page: 4 });
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'beyond_end', filtered: false },
+        { radiusMiles: 5, outcome: 'beyond_end', filtered: false, keyworded: false },
       ]);
     });
 
@@ -3505,11 +3517,34 @@ describe('searching for listings near a postcode', () => {
       await search({ category: 'outdoor-gardening' });
 
       expect(listings.metrics.listingSearches).toEqual([
-        { radiusMiles: 5, outcome: 'found', filtered: true },
+        { radiusMiles: 5, outcome: 'found', filtered: true, keyworded: false },
       ]);
       expect(JSON.stringify(listings.metrics.listingSearches)).not.toContain(
         'outdoor-gardening',
       );
+    });
+
+    /*
+     * **The same rule for the search term, and it is the one that matters most**
+     * (slice 3.3a). A category slug is at least a set an administrator created;
+     * a search term is whatever a stranger typed, so it is the only thing this
+     * system could label with that is unbounded, free text *and* public-supplied.
+     * The term used here is deliberately something that would be alarming to
+     * find in a metrics registry.
+     */
+    it('marks a keyworded search without recording the words', async () => {
+      await givenAListing(800);
+
+      await search({ keyword: 'hedge trimmer BS7 8AA' });
+
+      expect(listings.metrics.listingSearches).toEqual([
+        { radiusMiles: 5, outcome: 'empty', filtered: false, keyworded: true },
+      ]);
+
+      const recorded = JSON.stringify(listings.metrics.listingSearches);
+      expect(recorded).not.toContain('hedge');
+      expect(recorded).not.toContain('trimmer');
+      expect(recorded).not.toContain('BS7');
     });
 
     it('counts the geocode as well as the search, through one shared helper', async () => {
@@ -3696,6 +3731,174 @@ describe('searching for listings near a postcode', () => {
       await search();
 
       expect(listings.proximity.categories).toEqual([null]);
+    });
+  });
+
+  /**
+   * Narrowing to words (slice 3.3a).
+   *
+   * **What this describe block can prove, and what it cannot.** It proves the
+   * route accepts the parameter, that the parsed term reaches the query, that
+   * the response says which words it answered, and that nothing about it is a
+   * refusal. It proves **nothing** about matching — the proximity fake's rule is
+   * deliberately cruder than `websearch_to_tsquery`, and the real semantics live
+   * in `prisma-listing-search.db.test.ts` against a real Postgres.
+   */
+  describe('narrowing to words', () => {
+    it('returns only listings whose text matches', async () => {
+      const wanted = await givenAListing(800, { text: 'petrol hedge trimmer' });
+      await givenAListing(900, { text: 'sds rotary hammer drill' });
+
+      const results = parsePublicListingSearchResults(
+        (await search({ keyword: 'trimmer' })).json(),
+      );
+
+      expect(results.results.map((result) => result.id)).toEqual([wanted.id]);
+    });
+
+    /*
+     * **The response says which words it answered**, the radius's reason again
+     * and sharper: a page reading "nothing near you" when a keyword was applied
+     * is a claim about the area made on the evidence of one search term.
+     */
+    it('echoes the keyword it searched for', async () => {
+      await givenAListing(800, { text: 'petrol hedge trimmer' });
+
+      const keyworded = parsePublicListingSearchResults(
+        (await search({ keyword: 'trimmer' })).json(),
+      );
+      const plain = parsePublicListingSearchResults((await search()).json());
+
+      expect(keyworded.keyword).toBe('trimmer');
+      expect(plain.keyword).toBeNull();
+    });
+
+    /*
+     * **Trimmed on the way in and echoed trimmed**, so the page cannot display
+     * one thing while the query was asked another — and so the pager's links,
+     * which are built from the echo, describe the search that actually ran.
+     */
+    it('echoes the trimmed keyword, which is the one that ran', async () => {
+      await givenAListing(800, { text: 'petrol hedge trimmer' });
+
+      const results = parsePublicListingSearchResults(
+        (await search({ keyword: '  trimmer  ' })).json(),
+      );
+
+      expect(results.keyword).toBe('trimmer');
+      expect(listings.proximity.keywords).toEqual(['trimmer']);
+    });
+
+    /*
+     * **An empty `keyword=` is no keyword, not a bad request** — the case Browse
+     * will produce on every unkeyworded search the moment 3.3b gives this filter
+     * a text input, because a plain GET form submits every named control.
+     */
+    it('treats an empty keyword parameter as no keyword', async () => {
+      const created = await givenAListing(800);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/public/listings?postcode=BS7%208AA&radiusMiles=5&keyword=',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const results = parsePublicListingSearchResults(response.json());
+      expect(results.results.map((result) => result.id)).toEqual([created.id]);
+      expect(results.keyword).toBeNull();
+    });
+
+    /*
+     * **Words naming nothing are an empty page, never a 400** — and this is the
+     * deliberate difference from the category filter beside it. An unknown
+     * category slug is refused because it describes a search we do not serve; a
+     * word we hold no listing for describes a search we serve perfectly well and
+     * that simply found nothing. Refusing it would be telling somebody their
+     * question was malformed when it was merely unlucky.
+     */
+    it('answers words that match nothing with an empty page rather than a refusal', async () => {
+      await givenAListing(800, { text: 'petrol hedge trimmer' });
+
+      const response = await search({ keyword: 'xylophone' });
+
+      expect(response.statusCode).toBe(200);
+      const results = parsePublicListingSearchResults(response.json());
+      expect(results.results).toEqual([]);
+      expect(results.originStatus).toBe('placed');
+    });
+
+    /*
+     * **Nothing a person can type is refused for its content.** The contract
+     * bounds the length and nothing else — see `searchKeywordSchema` — because
+     * `websearch_to_tsquery` accepts all of this and a schema that did not would
+     * refuse searches the database handles.
+     */
+    it.each(['hedge & trimmer', '!!!', '3" drill bit', 'Not A Slug'])(
+      'accepts %j',
+      async (keyword) => {
+        await givenAListing(800);
+
+        expect((await search({ keyword })).statusCode).toBe(200);
+      },
+    );
+
+    it('refuses only a keyword past the length bound', async () => {
+      await givenAListing(800);
+
+      const response = await search({ keyword: 'x'.repeat(101) });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toContain('characters or fewer');
+    });
+
+    /*
+     * **A refused request is not a search**, which is slice 3.1f's rule holding
+     * for the third kind of refusal now.
+     */
+    it('records nothing for a keyword it refused', async () => {
+      await givenAListing(800);
+
+      await search({ keyword: 'x'.repeat(101) });
+
+      expect(listings.metrics.listingSearches).toEqual([]);
+    });
+
+    it('passes null down when no words were asked for', async () => {
+      await givenAListing(800);
+
+      await search();
+
+      expect(listings.proximity.keywords).toEqual([null]);
+    });
+
+    /*
+     * **Both filters at once, which is what Browse will send.** Each is proved
+     * alone above; this is the one that would catch a service passing one down
+     * and dropping the other, which returns a plausible page either way.
+     */
+    it('composes with the category filter', async () => {
+      await givenACategory('power-tools', SCHEMA, TRANSPORT);
+
+      const wanted = await givenAListing(800, {
+        categorySlug: 'outdoor-gardening',
+        text: 'petrol hedge trimmer',
+      });
+      await givenAListing(900, {
+        categorySlug: 'power-tools',
+        text: 'petrol hedge trimmer',
+      });
+      await givenAListing(1_000, {
+        categorySlug: 'outdoor-gardening',
+        text: 'lawn mower',
+      });
+
+      const results = parsePublicListingSearchResults(
+        (await search({ category: 'outdoor-gardening', keyword: 'trimmer' })).json(),
+      );
+
+      expect(results.results.map((result) => result.id)).toEqual([wanted.id]);
+      expect(results.category).toBe('outdoor-gardening');
+      expect(results.keyword).toBe('trimmer');
     });
   });
 
