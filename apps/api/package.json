@@ -12,9 +12,9 @@
   "dependencies": {
     "@clerk/backend": "^3.14.0",
     "@fastify/helmet": "^13.1.0",
-    "@nestjs/common": "^11.1.28",
-    "@nestjs/core": "^11.1.28",
-    "@nestjs/platform-fastify": "^11.1.28",
+    "@nestjs/common": "^11.1.29",
+    "@nestjs/core": "^11.1.29",
+    "@nestjs/platform-fastify": "^11.1.29",
     "@platform/config": "workspace:*",
     "@platform/contracts": "workspace:*",
     "@platform/core": "workspace:*",
@@ -27,7 +27,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@nestjs/testing": "^11.1.28",
+    "@nestjs/testing": "^11.1.29",
     "@types/node": "^26.1.2"
   }
 }
