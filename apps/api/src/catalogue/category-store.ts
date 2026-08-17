@@ -38,6 +38,8 @@ export interface CategoryRecord {
   readonly feePolicy: CategoryFeePolicy;
   /** The longest hire this category permits, in local calendar days (§8.5.3). */
   readonly maximumRentalDays: number;
+  /** How long an owner has to answer a request, in hours (§8.6, slice 4.5a). */
+  readonly requestExpiryHours: number;
   readonly versionNumber: number;
   readonly versionCreatedAt: Date;
   readonly createdAt: Date;
@@ -98,6 +100,8 @@ export interface CategoryConfiguration {
    * about not arranging regulated credit.
    */
   readonly maximumRentalDays: number;
+  /** How long an owner has to answer a request, in hours (§8.6, slice 4.5a). */
+  readonly requestExpiryHours: number;
 }
 
 /**

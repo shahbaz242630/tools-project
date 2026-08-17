@@ -49,6 +49,18 @@ function readMaximumRentalDays(form: FormData): number {
 }
 
 /**
+ * How long an owner has to answer a request (§8.6, slice 4.5a).
+ *
+ * Read exactly as the cap above is, and for the same reason: an absent or
+ * unparseable field becomes `NaN`, the contract refuses it with a message naming
+ * the field, and the administrator is told rather than being given a default they
+ * did not choose.
+ */
+function readRequestExpiryHours(form: FormData): number {
+  return Number(String(form.get('requestExpiryHours') ?? '').trim());
+}
+
+/**
  * Whatever was chosen, unvalidated.
  *
  * Cast rather than checked here because the contract schema below is what
@@ -202,6 +214,7 @@ export async function createCategoryAction(
     transportOptions: transport.options,
     feePolicy: fees.value,
     maximumRentalDays: readMaximumRentalDays(form),
+    requestExpiryHours: readRequestExpiryHours(form),
   });
   if (!parsed.success) {
     return {
@@ -295,6 +308,7 @@ export async function reconfigureCategoryAction(
     transportOptions: transport.options,
     feePolicy: fees.value,
     maximumRentalDays: readMaximumRentalDays(form),
+    requestExpiryHours: readRequestExpiryHours(form),
   });
   if (!parsed.success) {
     return {

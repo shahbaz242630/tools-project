@@ -174,13 +174,19 @@ model User {
 
   /// Prices this person has been quoted (BRD §8.5.2, slice 4.4b).
   ///
-  /// **`ON DELETE CASCADE`, which is the opposite of `bookings` above**, and the
-  /// difference is that a quote has no counterparty. Nobody else's record depends
-  /// on a price we offered somebody who never acted on it, and it holds their
-  /// postcode — so erasing the account erases it. From 4.5 a quote a booking was
-  /// made from stops being unused and this inverts; the reasoning is on
-  /// `Quote.renterId`.
+  /// **`ON DELETE RESTRICT` from 4.5a, where it was `CASCADE` in 4.4b** — a quote
+  /// a booking was made from carries terms the counterparty is entitled to, and
+  /// accounts are soft-deleted so this never fires in the ordinary course.
+  /// Erasure is QuotesService.eraseFor, which deletes the quotes nothing has
+  /// booked; the constraint is what turns a mistake there into a failed delete
+  /// rather than a destroyed record.
   quotes Quote[]
+
+  /// Booking events this person caused (slice 4.5a). Declared because Prisma
+  /// requires both ends; a booking's history is read through the booking, never
+  /// through an actor. Most events have no actor at all — an expiry sweep and an
+  /// auto-decline are the platform's own doing.
+  bookingEvents BookingEvent[]
 
   /// Listings this administrator has moderated (ADR 0041). Declared because
   /// Prisma requires both ends of a relation; nothing reads a moderator's
@@ -875,6 +881,23 @@ model CategoryVersion {
   /// completed rental still read as compliant after the category is changed.
   maximumRentalDays Int @default(88) @db.Integer
 
+  /// How long an owner has to answer a request, in hours (BRD §8.6, slice 4.5a).
+  ///
+  /// §8.6: *"Owner receives notification and accepts or declines **before a
+  /// configurable deadline**"*, and §6.2 puts an **expiry** on the `Booking`
+  /// entity. Neither existed before this slice — so a request could not expire,
+  /// and 4.7's expiry worker would have had nothing to read.
+  ///
+  /// **48 hours by default, which is engineering judgement rather than BRD text**
+  /// — see `DEFAULT_REQUEST_EXPIRY_HOURS` for the two things that bound it. A
+  /// `CHECK` holds it between 1 hour and two weeks; unlike the duration cap above
+  /// that ceiling is commercial rather than legal, so it is generous and exists
+  /// only to catch a typo.
+  ///
+  /// On the *version*, like every other configurable fact, so a request is judged
+  /// against the deadline in force when it was made.
+  requestExpiryHours Int @default(48) @db.Integer
+
   /// Who made this configuration what it is. BRD §6.2 puts an author on the
   /// entity; the corresponding audit entry carries the reason and the digests.
   createdById String @db.Uuid
@@ -889,6 +912,12 @@ model CategoryVersion {
   /// price still exists to be explained. Declared because Prisma requires both
   /// ends; nothing reads a version's quotes.
   quotes Quote[]
+
+  /// Bookings made under this configuration (slice 4.5a). `ON DELETE RESTRICT`
+  /// for the same reason and a stronger one: §8.2 requires a booking to be
+  /// interpretable under the terms it was made under, and §10.1 retains booking
+  /// records for six years.
+  bookings Booking[]
 
   /// Both the "no two versions share a number" rule and the index that answers
   /// "what is current". One constraint, two jobs, no second index to maintain.
@@ -1189,8 +1218,9 @@ model Listing {
   /// listing does; a booking is somebody else's record and does not.
   availabilityBlocks AvailabilityBlock[]
 
-  /// Prices quoted for this item (slice 4.4b). `ON DELETE CASCADE`, as the
-  /// blocks above — an offer for an item that no longer exists means nothing.
+  /// Prices quoted for this item. **`ON DELETE CASCADE`, unlike `quotes.renterId`**
+  /// — see the note there for why the two ends differ, and for the erasure bug
+  /// making them the same would have caused.
   quotes Quote[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -1428,12 +1458,94 @@ model Booking {
   /// range bound quietly widened here.
   period Unsupported("tstzrange")?
 
+  /// The quote this booking was made from (BRD §8.5.2, slice 4.5a).
+  ///
+  /// **`ON DELETE RESTRICT`, and this is the inversion the 17 August erasure
+  /// decision predicted.** A quote nobody acted on is erased with its renter's
+  /// account; a quote a booking was made from is part of that booking's terms and
+  /// belongs to the *counterparty* as much as to the renter, so it cannot be
+  /// deleted while the booking exists. `quotes.renterId` and `quotes.listingId`
+  /// change from `CASCADE` to `RESTRICT` in the same migration for the same
+  /// reason — the same shape the 10 August listing-deletion decision took when a
+  /// booking started referencing a listing.
+  ///
+  /// **Required, not optional.** There is one way to make a booking and it starts
+  /// with a price somebody was shown. A nullable column would permit a booking
+  /// whose money came from nowhere provable.
+  quoteId String @db.Uuid
+  quote   Quote  @relation(fields: [quoteId], references: [id])
+
+  /// The configuration in force when this booking was made (BRD §6.2's *config
+  /// versions*, §8.2).
+  ///
+  /// **The pin §8.2 requires, and ADR 0042 said would land on the booking.** The
+  /// quote already stores it; copying it here rather than reading it through the
+  /// quote is deliberate — the booking is the record that must still be
+  /// interpretable, and one join fewer is one fewer thing that can be missing.
+  categoryVersionId String          @db.Uuid
+  categoryVersion   CategoryVersion @relation(fields: [categoryVersionId], references: [id])
+
+  /// What was agreed, copied at the moment the booking was made — integer minor
+  /// units with the currency on the same record (ADR 0002).
+  ///
+  /// **Copied rather than read back through the listing**, which is the product
+  /// owner's instruction of 16 August: *"if the booking is done, it should show in
+  /// history, all details"*. §8.2 requires a booking to keep the terms it was made
+  /// under, and the listing is free to be repriced, paused, edited or — from the
+  /// 10 August decision — collapsed to its district when its owner leaves. A
+  /// booking that rendered its price by joining a listing would show today's price
+  /// for last month's hire, or nothing at all.
+  ///
+  /// One currency column for all three, as `quotes` and `listings` both do.
+  itemChargeAmount Int    @db.Integer
+  renterFeeAmount  Int    @db.Integer
+  totalAmount      Int    @db.Integer
+  currency         String @db.Text
+
+  /// What was hired, in the words that were on the listing at the time.
+  ///
+  /// **The other half of "all details".** A booking history line has to be
+  /// readable — *"Petrol hedge trimmer, Outdoor and gardening, 21–23 August"* —
+  /// after the listing has been retitled, recategorised or erased.
+  ///
+  /// **The title and the category name, not the description.** A two-thousand
+  /// character description on every booking row is weight nothing renders, and the
+  /// description is not part of what was agreed in the way the price and the item
+  /// are. If §8.9's condition protocol later needs the description as it stood,
+  /// that is evidence attached to a handover rather than a column here.
+  itemTitle    String @db.Text
+  categoryName String @db.Text
+
+  /// When an unanswered request expires (BRD §8.6, §6.2's *expiry*, §7.1).
+  ///
+  /// Computed at creation from the category version's `requestExpiryHours`, so a
+  /// deadline reconfigured later cannot move a request already made.
+  ///
+  /// **Named for the request rather than called `expiresAt`, deliberately.** §7
+  /// reaches `EXPIRED` from three states — `REQUESTED`, `AWAITING_PAYMENT` and
+  /// `PAYMENT_FAILED` — and those are different deadlines with different lengths
+  /// and different owners. One column serving all of them would have to be
+  /// rewritten on every transition, which is how a payment deadline comes to
+  /// expire a booking as though nobody had answered it. Phase 5's payment window
+  /// gets its own column.
+  ///
+  /// It is **not cleared on acceptance**: it records what the deadline was, and
+  /// 4.7's worker acts only on bookings still in `REQUESTED`.
+  requestExpiresAt DateTime @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// This booking's state history (BRD §6.2). Append-only — see `BookingEvent`.
+  events BookingEvent[]
 
   /// Both dashboards in slice 4.8 read one side's bookings, newest first.
   @@index([renterId, createdAt(sort: Desc)])
   @@index([listingId, createdAt(sort: Desc)])
+  /// What 4.7's expiry worker asks: which requests have run out of time. The
+  /// state is first because it is the more selective of the two — most bookings
+  /// are not awaiting an answer.
+  @@index([state, requestExpiresAt])
   /// Declared so the datamodel and the database agree — the same note
   /// `listings.searchDocument` and `listing_locations.fuzzedPoint` carry. The
   /// `EXCLUDE` constraint creates an index of its own that Prisma cannot see;
@@ -1502,6 +1614,99 @@ model AvailabilityBlock {
   @@map("availability_blocks")
 }
 
+/// One thing that happened to a booking (BRD §6.2, §7, slice 4.5a).
+///
+/// §6.2 calls this an **immutable state history**: *"Event type, actor, timestamp,
+/// metadata"*. §7 requires transitions to be validated centrally and never
+/// invented by a button; this is the record that they were.
+///
+/// **Why it exists at all, when `audit_logs` is right there.** The audit log
+/// answers *"who did what to whom"* across the whole platform and is read by an
+/// administrator and by the subject of an action. This answers *"what has happened
+/// to this booking"* and is read by the two parties to it, in order, as a history.
+/// Putting booking states in the audit log would mean either exposing an
+/// administrative projection to members or filtering it per reader — and the audit
+/// log deliberately has no update method and no notion of sequence within one
+/// subject.
+///
+/// **It was deferred from 4.2 to here on purpose**, by the product owner on
+/// 16 August: nothing transitioned until now, and a table with no writer is a dead
+/// control. 4.5a is the first writer.
+///
+/// **Append-only, and the database enforces it** — a trigger refuses `UPDATE`,
+/// exactly as `category_versions`' does. That is a stronger guarantee than the
+/// audit log has (a port with no update method, which is code rather than
+/// storage), and it is warranted because §6.2 uses the word immutable and because
+/// a state history that can be edited is evidence of nothing. `DELETE` is left
+/// alone for the same reason it is on `category_versions`: retention (§10.1) is a
+/// scheduled act, not an application one.
+model BookingEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// `ON DELETE CASCADE`. A booking's history is meaningless without the booking,
+  /// and bookings are never deleted in the ordinary course — §10.1 retains booking
+  /// records for six years, and an account that leaves is soft-deleted so its
+  /// bookings survive with a tombstoned counterparty.
+  bookingId String  @db.Uuid
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  /// What happened, from a closed vocabulary in code (`BookingEventType`).
+  ///
+  /// Text with the vocabulary in code rather than a Postgres enum, for the reason
+  /// `bookings.state` and `listings.status` both give: a Postgres enum needs a
+  /// migration to add a value, and §7's vocabulary is exactly the kind of thing a
+  /// phase discovers a new member of.
+  type String @db.Text
+
+  /// The transition this event records, or nulls for an event that is not one.
+  ///
+  /// **`fromState` is null on creation** — a booking's first event has nothing to
+  /// come from, and writing `DRAFT` there would assert a state it was never in.
+  /// Both are null for an event that says something happened without moving the
+  /// booking, which §6.2's "event type" permits and 4.6's auto-decline notice will
+  /// use.
+  fromState String? @db.Text
+  toState   String? @db.Text
+
+  /// Who caused it, or **null for the platform itself**.
+  ///
+  /// Null is not missing data: an expiry sweep (4.7) and an auto-decline (§7.1,
+  /// 4.6) have no human actor, and recording one would be a lie about who decided.
+  /// `ON DELETE RESTRICT` — accounts are soft-deleted, so this never fires and
+  /// exists to make sure it never can.
+  ///
+  /// **`Restrict` is stated rather than left to Prisma's default**, which for an
+  /// optional relation is `SetNull` — and that would quietly rewrite history to
+  /// say *the platform* did something a person did. It is the same latent defect
+  /// `listings.moderatedById` carries today, found by reading this diff.
+  actorId String? @db.Uuid
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  /// Anything else worth keeping about this event, as JSON (§6.2's *metadata*).
+  ///
+  /// **Empty by default rather than nullable.** `{}` and null would mean the same
+  /// thing to every reader while needing two branches at each one — the call
+  /// `category_versions.attributes` already made.
+  ///
+  /// **Nothing personal goes in here.** It is the loosest column in the booking
+  /// tables and therefore the one most likely to accumulate a postcode or a note
+  /// somebody typed; what belongs is what a state change needs to be understood —
+  /// a refusal reason, the id of a conflicting request — and §10.1's erasure has no
+  /// way to reach inside a JSON blob.
+  metadata Json @default("{}") @db.JsonB
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// **No `updatedAt`.** Nothing updates an event, and the trigger refuses it.
+  ///
+  /// The history of one booking, oldest first — which is how it is read, and the
+  /// opposite of every other index in these tables. `createdAt` alone ties for two
+  /// events written in the same millisecond, so `id` breaks it: the same tiebreak
+  /// Phase 3's `ORDER BY` needed and that session 37's flake taught.
+  @@index([bookingId, createdAt, id])
+  @@map("booking_events")
+}
+
 /// A priced, expiring offer for a period (BRD §8.5.2, §6.2, slice 4.4b).
 ///
 /// **Why a quote is stored at all, when the price could be recomputed.** §8.5.2:
@@ -1538,9 +1743,20 @@ model Quote {
   /// transaction between two people; it is a price we offered for an item, and
   /// when the item goes the offer means nothing.
   ///
-  /// **This changes in 4.5**, where a quote a booking was made from becomes part
-  /// of that booking's terms and must outlive the listing exactly as the booking
-  /// does. See the note on `renterId`.
+  /// **It stays `CASCADE`, and 4.5a nearly changed it by symmetry with `renterId`
+  /// below — which would have broken account erasure.** The two ends of this table
+  /// genuinely differ:
+  ///
+  /// A listing is only ever deleted when **nothing has booked it**
+  /// (`listings.eraseOwnedBy`), so every quote hanging off a deletable listing is
+  /// an unbooked quote — a price offered for an item that is going. And if a
+  /// *booked* quote somehow referenced it, `bookings.quoteId`'s `RESTRICT` would
+  /// refuse the whole delete, which is the guard that actually protects the terms.
+  ///
+  /// `RESTRICT` here would instead have meant that **an owner could not erase their
+  /// account once a stranger had asked their listing for a price** — a §10.1
+  /// failure triggered by somebody else's action. Slice 4.4b's own db test caught
+  /// it.
   listingId String  @db.Uuid
   listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
@@ -1548,16 +1764,16 @@ model Quote {
   /// decision of 17 August 2026 in one column: *an unused quote is erased
   /// outright, and a quote a booking references follows the booking.*
   ///
-  /// **Cascade is the whole of that rule today and only half of it from 4.5.**
-  /// Nothing references a quote yet, so every quote is unused and deleting the
-  /// account deletes them all — which is what the rule asks for. When 4.5 makes a
-  /// booking reference a quote, this becomes `RESTRICT` plus a conditional
-  /// erasure, because accounts are soft-deleted (ADR 0018) and the *counterparty*
-  /// keeps a right to the terms they agreed. That is the same inversion the
-  /// 10 August listing decision predicted and that 4.2 already performed once,
-  /// when `deleteAllOwnedBy` became `eraseOwnedBy`.
+  /// **It was `CASCADE` in 4.4b and is `RESTRICT` from 4.5a**, which is the
+  /// inversion that decision predicted and 4.2 had already performed once when
+  /// `deleteAllOwnedBy` became `eraseOwnedBy`. Now that a booking can reference a
+  /// quote, the erasure is conditional rather than wholesale:
+  /// `QuotesService.eraseFor` deletes the quotes **nothing has booked** and leaves
+  /// the rest, because accounts are soft-deleted (ADR 0018) and the *counterparty*
+  /// keeps a right to the terms they agreed to. The `RESTRICT` is what makes a
+  /// mistake here a failed delete rather than a silently destroyed record.
   renterId String @db.Uuid
-  renter   User   @relation(fields: [renterId], references: [id], onDelete: Cascade)
+  renter   User   @relation(fields: [renterId], references: [id])
 
   /// The hire the price is for, in UTC (ADR 0003), `[startAt, endAt)`.
   ///
@@ -1650,6 +1866,12 @@ model Quote {
   ///
   /// A renter reads their own quotes newest first; the listing index is what a
   /// retention sweep and 4.5's lookup both use.
+  /// The booking made from this quote, if one was (slice 4.5a). At most one —
+  /// there is one way to make a booking and it consumes a quote once. Declared
+  /// because Prisma requires both ends, and because it is what makes "has this
+  /// quote been booked" answerable by the conditional erasure.
+  bookings Booking[]
+
   @@index([renterId, createdAt(sort: Desc)])
   @@index([listingId, createdAt(sort: Desc)])
   @@index([expiresAt])

@@ -1,4 +1,9 @@
-import type { BookingState } from '@platform/contracts';
+import type { MoneyValue } from '@platform/core';
+import type {
+  BookingEventType,
+  BookingState,
+  QuoteLineItem,
+} from '@platform/contracts';
 
 /**
  * How bookings are read and written (slice 4.2).
@@ -18,6 +23,34 @@ export interface NewBooking {
   readonly startAt: Date;
   readonly endAt: Date;
   /**
+   * The quote this was made from, and the configuration version it was priced
+   * under (slice 4.5a).
+   *
+   * **Both required, so a booking with no provable price is unrepresentable.**
+   * There is one way to make a booking and it starts with a figure somebody was
+   * shown — which is §3.4.4's point, and the reason there is no overload of this
+   * type that omits them.
+   */
+  readonly quoteId: string;
+  readonly categoryVersionId: string;
+  /**
+   * The terms, copied at the moment of booking rather than joined later (§8.2,
+   * and the product owner's *"if the booking is done, it should show in history,
+   * all details"*).
+   *
+   * The store takes them rather than reading them off the quote itself, because
+   * a repository that fetched a row to copy from it would be deciding what the
+   * booking's terms are — and that is the service's decision. See
+   * `bookings.service.ts`, where they come off the quote in one place.
+   */
+  readonly itemCharge: MoneyValue;
+  readonly renterFee: MoneyValue;
+  readonly total: MoneyValue;
+  readonly itemTitle: string;
+  readonly categoryName: string;
+  /** When an unanswered request expires (§8.6), computed from the category. */
+  readonly requestExpiresAt: Date;
+  /**
    * The IANA zone the hire is counted in (ADR 0003).
    *
    * **Required rather than defaulted to `Europe/London`.** A default here is a
@@ -33,6 +66,61 @@ export interface BookingRecord extends NewBooking {
   readonly id: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/**
+ * One entry in a booking's history (BRD §6.2, slice 4.5a).
+ *
+ * **`fromState` is null on the first event and only there.** A booking's first
+ * event has nothing to come from, and writing `DRAFT` would assert a state it was
+ * never in — see `bookings.service.ts` for why nothing enters `DRAFT`.
+ *
+ * **`actorId` is null for the platform itself.** An expiry sweep (4.7) and §7.1's
+ * auto-decline (4.6) have no human actor, and naming one would be a lie about who
+ * decided.
+ */
+export interface NewBookingEvent {
+  readonly bookingId: string;
+  readonly type: BookingEventType;
+  readonly fromState: BookingState | null;
+  readonly toState: BookingState | null;
+  readonly actorId: string | null;
+  /**
+   * Anything a reader needs to understand the change (§6.2's *metadata*).
+   *
+   * **Nothing personal belongs here.** It is the loosest column in these tables,
+   * and §10.1's erasure cannot reach inside a JSON blob. What belongs is what a
+   * state change means — a refusal reason, a conflicting booking's id.
+   *
+   * **Flat scalars only, and the type says so.** Not `unknown`, which would admit
+   * a nested object and with it the temptation to put a whole projection in here —
+   * the way a metadata column becomes a second copy of the row it describes. It is
+   * also what makes the value assignable to a JSON column without a cast.
+   */
+  readonly metadata: Readonly<Record<string, string | number | boolean | null>>;
+}
+
+export interface BookingEventRecord extends NewBookingEvent {
+  readonly id: string;
+  readonly createdAt: Date;
+}
+
+/**
+ * A booking and its history, which is how either party reads one.
+ *
+ * **Together rather than as two reads**, because §6.2 makes the history part of
+ * what a booking *is*, and a projection assembled from two queries can show a
+ * state the history does not explain.
+ *
+ * The line items come from the quote the booking was made from — the store joins
+ * it rather than the service fetching it, because a booking without its breakdown
+ * cannot be rendered under §3.4.4 and a caller should not be able to forget.
+ */
+export interface BookingWithEvents {
+  readonly booking: BookingRecord;
+  readonly lineItems: readonly QuoteLineItem[];
+  /** Oldest first, which is how a history reads. */
+  readonly events: readonly BookingEventRecord[];
 }
 
 /**
@@ -71,6 +159,40 @@ export interface BookingStore {
    * one of §8.5.1's nine calendar-occupying states.
    */
   create(booking: NewBooking): Promise<BookingRecord>;
+
+  /**
+   * Write a booking **and its first event, in one transaction** (slice 4.5a).
+   *
+   * **One method rather than two calls, because a booking with no history is a
+   * defect §6.2 forbids** — it calls the event log the booking's *immutable state
+   * history*, and a booking whose first state was never recorded has a history
+   * that begins with a gap. Two calls from a service would leave that gap open
+   * whenever the second one failed.
+   *
+   * It is also what makes the overlap refusal safe to combine with the write:
+   * `OverlappingBookingError` rolls back the event with the booking, so a losing
+   * request leaves nothing behind at all.
+   *
+   * Throws `OverlappingBookingError` exactly as `create` does.
+   */
+  createWithEvent(
+    booking: NewBooking,
+    event: Omit<NewBookingEvent, 'bookingId'>,
+  ): Promise<BookingRecord>;
+
+  /**
+   * One booking belonging to one of its two parties, with its history.
+   *
+   * **Scoped by *party* rather than by renter**, which is the one read in this
+   * module that is not owner-scoped or renter-scoped but both: §8.6 gives the
+   * owner the decision and the renter the record, and 4.8's dashboards read the
+   * same booking from either side. The scope is in the query — a comparison
+   * afterwards is a line somebody can delete.
+   *
+   * Null covers "no such booking" and "not yours", and the caller must keep them
+   * indistinguishable.
+   */
+  findForParty(id: string, userId: string): Promise<BookingWithEvents | null>;
 
   /**
    * The subset of these listings that any booking refers to.

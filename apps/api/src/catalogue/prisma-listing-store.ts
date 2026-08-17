@@ -516,12 +516,15 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return {
       id: listing.id,
       ownerId: listing.ownerId,
+      title: listing.title,
+      categoryName: listing.categoryVersion.name,
       rates: asRateCard(listing),
       currentFeePolicy: asFeePolicy(
         current,
         `the current version of the category listed by ${listing.id}`,
       ),
       currentMaximumRentalDays: current.maximumRentalDays,
+      currentRequestExpiryHours: current.requestExpiryHours,
       currentCategoryVersionId: current.id,
     };
   }

@@ -9,12 +9,25 @@ import type { CategoryFeePolicy, ListingRateCard } from '@platform/contracts';
  * find out (BRD §5.1).
  *
  * **Narrower than a listing, and every omission is deliberate.** There is no
- * title, no description, no attribute values and — above all — no collection
- * address. A quote is arithmetic about dates and money; a port returning the
- * whole record would put a decrypted street line inside a module that has no
- * reason to hold one, and every later caller here would have one to hand
- * without having needed it. That is how a projection leaks. `ListingOwnership`
- * makes the same argument for returning a boolean.
+ * description, no attribute values and — above all — no collection address. A
+ * port returning the whole record would put a decrypted street line inside a
+ * module that has no reason to hold one, and every later caller here would have
+ * one to hand without having needed it. That is how a projection leaks.
+ * `ListingOwnership` makes the same argument for returning a boolean.
+ *
+ * **It gained the item's name in 4.5a, having deliberately had none in 4.4b**, and
+ * the reason is §8.2 rather than convenience: a booking **copies** what was hired
+ * so its history stays readable after the listing is retitled or erased, and the
+ * words have to come from somewhere. An address still does not, which is the line
+ * this port draws — what crosses is what a booking record must contain, not
+ * everything a listing knows.
+ *
+ * **The name still says "quote" although a booking reads it too**, and that is a
+ * judgement rather than an oversight: everything bookable is quotable and a
+ * booking is made from a quote, so the two questions have one answer. Renaming it
+ * would touch 4.4b's files for no change in behaviour, and a second port with
+ * overlapping fields would be worse — two places for "what may be booked" to be
+ * decided.
  *
  * **It answers only about listings a stranger could book.** Null covers a
  * listing that does not exist, one that is not published, one the platform has
@@ -35,6 +48,17 @@ export interface QuotableListing {
    * one person on both sides of a payout.
    */
   readonly ownerId: string;
+  /**
+   * What was hired and what kind of thing it is, for the copy a booking keeps
+   * (§8.2, slice 4.5a).
+   *
+   * **Read at the moment of booking and then never again**, which is the whole
+   * point: a booking that rendered its item by joining the listing would show a
+   * retitled item for last month's hire, or nothing at all once the owner has
+   * left.
+   */
+  readonly title: string;
+  readonly categoryName: string;
   /** What the owner charges (§8.5.2). The daily rate is the spine. */
   readonly rates: ListingRateCard;
   /**
@@ -62,7 +86,15 @@ export interface QuotableListing {
    * cap this quote was actually judged against.
    */
   readonly currentMaximumRentalDays: number;
-  /** The version the two `current` fields above came from (§8.5.2). */
+  /**
+   * How long the owner has to answer a request, in hours (§8.6, slice 4.5a).
+   *
+   * Current rather than pinned, for the same reason the cap above is: it is a rule
+   * about what may happen now. A request records the deadline it was given, so
+   * changing this cannot move one already made.
+   */
+  readonly currentRequestExpiryHours: number;
+  /** The version the `current` fields above came from (§8.5.2). */
   readonly currentCategoryVersionId: string;
 }
 

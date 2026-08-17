@@ -5,7 +5,10 @@ import {
   reconfigureCategory,
 } from './admin-categories';
 import type { FetchLike } from './admin-categories';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -32,6 +35,7 @@ const CATEGORY = {
   attributes: [],
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-03T09:00:00.000Z',
@@ -47,6 +51,7 @@ const DRAFT = {
   attributes: [],
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: [],
 } as const;
 
@@ -212,6 +217,7 @@ describe('reconfigureCategory', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'renamed after the taxonomy review',
@@ -237,6 +243,7 @@ describe('reconfigureCategory', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'renamed after the taxonomy review',
@@ -260,6 +267,7 @@ describe('reconfigureCategory', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       REASON,
@@ -282,6 +290,7 @@ describe('reconfigureCategory', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       REASON,

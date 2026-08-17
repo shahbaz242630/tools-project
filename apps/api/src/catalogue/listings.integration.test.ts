@@ -37,7 +37,10 @@ import type { ListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { bookingModuleFakes } from '../booking/testing/fakes.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -229,6 +232,7 @@ async function givenACategory(
       transportOptions,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
     },
     author,
   );
@@ -246,6 +250,7 @@ async function reconfigured(attributes: readonly CategoryAttribute[]): Promise<v
       attributes,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [],
     },
     author,
@@ -264,6 +269,7 @@ async function reconfiguredName(name: string): Promise<void> {
       attributes: SCHEMA,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [],
     },
     author,
@@ -283,6 +289,7 @@ async function reconfiguredWithFee(renterFeeBasisPoints: number): Promise<void> 
       transportOptions: [],
       feePolicy: { ...FEE_POLICY, renterFeeBasisPoints },
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
     },
     author,
   );

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CATEGORY_REPORTABLE_ACTIVITIES,
   DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
   MAX_ATTRIBUTE_DECIMAL_PLACES,
   MAX_ATTRIBUTE_OPTIONS,
   MAX_ATTRIBUTE_TEXT_LENGTH,
@@ -363,6 +364,7 @@ const validDraft = {
   attributes: realisticSchema,
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: realisticTransportOptions,
 };
 
@@ -374,6 +376,7 @@ const validConfiguration = {
   attributes: realisticSchema,
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: realisticTransportOptions,
 };
 

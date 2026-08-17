@@ -7,7 +7,10 @@ import {
 } from './limits.js';
 import { createCatalogueFakes, createListingFakes } from './testing/fakes.js';
 import type { CatalogueFakes, ListingFakes } from './testing/fakes.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 /**
  * Slice H2 — every list read in this module is bounded, and no bound is silent.
@@ -59,6 +62,7 @@ async function seedCategories(fakes: CatalogueFakes, count: number): Promise<voi
         transportOptions: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
       OWNER,
     );

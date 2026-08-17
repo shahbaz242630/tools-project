@@ -78,6 +78,7 @@ interface StoredVersion {
   readonly feePolicy: CategoryFeePolicy;
   /** §8.5.3's cap, stored on the version like everything else (slice 4.4a). */
   readonly maximumRentalDays: number;
+  readonly requestExpiryHours: number;
   readonly createdById: string;
   readonly createdAt: Date;
 }
@@ -138,6 +139,7 @@ export class InMemoryCategoryStore implements CategoryStore {
           // back as 88 — and every test of "the cap comes from configuration"
           // would pass while proving the opposite (slice 4.4a).
           maximumRentalDays: input.maximumRentalDays,
+          requestExpiryHours: input.requestExpiryHours,
           createdById: authorId,
           createdAt: Time.nowUtc(),
         },
@@ -170,6 +172,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       transportOptions: [...configuration.transportOptions],
       feePolicy: configuration.feePolicy,
       maximumRentalDays: configuration.maximumRentalDays,
+      requestExpiryHours: configuration.requestExpiryHours,
       createdById: authorId,
       createdAt: Time.nowUtc(),
     });
@@ -220,6 +223,7 @@ function toRecord(category: StoredCategory): CategoryRecord {
     transportOptions: latest.transportOptions,
     feePolicy: latest.feePolicy,
     maximumRentalDays: latest.maximumRentalDays,
+    requestExpiryHours: latest.requestExpiryHours,
     versionNumber: latest.versionNumber,
     versionCreatedAt: latest.createdAt,
     createdAt: category.createdAt,
@@ -498,9 +502,14 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return {
       id: listing.id,
       ownerId: listing.ownerId,
+      title: listing.title,
+      // The pinned version's name, which is what the public listing page shows —
+      // so a booking's copy says what the renter was looking at.
+      categoryName: listing.categoryName,
       rates: listing.rates,
       currentFeePolicy: category.feePolicy,
       currentMaximumRentalDays: category.maximumRentalDays,
+      currentRequestExpiryHours: category.requestExpiryHours,
       currentCategoryVersionId: `${category.id}:v${String(category.versionNumber)}`,
     };
   }

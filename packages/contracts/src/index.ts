@@ -4,6 +4,7 @@ export * from './attribute-values.js';
 export * from './audit.js';
 export * from './availability.js';
 export * from './booking.js';
+export * from './bookings.js';
 export * from './catalogue.js';
 export * from './export.js';
 export * from './feature-flags.js';

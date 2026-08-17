@@ -30,7 +30,10 @@ import { PrismaListingStore } from './prisma-listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
 import type { ModerationDecision } from './listing-store.js';
 import { CATEGORY_LIST_LIMIT, EXPORTED_LISTING_LIMIT } from './limits.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 /**
  * A priced category (BRD §8.2, §3.4, slice 2.7a).
@@ -136,6 +139,7 @@ async function newCategory(
       attributes,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [],
     },
     authorId,
@@ -254,6 +258,7 @@ describe('creating a draft', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       owner,
@@ -281,6 +286,7 @@ describe('creating a draft', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       owner,
@@ -319,6 +325,7 @@ describe('creating a draft', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       owner,
@@ -426,6 +433,7 @@ describe('the attribute values', () => {
         ],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       owner,
@@ -494,6 +502,7 @@ describe('the categories an owner may choose', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       owner,
@@ -633,6 +642,7 @@ describe('the category options', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       author,
@@ -773,6 +783,7 @@ describe('the transport requirement', () => {
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [
           { requirement: 'car_boot', suggestedUpToKg: 25 },
           { requirement: 'van_required', suggestedUpToKg: 150 },
@@ -801,6 +812,7 @@ describe('the transport requirement', () => {
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [{ requirement: 'van_required', suggestedUpToKg: 150 }],
       },
       owner,
@@ -819,6 +831,7 @@ describe('the transport requirement', () => {
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       owner,
@@ -1479,6 +1492,7 @@ describe('the current fee policy', () => {
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
       owner,
     );
@@ -1518,6 +1532,7 @@ describe('the current fee policy', () => {
           transportOptions: [],
           feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: rate },
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+          requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         },
         owner,
       );
@@ -1547,6 +1562,7 @@ describe('the current fee policy', () => {
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
       owner,
     );
@@ -1960,6 +1976,7 @@ describe('updating a listing', () => {
           transportOptions: [],
           feePolicy: FEE_POLICY,
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+          requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         },
         owner,
       );
@@ -2055,6 +2072,7 @@ describe('updating a listing', () => {
         transportOptions: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
       owner,
     );
@@ -2086,6 +2104,7 @@ describe('updating a listing', () => {
         transportOptions: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
       owner,
     );
@@ -2582,6 +2601,7 @@ describe('the public read', () => {
           transportOptions: [],
           feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
           maximumRentalDays: 30,
+          requestExpiryHours: 48,
         },
         owner,
       );
@@ -2687,6 +2707,7 @@ describe('the public read', () => {
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
       owner,
     );

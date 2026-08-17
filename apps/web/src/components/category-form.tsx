@@ -20,6 +20,7 @@ import { INITIAL_CATEGORY_STATE } from '../app/admin/categories/state';
 import { AttributeSchemaEditor } from './attribute-schema-editor';
 import { FeePolicyEditor } from './fee-policy-editor';
 import { MaximumRentalDaysField } from './maximum-rental-days-field';
+import { RequestExpiryField } from './request-expiry-field';
 import { TransportOptionsEditor } from './transport-options-editor';
 
 /** Human wording for the vocabulary. The values themselves are the contract's. */
@@ -283,6 +284,8 @@ export function CreateCategoryForm() {
 
       <MaximumRentalDaysField idPrefix="create" />
 
+      <RequestExpiryField idPrefix="create" />
+
       <p>
         <label htmlFor="create-reason">Why</label>
         <input
@@ -386,6 +389,13 @@ export function ReconfigureCategoryForm({
       <MaximumRentalDaysField
         idPrefix={category.slug}
         initial={category.maximumRentalDays}
+      />
+
+      {/* Seeded for the same reason: reconfiguring the fees should not silently
+          reset how long an owner has to answer. */}
+      <RequestExpiryField
+        idPrefix={category.slug}
+        initial={category.requestExpiryHours}
       />
 
       <p>
