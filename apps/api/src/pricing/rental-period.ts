@@ -70,10 +70,18 @@ export type PeriodRefusal =
  * into on our behalf.
  *
  * **`maximumDays` is the category's, passed in rather than read.** This module
- * has no store — the caller holds the listing and its pinned category version
- * already (see `daily-price.ts` for the same arrangement and its reasoning), and
- * the *pinned* version is the one that matters: a booking is judged against the
- * cap it was made under.
+ * has no store — the caller holds the listing and its category configuration
+ * already (see `daily-price.ts` for the same arrangement and its reasoning).
+ *
+ * **It is the *current* version's cap, and this paragraph said the pinned one
+ * until slice 4.4b had to choose.** The distinction is ADR 0042's, applied to a
+ * cap: a pinned version gives stored answers their **meaning** — `25` is 2.5 kg —
+ * while a **rule** about what may happen now comes from the current version,
+ * which is why the fee policy does. A duration cap is a rule, and a legal one: an
+ * administrator narrowing a category to thirty days has to affect the next hire,
+ * not only the hires of listings whose owners happen to edit them. What keeps
+ * history honest is that the quote stores the version it was judged against
+ * (§8.5.2), so a booking made last year can still be read under last year's cap.
  *
  * **The ceiling is re-checked here even though the contract validates it.**
  * `maximumRentalDaysSchema` refuses anything above 88 at the boundary, so a

@@ -36,7 +36,7 @@ import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import type { ListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
-import { createBookingFakes } from '../booking/testing/fakes.js';
+import { bookingModuleFakes } from '../booking/testing/fakes.js';
 import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
 
 /**
@@ -178,7 +178,7 @@ beforeEach(async () => {
         ),
         featureFlags: createFeatureFlagFakes().service,
         listings: listings.service,
-        availability: createBookingFakes().service,
+        ...bookingModuleFakes(),
       }),
     ],
   }).compile();

@@ -4,7 +4,7 @@ import type {
   InclusiveDailyPrice,
   ListingRateCard,
 } from '@platform/contracts';
-import { basisPointsToPercent } from '@platform/contracts';
+import { renterFeeOn } from './renter-fee.js';
 
 /**
  * The one place a price is worked out, and the only place rounding happens.
@@ -61,44 +61,14 @@ export function inclusiveDailyPrice(
   const rate = Money.money(rates.daily.amount, rates.daily.currency);
 
   /*
-   * The percentage, rounded once, here.
-   *
-   * `percentageOf` rounds half-up to a whole penny, which is the platform's
-   * single rounding rule (§6.1). Rounding again anywhere downstream — a display
-   * helper formatting to two places, a component adding two rounded numbers —
-   * is how a total stops equalling the sum of its parts.
+   * **The percentage-then-floor rule lives in `renter-fee.ts`**, and did not
+   * until slice 4.4b. It was inline here while this was its only caller; the
+   * quote engine is the second, applying the same rule to a whole period, and
+   * §6.1 says the rounding rule exists once. The reasoning for the floor going
+   * entirely on the renter's side — and for what Phase 5 changes about it — is
+   * in that file.
    */
-  const percentageFee = Money.percentageOf(
-    rate,
-    basisPointsToPercent(policy.renterFeeBasisPoints),
-  );
-
-  const floor = Money.money(
-    policy.minimumPlatformFee.amount,
-    policy.minimumPlatformFee.currency,
-  );
-
-  /*
-   * **The floor is applied to the renter's fee, and that is deliberately the
-   * conservative reading of §3.4.2.**
-   *
-   * §3.4.2 puts a minimum on *the platform fee*, and the platform's revenue on a
-   * booking is the owner's commission plus the renter's fee. Which side makes up
-   * a shortfall is a payout question — it changes what the owner receives — and
-   * payouts are Phase 5. Nothing here is entitled to decide it.
-   *
-   * So this takes the bound that cannot be wrong in the direction that matters:
-   * applying the whole floor to the renter's side can only ever *overstate* what
-   * they will be charged relative to any allocation Phase 5 chooses. If Phase 5
-   * makes the owner absorb part of it, the renter pays less than was displayed,
-   * which is safe. The opposite — displaying less than they pay — is the drip
-   * pricing §3.4.4 prohibits.
-   *
-   * When Phase 5 decides the allocation, this is the line that changes, and the
-   * displayed price can only fall.
-   */
-  const minimumFeeApplied = Money.lessThan(percentageFee, floor);
-  const renterFee = minimumFeeApplied ? floor : percentageFee;
+  const { fee: renterFee, minimumFeeApplied } = renterFeeOn(rate, policy);
 
   return {
     rate,

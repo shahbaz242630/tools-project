@@ -53,6 +53,7 @@ import type {
   ModerationDecision,
   PublicListingRecord,
   PublicListingSummaryRecord,
+  QuotableListingRecord,
 } from '../listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from '../listing-locator.js';
 import type { OwnerStatus } from '@platform/contracts';
@@ -471,6 +472,39 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
    * deletions is a projection that silently gains whatever the source record
    * gains next, and what this one would gain is a decrypted street address.
    */
+  /**
+   * What the quote engine needs (slice 4.4b).
+   *
+   * **The same visibility check as `findPublished`**, called rather than
+   * restated, so the double cannot drift from its neighbour the way the real
+   * adapter's three SQL predicates could.
+   *
+   * **The version id is synthesised, and it has to be.** This double holds no
+   * `category_versions` rows — a category is one object with a version *number* —
+   * so there is no id to return. What a test needs of it is what production
+   * guarantees: that it is stable for a given configuration and *changes when the
+   * category is reconfigured*, which is what makes "the quote pinned the version
+   * it priced under" provable here at all.
+   */
+  async findQuotable(id: string): Promise<QuotableListingRecord | null> {
+    const listing = this.listings.find((candidate) => candidate.id === id);
+    if (listing === undefined) return null;
+    if (!isPubliclyVisible(listing.status, listing.moderationState)) return null;
+
+    const category = await this.categories.findBySlug(listing.categorySlug);
+    /* c8 ignore next -- unreachable: a listing cannot exist without its category. */
+    if (category === null) return null;
+
+    return {
+      id: listing.id,
+      ownerId: listing.ownerId,
+      rates: listing.rates,
+      currentFeePolicy: category.feePolicy,
+      currentMaximumRentalDays: category.maximumRentalDays,
+      currentCategoryVersionId: `${category.id}:v${String(category.versionNumber)}`,
+    };
+  }
+
   async findPublished(id: string): Promise<PublicListingRecord | null> {
     const listing = this.listings.find((candidate) => candidate.id === id);
     if (listing === undefined) return null;

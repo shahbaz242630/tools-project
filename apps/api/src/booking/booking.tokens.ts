@@ -10,3 +10,6 @@
  * is the first thing here a controller resolves.
  */
 export const AVAILABILITY_SERVICE = Symbol('AVAILABILITY_SERVICE');
+
+/** Injection token for the quote engine (slice 4.4b). */
+export const QUOTES_SERVICE = Symbol('QUOTES_SERVICE');

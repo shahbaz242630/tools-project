@@ -172,6 +172,16 @@ model User {
   /// of a transaction because the *other* party asked to leave.
   bookings Booking[]
 
+  /// Prices this person has been quoted (BRD §8.5.2, slice 4.4b).
+  ///
+  /// **`ON DELETE CASCADE`, which is the opposite of `bookings` above**, and the
+  /// difference is that a quote has no counterparty. Nobody else's record depends
+  /// on a price we offered somebody who never acted on it, and it holds their
+  /// postcode — so erasing the account erases it. From 4.5 a quote a booking was
+  /// made from stops being unused and this inverts; the reasoning is on
+  /// `Quote.renterId`.
+  quotes Quote[]
+
   /// Listings this administrator has moderated (ADR 0041). Declared because
   /// Prisma requires both ends of a relation; nothing reads a moderator's
   /// listings *through the user*, and if something ever needs to — "show me
@@ -874,6 +884,12 @@ model CategoryVersion {
 
   listings Listing[]
 
+  /// Quotes priced under this configuration (slice 4.4b). `ON DELETE RESTRICT`,
+  /// so a version somebody was given a price under cannot be deleted while the
+  /// price still exists to be explained. Declared because Prisma requires both
+  /// ends; nothing reads a version's quotes.
+  quotes Quote[]
+
   /// Both the "no two versions share a number" rule and the index that answers
   /// "what is current". One constraint, two jobs, no second index to maintain.
   @@unique([categoryId, versionNumber])
@@ -1172,6 +1188,10 @@ model Listing {
   /// A block is the owner's own note about their own item, so it goes when the
   /// listing does; a booking is somebody else's record and does not.
   availabilityBlocks AvailabilityBlock[]
+
+  /// Prices quoted for this item (slice 4.4b). `ON DELETE CASCADE`, as the
+  /// blocks above — an offer for an item that no longer exists means nothing.
+  quotes Quote[]
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -1480,6 +1500,160 @@ model AvailabilityBlock {
   /// `bookings.period` and `listings.searchDocument` applies here too.
   @@index([period], type: Gist)
   @@map("availability_blocks")
+}
+
+/// A priced, expiring offer for a period (BRD §8.5.2, §6.2, slice 4.4b).
+///
+/// **Why a quote is stored at all, when the price could be recomputed.** §8.5.2:
+/// *"The renter postcode used is stored on the `Quote` record so the quote can be
+/// reproduced and audited"*, and *"Every quote has an expiry and stores the
+/// pricing-rule and category version"*. A price we showed somebody is a thing we
+/// said, and recomputing it later answers a different question — what we would
+/// say now — which is exactly the question a dispute is not about.
+///
+/// **In the booking module** (BRD §5.1), like `availability_blocks` and for the
+/// same reason: the arithmetic lives in `pricing/`, which has no store and no
+/// ports by design (ADR 0034), and what a quote *is* — an offer for dates on a
+/// listing — is Booking's subject.
+///
+/// **It has a renter, which §6.2's entity list does not.** That list names the
+/// renter's *postcode* but no renter, which taken literally would let an
+/// anonymous visitor leave a postcode and a date range in this table with no
+/// subject who could ask for it back — personal data with no erasure route,
+/// against §10.1. So a quote requires a signed-in renter. Nothing is lost: a
+/// stranger still sees the indicative `from £x/day` the listing page shows, which
+/// §8.5.2 explicitly permits before a postcode is supplied.
+///
+/// **Nothing here is immutable by trigger, unlike `category_versions`.** A quote
+/// is not configuration that other rows point at — it expires, and 4.5 will copy
+/// what it needs onto the booking rather than referencing it for meaning. What
+/// makes it trustworthy is that nothing updates it: there is no route that
+/// re-prices a quote, because re-pricing is issuing a new one.
+model Quote {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What was priced. `ON DELETE CASCADE` — the same call
+  /// `availability_blocks.listingId` makes, and the opposite of
+  /// `bookings.listingId`. A quote nobody acted on is not a record of a
+  /// transaction between two people; it is a price we offered for an item, and
+  /// when the item goes the offer means nothing.
+  ///
+  /// **This changes in 4.5**, where a quote a booking was made from becomes part
+  /// of that booking's terms and must outlive the listing exactly as the booking
+  /// does. See the note on `renterId`.
+  listingId String  @db.Uuid
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  /// Who asked. `ON DELETE CASCADE`, deliberately, and it is the erasure
+  /// decision of 17 August 2026 in one column: *an unused quote is erased
+  /// outright, and a quote a booking references follows the booking.*
+  ///
+  /// **Cascade is the whole of that rule today and only half of it from 4.5.**
+  /// Nothing references a quote yet, so every quote is unused and deleting the
+  /// account deletes them all — which is what the rule asks for. When 4.5 makes a
+  /// booking reference a quote, this becomes `RESTRICT` plus a conditional
+  /// erasure, because accounts are soft-deleted (ADR 0018) and the *counterparty*
+  /// keeps a right to the terms they agreed. That is the same inversion the
+  /// 10 August listing decision predicted and that 4.2 already performed once,
+  /// when `deleteAllOwnedBy` became `eraseOwnedBy`.
+  renterId String @db.Uuid
+  renter   User   @relation(fields: [renterId], references: [id], onDelete: Cascade)
+
+  /// The hire the price is for, in UTC (ADR 0003), `[startAt, endAt)`.
+  ///
+  /// **No `period` range and no exclusion constraint**, unlike `bookings` and
+  /// `availability_blocks`. A quote reserves nothing (§7.1) — two people may hold
+  /// quotes for the same week, and only 4.6's acceptance decides between them.
+  /// Giving this table a range would suggest otherwise.
+  startAt DateTime @db.Timestamptz(3)
+  endAt   DateTime @db.Timestamptz(3)
+
+  /// The zone the hire was counted in (ADR 0003), stored for the reason that ADR
+  /// gives: a period priced today must still recount the same way in five years.
+  timeZone String @db.Text
+
+  /// The renter's postcode, normalised (§8.5.2).
+  ///
+  /// **Required, stored, and it does not change the price today.** §8.5.2 makes
+  /// it a quote input because location determines reachability, whether owner
+  /// delivery is available and at what charge, and any location-dependent fee
+  /// configuration — none of which exists as configuration yet. It is collected
+  /// now because a quote without it *"must not be presented as a firm total"*,
+  /// and because collecting it later would mean re-quoting every price already
+  /// given.
+  ///
+  /// **In the clear, unlike `listing_locations.postcode`.** The encrypted one is
+  /// somebody's home address, disclosed only after a booking; this is an
+  /// answer to *"where are you"* volunteered to get a price, and it has to be
+  /// readable by the query that will one day compute a delivery charge from it.
+  /// It is personal data all the same, which is what the cascade above is for.
+  renterPostcode String @db.Text
+
+  /// What the owner charges, the renter's mandatory fee, and the headline total —
+  /// integer minor units with the currency on the same record (ADR 0002).
+  ///
+  /// **One currency column for all three**, as `listings.rateCurrency` does: a
+  /// quote whose fee is in a different currency from its item charge is not a
+  /// quote, and three columns would make that expressible.
+  ///
+  /// **`total` is stored rather than derived**, which is the one piece of
+  /// redundancy here and is deliberate: it is the number a person was shown, and
+  /// §3.4.4 makes it the legally significant one. A total recomputed from the
+  /// parts by a later reader would silently adopt that reader's rounding.
+  itemChargeAmount Int    @db.Integer
+  renterFeeAmount  Int    @db.Integer
+  totalAmount      Int    @db.Integer
+  currency         String @db.Text
+
+  /// Whether the category's minimum platform fee bound rather than the
+  /// percentage, carried so a price can be explained without re-deriving it.
+  minimumFeeApplied Boolean @db.Boolean
+
+  /// The units the price was built from — `[{ unit, count, unitPrice, subtotal }]`
+  /// (§6.2's *line items*).
+  ///
+  /// **JSON rather than a child table**, which is `category_versions.attributes`'
+  /// reasoning: it is variable-length, ordered, always read whole, and never
+  /// queried across rows. A `quote_line_items` table would add a join to every
+  /// read of a row that is meaningless without it.
+  ///
+  /// It is what makes a price explainable a year later — *"one week and three
+  /// days at the rates in force"* — which is the property the pricing rule was
+  /// chosen for (ADR 0047).
+  lineItems Json @db.JsonB
+
+  /// The category version whose fee policy priced this (§8.5.2's *category
+  /// version*).
+  ///
+  /// **ADR 0042 says a listing reads the *current* fee policy and that the pin
+  /// happens when a commitment is made — and puts that pin in Phase 5.** It
+  /// arrives here instead, because a quote is already a commitment: it is a firm
+  /// total with an expiry, and reproducing it needs the rates it was computed
+  /// from. `ON DELETE RESTRICT`, so configuration a price was given under cannot
+  /// be deleted out from under it.
+  categoryVersionId String          @db.Uuid
+  categoryVersion   CategoryVersion @relation(fields: [categoryVersionId], references: [id])
+
+  /// When the price stops holding (§8.5.2 requires an expiry and does not say
+  /// what it should be — `QUOTE_VALIDITY_MINUTES` names the 30 minutes and why).
+  ///
+  /// **Enforced by reading, not by deletion.** An expired quote stays until
+  /// erasure or a retention sweep collects it, because it is evidence of what was
+  /// offered; what expires is its usability, and 4.5 is what refuses to build a
+  /// booking on one.
+  expiresAt DateTime @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// **No `updatedAt`, deliberately.** Nothing updates a quote. Re-pricing is a
+  /// new quote, and a column suggesting otherwise would be an invitation.
+  ///
+  /// A renter reads their own quotes newest first; the listing index is what a
+  /// retention sweep and 4.5's lookup both use.
+  @@index([renterId, createdAt(sort: Desc)])
+  @@index([listingId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("quotes")
 }
 
 /// A seller's tax position for statutory reporting — **present and inactive**.

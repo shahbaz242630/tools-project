@@ -208,6 +208,7 @@ beforeEach(async () => {
   // Bookings sit above listings from slice 4.2, so they truncate first or the
   // foreign key refuses — children before parents, this suite's standing rule.
   await client.booking.deleteMany();
+  await client.quote.deleteMany();
   await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();
@@ -2404,10 +2405,21 @@ describe('moderation', () => {
  * exactly why it cannot tell you whether the SQL agrees.
  */
 describe('the public read', () => {
-  /** A listing complete enough to be published, with a real located address. */
-  async function givenListing(owner: string, slug: string) {
+  /**
+   * A listing complete enough to be published, with a real located address.
+   *
+   * **`rates` is an override rather than a default**, because most tests in this
+   * block are about visibility and an unpriced listing exercises them fine. The
+   * quotable read is about money, so it passes one.
+   */
+  async function givenListing(
+    owner: string,
+    slug: string,
+    rates: ListingRateCard = UNPRICED_RATE_CARD,
+  ) {
     return store.createDraft(
       draft(owner, slug, {
+        rates,
         collectionLocation: {
           line1: '12 Gloucester Road',
           line2: 'Flat 2',
@@ -2484,6 +2496,131 @@ describe('the public read', () => {
     expect(
       await store.findPublished('11111111-1111-4111-8111-111111111111'),
     ).toBeNull();
+  });
+
+  describe('the quotable read (slice 4.4b)', () => {
+    /** £18 a day and £90 a week — the fixture's own hedge trimmer. */
+    const PRICED: ListingRateCard = {
+      daily: { amount: 1_800, currency: 'GBP' },
+      weekend: null,
+      weekly: { amount: 9_000, currency: 'GBP' },
+    };
+
+    it('serves the rates, the current policy, the cap and the version id', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await givenListing(owner, category.slug, PRICED);
+      await store.publish(created.id, owner);
+
+      const quotable = await store.findQuotable(created.id);
+
+      expect(quotable?.id).toBe(created.id);
+      expect(quotable?.ownerId).toBe(owner);
+      expect(quotable?.rates.daily).toEqual({ amount: 1_800, currency: 'GBP' });
+      expect(quotable?.currentFeePolicy.renterFeeBasisPoints).toBe(800);
+      expect(quotable?.currentMaximumRentalDays).toBe(DEFAULT_MAXIMUM_RENTAL_DAYS);
+      // The version the two `current` fields came from, which is what the quote
+      // stores so the price can be explained afterwards (§8.5.2).
+      expect(quotable?.currentCategoryVersionId).toEqual(expect.any(String));
+    });
+
+    it('applies the same visibility rule as the public read', async () => {
+      // The third query to restate `PUBLICLY_VISIBLE`, so the same nine pairs are
+      // walked against it. A quote for a paused or rejected listing is a price
+      // for something nobody can book.
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const visible: string[] = [];
+
+      for (const status of ['DRAFT', 'PUBLISHED', 'PAUSED'] as const) {
+        for (const state of ['APPROVED', 'UNDER_REVIEW', 'REJECTED'] as const) {
+          const created = await givenListing(owner, category.slug);
+
+          await client.listing.update({
+            where: { id: created.id },
+            data: {
+              status,
+              moderationState: state,
+              moderationReason: state === 'APPROVED' ? null : 'Checking the serial',
+              ...(state === 'APPROVED'
+                ? {}
+                : { moderatedById: owner, moderatedAt: new Date() }),
+            },
+          });
+
+          if ((await store.findQuotable(created.id)) !== null) {
+            visible.push(`${status}/${state}`);
+          }
+        }
+      }
+
+      expect(visible).toEqual(['PUBLISHED/APPROVED']);
+    });
+
+    it('follows the category to its newest version, for the policy and the cap', async () => {
+      /*
+       * **The assertion ADR 0047 rests on, and the one 4.4a's docblock expected to
+       * go the other way.** A duration cap is a rule about what may happen now, so
+       * narrowing a category has to reach a listing whose owner has not touched it
+       * — unlike the attribute schema, which stays pinned so a stored `25` keeps
+       * meaning 2.5 kg.
+       */
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await givenListing(owner, category.slug);
+      await store.publish(created.id, owner);
+
+      const before = await store.findQuotable(created.id);
+
+      await categories.addVersion(
+        category.slug,
+        {
+          name: 'Outdoor and gardening',
+          riskLevel: 'medium',
+          reportableActivity: 'none',
+          attributes: SCHEMA,
+          transportOptions: [],
+          feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+          maximumRentalDays: 30,
+        },
+        owner,
+      );
+
+      const after = await store.findQuotable(created.id);
+
+      expect(after?.currentMaximumRentalDays).toBe(30);
+      expect(after?.currentFeePolicy.renterFeeBasisPoints).toBe(1_600);
+      // A different version, which is what makes the stored pin meaningful: two
+      // quotes given either side of a reconfiguration name different rows.
+      expect(after?.currentCategoryVersionId).not.toBe(
+        before?.currentCategoryVersionId,
+      );
+
+      // The listing's own pin has *not* moved, which is the other half.
+      const reread = await store.findOwnedBy(created.id, owner);
+      expect(reread?.categoryVersionNumber).toBe(1);
+    });
+
+    it('never reads the precise address', async () => {
+      // `QuotableListingRecord` has no field a street line could occupy — the
+      // same structural guarantee `findPublished` carries, and worth restating
+      // because this projection was added to a module whose subject is money.
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await givenListing(owner, category.slug);
+      await store.publish(created.id, owner);
+
+      const quotable = await store.findQuotable(created.id);
+
+      expect(JSON.stringify(quotable)).not.toContain('Gloucester');
+      expect(JSON.stringify(quotable)).not.toContain('BS7 8AA');
+    });
+
+    it('resolves to null for a listing that does not exist', async () => {
+      expect(
+        await store.findQuotable('11111111-1111-4111-8111-111111111111'),
+      ).toBeNull();
+    });
   });
 
   it('never reads the precise address, even to discard it', async () => {

@@ -52,6 +52,8 @@ import { PostcodesIoGeocoder } from './search-location/postcodes-io-geocoder.js'
 import { PrismaBookingStore } from './booking/prisma-booking-store.js';
 import { PrismaAvailabilityStore } from './booking/prisma-availability-store.js';
 import { AvailabilityService } from './booking/availability.service.js';
+import { PrismaQuoteStore } from './booking/prisma-quote-store.js';
+import { QuotesService } from './booking/quotes.service.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -234,6 +236,17 @@ async function bootstrap(): Promise<void> {
       erase: async (actor) => {
         await profiles.eraseFor(actor);
         await listings.eraseFor(actor);
+        /*
+         * **Three erasers now, and this one is the first from Booking** (slice
+         * 4.4b). A quote holds the renter's postcode, and the `ON DELETE
+         * CASCADE` on `quotes.renterId` does *not* discharge the obligation:
+         * accounts are soft-deleted with a tombstoned email (ADR 0018), so the
+         * `users` row survives and the cascade never fires.
+         *
+         * Last in the sequence because it is the cheapest and the least
+         * consequential — the two above remove things other people have seen.
+         */
+        await quotes.eraseFor(actor.userId);
       },
     },
     authenticationEvents,
@@ -440,9 +453,32 @@ async function bootstrap(): Promise<void> {
    * whole answer, so the calendar cannot reach a collection address through it
    * — see `existsOwnedBy`, which reads one column rather than decrypting one.
    */
-  const availability = new AvailabilityService(new PrismaAvailabilityStore(database), {
+  const availabilityStore = new PrismaAvailabilityStore(database);
+
+  const availability = new AvailabilityService(availabilityStore, {
     isOwnedBy: (listingId, ownerId) => listings.isOwnedBy(listingId, ownerId),
   });
+
+  /*
+   * The quote engine (slice 4.4b). Built after listings for the same reason the
+   * calendar is: it takes a port they answer.
+   *
+   * **`findQuotable` narrowed to one method at the seam**, the second port
+   * Booking declares and Catalogue answers. What crosses is rates, the current
+   * fee policy, the current duration cap and the version id they came from — and
+   * pointedly not a title, a description or an address, so a module whose subject
+   * is dates and money cannot hold one.
+   *
+   * **It is given the availability *store*, not the service**, and the same
+   * instance the calendar has. Every method on that service is owner-scoped, and
+   * a renter asking for a price owns nothing; `reasonUnavailable` is the one
+   * question on the store that is not about whose calendar it is.
+   */
+  const quotes = new QuotesService(
+    new PrismaQuoteStore(database),
+    { findQuotable: (listingId) => listings.findQuotable(listingId) },
+    availabilityStore,
+  );
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
@@ -471,6 +507,7 @@ async function bootstrap(): Promise<void> {
       featureFlags,
       listings,
       availability,
+      quotes,
     }),
     /*
      * **One hop, not all of them, and not none.**
