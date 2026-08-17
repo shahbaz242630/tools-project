@@ -66,6 +66,7 @@ beforeEach(async () => {
    */
   await client.booking.deleteMany();
   await client.listingLocation.deleteMany();
+  await client.quote.deleteMany();
   await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
   await client.category.deleteMany();

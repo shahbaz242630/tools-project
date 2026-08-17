@@ -15,7 +15,7 @@ import {
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
-import { createBookingFakes } from '../booking/testing/fakes.js';
+import { bookingModuleFakes } from '../booking/testing/fakes.js';
 
 /**
  * Boots the real application — real routing, real middleware, real exception
@@ -66,7 +66,7 @@ async function boot(
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes().service,
-        availability: createBookingFakes().service,
+        ...bookingModuleFakes(),
       }),
     ],
   }).compile();

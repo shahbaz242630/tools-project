@@ -12,6 +12,7 @@ import type {
 } from './availability-store.js';
 import type { ListingOwnership } from './listing-ownership.js';
 import { MAX_BLOCK_DAYS, MAX_BLOCK_HORIZON_DAYS } from './limits.js';
+import { periodFromLocalDates } from './local-period.js';
 
 /**
  * The owner's calendar (BRD §8.5, slice 4.3b).
@@ -107,15 +108,18 @@ export class AvailabilityService {
   ): Promise<AvailabilityBlock | null> {
     if (!(await this.listings.isOwnedBy(listingId, ownerId))) return null;
 
-    const startAt = Time.startOfLocalDay(request.startDate);
     /*
      * **The inclusive last day becomes an exclusive bound**, which is the one
      * piece of arithmetic this service exists for. "To the 22nd" ends at the
      * start of the 23rd, so a block ending on the 22nd and a booking collected
      * on the 23rd do not overlap — which is what the `[)` in the migration's
      * trigger means and what `overlaps()` in the adapter compares.
+     *
+     * **It moved into `local-period.ts` in slice 4.4b**, when the quote engine
+     * became a second caller. The rule is unchanged; what changed is that there
+     * is still only one implementation of it.
      */
-    const endAt = Time.startOfLocalDay(Time.addLocalDays(request.endDate, 1));
+    const { startAt, endAt } = periodFromLocalDates(request.startDate, request.endDate);
 
     this.refuseUnacceptablePeriod(request, startAt, endAt);
 

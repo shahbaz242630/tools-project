@@ -87,6 +87,7 @@ beforeEach(async () => {
         featureFlags: createFeatureFlagFakes(audit).service,
         listings: createListingFakes(categories).service,
         availability: booking.service,
+        quotes: booking.quotes,
       }),
     ],
   }).compile();

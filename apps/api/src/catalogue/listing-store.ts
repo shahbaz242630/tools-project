@@ -216,6 +216,41 @@ export interface PublicListingRecord {
  * putting it on a record the store returns would mean the store had to know
  * about searching. The service pairs the two.
  */
+/**
+ * A listing as the quote engine needs it (slice 4.4b).
+ *
+ * **The narrowest projection in this module, and the only one with no words on
+ * it.** No title, no description, no attributes, no district — a quote is
+ * arithmetic about dates and money. Booking declares what it needs as
+ * `QuotableListing`, and this is what fills it.
+ *
+ * **Two `current` fields and the id they came from.** ADR 0042: a listing reads
+ * the *current* fee policy rather than the one it pinned, because a listing is not
+ * a contract and §3.4.4 wants the price in the window to be the price payable
+ * today. `currentCategoryVersionId` is what the quote stores, so the price it gave
+ * can be explained afterwards — the pin ADR 0042 places at the moment of
+ * commitment, arriving one phase earlier than that ADR expected because a quote is
+ * already a commitment.
+ */
+export interface QuotableListingRecord {
+  readonly id: string;
+  /** So the service can refuse to quote somebody their own item. */
+  readonly ownerId: string;
+  readonly rates: ListingRateCard;
+  /** The fee policy **as it stands now** (ADR 0042). */
+  readonly currentFeePolicy: CategoryFeePolicy;
+  /**
+   * The longest hire the category permits **as it stands now** (§8.5.3).
+   *
+   * Current rather than pinned, for the reason `QuotableListing` gives at length:
+   * a pinned version gives stored answers their meaning, and a duration cap is a
+   * rule about what may happen now — a legal one, which an administrator
+   * narrowing a category has to be able to apply to the next hire.
+   */
+  readonly currentMaximumRentalDays: number;
+  readonly currentCategoryVersionId: string;
+}
+
 export interface PublicListingSummaryRecord {
   readonly id: string;
   readonly ownerId: string;
@@ -702,6 +737,27 @@ export interface ListingStore {
   findPublishedSummaries(
     ids: readonly string[],
   ): Promise<readonly PublicListingSummaryRecord[]>;
+
+  /**
+   * What is needed to price a hire of this listing, or null (slice 4.4b).
+   *
+   * **Its own method rather than two fields added to `findPublished`**, and the
+   * reason is the argument the record types here keep making: every projection is
+   * built field by field for what its caller renders. The public listing page has
+   * no use for a category version id or a duration cap, and putting them on its
+   * record would mean a page holding configuration identifiers it will never show.
+   *
+   * **The same visibility predicate as `findPublished`**, so a quote cannot be
+   * given for a paused or rejected listing. That predicate is now stated in three
+   * queries and the db test that walks all nine status × moderation pairs is what
+   * holds them together — which is the argument for `PUBLICLY_VISIBLE` being one
+   * constant rather than three literals.
+   *
+   * **It does not read the owner's declaration**, and so is not the whole rule.
+   * ADR 0044's asymmetry: that authority lives in another module's table, and the
+   * service composes it — exactly as `findPublic` does.
+   */
+  findQuotable(id: string): Promise<QuotableListingRecord | null>;
 
   /**
    * Read a listing without knowing whose it is (slice 2.8c-i).

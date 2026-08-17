@@ -32,6 +32,7 @@ import type {
   ModerationDecision,
   PublicListingRecord,
   PublicListingSummaryRecord,
+  QuotableListingRecord,
 } from './listing-store.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from './listing-locator.js';
 
@@ -485,6 +486,46 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
    * to null rather than throwing because a public route should 404 on a row it
    * cannot describe rather than 500.
    */
+  /**
+   * What is needed to price a hire (slice 4.4b).
+   *
+   * **`PUBLIC_LISTING_CATEGORY` again rather than a narrower include**, which is
+   * `findPublishedSummaries`' decision and its reasoning: what matters about that
+   * constant is the join it does *not* make — `listing_locations` — and one
+   * constant held by every public read is worth more than the columns a bespoke
+   * `select` would save. The narrowing that protects anybody is on the record
+   * type.
+   *
+   * **The current version, with the pinned one as the fallback.** `versions[0]`
+   * is the highest version number; it is absent only if the category has no
+   * versions at all, which the schema makes impossible for a listing that pinned
+   * one. The `??` is the same expression `findPublished` uses two methods down and
+   * exists for the same reason: a `!` here would be an assertion about another
+   * table's contents.
+   */
+  async findQuotable(id: string): Promise<QuotableListingRecord | null> {
+    const listing = await this.prisma.listing.findFirst({
+      where: { id, ...PUBLICLY_VISIBLE },
+      include: PUBLIC_LISTING_CATEGORY,
+    });
+    if (listing === null) return null;
+
+    const current =
+      listing.categoryVersion.category.versions[0] ?? listing.categoryVersion;
+
+    return {
+      id: listing.id,
+      ownerId: listing.ownerId,
+      rates: asRateCard(listing),
+      currentFeePolicy: asFeePolicy(
+        current,
+        `the current version of the category listed by ${listing.id}`,
+      ),
+      currentMaximumRentalDays: current.maximumRentalDays,
+      currentCategoryVersionId: current.id,
+    };
+  }
+
   async findPublished(id: string): Promise<PublicListingRecord | null> {
     const listing = await this.prisma.listing.findFirst({
       where: { id, ...PUBLICLY_VISIBLE },

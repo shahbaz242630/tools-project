@@ -47,6 +47,7 @@ import type {
   ListingRecord,
   ListingStore,
   PublicListingRecord,
+  QuotableListingRecord,
   PublicListingSummaryRecord,
 } from './listing-store.js';
 import { CategoryChangedError, UnknownCategoryError } from './listing-store.js';
@@ -818,6 +819,40 @@ export class ListingsService {
     if (ownerStatus !== 'private_owner') return null;
 
     return { listing, ownerStatus };
+  }
+
+  /**
+   * What Booking needs to price a hire of this listing, or null (slice 4.4b).
+   *
+   * **The same two steps as `findPublic`, in the same order, and that is the
+   * point of it living here rather than being the store method Booking calls.**
+   * The store applies the two visibility columns; this applies the owner's
+   * declaration. Both are required for a listing to be publicly bookable, and
+   * they live in two modules — so the composition has to happen somewhere, and
+   * `findPublic` establishes that it happens in the application service (slice
+   * 2.13, ADR 0044).
+   *
+   * **A quote and a public listing page must agree about what is visible**,
+   * because a page that shows a price for something the quote route then 404s is
+   * worse than either behaviour alone. Sharing the rule rather than restating it
+   * is what makes that structural.
+   *
+   * Null covers four facts — no such listing, not published, hidden by the
+   * platform, and an owner who has not declared themselves a private individual.
+   * The caller answers 404 to all four and cannot tell them apart.
+   */
+  async findQuotable(id: string): Promise<QuotableListingRecord | null> {
+    const listing = await this.store.findQuotable(id);
+    if (listing === null) return null;
+
+    const ownerStatus = await this.ownerStatusOf(listing.ownerId);
+
+    // Not `!== 'professional_trader'`, for the reason `findPublic` gives: an
+    // owner who has *never* declared must not be bookable either, and writing
+    // the negative would let null through.
+    if (ownerStatus !== 'private_owner') return null;
+
+    return listing;
   }
 
   /**

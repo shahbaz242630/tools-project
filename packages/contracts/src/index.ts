@@ -15,6 +15,7 @@ export * from './money.js';
 export * from './parse.js';
 export * from './pricing.js';
 export * from './publication.js';
+export * from './quotes.js';
 export * from './profiles.js';
 export * from './search.js';
 export * from './sessions.js';

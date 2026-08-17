@@ -35,7 +35,7 @@ import {
 import { InMemoryAuthenticationEvents } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
-import { createBookingFakes } from '../booking/testing/fakes.js';
+import { bookingModuleFakes } from '../booking/testing/fakes.js';
 
 /**
  * A suspended account against the real application.
@@ -150,7 +150,7 @@ beforeEach(async () => {
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
         listings: createListingFakes().service,
-        availability: createBookingFakes().service,
+        ...bookingModuleFakes(),
       }),
     ],
   }).compile();

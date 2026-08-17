@@ -52,8 +52,10 @@ import { PublicListingSearchController } from './catalogue/public-listing-search
 import { PublicCategoriesController } from './catalogue/public-categories.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import { OwnerAvailabilityController } from './booking/owner-availability.controller.js';
-import { AVAILABILITY_SERVICE } from './booking/booking.tokens.js';
+import { AVAILABILITY_SERVICE, QUOTES_SERVICE } from './booking/booking.tokens.js';
 import type { AvailabilityService } from './booking/availability.service.js';
+import { QuotesController } from './booking/quotes.controller.js';
+import type { QuotesService } from './booking/quotes.service.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
 import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
 import type { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -168,6 +170,13 @@ export interface AppModuleOptions {
    * every place to fix.
    */
   readonly availability: AvailabilityService;
+
+  /**
+   * The quote engine (slice 4.4b, BRD §8.5.2).
+   *
+   * Required rather than optional, for the reason every dependency here is.
+   */
+  readonly quotes: QuotesService;
 }
 
 /**
@@ -207,6 +216,7 @@ export class AppModule implements NestModule {
         // sitting with the other two for that reason rather than with the
         // public four below.
         OwnerAvailabilityController,
+        QuotesController,
         // **Unguarded by design, all four**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
@@ -272,6 +282,7 @@ export class AppModule implements NestModule {
         { provide: LISTINGS_SERVICE, useValue: options.listings },
         { provide: FEATURE_FLAGS_SERVICE, useValue: options.featureFlags },
         { provide: AVAILABILITY_SERVICE, useValue: options.availability },
+        { provide: QUOTES_SERVICE, useValue: options.quotes },
       ],
     };
   }

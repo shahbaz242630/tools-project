@@ -24,7 +24,7 @@ import {
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from './testing/fakes.js';
 import type { FeatureFlagFakes } from './testing/fakes.js';
-import { createBookingFakes } from '../booking/testing/fakes.js';
+import { bookingModuleFakes } from '../booking/testing/fakes.js';
 
 /**
  * Feature flags through the real application: real routing, real guard, real
@@ -97,7 +97,7 @@ beforeEach(async () => {
         ),
         featureFlags: flags.service,
         listings: createListingFakes(categories).service,
-        availability: createBookingFakes().service,
+        ...bookingModuleFakes(),
       }),
     ],
   }).compile();
