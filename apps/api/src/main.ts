@@ -163,6 +163,19 @@ async function bootstrap(): Promise<void> {
   // rather than a second pool alongside it.
   const database = createPrismaClient({ connectionString: env.databaseUrl });
 
+  /*
+   * ioredis 6 negotiates RESP3 by default, and this client is left on that
+   * default deliberately rather than pinned back to `protocol: 2`.
+   *
+   * It issues exactly one command — `PING`, for the readiness check — and the
+   * reply is the identical string `PONG` under both protocols, measured against
+   * Redis 7 rather than assumed. A pin with no failure behind it is a line
+   * nobody can later tell from a real constraint.
+   *
+   * What does change between the two is the shape of a *map* reply — `HGETALL`,
+   * `CONFIG GET`, `XRANGE` — so a second command here is a reason to check
+   * again, not to trust this note.
+   */
   const redis = new Redis(env.redisUrl, {
     maxRetriesPerRequest: 1,
     // Without this, a command issued while disconnected queues silently and
