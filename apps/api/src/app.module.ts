@@ -52,10 +52,16 @@ import { PublicListingSearchController } from './catalogue/public-listing-search
 import { PublicCategoriesController } from './catalogue/public-categories.controller.js';
 import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
 import { OwnerAvailabilityController } from './booking/owner-availability.controller.js';
-import { AVAILABILITY_SERVICE, QUOTES_SERVICE } from './booking/booking.tokens.js';
+import {
+  AVAILABILITY_SERVICE,
+  BOOKINGS_SERVICE,
+  QUOTES_SERVICE,
+} from './booking/booking.tokens.js';
 import type { AvailabilityService } from './booking/availability.service.js';
 import { QuotesController } from './booking/quotes.controller.js';
+import { BookingsController } from './booking/bookings.controller.js';
 import type { QuotesService } from './booking/quotes.service.js';
+import type { BookingsService } from './booking/bookings.service.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
 import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
 import type { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -177,6 +183,13 @@ export interface AppModuleOptions {
    * Required rather than optional, for the reason every dependency here is.
    */
   readonly quotes: QuotesService;
+
+  /**
+   * Requesting a booking (slice 4.5a, BRD §8.6).
+   *
+   * Required rather than optional, for the reason every dependency here is.
+   */
+  readonly bookings: BookingsService;
 }
 
 /**
@@ -217,6 +230,7 @@ export class AppModule implements NestModule {
         // public four below.
         OwnerAvailabilityController,
         QuotesController,
+        BookingsController,
         // **Unguarded by design, all four**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
@@ -283,6 +297,7 @@ export class AppModule implements NestModule {
         { provide: FEATURE_FLAGS_SERVICE, useValue: options.featureFlags },
         { provide: AVAILABILITY_SERVICE, useValue: options.availability },
         { provide: QUOTES_SERVICE, useValue: options.quotes },
+        { provide: BOOKINGS_SERVICE, useValue: options.bookings },
       ],
     };
   }

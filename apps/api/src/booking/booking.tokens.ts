@@ -13,3 +13,6 @@ export const AVAILABILITY_SERVICE = Symbol('AVAILABILITY_SERVICE');
 
 /** Injection token for the quote engine (slice 4.4b). */
 export const QUOTES_SERVICE = Symbol('QUOTES_SERVICE');
+
+/** Injection token for the request path (slice 4.5a). */
+export const BOOKINGS_SERVICE = Symbol('BOOKINGS_SERVICE');

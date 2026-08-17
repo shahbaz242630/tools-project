@@ -22,7 +22,10 @@ import { randomUUID } from 'node:crypto';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 import type { QuoteLineItem } from '@platform/contracts';
 import { PrismaCategoryStore } from '../catalogue/prisma-category-store.js';
 import { PrismaListingStore } from '../catalogue/prisma-listing-store.js';
@@ -114,6 +117,7 @@ async function newFixture(): Promise<Fixture> {
       },
       transportOptions: [],
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
     },
     owner,
   );
@@ -299,8 +303,8 @@ describe('what a deletion takes with it', () => {
       quoteFor(fixture, { expiresAt: new Date('2026-09-10T13:00:00Z') }),
     );
 
-    expect(await store.deleteAllForRenter(fixture.renterId)).toBe(2);
-    expect(await store.deleteAllForRenter(fixture.renterId)).toBe(0);
+    expect(await store.deleteUnbookedForRenter(fixture.renterId)).toBe(2);
+    expect(await store.deleteUnbookedForRenter(fixture.renterId)).toBe(0);
   });
 
   it('leaves another renter’s quotes alone', async () => {
@@ -309,7 +313,7 @@ describe('what a deletion takes with it', () => {
     await store.create(quoteFor(fixture));
     const theirs = await store.create(quoteFor(fixture, { renterId: other }));
 
-    await store.deleteAllForRenter(fixture.renterId);
+    await store.deleteUnbookedForRenter(fixture.renterId);
 
     expect(await store.findForRenter(theirs.id, other)).not.toBe(null);
   });

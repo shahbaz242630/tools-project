@@ -434,6 +434,44 @@ export const maximumRentalDaysSchema = z
   });
 
 /**
+ * How long an owner has to answer a request, in hours (BRD §8.6, slice 4.5a).
+ *
+ * §8.6: *"Owner receives notification and accepts or declines **before a
+ * configurable deadline**"*, and §6.2 puts an **expiry** on the `Booking` entity.
+ * Neither existed until this slice — so a request could not expire, and the
+ * expiry worker §14 asks for in 4.7 would have had nothing to read.
+ *
+ * **48 hours by default, and that is engineering judgement rather than BRD
+ * text.** Two things bound it. An owner is a private individual with a job, not
+ * a depot: a request arriving on Friday evening needs to survive until Monday
+ * morning, which 24 hours does not. And a renter who has asked for next weekend
+ * cannot wait a week to find out, because every hour of silence is an hour they
+ * could have spent asking somebody else — §17 names low inventory density as the
+ * dominant failure mode, and a slow no is worse for that than a fast one.
+ *
+ * **Unlike the duration cap, the ceiling here is commercial rather than legal**,
+ * so it is generous: two weeks. What it exists to stop is a typo — 720 hours
+ * would leave a renter waiting a month while the dates they wanted passed.
+ *
+ * **The floor is one hour** rather than zero. A deadline of zero would expire
+ * every request the moment it was made, which reads as a broken platform rather
+ * than as a misconfiguration.
+ */
+export const DEFAULT_REQUEST_EXPIRY_HOURS = 48;
+export const MIN_REQUEST_EXPIRY_HOURS = 1;
+export const MAX_REQUEST_EXPIRY_HOURS = 336;
+
+export const requestExpiryHoursSchema = z
+  .number()
+  .int()
+  .min(MIN_REQUEST_EXPIRY_HOURS, {
+    message: `must be at least ${String(MIN_REQUEST_EXPIRY_HOURS)} hour`,
+  })
+  .max(MAX_REQUEST_EXPIRY_HOURS, {
+    message: `must be at most ${String(MAX_REQUEST_EXPIRY_HOURS)} hours — two weeks`,
+  });
+
+/**
  * The warning §8.5.3 requires the admin interface to carry on change.
  *
  * **Here rather than in the form, for the reason the reporting acknowledgement
@@ -551,6 +589,14 @@ export interface AdminCategory {
    * default — so the backfill asserts the specification rather than guessing.
    */
   readonly maximumRentalDays: number;
+  /**
+   * How long an owner has to answer a request, in hours (§8.6, slice 4.5a).
+   *
+   * On the version like every other configurable fact, so a request is judged
+   * against the deadline in force when it was made. Every category configured
+   * before 4.5a carries `DEFAULT_REQUEST_EXPIRY_HOURS`.
+   */
+  readonly requestExpiryHours: number;
   readonly versionNumber: number;
   /** ISO 8601 UTC. When this *version* was written, not when the category was. */
   readonly versionCreatedAt: string;
@@ -576,6 +622,7 @@ const adminCategorySchema = z.object({
   transportOptions: categoryTransportOptionsSchema,
   feePolicy: categoryFeePolicySchema,
   maximumRentalDays: maximumRentalDaysSchema,
+  requestExpiryHours: requestExpiryHoursSchema,
   versionNumber: z.number().int().positive(),
   versionCreatedAt: z.string(),
   createdAt: z.string(),
@@ -647,6 +694,13 @@ export const categoryDraftSchema = z
      * 400 and makes somebody say the number.
      */
     maximumRentalDays: maximumRentalDaysSchema,
+    /**
+     * Required for the same reason the cap above is: the defensible silent
+     * default would be 48 hours, and a caller who forgot the field should be
+     * told rather than handed one. §8.6 makes it configuration, so somebody
+     * has to choose it.
+     */
+    requestExpiryHours: requestExpiryHoursSchema,
   })
   .superRefine(requireReportingAcknowledgement);
 
@@ -715,6 +769,13 @@ export const categoryConfigurationSchema = z
      * booking reading under the cap it was actually made under.
      */
     maximumRentalDays: maximumRentalDaysSchema,
+    /**
+     * Required for the same reason the cap above is: the defensible silent
+     * default would be 48 hours, and a caller who forgot the field should be
+     * told rather than handed one. §8.6 makes it configuration, so somebody
+     * has to choose it.
+     */
+    requestExpiryHours: requestExpiryHoursSchema,
   })
   .superRefine(requireReportingAcknowledgement);
 export type CategoryConfigurationInput = Omit<

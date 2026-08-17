@@ -42,9 +42,12 @@ function quotableMower(
   return {
     id: MOWER,
     ownerId: OWNER,
+    title: 'Petrol hedge trimmer',
+    categoryName: 'Outdoor and gardening',
     rates,
     currentFeePolicy: policy,
     currentMaximumRentalDays: 88,
+    currentRequestExpiryHours: 48,
     currentCategoryVersionId: 'category-version-2',
     ...overrides,
   };
@@ -291,6 +294,26 @@ describe('QuotesService', () => {
 
       expect(erased).toBe(2);
       expect(quotes.all().map((quote) => quote.renterId)).toEqual(['user-other']);
+    });
+
+    it('keeps a quote a booking was made from', async () => {
+      /*
+       * **The product owner's decision of 17 August, and the half that is easy to
+       * get wrong.** The terms belong to the counterparty as much as to the renter
+       * — §8.2 requires the booking to keep them and §10.1 retains booking records
+       * for six years — so erasing one would destroy the other party's record of
+       * what they agreed to.
+       */
+      const kept = await service.quote(MOWER, ADA, request);
+      const gone = await service.quote(MOWER, ADA, {
+        ...request,
+        endDate: '2026-08-24',
+      });
+      quotes.bookedQuoteIds.add(kept?.id ?? '');
+
+      expect(await service.eraseFor(ADA)).toBe(1);
+      expect(quotes.all().map((quote) => quote.id)).toEqual([kept?.id]);
+      expect(gone).not.toBe(null);
     });
 
     it('is idempotent, which a retry after a partial failure needs', async () => {

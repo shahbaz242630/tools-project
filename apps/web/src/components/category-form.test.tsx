@@ -4,6 +4,7 @@ import { UNCONFIGURED_FEE_POLICY } from '@platform/contracts';
 import type { AdminCategory } from '@platform/contracts';
 import {
   DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
   MAXIMUM_RENTAL_DAYS_WARNING,
   MAX_MAXIMUM_RENTAL_DAYS,
 } from '@platform/contracts';
@@ -63,6 +64,7 @@ const CATEGORY: AdminCategory = {
   attributes: [],
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: [],
   versionNumber: 1,
   versionCreatedAt: '2026-08-04T09:00:00.000Z',
@@ -378,6 +380,42 @@ describe('the maximum rental duration', () => {
     expect((screen.getByLabelText(/longest hire/i) as HTMLInputElement).value).toBe(
       '30',
     );
+  });
+
+  describe('the time an owner has to answer (§8.6, slice 4.5a)', () => {
+    it('seeds 48 hours when creating, bounded in the markup', () => {
+      render(<CreateCategoryForm />);
+
+      const field = screen.getByLabelText(/time to answer/i) as HTMLInputElement;
+      expect(field.value).toBe(String(DEFAULT_REQUEST_EXPIRY_HOURS));
+      expect(field.min).toBe('1');
+      expect(field.max).toBe('336');
+    });
+
+    it('seeds what the category allows now when reconfiguring', () => {
+      // Not the default. Reconfiguring the fees must not silently reset a deadline
+      // somebody chose.
+      render(
+        <ReconfigureCategoryForm category={{ ...CATEGORY, requestExpiryHours: 6 }} />,
+      );
+
+      expect((screen.getByLabelText(/time to answer/i) as HTMLInputElement).value).toBe(
+        '6',
+      );
+    });
+
+    it('carries no warning, unlike the cap beside it', () => {
+      // §8.5.3 requires a warning on the cap; this is an operational choice with a
+      // trade-off rather than a legal boundary, and a warning nobody needs is how
+      // the ones that matter stop being read.
+      render(<CreateCategoryForm />);
+
+      const help = screen
+        .getByLabelText(/time to answer/i)
+        .getAttribute('aria-describedby');
+      expect(help).toBeTruthy();
+      expect(screen.getAllByRole('note')).toHaveLength(1);
+    });
   });
 
   it('warns, in the words §8.5.3 requires, on both forms', () => {

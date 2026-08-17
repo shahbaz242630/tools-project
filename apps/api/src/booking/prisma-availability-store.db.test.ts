@@ -21,7 +21,10 @@ import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PrismaAvailabilityStore } from './prisma-availability-store.js';
 import { PrismaBookingStore } from './prisma-booking-store.js';
 import { AvailabilityService } from './availability.service.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 const env = loadEnv();
 
@@ -98,6 +101,7 @@ async function newListing(): Promise<string> {
       },
       transportOptions: [],
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
     },
     owner,
   );
@@ -126,13 +130,60 @@ async function givenABooking(
   startAt = MONDAY,
   endAt = FRIDAY,
 ): Promise<void> {
+  const renterId = await newUser();
+
+  /*
+   * **The quote comes first from slice 4.5a**, because a booking now carries the
+   * terms it was made under (§8.2) and a quote is where they legitimately come
+   * from. This file's subject is the calendar rather than the money, so the
+   * amounts are whatever is cheapest to write — what matters is that they exist
+   * and that the row they came from is real.
+   */
+  const version = await client.categoryVersion.findFirstOrThrow({
+    where: { listings: { some: { id: listingId } } },
+  });
+
+  const quote = await client.quote.create({
+    data: {
+      listingId,
+      renterId,
+      startAt,
+      endAt,
+      timeZone: 'Europe/London',
+      renterPostcode: 'BS7 8AA',
+      itemChargeAmount: 1_800,
+      renterFeeAmount: 144,
+      totalAmount: 1_944,
+      currency: 'GBP',
+      minimumFeeApplied: false,
+      lineItems: [
+        {
+          unit: 'day',
+          count: 1,
+          unitPrice: { amount: 1_800, currency: 'GBP' },
+          subtotal: { amount: 1_800, currency: 'GBP' },
+        },
+      ],
+      categoryVersionId: version.id,
+      expiresAt: new Date(startAt.getTime() + 30 * 60_000),
+    },
+  });
+
   await bookings.create({
     listingId,
-    renterId: await newUser(),
+    renterId,
     state,
     startAt,
     endAt,
     timeZone: 'Europe/London',
+    quoteId: quote.id,
+    categoryVersionId: version.id,
+    itemCharge: { amount: 1_800, currency: 'GBP' },
+    renterFee: { amount: 144, currency: 'GBP' },
+    total: { amount: 1_944, currency: 'GBP' },
+    itemTitle: 'Petrol hedge trimmer',
+    categoryName: 'Outdoor and gardening',
+    requestExpiresAt: new Date(startAt.getTime() + 48 * 3_600_000),
   });
 }
 

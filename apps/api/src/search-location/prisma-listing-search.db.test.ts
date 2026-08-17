@@ -33,7 +33,10 @@ import { FakeGeocoder } from './testing/fakes.js';
 import { applyFuzzOffset, distanceMetres } from './fuzz.js';
 import type { Point } from './fuzz.js';
 import { milesToMetres } from './distance-bucket.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 const env = loadEnv();
 
@@ -184,6 +187,7 @@ async function newCategory(authorId: string) {
       attributes: [],
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [],
     },
     authorId,

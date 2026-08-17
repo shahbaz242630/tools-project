@@ -54,6 +54,7 @@ import { PrismaAvailabilityStore } from './booking/prisma-availability-store.js'
 import { AvailabilityService } from './booking/availability.service.js';
 import { PrismaQuoteStore } from './booking/prisma-quote-store.js';
 import { QuotesService } from './booking/quotes.service.js';
+import { BookingsService } from './booking/bookings.service.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -474,9 +475,26 @@ async function bootstrap(): Promise<void> {
    * a renter asking for a price owns nothing; `reasonUnavailable` is the one
    * question on the store that is not about whose calendar it is.
    */
-  const quotes = new QuotesService(
-    new PrismaQuoteStore(database),
-    { findQuotable: (listingId) => listings.findQuotable(listingId) },
+  const quoteStore = new PrismaQuoteStore(database);
+  const quotableListings = {
+    findQuotable: (listingId: string) => listings.findQuotable(listingId),
+  };
+
+  const quotes = new QuotesService(quoteStore, quotableListings, availabilityStore);
+
+  /*
+   * The request path (slice 4.5a) — the first thing here that makes something
+   * bookable.
+   *
+   * **It shares the quote store and the listing port with the quote engine**,
+   * deliberately: a request is made *from* a quote, so reading one through a
+   * second instance would be two views of the same rows. It shares the
+   * availability store with the calendar for the reason 4.4b gives.
+   */
+  const bookings = new BookingsService(
+    bookingStore,
+    quoteStore,
+    quotableListings,
     availabilityStore,
   );
 
@@ -508,6 +526,7 @@ async function bootstrap(): Promise<void> {
       listings,
       availability,
       quotes,
+      bookings,
     }),
     /*
      * **One hop, not all of them, and not none.**

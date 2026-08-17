@@ -198,6 +198,11 @@ export class QuotesService {
    * are soft-deleted with a tombstoned email (ADR 0018), so the `users` row
    * survives and the cascade never fires.
    *
+   * **Conditional from slice 4.5a**, which is the product owner's decision of
+   * 17 August: an unused quote goes, and a quote a booking was made from stays
+   * because the terms belong to the counterparty too. The condition lives in the
+   * store's query — see `deleteUnbookedForRenter`.
+   *
    * **No audit entry, unlike the profile and listing erasers.** Those record what
    * was removed because the removal is of something the person created and others
    * may have seen. A quote is a price we offered; the deletion request itself is
@@ -205,7 +210,7 @@ export class QuotesService {
    * bury that trail in noise.
    */
   async eraseFor(renterId: string): Promise<number> {
-    return this.quotes.deleteAllForRenter(renterId);
+    return this.quotes.deleteUnbookedForRenter(renterId);
   }
 
   /**

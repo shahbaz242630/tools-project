@@ -22,7 +22,10 @@ import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { bookingModuleFakes } from '../booking/testing/fakes.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 /** A priced category (BRD §8.2, §3.4, slice 2.7a). */
 const FEE_POLICY = {
@@ -72,6 +75,7 @@ const DRAFT = {
   attributes: [],
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: [],
 } as const;
 
@@ -314,6 +318,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -339,6 +344,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -358,6 +364,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -382,6 +389,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
         slug: 'something-else',
       },
@@ -513,6 +521,7 @@ describe('the attribute schema, through the routes', () => {
         attributes: [SCHEMA[0]],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -657,6 +666,7 @@ describe('the reportable-activity flag', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -681,6 +691,7 @@ describe('the reportable-activity flag', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -731,6 +742,7 @@ describe('the reportable-activity flag', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
     });
@@ -780,6 +792,7 @@ describe('the transport options', () => {
       ...DRAFT,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: TRANSPORT,
     });
 
@@ -796,6 +809,7 @@ describe('the transport options', () => {
       ...DRAFT,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [
         { requirement: 'trailer_required' },
         { requirement: 'hand_carryable' },
@@ -844,6 +858,7 @@ describe('the transport options', () => {
       ...DRAFT,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [
         { requirement: 'car_boot', suggestedUpToKg: 50 },
         { requirement: 'van_required', suggestedUpToKg: 20 },
@@ -884,6 +899,7 @@ describe('the transport options', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [{ requirement: 'car_boot', suggestedUpToKg: 25 }],
       },
     });
@@ -900,6 +916,7 @@ describe('the transport options', () => {
       ...DRAFT,
       feePolicy: FEE_POLICY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: TRANSPORT,
     });
 

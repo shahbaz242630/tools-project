@@ -236,6 +236,15 @@ export interface QuotableListingRecord {
   readonly id: string;
   /** So the service can refuse to quote somebody their own item. */
   readonly ownerId: string;
+  /**
+   * What the item is called and what kind of thing it is (slice 4.5a).
+   *
+   * **Added when a booking started copying its terms**, not for the quote: §8.2
+   * requires a booking to keep what it was made under, so the words have to reach
+   * Booking once, at the moment of booking. An address still does not.
+   */
+  readonly title: string;
+  readonly categoryName: string;
   readonly rates: ListingRateCard;
   /** The fee policy **as it stands now** (ADR 0042). */
   readonly currentFeePolicy: CategoryFeePolicy;
@@ -248,6 +257,14 @@ export interface QuotableListingRecord {
    * narrowing a category has to be able to apply to the next hire.
    */
   readonly currentMaximumRentalDays: number;
+  /**
+   * How long the owner has to answer a request, in hours (§8.6, slice 4.5a).
+   *
+   * Current rather than pinned, like the cap above and for the same reason: it is
+   * a rule about what may happen now, and a request records the deadline it was
+   * actually given.
+   */
+  readonly currentRequestExpiryHours: number;
   readonly currentCategoryVersionId: string;
 }
 

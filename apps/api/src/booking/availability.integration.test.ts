@@ -88,6 +88,7 @@ beforeEach(async () => {
         listings: createListingFakes(categories).service,
         availability: booking.service,
         quotes: booking.quotes,
+        bookings: booking.bookings,
       }),
     ],
   }).compile();

@@ -71,23 +71,33 @@ export interface QuoteStore {
   findForRenter(id: string, renterId: string): Promise<QuoteRecord | null>;
 
   /**
-   * Delete every quote belonging to this renter, and answer how many.
+   * Delete the quotes belonging to this renter **that nothing has booked**, and
+   * answer how many went.
    *
    * **This is account erasure, and the foreign key cannot do it.**
-   * `quotes.renterId` is `ON DELETE CASCADE`, which looks like it settles the
-   * question — but accounts are **soft-deleted** with a tombstoned email
-   * (ADR 0018), so the `users` row survives and the cascade never fires. A
-   * reader who trusted the schema would leave a postcode and a date range behind
-   * for every quote the account ever asked for.
+   * `quotes.renterId` is `ON DELETE RESTRICT`, and even when it was `CASCADE` it
+   * would never have fired: accounts are **soft-deleted** with a tombstoned email
+   * (ADR 0018), so the `users` row survives. A reader who trusted the schema
+   * would leave a postcode and a date range behind for every quote the account
+   * ever asked for.
+   *
+   * **Conditional from slice 4.5a, which is the product owner's decision of
+   * 17 August 2026**: an unused quote is erased outright, and a quote a booking
+   * was made from follows the booking. The terms belong to the *counterparty* as
+   * much as to the renter — §8.2 requires a booking to keep them and §10.1
+   * retains booking records for six years — so erasing one would destroy the
+   * other party's record of what they agreed to.
+   *
+   * **The condition is in the query rather than in a caller**, and the
+   * `RESTRICT` is what makes a mistake here loud: a delete that tried to take a
+   * booked quote fails rather than silently succeeding.
    *
    * **Idempotent**, which `PersonalDataEraser` requires: erasing what is already
    * gone is a success, so a retry after a partial failure can finish the job.
    *
-   * **From 4.5 this becomes conditional.** A quote a booking was made from is
-   * part of that booking's terms and belongs to the counterparty as much as to
-   * the renter, so it will be kept while the booking exists — the product
-   * owner's decision of 17 August 2026, and the same inversion 4.2 performed
-   * when `deleteAllOwnedBy` became `eraseOwnedBy`.
+   * The name says `Unbooked` rather than `All` because that is now the whole
+   * rule, and a method called `deleteAllForRenter` that deliberately keeps some
+   * would be the kind of name a later reader trusts and should not.
    */
-  deleteAllForRenter(renterId: string): Promise<number>;
+  deleteUnbookedForRenter(renterId: string): Promise<number>;
 }

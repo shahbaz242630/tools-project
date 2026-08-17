@@ -4,7 +4,10 @@ import { CategorySlugTakenError } from './category-store.js';
 import { createCatalogueFakes } from './testing/fakes.js';
 import type { CatalogueFakes } from './testing/fakes.js';
 import type { Actor } from '../audit/audit-log.js';
-import { DEFAULT_MAXIMUM_RENTAL_DAYS } from '@platform/contracts';
+import {
+  DEFAULT_MAXIMUM_RENTAL_DAYS,
+  DEFAULT_REQUEST_EXPIRY_HOURS,
+} from '@platform/contracts';
 
 const ADMIN: Actor = {
   userId: '00000000-0000-4000-8000-00000000000a',
@@ -48,6 +51,7 @@ const draft = {
   transportOptions: [],
   feePolicy: FEE_POLICY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+  requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
 } as const;
 
 /**
@@ -165,6 +169,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -191,6 +196,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -214,6 +220,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Testing that the slug is stable',
@@ -235,6 +242,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -265,6 +273,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Saving the identical configuration again',
@@ -285,6 +294,7 @@ describe('reconfiguring a category', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Should not be possible',
@@ -309,6 +319,7 @@ describe('reading categories', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       REASON,
@@ -323,6 +334,7 @@ describe('reading categories', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Renamed after the taxonomy review',
@@ -377,6 +389,7 @@ describe('the attribute schema', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Clearing the schema',
@@ -399,6 +412,7 @@ describe('the attribute schema', () => {
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Adding the attribute schema',
@@ -425,6 +439,7 @@ describe('the attribute schema', () => {
         attributes: [...SCHEMA].reverse(),
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Putting weight first',
@@ -446,6 +461,7 @@ describe('the attribute schema', () => {
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Saving the identical configuration again',
@@ -486,6 +502,7 @@ describe('the transport options', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
       },
       'Withdrawing the transport options',
@@ -508,6 +525,7 @@ describe('the transport options', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,
       },
       'Offering transport options for the first time',
@@ -540,6 +558,7 @@ describe('the transport options', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [
           { requirement: 'car_boot', suggestedUpToKg: 40 },
           { requirement: 'van_required', suggestedUpToKg: 150 },
@@ -568,6 +587,7 @@ describe('the transport options', () => {
         attributes: [],
         feePolicy: FEE_POLICY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,
       },
       'Saving the identical configuration again',

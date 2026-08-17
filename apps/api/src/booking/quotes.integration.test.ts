@@ -95,6 +95,7 @@ beforeEach(async () => {
         listings: createListingFakes(categories).service,
         availability: booking.service,
         quotes: booking.quotes,
+        bookings: booking.bookings,
       }),
     ],
   }).compile();
@@ -114,6 +115,8 @@ beforeEach(async () => {
   booking.quotableListings.give({
     id: MOWER,
     ownerId: bobId,
+    title: 'Petrol hedge trimmer',
+    categoryName: 'Outdoor and gardening',
     rates: { daily: gbp(1_800), weekend: null, weekly: gbp(9_000) },
     currentFeePolicy: {
       ownerCommissionBasisPoints: 1_600,
@@ -122,6 +125,7 @@ beforeEach(async () => {
       minimumPlatformFee: gbp(100),
     },
     currentMaximumRentalDays: 88,
+    currentRequestExpiryHours: 48,
     currentCategoryVersionId: 'category-version-2',
   });
 });

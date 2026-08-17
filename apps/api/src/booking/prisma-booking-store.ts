@@ -1,7 +1,17 @@
+import { Money } from '@platform/core';
+import type { MoneyValue } from '@platform/core';
 import type { PrismaClient } from '@platform/database';
-import type { BookingState } from '@platform/contracts';
+import type { BookingEventType, BookingState } from '@platform/contracts';
+import { parseQuoteLineItems } from '@platform/contracts';
 import { OverlappingBookingError } from './booking-store.js';
-import type { BookingRecord, BookingStore, NewBooking } from './booking-store.js';
+import type {
+  BookingEventRecord,
+  BookingRecord,
+  BookingStore,
+  BookingWithEvents,
+  NewBooking,
+  NewBookingEvent,
+} from './booking-store.js';
 
 /**
  * Bookings in Postgres (slice 4.2).
@@ -100,19 +110,72 @@ export class PrismaBookingStore implements BookingStore {
    */
   private static readonly DEADLOCK_ATTEMPTS = 2;
 
-  async create(booking: NewBooking): Promise<BookingRecord> {
+  create(booking: NewBooking): Promise<BookingRecord> {
+    return this.write(booking, null);
+  }
+
+  createWithEvent(
+    booking: NewBooking,
+    event: Omit<NewBookingEvent, 'bookingId'>,
+  ): Promise<BookingRecord> {
+    return this.write(booking, event);
+  }
+
+  /**
+   * The one write, with or without the first event.
+   *
+   * **One method behind both, because the deadlock retry must wrap whichever it
+   * is.** Two copies of that loop is two places for the finding above to be
+   * forgotten, and the version without the event is the one a later reader would
+   * copy from.
+   *
+   * **A transaction only when there is an event to write.** A single `create` is
+   * already atomic, and wrapping it would buy a second round trip and a longer
+   * lock window on the busiest statement in the product for nothing.
+   */
+  private async write(
+    booking: NewBooking,
+    event: Omit<NewBookingEvent, 'bookingId'> | null,
+  ): Promise<BookingRecord> {
+    const data = {
+      listingId: booking.listingId,
+      renterId: booking.renterId,
+      state: booking.state,
+      startAt: booking.startAt,
+      endAt: booking.endAt,
+      timeZone: booking.timeZone,
+      quoteId: booking.quoteId,
+      categoryVersionId: booking.categoryVersionId,
+      itemChargeAmount: booking.itemCharge.amount,
+      renterFeeAmount: booking.renterFee.amount,
+      totalAmount: booking.total.amount,
+      currency: booking.total.currency,
+      itemTitle: booking.itemTitle,
+      categoryName: booking.categoryName,
+      requestExpiresAt: booking.requestExpiresAt,
+    };
+
     for (let attempt = 1; ; attempt++) {
       try {
-        const row = await this.prisma.booking.create({
-          data: {
-            listingId: booking.listingId,
-            renterId: booking.renterId,
-            state: booking.state,
-            startAt: booking.startAt,
-            endAt: booking.endAt,
-            timeZone: booking.timeZone,
-          },
-        });
+        const row =
+          event === null
+            ? await this.prisma.booking.create({ data })
+            : await this.prisma.$transaction(async (tx) => {
+                const created = await tx.booking.create({ data });
+
+                await tx.bookingEvent.create({
+                  data: {
+                    bookingId: created.id,
+                    type: event.type,
+                    fromState: event.fromState,
+                    toState: event.toState,
+                    actorId: event.actorId,
+                    metadata: { ...event.metadata },
+                  },
+                });
+
+                return created;
+              });
 
         return toRecord(row);
       } catch (error) {
@@ -162,6 +225,44 @@ export class PrismaBookingStore implements BookingStore {
 
     return new Set(rows.map((row) => row.listingId));
   }
+
+  async findForParty(id: string, userId: string): Promise<BookingWithEvents | null> {
+    /*
+     * **Both parties in one `OR`, in the query.** §8.6 gives the owner the
+     * decision and the renter the record, so a booking has two legitimate
+     * readers — and the owner is not a column here (see the schema: duplicating
+     * it would let a row disagree with itself about who is owed the money), so
+     * their side is expressed as a condition on the listing.
+     *
+     * The alternative — read it, then compare — is the pattern every
+     * owner-scoped read in this project refuses: the row is already in memory
+     * by the time the comparison runs, and the comparison is a line somebody can
+     * delete.
+     */
+    const row = await this.prisma.booking.findFirst({
+      where: {
+        id,
+        OR: [{ renterId: userId }, { listing: { ownerId: userId } }],
+      },
+      include: {
+        // The breakdown §3.4.4 requires beside a total, from the quote the
+        // booking was made from. `RESTRICT` on that foreign key is what makes
+        // this join safe to rely on.
+        quote: { select: { lineItems: true } },
+        events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      },
+    });
+    if (row === null) return null;
+
+    return {
+      booking: toRecord(row),
+      lineItems: parseQuoteLineItems(
+        row.quote.lineItems,
+        `the line items on the quote behind booking ${row.id}`,
+      ),
+      events: row.events.map(toEventRecord),
+    };
+  }
 }
 
 function toRecord(row: {
@@ -172,6 +273,15 @@ function toRecord(row: {
   startAt: Date;
   endAt: Date;
   timeZone: string;
+  quoteId: string;
+  categoryVersionId: string;
+  itemChargeAmount: number;
+  renterFeeAmount: number;
+  totalAmount: number;
+  currency: string;
+  itemTitle: string;
+  categoryName: string;
+  requestExpiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }): BookingRecord {
@@ -179,6 +289,17 @@ function toRecord(row: {
     id: row.id,
     listingId: row.listingId,
     renterId: row.renterId,
+    quoteId: row.quoteId,
+    categoryVersionId: row.categoryVersionId,
+    // One currency column, three amounts — reassembled here rather than at every
+    // caller, and through `Money.money` so a row written by hand fails loudly
+    // rather than becoming a price. `prisma-quote-store.ts` does the same.
+    itemCharge: toMoney(row.itemChargeAmount, row.currency),
+    renterFee: toMoney(row.renterFeeAmount, row.currency),
+    total: toMoney(row.totalAmount, row.currency),
+    itemTitle: row.itemTitle,
+    categoryName: row.categoryName,
+    requestExpiresAt: row.requestExpiresAt,
     /*
      * **Cast rather than validated, and the reason is where the vocabulary is
      * enforced.** The column is `text` because §7's table is the kind of thing
@@ -194,5 +315,50 @@ function toRecord(row: {
     timeZone: row.timeZone,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toMoney(amount: number, currency: string): MoneyValue {
+  return Money.money(amount, currency as MoneyValue['currency']);
+}
+
+/**
+ * One history entry as this module reads it.
+ *
+ * The two state columns are cast for the same reason `state` is — the vocabulary
+ * is kept honest by `booking-state-machine.ts` on the way in — and `metadata` is
+ * narrowed to a record rather than parsed: nothing reads a specific key out of it
+ * yet, and a schema per event type is what 4.6 will need when something does.
+ */
+function toEventRecord(row: {
+  id: string;
+  bookingId: string;
+  type: string;
+  fromState: string | null;
+  toState: string | null;
+  actorId: string | null;
+  metadata: unknown;
+  createdAt: Date;
+}): BookingEventRecord {
+  return {
+    id: row.id,
+    bookingId: row.bookingId,
+    type: row.type as BookingEventType,
+    fromState: row.fromState as BookingState | null,
+    toState: row.toState as BookingState | null,
+    actorId: row.actorId,
+    /*
+     * **Narrowed rather than parsed, and flattened to scalars.** Nothing reads a
+     * specific key out of metadata yet; when 4.6 does, that key gets a schema
+     * rather than this getting looser. Anything that is not an object — which the
+     * column's default `{}` makes unreachable through our writers — reads as
+     * empty rather than throwing, because a booking's history should not be
+     * unreadable because one entry's metadata is odd.
+     */
+    metadata:
+      typeof row.metadata === 'object' && row.metadata !== null
+        ? (row.metadata as Record<string, string | number | boolean | null>)
+        : {},
+    createdAt: row.createdAt,
   };
 }

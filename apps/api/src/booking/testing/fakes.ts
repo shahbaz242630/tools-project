@@ -1,7 +1,14 @@
 import { Time } from '@platform/core';
 import { CALENDAR_OCCUPYING_STATES } from '../booking-state-machine.js';
 import { OverlappingBookingError } from '../booking-store.js';
-import type { BookingRecord, BookingStore, NewBooking } from '../booking-store.js';
+import type {
+  BookingEventRecord,
+  BookingRecord,
+  BookingStore,
+  BookingWithEvents,
+  NewBooking,
+  NewBookingEvent,
+} from '../booking-store.js';
 import type {
   AvailabilityBlockRecord,
   AvailabilityStore,
@@ -13,6 +20,7 @@ import type { ListingQuoteSource, QuotableListing } from '../listing-quote-sourc
 import type { NewQuote, QuoteRecord, QuoteStore } from '../quote-store.js';
 import { AvailabilityService } from '../availability.service.js';
 import { QuotesService } from '../quotes.service.js';
+import { BookingsService } from '../bookings.service.js';
 
 /**
  * Bookings without a database (slice 4.2).
@@ -33,7 +41,38 @@ import { QuotesService } from '../quotes.service.js';
  */
 export class InMemoryBookingStore implements BookingStore {
   private readonly bookings: BookingRecord[] = [];
+  private readonly events: BookingEventRecord[] = [];
   private nextId = 1;
+
+  /**
+   * The clock this store stamps rows with (slice 4.5a).
+   *
+   * **Injected, because a booking's *history* is now something a test asserts.**
+   * `Time.nowUtc()` was fine while nothing read a timestamp back; the moment §6.2's
+   * event log became a projection, a fake stamping the real clock made the one
+   * assertion that matters — *what happened and when* — impossible to write
+   * without matching against `expect.any(String)`, which asserts nothing.
+   *
+   * Defaults to the real clock, so a test that does not care need not say.
+   */
+  constructor(private readonly now: () => Date = Time.nowUtc) {}
+
+  /**
+   * The listing owners this store knows about, so `findForParty` can answer the
+   * owner's side (slice 4.5a).
+   *
+   * **The real query reaches through `listing.ownerId`**, which this fake has no
+   * access to — so a test states the ownership it needs. Stated rather than
+   * inferred: a fake that guessed an owner would let a test pass while the real
+   * query returned nothing.
+   */
+  private readonly owners = new Map<string, string>();
+
+  /** Record who owns a listing, for the owner side of `findForParty`. */
+  givenOwner(listingId: string, ownerId: string): this {
+    this.owners.set(listingId, ownerId);
+    return this;
+  }
 
   create(booking: NewBooking): Promise<BookingRecord> {
     /*
@@ -61,7 +100,7 @@ export class InMemoryBookingStore implements BookingStore {
      * `new Date()` in domain code is the exact mechanism by which this decision
      * gets undone."* Every other fake in this project does the same.
      */
-    const now = Time.nowUtc();
+    const now = this.now();
     const record: BookingRecord = {
       ...booking,
       id: `booking-${String(this.nextId++)}`,
@@ -71,6 +110,64 @@ export class InMemoryBookingStore implements BookingStore {
 
     this.bookings.push(record);
     return Promise.resolve(record);
+  }
+
+  /**
+   * A booking and its first event (slice 4.5a).
+   *
+   * **The atomicity is exactly what this fake cannot model**, and that is the
+   * division every fake here draws: `create` above either refuses or succeeds, so
+   * writing the event after it can never be interrupted in memory. What the real
+   * store guarantees is that a rolled-back booking leaves no event behind, and
+   * only `prisma-booking-store.db.test.ts` can be evidence of that.
+   */
+  async createWithEvent(
+    booking: NewBooking,
+    event: Omit<NewBookingEvent, 'bookingId'>,
+  ): Promise<BookingRecord> {
+    const created = await this.create(booking);
+
+    this.events.push({
+      ...event,
+      bookingId: created.id,
+      id: `event-${String(this.events.length + 1)}`,
+      createdAt: this.now(),
+    });
+
+    return created;
+  }
+
+  findForParty(id: string, userId: string): Promise<BookingWithEvents | null> {
+    const booking = this.bookings.find(
+      (candidate) =>
+        candidate.id === id &&
+        (candidate.renterId === userId ||
+          this.owners.get(candidate.listingId) === userId),
+    );
+    if (booking === undefined) return Promise.resolve(null);
+
+    return Promise.resolve({
+      booking,
+      /*
+       * **A fixed breakdown rather than the quote's.** The real store joins the
+       * quote the booking was made from; this fake holds no quotes, and inventing
+       * a plausible one would let a test assert a breakdown that never came from
+       * a price anybody was shown. One line item, obviously synthetic, is enough
+       * for a service test about refusals — the round trip is the db test's
+       * subject.
+       */
+      lineItems: [
+        {
+          unit: 'day',
+          count: 1,
+          unitPrice: booking.itemCharge,
+          subtotal: booking.itemCharge,
+        },
+      ],
+      events: this.events
+        .filter((event) => event.bookingId === booking.id)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
+    });
   }
 
   findBookedListings(listingIds: readonly string[]): Promise<ReadonlySet<string>> {
@@ -104,7 +201,7 @@ export class InMemoryBookingStore implements BookingStore {
    * period would be arranging around a rule they are not testing.
    */
   holds(listingId: string): this {
-    const now = Time.nowUtc();
+    const now = this.now();
     this.bookings.push({
       id: `booking-${String(this.nextId++)}`,
       listingId,
@@ -113,6 +210,16 @@ export class InMemoryBookingStore implements BookingStore {
       startAt: now,
       endAt: Time.addRentalDays(now, 1, 'Europe/London'),
       timeZone: 'Europe/London',
+      // The terms slice 4.5a made required. Obviously synthetic, because these
+      // tests are about which listings are referenced and nothing reads a price.
+      quoteId: 'quote-erasure-fixture',
+      categoryVersionId: 'category-version-erasure-fixture',
+      itemCharge: { amount: 1_800, currency: 'GBP' },
+      renterFee: { amount: 144, currency: 'GBP' },
+      total: { amount: 1_944, currency: 'GBP' },
+      itemTitle: 'Petrol hedge trimmer',
+      categoryName: 'Outdoor and gardening',
+      requestExpiresAt: Time.addHours(now, 48),
       createdAt: now,
       updatedAt: now,
     });
@@ -240,12 +347,25 @@ export class InMemoryQuoteStore implements QuoteStore {
     );
   }
 
-  deleteAllForRenter(renterId: string): Promise<number> {
+  /**
+   * Erase the quotes nothing has booked (slice 4.5a).
+   *
+   * **The fake has to be told which quotes are booked**, because it holds no
+   * bookings — `bookedQuoteIds` is what a test states. Inferring it would be the
+   * fake deciding a rule the real query decides, which is how a double comes to
+   * pass a test the database would fail.
+   */
+  bookedQuoteIds = new Set<string>();
+
+  deleteUnbookedForRenter(renterId: string): Promise<number> {
     const before = this.quotes.length;
     // Spliced in place rather than reassigned, so a caller holding this instance
     // sees the erasure — the same reason the array is `readonly`.
     for (let index = this.quotes.length - 1; index >= 0; index -= 1) {
-      if (this.quotes[index]?.renterId === renterId) this.quotes.splice(index, 1);
+      const quote = this.quotes[index];
+      if (quote?.renterId === renterId && !this.bookedQuoteIds.has(quote.id)) {
+        this.quotes.splice(index, 1);
+      }
     }
     return Promise.resolve(before - this.quotes.length);
   }
@@ -312,8 +432,9 @@ export function createBookingFakes(
   readonly quoteStore: InMemoryQuoteStore;
   readonly quotableListings: InMemoryListingQuoteSource;
   readonly quotes: QuotesService;
+  readonly bookings: BookingsService;
 } {
-  const store = new InMemoryBookingStore();
+  const store = new InMemoryBookingStore(now);
   // Built over the same booking store, because "booked" is not a second fact
   // — a calendar reading a different set of bookings than the one that
   // enforces the overlap is a calendar that lies.
@@ -337,6 +458,18 @@ export function createBookingFakes(
      * be a quote for dates the owner has already refused.
      */
     quotes: new QuotesService(quoteStore, quotableListings, availability, now),
+    /*
+     * **The request path over the same store, the same listings and the same
+     * calendar** (slice 4.5a). A request is made from a quote, so a second quote
+     * store here would let a test create a quote the request path cannot see.
+     */
+    bookings: new BookingsService(
+      store,
+      quoteStore,
+      quotableListings,
+      availability,
+      now,
+    ),
     /*
      * **The real service over fake storage**, which is the arrangement
      * `createListingFakes` uses and for the same reason: what an integration
@@ -366,8 +499,13 @@ export function createBookingFakes(
 export function bookingModuleFakes(): {
   readonly availability: AvailabilityService;
   readonly quotes: QuotesService;
+  readonly bookings: BookingsService;
 } {
   const fakes = createBookingFakes();
 
-  return { availability: fakes.service, quotes: fakes.quotes };
+  return {
+    availability: fakes.service,
+    quotes: fakes.quotes,
+    bookings: fakes.bookings,
+  };
 }

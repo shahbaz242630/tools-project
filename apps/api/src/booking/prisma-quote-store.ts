@@ -63,10 +63,25 @@ export class PrismaQuoteStore implements QuoteStore {
     return row === null ? null : toRecord(row);
   }
 
-  async deleteAllForRenter(renterId: string): Promise<number> {
-    // `deleteMany` is idempotent by construction — a second call deletes nothing
-    // and reports zero, which is what `PersonalDataEraser` requires of a retry.
-    const { count } = await this.prisma.quote.deleteMany({ where: { renterId } });
+  async deleteUnbookedForRenter(renterId: string): Promise<number> {
+    /*
+     * **`bookings: { none: {} }` is the whole of the 17 August erasure decision.**
+     * A quote nobody acted on is a price we offered and nothing more; a quote a
+     * booking was made from carries that booking's terms, which belong to the
+     * counterparty too.
+     *
+     * **The condition is in the `where`, not in a filter afterwards.** A read-then-
+     * delete would race a request being made in between, and the `RESTRICT` on
+     * `bookings.quoteId` would then turn that race into a failed erasure — which
+     * is the right failure and still a failure. Postgres evaluates this as one
+     * statement.
+     *
+     * `deleteMany` is idempotent by construction — a second call deletes nothing
+     * and reports zero, which is what `PersonalDataEraser` requires of a retry.
+     */
+    const { count } = await this.prisma.quote.deleteMany({
+      where: { renterId, bookings: { none: {} } },
+    });
 
     return count;
   }
