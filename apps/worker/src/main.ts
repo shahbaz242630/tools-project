@@ -9,6 +9,7 @@ import {
   installProcessHandlers,
 } from '@platform/observability';
 import { createShutdown } from '@platform/runtime';
+import { hasNothingToDrain } from './drain.js';
 import { createHeartbeatHandler } from './heartbeat.handler.js';
 import { HEARTBEAT_JOB } from './queues.js';
 import { createMaintenanceWorker } from './worker.js';
@@ -85,9 +86,13 @@ const HEALTH_FILE_MODE = 0o600;
  *
  * It has to be generous, because `close()` is waiting for a real job to finish
  * and an interrupted job is re-delivered. It also has to be bounded, because
- * bullmq's `close()` does not settle at all when Redis was never reachable —
- * which is exactly the state during the Redis outage that makes somebody
- * redeploy.
+ * bullmq's `close()` can fail to settle at all when the broker is unreachable.
+ *
+ * **From bullmq 6 this bound is no longer what handles the never-connected
+ * case** — `drain.ts` does, by not waiting at all where there is nothing to
+ * wait for. What is left for this timeout is the harder case it was always
+ * meant for: a connection that came up, took a job, and then died. There the
+ * wait might genuinely pay off, so it is worth 25 seconds before giving up.
  */
 const DRAIN_TIMEOUT_MS = 25_000;
 
@@ -120,10 +125,19 @@ function main(): void {
   });
 
   /*
-   * One probe at a time. `worker.client` does not settle until the connection is
-   * ready, and a command issued on a down connection is buffered rather than
-   * refused — so during an outage each interval would otherwise leave another
-   * pending probe behind, and reconnecting would resolve all of them at once.
+   * BullMQ 6 removed `Worker#client` — the high-level classes no longer expose
+   * Redis internals, and the raw client lives on the backend that `getBackend()`
+   * returns. Held here rather than fetched per probe: it is the same object for
+   * the life of the worker, and `getBackend()` on a closing worker is not
+   * something this probe should be asking about.
+   */
+  const backend = worker.getBackend();
+
+  /*
+   * One probe at a time. A command issued on a down connection is buffered
+   * rather than refused, so during an outage each interval would otherwise leave
+   * another pending probe behind, and reconnecting would resolve all of them at
+   * once.
    */
   let probing = false;
 
@@ -133,16 +147,42 @@ function main(): void {
 
     void (async () => {
       try {
-        // The worker's own connection, not a second one. A fresh client proving
-        // Redis is reachable would say nothing about whether *this* worker is
-        // still attached to it — which is the failure the whole signal is for.
-        const connection = await worker.client;
+        /*
+         * Three questions, cheapest first, and the order is the point.
+         *
+         * BullMQ's own connection status is synchronous and settles the one
+         * thing the client promise cannot tell us safely: whether there has
+         * ever been a connection at all. `backend.connection.client` does not
+         * resolve until the connection is ready, so awaiting it during an
+         * outage awaits something that may never settle — which is precisely
+         * the shape of failure this project has been bitten by twice. Asking
+         * `status` first means the promise is only ever awaited once it is
+         * already resolved.
+         *
+         * Then the client's own view, which is what notices a connection that
+         * came up and later dropped: BullMQ leaves its status at `ready` once
+         * reached, so it answers "did we ever connect", not "are we connected".
+         *
+         * Then INFO, a real round trip, because it is the round trip that
+         * distinguishes a live connection from a socket that believes it is
+         * fine. Asking the two statuses first also means no command is ever
+         * queued on a connection that is down, which is what would never
+         * settle.
+         *
+         * All three are asked of the worker's own connection, not a second one.
+         * A fresh client proving Redis is reachable would say nothing about
+         * whether *this* worker is still attached to it — which is the failure
+         * the whole signal exists for.
+         */
+        if (backend.connection.status !== 'ready') {
+          logger.warn('health signal not refreshed', {
+            backendStatus: backend.connection.status,
+          });
+          return;
+        }
 
-        // Two questions, cheapest first. `status` is the client's own view and
-        // costs nothing; INFO is a real round trip, and it is the round trip
-        // that distinguishes a live connection from a socket that believes it is
-        // fine. Asking `status` first also means no command is ever queued on a
-        // connection that is down, which is what would never settle.
+        const connection = await backend.connection.client;
+
         if (connection.status !== 'ready') {
           logger.warn('health signal not refreshed', {
             redisStatus: connection.status,
@@ -197,8 +237,14 @@ function main(): void {
       },
       {
         name: 'maintenance worker',
-        // `close()` stops taking new jobs and waits for in-flight ones.
-        close: () => worker.close(),
+        /*
+         * `close()` stops taking new jobs and waits for in-flight ones;
+         * `close(true)` skips the waiting. Which one is right is decided here,
+         * at shutdown rather than at wiring, because it depends on whether
+         * there has ever been a connection — see `drain.ts` for the rule and
+         * the measurements behind it.
+         */
+        close: () => worker.close(hasNothingToDrain(backend.connection.status)),
       },
     ],
   });
