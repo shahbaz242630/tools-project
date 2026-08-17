@@ -21,7 +21,7 @@
     "@platform/database": "workspace:*",
     "@platform/observability": "workspace:*",
     "@platform/runtime": "workspace:*",
-    "ioredis": "^5.11.1",
+    "ioredis": "^6.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.4.3"
