@@ -13,6 +13,9 @@ import type { CategoryAttribute, OwnerListing } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
 import { editListingPath, listingCalendarPath } from '../../../lib/page-paths';
+import type { ReactNode } from 'react';
+import { fetchRequests } from '../../../lib/requests';
+import { OwnerRequests } from '../../../components/owner-requests';
 import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
 import { ModerationNotice, StatusLine } from '../../../components/listing-visibility';
@@ -42,14 +45,19 @@ export default async function ListingPage({
 }) {
   const { id } = await params;
   const { getToken } = await auth();
+  const token = await getToken();
+  const clientIp = clientIpFrom((await headers()).get('x-forwarded-for'));
 
-  const outcome = await fetchListing(
-    webEnv().API_BASE_URL,
-    await getToken(),
-    id,
-    undefined,
-    clientIpFrom((await headers()).get('x-forwarded-for')),
-  );
+  /*
+   * **Both reads at once, because neither depends on the other** — the shape the
+   * calendar page uses. Ownership is enforced by the API on *both*, so this page
+   * has no check of its own to forget: a listing that is not theirs answers 404
+   * below, and the requests read answers with an empty list rather than a 403.
+   */
+  const [outcome, requests] = await Promise.all([
+    fetchListing(webEnv().API_BASE_URL, token, id, undefined, clientIp),
+    fetchRequests(webEnv().API_BASE_URL, token, id, undefined, clientIp),
+  ]);
 
   // Somebody else's listing answers 404 rather than 403, and this page says the
   // same thing the API did. Rendering "you are not allowed" here would leak the
@@ -59,7 +67,22 @@ export default async function ListingPage({
   return (
     <main className={styles.page}>
       {outcome.kind === 'loaded' ? (
-        <Listing listing={outcome.value} />
+        <Listing
+          listing={outcome.value}
+          requests={
+            /*
+             * **Rendered only when the read succeeded, and silently absent
+             * otherwise.** A failed requests read must not take down the page
+             * whose real job is showing somebody their own listing — and it must
+             * not claim there are none, either, which is what an empty panel
+             * would say. The listing is what this page is for; requests are what
+             * it also shows.
+             */
+            requests.kind === 'loaded' ? (
+              <OwnerRequests listingId={id} requests={requests.value.requests} />
+            ) : null
+          }
+        />
       ) : (
         <Unavailable kind={outcome.kind} />
       )}
@@ -76,7 +99,21 @@ export default async function ListingPage({
   );
 }
 
-function Listing({ listing }: { readonly listing: OwnerListing }) {
+function Listing({
+  listing,
+  requests,
+}: {
+  readonly listing: OwnerListing;
+  /**
+   * The requests waiting on this listing, or nothing (slice 4.6b).
+   *
+   * **A slot rather than something this component fetches.** It is a server
+   * component and could read them itself; passing them keeps every network call
+   * for this page in one place, where the two can be issued together instead of
+   * one waiting on the other.
+   */
+  readonly requests: ReactNode;
+}) {
   return (
     <>
       <h1 className={styles.title}>{listing.title}</h1>
@@ -105,6 +142,14 @@ function Listing({ listing }: { readonly listing: OwnerListing }) {
       </p>
 
       <ModerationNotice listing={listing} />
+
+      {/*
+        **Above the item's own details, because it is the only thing on this page
+        with a clock on it.** §8.6 gives a request 48 hours; editing, availability
+        and publishing can all wait, and a panel below the fold is one an owner
+        finds after the deadline rather than before it.
+      */}
+      {requests}
 
       <dl className={styles.facts}>
         <dt>Category</dt>
