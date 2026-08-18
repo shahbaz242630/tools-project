@@ -295,6 +295,18 @@ services:
       # The other half of the pair above (slice 4.7a). Same value, same file, and
       # the worker refuses to start without it for the same reason the API does.
       INTERNAL_TRIGGER_SECRET: ${INTERNAL_TRIGGER_SECRET:?set INTERNAL_TRIGGER_SECRET}
+      # Where the worker reaches the API to set off scheduled work (slice 4.7b).
+      #
+      # **Hardcoded rather than taken from the env file, unlike everything above.**
+      # It is not a secret and not an operator's choice: it is the compose service
+      # name and the port this file already assigns, resolved on the internal
+      # network. Putting it in the env file would mean two places could disagree
+      # about a name defined here — and the failure would be a worker that starts,
+      # sweeps every fifteen minutes, and fails every one of them.
+      #
+      # No published port and none needed. The API is deliberately not on the edge
+      # network; this hop never leaves the host.
+      API_INTERNAL_URL: http://api:3000
 
     # No `healthcheck:` here, and that is not an omission — the worker image
     # carries its own (apps/worker/Dockerfile) and compose inherits it. One home

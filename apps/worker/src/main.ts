@@ -2,7 +2,7 @@ import { closeSync, constants, openSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describeEnv, loadEnv } from '@platform/config';
+import { describeEnv, loadEnv, loadWorkerEnv } from '@platform/config';
 import {
   createLogger,
   createNoopErrorTracker,
@@ -10,8 +10,10 @@ import {
 } from '@platform/observability';
 import { createShutdown } from '@platform/runtime';
 import { hasNothingToDrain } from './drain.js';
+import { createExpireRequestsHandler } from './expire-requests.handler.js';
 import { createHeartbeatHandler } from './heartbeat.handler.js';
-import { HEARTBEAT_JOB } from './queues.js';
+import { EXPIRE_REQUESTS_JOB, HEARTBEAT_JOB } from './queues.js';
+import { createScheduler } from './scheduler.js';
 import { createMaintenanceWorker } from './worker.js';
 
 /**
@@ -98,6 +100,12 @@ const DRAIN_TIMEOUT_MS = 25_000;
 
 function main(): void {
   const env = loadEnv();
+  /*
+   * The worker's own schema, alongside the shared one (slice 4.7b). Separate
+   * because the API has no use for its own address — see `worker-env.ts`, and
+   * `loadIdentityEnv` for the same split in the other direction.
+   */
+  const workerEnv = loadWorkerEnv();
   const logger = createLogger({ service: 'worker', level: env.LOG_LEVEL });
 
   /*
@@ -121,7 +129,19 @@ function main(): void {
     // construct its own avoids that being silently wrong.
     connection: { host: env.REDIS_HOST, port: env.REDIS_PORT },
     logger,
-    handlers: { [HEARTBEAT_JOB]: createHeartbeatHandler(logger) },
+    handlers: {
+      [HEARTBEAT_JOB]: createHeartbeatHandler(logger),
+      /*
+       * The scheduled sweep (slice 4.7b, ADR 0048). It holds the secret from the
+       * *shared* loader and the address from the worker's own — see the handler for
+       * why the secret must never reach a log line.
+       */
+      [EXPIRE_REQUESTS_JOB]: createExpireRequestsHandler({
+        apiBaseUrl: workerEnv.API_INTERNAL_URL,
+        secret: env.INTERNAL_TRIGGER_SECRET,
+        logger,
+      }),
+    },
   });
 
   /*
@@ -132,6 +152,59 @@ function main(): void {
    * something this probe should be asking about.
    */
   const backend = worker.getBackend();
+
+  /*
+   * The schedule (slice 4.7b), registered after the worker is constructed so a
+   * job minted immediately has a consumer ready for it.
+   *
+   * **Its own Redis connection, not the worker's.** BullMQ requires
+   * `maxRetriesPerRequest: null` on a worker's connection and a `Queue` wants the
+   * default, so sharing one would mean choosing which of the two is wrong.
+   */
+  const scheduler = createScheduler({
+    connection: { host: env.REDIS_HOST, port: env.REDIS_PORT },
+    logger,
+  });
+
+  /*
+   * **Registered without blocking the boot, and a failure is retried rather than
+   * fatal.** Both halves of that were measured rather than assumed.
+   *
+   * *Not fatal:* an earlier version of this called `process.exit(1)` on a
+   * rejection, and it was wrong. A broker that is briefly unreachable is the one
+   * failure this process is built to survive — the container check boots it with no
+   * Redis at all and asserts it **keeps running rather than exiting** — so crashing
+   * would turn a blip into a restart loop and lose the drain behaviour `drain.ts`
+   * exists for.
+   *
+   * *Not blocking:* ioredis buffers commands while offline, so with no broker this
+   * promise simply pends until one appears. Measured on 6.1.2 with Redis
+   * unreachable: the process was still up after five seconds and the registration
+   * had neither resolved nor thrown. Awaiting it here would therefore hang boot
+   * indefinitely, and the worker would never start consuming.
+   *
+   * **The residual gap, stated because nothing catches it.** If registration fails
+   * while Redis is healthy, the worker runs with no schedule and the health probe —
+   * which only asks whether Redis answers — still reads healthy. The retry below
+   * turns that into a repeating error line rather than one, and there are no alert
+   * rules yet to fire on it (`SECURITY.md` §2.3). Making the probe assert the
+   * schedule exists is the fix, and it belongs with whatever slice gives the worker
+   * a metrics endpoint.
+   */
+  const REGISTER_RETRY_MS = 30_000;
+
+  const register = (): void => {
+    void scheduler.register().catch((error: unknown) => {
+      logger.error('could not register the expiry schedule; will retry', {
+        retryInMs: REGISTER_RETRY_MS,
+        error,
+      });
+      // `unref` so a pending retry never keeps the process alive on shutdown.
+      setTimeout(register, REGISTER_RETRY_MS).unref();
+    });
+  };
+
+  register();
 
   /*
    * One probe at a time. A command issued on a down connection is buffered
@@ -236,6 +309,15 @@ function main(): void {
         },
       },
       {
+        /*
+         * Before the worker, so no new scheduled job is minted while the consumer
+         * is draining. Closing it releases one Redis connection and nothing else —
+         * the schedule itself lives in Redis and survives.
+         */
+        name: 'schedule',
+        close: () => scheduler.close(),
+      },
+      {
         name: 'maintenance worker',
         /*
          * `close()` stops taking new jobs and waits for in-flight ones;
@@ -254,7 +336,8 @@ function main(): void {
 
   logger.info('worker started', {
     queue: 'maintenance',
-    handlers: [HEARTBEAT_JOB],
+    handlers: [HEARTBEAT_JOB, EXPIRE_REQUESTS_JOB],
+    apiBaseUrl: workerEnv.API_INTERNAL_URL,
     ...describeEnv(env),
   });
 }
