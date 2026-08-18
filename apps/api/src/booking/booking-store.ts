@@ -145,6 +145,53 @@ export class OverlappingBookingError extends Error {
   }
 }
 
+/**
+ * A request waiting on an owner, and what saying yes would cost (slice 4.6).
+ *
+ * **The conflict count is computed with the request rather than fetched beside
+ * it**, because §7.1 makes it part of what the owner must be shown *before*
+ * accepting: *"Owners must be shown, before accepting, that competing requests
+ * exist and will be declined."* A caller that had to ask a second question could
+ * forget to, and the page would silently stop disclosing the consequence.
+ */
+export interface PendingRequest {
+  readonly booking: BookingRecord;
+  /** Other `REQUESTED` bookings this one would auto-decline (§7.1). */
+  readonly conflictCount: number;
+}
+
+/**
+ * What an acceptance did (§7.1, slice 4.6).
+ *
+ * **The auto-declined ids are returned rather than swallowed**, so the caller can
+ * emit an event per losing renter — §7.1 requires each of them to be notified with
+ * the reason, and Phase 6 is what delivers it. Returning a count instead would
+ * make that impossible without a second query for rows we have just written.
+ */
+export interface AcceptanceResult {
+  readonly booking: BookingRecord;
+  readonly autoDeclinedIds: readonly string[];
+}
+
+/**
+ * Thrown when a booking is no longer in the state the caller believed (slice 4.6).
+ *
+ * **Distinct from "not found", which is what an unowned or missing booking gets.**
+ * An owner pressing Accept on a request that expired while the page was open, or
+ * that they already declined in another tab, has not asked for something
+ * forbidden — they have asked for something that was true a minute ago. The two
+ * need different sentences and different status codes.
+ */
+export class BookingStateChangedError extends Error {
+  constructor(
+    readonly bookingId: string,
+    readonly actual: BookingState,
+  ) {
+    super(`Booking ${bookingId} is ${actual}, not REQUESTED`);
+    this.name = 'BookingStateChangedError';
+  }
+}
+
 export interface BookingStore {
   /**
    * Write a booking, or refuse it because the dates are taken.
@@ -203,4 +250,59 @@ export interface BookingStore {
    * — 4.5 adds one when there is behaviour to put in it.
    */
   findBookedListings(listingIds: readonly string[]): Promise<ReadonlySet<string>>;
+
+  /**
+   * The unanswered requests against one of this owner's listings (§8.6, slice 4.6).
+   *
+   * **Owner-scoped in the query, never by a comparison afterwards** — the rule
+   * `findForParty` states at length. An owner who does not own this listing gets
+   * an empty list, indistinguishable from a listing nobody has asked for.
+   *
+   * **Expired requests are excluded here rather than swept first.** 4.7's worker
+   * will move them to `EXPIRED`; until it exists, a request past its deadline must
+   * not be offered to an owner as something they may still accept — §8.6 gives it a
+   * deadline and a page that ignored it would be the deadline not existing.
+   */
+  findPendingRequests(
+    listingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<readonly PendingRequest[]>;
+
+  /**
+   * Accept one request, lock the dates, and decline every conflict — **in one
+   * transaction** (§7.1).
+   *
+   * §7.1 is unusually prescriptive and this is a transcription of it: *"On
+   * acceptance, in a single database transaction, the system must: acquire the
+   * exclusive availability lock; move the accepted booking to `ACCEPTED`; and move
+   * every other `REQUESTED` booking whose dates overlap the accepted period to
+   * `DECLINED` with reason `AUTO_DECLINED_CONFLICT`."*
+   *
+   * **The lock is acquired by the write itself, not by a query before it.**
+   * Moving the booking into `ACCEPTED` puts it in one of §8.5.1's nine
+   * calendar-occupying states, which is exactly when the `EXCLUDE` constraint
+   * begins to apply to it — so the database refuses a second acceptance rather
+   * than the application noticing one. §8.5.1 names check-then-insert as the
+   * anti-pattern by name.
+   *
+   * Returns null when the booking does not exist or is not this owner's. Throws
+   * `BookingStateChangedError` when it is no longer `REQUESTED`, and
+   * `OverlappingBookingError` when another booking already holds the dates.
+   */
+  accept(
+    bookingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<AcceptanceResult | null>;
+
+  /**
+   * Decline one request (§8.6).
+   *
+   * **No transaction beyond the row and its event**, unlike acceptance: a decline
+   * frees nothing and locks nothing, so there is no conflict set to resolve and no
+   * constraint to race against. The asymmetry is worth noticing rather than
+   * smoothing over — it is why saying no is cheap and saying yes is not.
+   */
+  decline(bookingId: string, ownerId: string, now: Date): Promise<BookingRecord | null>;
 }

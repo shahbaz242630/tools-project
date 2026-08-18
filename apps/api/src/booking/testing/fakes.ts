@@ -1,13 +1,16 @@
 import { Time } from '@platform/core';
+import type { BookingEventType, BookingState } from '@platform/contracts';
 import { CALENDAR_OCCUPYING_STATES } from '../booking-state-machine.js';
-import { OverlappingBookingError } from '../booking-store.js';
+import { BookingStateChangedError, OverlappingBookingError } from '../booking-store.js';
 import type {
+  AcceptanceResult,
   BookingEventRecord,
   BookingRecord,
   BookingStore,
   BookingWithEvents,
   NewBooking,
   NewBookingEvent,
+  PendingRequest,
 } from '../booking-store.js';
 import type {
   AvailabilityBlockRecord,
@@ -135,6 +138,149 @@ export class InMemoryBookingStore implements BookingStore {
     });
 
     return created;
+  }
+
+  findPendingRequests(
+    listingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<readonly PendingRequest[]> {
+    const rows = this.bookings
+      .filter(
+        (booking) =>
+          booking.listingId === listingId &&
+          this.owners.get(booking.listingId) === ownerId &&
+          booking.state === 'REQUESTED' &&
+          booking.requestExpiresAt > now,
+      )
+      .sort(
+        (a, b) => a.startAt.getTime() - b.startAt.getTime() || a.id.localeCompare(b.id),
+      );
+
+    return Promise.resolve(
+      rows.map((booking) => ({
+        booking,
+        conflictCount: rows.filter(
+          (other) =>
+            other.id !== booking.id &&
+            other.startAt < booking.endAt &&
+            other.endAt > booking.startAt,
+        ).length,
+      })),
+    );
+  }
+
+  /**
+   * Acceptance, and the one thing this fake genuinely cannot model.
+   *
+   * **The overlap refusal and the auto-decline are modelled; the atomicity
+   * between them is not.** In memory nothing can interrupt the two, so a test
+   * here can never be evidence that a refused acceptance leaves no auto-decline
+   * behind — that is `prisma-booking-store.db.test.ts`'s, and §7.1's *"single
+   * database transaction"* is a claim only a database can support.
+   *
+   * What this is good for is the sequence: which states are reached, which events
+   * are written, and which competing requests fall.
+   */
+  accept(
+    bookingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<AcceptanceResult | null> {
+    const booking = this.bookings.find(
+      (row) => row.id === bookingId && this.owners.get(row.listingId) === ownerId,
+    );
+    if (booking === undefined) return Promise.resolve(null);
+
+    if (booking.state !== 'REQUESTED' || booking.requestExpiresAt <= now) {
+      return Promise.reject(new BookingStateChangedError(bookingId, booking.state));
+    }
+
+    // The same two conditions the constraint applies. See `create` above.
+    const taken = this.bookings.some(
+      (other) =>
+        other.id !== booking.id &&
+        other.listingId === booking.listingId &&
+        CALENDAR_OCCUPYING_STATES.includes(other.state) &&
+        other.startAt < booking.endAt &&
+        booking.startAt < other.endAt,
+    );
+    if (taken) return Promise.reject(new OverlappingBookingError(bookingId));
+
+    this.replace(booking, 'ACCEPTED');
+    this.record(booking.id, 'state-changed', 'REQUESTED', 'ACCEPTED', ownerId, {});
+
+    const conflicts = this.bookings.filter(
+      (other) =>
+        other.id !== booking.id &&
+        other.listingId === booking.listingId &&
+        other.state === 'REQUESTED' &&
+        other.startAt < booking.endAt &&
+        other.endAt > booking.startAt,
+    );
+
+    for (const conflict of conflicts) {
+      this.replace(conflict, 'DECLINED');
+      this.record(conflict.id, 'auto-declined', 'REQUESTED', 'DECLINED', null, {
+        reason: 'AUTO_DECLINED_CONFLICT',
+        conflictingBookingId: booking.id,
+      });
+    }
+
+    return Promise.resolve({
+      booking: { ...booking, state: 'ACCEPTED' },
+      autoDeclinedIds: conflicts.map((conflict) => conflict.id),
+    });
+  }
+
+  decline(
+    bookingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<BookingRecord | null> {
+    const booking = this.bookings.find(
+      (row) => row.id === bookingId && this.owners.get(row.listingId) === ownerId,
+    );
+    if (booking === undefined) return Promise.resolve(null);
+
+    if (booking.state !== 'REQUESTED') {
+      return Promise.reject(new BookingStateChangedError(bookingId, booking.state));
+    }
+
+    // Deliberately no deadline check, matching the real store: saying no after
+    // the deadline costs a renter nothing they had not already lost.
+    void now;
+
+    this.replace(booking, 'DECLINED');
+    this.record(booking.id, 'state-changed', 'REQUESTED', 'DECLINED', ownerId, {});
+
+    return Promise.resolve({ ...booking, state: 'DECLINED' });
+  }
+
+  /** Move a booking to a new state in place, keeping the array identity stable. */
+  private replace(booking: BookingRecord, state: BookingState): void {
+    const at = this.bookings.indexOf(booking);
+    this.bookings[at] = { ...booking, state, updatedAt: this.now() };
+  }
+
+  private record(
+    bookingId: string,
+    type: BookingEventType,
+    fromState: BookingState | null,
+    toState: BookingState | null,
+    actorId: string | null,
+    metadata: Readonly<Record<string, string | number | boolean | null>>,
+  ): void {
+    this.events.push({
+      bookingId,
+      type,
+      fromState,
+      toState,
+      actorId,
+      metadata,
+      id: `event-${String(this.events.length + 1)}`,
+      createdAt: this.now(),
+    });
   }
 
   findForParty(id: string, userId: string): Promise<BookingWithEvents | null> {
