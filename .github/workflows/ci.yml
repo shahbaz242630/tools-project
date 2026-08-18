@@ -298,6 +298,7 @@ jobs:
           docker run -d --name worker-ci --stop-timeout 45 \
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             -e POSTGRES_SSLMODE=disable \
+            -e INTERNAL_TRIGGER_SECRET=ci-only-internal-trigger-secret-not-a-real-one \
             rental-worker:ci
 
           sleep 5
@@ -1083,6 +1084,11 @@ jobs:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: rental_test
           POSTGRES_TEST_DB: rental_test
+          # Required by @platform/config from slice 4.7a, and the db tests call
+          # `loadEnv()`. Any value over 32 characters — nothing here presents it,
+          # because the integration suite drives services directly rather than
+          # over HTTP; the guard itself is covered in the api project.
+          INTERNAL_TRIGGER_SECRET: ci-only-internal-trigger-secret-not-a-real-one
 
   security:
     name: Secrets and dependencies
