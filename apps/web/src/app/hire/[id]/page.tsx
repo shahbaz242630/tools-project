@@ -1,7 +1,10 @@
 import { notFound } from 'next/navigation';
+import { auth } from '@clerk/nextjs/server';
+import { Time } from '@platform/core';
 import { fetchPublicListing } from '../../../lib/listings';
 import { webEnv } from '../../../lib/env';
 import { PublicListingView } from '../../../components/public-listing';
+import { RequestPanel, SignInToBook } from '../../../components/request-panel';
 import styles from './hire.module.css';
 
 /**
@@ -80,10 +83,41 @@ export default async function PublicListingPage({
    */
   if (outcome.kind === 'not-found') notFound();
 
+  /*
+   * **Whether there is a session is decided here, before anything is
+   * submitted** (slice 4.5b). Both routes behind the panel need one, and this is
+   * the only page in the product a signed-out stranger is meant to reach — so a
+   * form that submits and fails would be the Phase 0-3 audit's worst defect
+   * rebuilt on the page with the largest audience.
+   *
+   * **`auth()` and not `currentUser()`**: this needs to know whether somebody is
+   * signed in and nothing about who they are, and the second makes a network
+   * call to Clerk to answer a question the token already answers.
+   */
+  const { userId } = await auth();
+
   return (
     <main className={styles.page}>
       {outcome.kind === 'loaded' ? (
-        <PublicListingView listing={outcome.value} />
+        <PublicListingView
+          listing={outcome.value}
+          requestPanel={
+            userId === null ? (
+              <SignInToBook listingId={id} />
+            ) : (
+              /*
+               * **Today, computed on the server in the platform's timezone.** It
+               * bounds the date controls, and a browser deriving it would derive
+               * it in the device's zone — which is the wrong day for anybody east
+               * of us for part of every evening.
+               */
+              <RequestPanel
+                listingId={id}
+                today={Time.toLocalDateString(Time.nowUtc())}
+              />
+            )
+          }
+        />
       ) : (
         /*
          * **Two failures, one sentence, and deliberately no detail.** The

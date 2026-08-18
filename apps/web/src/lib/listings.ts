@@ -339,6 +339,21 @@ export async function call<T, E422 = never, E503 = never, E409 = never>(
   }
 }
 
+/**
+ * The `message` out of an error body, or nothing if it is not one.
+ *
+ * **Exported from slice 4.5b, and it is the same argument that exported `call`
+ * one slice earlier.** Every client that translates a status for itself — the
+ * calendar's 422, the quote's, the booking request's — needs to read the
+ * sentence out of the body, and each one writing its own `JSON.parse` in a
+ * `try` is three places for a body shape to be read three ways. It delegates to
+ * `readError` rather than parsing again, so there is one reader of an error
+ * body in this file and not two.
+ */
+export function messageIn(raw: string): string | null {
+  return readError(raw).message ?? null;
+}
+
 export function fetchCategoryOptions(
   apiBaseUrl: string,
   token: string | null,

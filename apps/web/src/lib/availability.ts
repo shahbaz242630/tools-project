@@ -23,7 +23,7 @@ import type {
   AvailabilityBlockRequest,
   ListingAvailability,
 } from '@platform/contracts';
-import { call } from './listings';
+import { call, messageIn } from './listings';
 import type { FetchLike, ListingOutcome } from './listings';
 
 /**
@@ -114,16 +114,4 @@ export function unblockPeriod(
     () => null,
     { method: 'DELETE' },
   );
-}
-
-/** The `message` out of an error body, or nothing if it is not one. */
-function messageIn(raw: string): string | null {
-  try {
-    const body: unknown = JSON.parse(raw);
-    if (typeof body !== 'object' || body === null) return null;
-    const { message } = body as { message?: unknown };
-    return typeof message === 'string' ? message : null;
-  } catch {
-    return null;
-  }
 }

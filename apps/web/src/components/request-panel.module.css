@@ -1,0 +1,171 @@
+/*
+ * The renter's request panel (slice 4.5b).
+ *
+ * **It sits inside the listing's price card**, where the "booking is not open
+ * yet" paragraph used to be — so this file styles the block below a rule rather
+ * than a card of its own. The card, its padding and its shadow belong to
+ * `public-listing.module.css` and are not restated here.
+ */
+
+.panel {
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--line-row);
+}
+
+.heading {
+  margin-bottom: 12px;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/*
+ * **The two date fields sit side by side, and collapse rather than shrink.**
+ * The panel lives in a 360px column on a desktop and the full width on a phone;
+ * two native date controls at half of 360px are narrower than the text they
+ * render in several locales, which clips the year.
+ */
+.dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 1079px) {
+  .dates {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+.hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.5;
+}
+
+/*
+ * **The refusal, and it is the only red on the page.** It carries the API's own
+ * sentence, which is written for the person reading it — so it is given room
+ * rather than being squeezed into a field's helper line.
+ */
+.error {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-control);
+  background: var(--danger-tint);
+  color: var(--danger);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/* ---- The quote ----------------------------------------------------------- */
+
+.period {
+  margin-bottom: 10px;
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.days {
+  color: var(--ink-secondary);
+  font-weight: 400;
+}
+
+/*
+ * **The total is the only figure allowed to be largest** (§3.4.4). The size
+ * difference is doing legal work as well as visual: drip pricing is prohibited
+ * by the DMCC regime, and a breakdown line that competed with the headline for
+ * attention is how a bare rate starts reading as the price.
+ */
+.total {
+  margin-bottom: 12px;
+  color: var(--ink-secondary);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.totalAmount {
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 600;
+}
+
+/* The arithmetic, in the owner's own rate units — §6.2's line items. */
+.lines {
+  padding: 0;
+  margin: 0 0 12px;
+  list-style: none;
+}
+
+.lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-row);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.5;
+}
+
+.lines li:last-child {
+  border-bottom: 0;
+}
+
+.hold,
+.expiry {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line-row);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/*
+ * **Both buttons on one row, wrapping rather than truncating.** *Request this
+ * hire* is the primary and comes first in the DOM, which is also the order a
+ * keyboard reaches them in.
+ */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* ---- After it has been sent ---------------------------------------------- */
+
+.sent {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-control);
+  background: var(--accent-wash);
+  color: var(--ink);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+.body {
+  color: var(--ink);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+.note {
+  margin-top: 10px;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}

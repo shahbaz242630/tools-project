@@ -3,15 +3,18 @@ import type { MoneyValue } from '@platform/core';
 import type { PrismaClient } from '@platform/database';
 import type { BookingEventType, BookingState } from '@platform/contracts';
 import { parseQuoteLineItems } from '@platform/contracts';
-import { OverlappingBookingError } from './booking-store.js';
+import { BookingStateChangedError, OverlappingBookingError } from './booking-store.js';
 import type {
+  AcceptanceResult,
   BookingEventRecord,
   BookingRecord,
   BookingStore,
   BookingWithEvents,
   NewBooking,
   NewBookingEvent,
+  PendingRequest,
 } from './booking-store.js';
+import { overlaps } from './prisma-availability-store.js';
 
 /**
  * Bookings in Postgres (slice 4.2).
@@ -200,6 +203,206 @@ export class PrismaBookingStore implements BookingStore {
         throw error;
       }
     }
+  }
+
+  async findPendingRequests(
+    listingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<readonly PendingRequest[]> {
+    const rows = await this.prisma.booking.findMany({
+      where: {
+        // Owner-scoped in the query. See `findForParty` for why never after.
+        listing: { id: listingId, ownerId },
+        state: 'REQUESTED',
+        // §8.6's deadline, honoured before 4.7's worker exists to enforce it.
+        requestExpiresAt: { gt: now },
+      },
+      orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
+    });
+
+    /*
+     * **The conflict count is computed in memory, over rows already in hand.**
+     * §7.1 needs, per request, how many *others* overlap it — a self-join over a
+     * set that is at most a handful of rows for one listing. A query per request
+     * would be N+1 against one page, and a SQL self-join would be raw SQL this
+     * module deliberately did not widen in 4.3a.
+     *
+     * The comparison is the same half-open rule, written directly on the dates
+     * rather than through `overlaps` — that helper builds a *Prisma filter*, and
+     * this is two rows being compared in memory.
+     */
+    return rows.map((row) => ({
+      booking: toRecord(row),
+      conflictCount: rows.filter(
+        (other) =>
+          other.id !== row.id && other.startAt < row.endAt && other.endAt > row.startAt,
+      ).length,
+    }));
+  }
+
+  async accept(
+    bookingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<AcceptanceResult | null> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const booking = await tx.booking.findFirst({
+            where: { id: bookingId, listing: { ownerId } },
+          });
+          // Not this owner's, or no such booking. Indistinguishable on purpose.
+          if (booking === null) return null;
+
+          const state = booking.state as BookingState;
+          if (state !== 'REQUESTED') {
+            /*
+             * Expired, already declined, or accepted in another tab. Thrown
+             * rather than returned so it rolls the transaction back, and so it
+             * cannot be confused with the null above — the two need different
+             * sentences and different status codes.
+             */
+            throw new BookingStateChangedError(bookingId, state);
+          }
+
+          if (booking.requestExpiresAt <= now) {
+            // §8.6's deadline. 4.7 will move these to `EXPIRED`; until it does,
+            // the deadline has to be honoured by whoever would act past it.
+            throw new BookingStateChangedError(bookingId, state);
+          }
+
+          /*
+           * **This update *is* the availability lock §7.1 asks for.** `ACCEPTED`
+           * is one of §8.5.1's nine calendar-occupying states, so the `EXCLUDE`
+           * constraint begins applying to this row the moment it lands — and a
+           * second acceptance of overlapping dates is refused by Postgres rather
+           * than noticed by us. There is deliberately no availability query
+           * before this line: §8.5.1 names check-then-insert as the anti-pattern.
+           */
+          const accepted = await tx.booking.update({
+            where: { id: bookingId },
+            data: { state: 'ACCEPTED' },
+          });
+
+          await tx.bookingEvent.create({
+            data: {
+              bookingId,
+              type: 'state-changed',
+              fromState: 'REQUESTED',
+              toState: 'ACCEPTED',
+              actorId: ownerId,
+              metadata: {},
+            },
+          });
+
+          /*
+           * **Every other `REQUESTED` booking overlapping the accepted period**
+           * (§7.1). Read before writing, because the caller owes each of those
+           * renters a notification and `updateMany` reports a count rather than
+           * which rows it touched.
+           */
+          const conflicts = await tx.booking.findMany({
+            where: {
+              id: { not: bookingId },
+              listingId: booking.listingId,
+              state: 'REQUESTED',
+              ...overlaps(booking.startAt, booking.endAt),
+            },
+            select: { id: true },
+          });
+          const autoDeclinedIds = conflicts.map((conflict) => conflict.id);
+
+          if (autoDeclinedIds.length > 0) {
+            await tx.booking.updateMany({
+              where: { id: { in: autoDeclinedIds } },
+              data: { state: 'DECLINED' },
+            });
+
+            await tx.bookingEvent.createMany({
+              data: autoDeclinedIds.map((id) => ({
+                bookingId: id,
+                /*
+                 * **Its own type, not `state-changed` carrying a reason.** The
+                 * reason lives in `metadata`, and `bookingEventSchema` does not
+                 * project metadata to a party — so without this the losing renter
+                 * reads "declined" where §7.1 requires them to be told it was a
+                 * conflict. The contract carries the full argument.
+                 */
+                type: 'auto-declined',
+                fromState: 'REQUESTED',
+                toState: 'DECLINED',
+                // Nobody decided this. §6.2's actor is null for the platform.
+                actorId: null,
+                metadata: {
+                  reason: 'AUTO_DECLINED_CONFLICT',
+                  conflictingBookingId: bookingId,
+                },
+              })),
+            });
+          }
+
+          return { booking: toRecord(accepted), autoDeclinedIds };
+        });
+      } catch (error) {
+        // Somebody else's acceptance already holds these dates. Nothing about
+        // that other booking crosses this boundary — see `OverlappingBookingError`.
+        if (isOverlapViolation(error)) {
+          throw new OverlappingBookingError(bookingId);
+        }
+
+        // The same finding as `write`: two acceptances racing on the exclusion
+        // constraint deadlock rather than violate it, about one race in three.
+        if (isDeadlock(error) && attempt < PrismaBookingStore.DEADLOCK_ATTEMPTS) {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+  }
+
+  async decline(
+    bookingId: string,
+    ownerId: string,
+    now: Date,
+  ): Promise<BookingRecord | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findFirst({
+        where: { id: bookingId, listing: { ownerId } },
+      });
+      if (booking === null) return null;
+
+      const state = booking.state as BookingState;
+      if (state !== 'REQUESTED') throw new BookingStateChangedError(bookingId, state);
+
+      /*
+       * **A decline past the deadline is allowed, and an acceptance is not.**
+       * The asymmetry is deliberate: §8.6's deadline exists to stop a renter being
+       * held indefinitely, and saying no after it costs them nothing they had not
+       * already lost. Saying yes after it would bind somebody to a hire they were
+       * entitled to consider dead.
+       */
+      void now;
+
+      const declined = await tx.booking.update({
+        where: { id: bookingId },
+        data: { state: 'DECLINED' },
+      });
+
+      await tx.bookingEvent.create({
+        data: {
+          bookingId,
+          type: 'state-changed',
+          fromState: 'REQUESTED',
+          toState: 'DECLINED',
+          actorId: ownerId,
+          metadata: {},
+        },
+      });
+
+      return toRecord(declined);
+    });
   }
 
   async findBookedListings(
