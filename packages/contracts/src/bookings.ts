@@ -53,6 +53,53 @@ export function listingRequestsPath(id: string): string {
 export const LISTING_REQUESTS_ROUTE = '/listings/:id/requests';
 
 /**
+ * Where scheduled work is set off (slice 4.7a, ADR 0048).
+ *
+ * **Under `/internal/` because that prefix is the audience, not a version.** Every
+ * other route in this API answers to a person holding a session; this one answers to
+ * a machine holding a shared secret, and the two need to be distinguishable at a
+ * glance — in a route table, in a log line, and in the WAF rule that will eventually
+ * refuse this path at the edge outright. It is deliberately not `/bookings/expire`,
+ * which would sit among the routes an owner calls.
+ *
+ * **No path parameter and no body.** A sweep takes no arguments: *which* requests
+ * have lapsed is a question only the database can answer, and a caller that could
+ * name them could name the wrong ones.
+ */
+export const EXPIRE_REQUESTS_ROUTE = '/internal/bookings/expire-requests';
+
+/**
+ * What a sweep did, as the caller is told it (slice 4.7a).
+ *
+ * **A count and ids, never the bookings.** The trigger is a machine with no user
+ * and no scope, so anything richer would be handing an unscoped caller the terms of
+ * somebody's hire. The ids are ours, meaningless alone, and they are what makes a
+ * worker's log line traceable to rows.
+ *
+ * `strictObject`, as every projection in this module is: a field added on the server
+ * and forgotten on the client fails loudly rather than being dropped in transit.
+ */
+export const expirySweepSchema = z.strictObject({
+  expired: z.number().int().nonnegative(),
+  /*
+   * `min(1)` rather than `uuid()`, matching `bookingSchema` and
+   * `listingRequestSchema` above. The module types an id as a non-empty string
+   * throughout so a fake can use a readable one — a projection that demanded a uuid
+   * would be a contract only the database could satisfy, and the integration tests
+   * boot the real routing over in-memory storage.
+   */
+  bookingIds: z.array(z.string().min(1)),
+  /** The batch bound was reached, so the caller should sweep again sooner. */
+  reachedLimit: z.boolean(),
+});
+
+export type ExpirySweep = z.infer<typeof expirySweepSchema>;
+
+export function parseExpirySweep(value: unknown): ExpirySweep {
+  return parseWith(expirySweepSchema, 'The sweep', value);
+}
+
+/**
  * What happened to a booking (§6.2's *event type*).
  *
  * **A closed union in code rather than a database enum**, the call

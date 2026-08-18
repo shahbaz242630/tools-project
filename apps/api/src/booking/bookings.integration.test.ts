@@ -23,6 +23,7 @@ import { createNoopMetrics } from '@platform/observability';
 import { createRecordingLogger } from '@platform/observability/testing';
 import {
   BOOKINGS_ROUTE,
+  EXPIRE_REQUESTS_ROUTE,
   ME_PATH,
   bookingAcceptPath,
   bookingDeclinePath,
@@ -30,6 +31,7 @@ import {
   listingQuotesPath,
   listingRequestsPath,
   parseBooking,
+  parseExpirySweep,
   parseListingRequests,
   parseRentalQuote,
 } from '@platform/contracts';
@@ -45,7 +47,8 @@ import {
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
-import { createBookingFakes } from './testing/fakes.js';
+import { INTERNAL_TRIGGER_HEADER } from './internal-trigger.guard.js';
+import { TEST_INTERNAL_TRIGGER_SECRET, createBookingFakes } from './testing/fakes.js';
 
 const ADA = { clerkUserId: 'user_ada', sessionId: 'sess_a', email: 'ada@example.com' };
 const BOB = { clerkUserId: 'user_bob', sessionId: 'sess_b', email: 'bob@example.com' };
@@ -53,9 +56,22 @@ const CAT = { clerkUserId: 'user_cat', sessionId: 'sess_c', email: 'cat@example.
 
 const MOWER = 'listing-mower';
 
-/** A fixed clock, so the fixtures are never overtaken by the real date. */
+/**
+ * A fixed clock, so the fixtures are never overtaken by the real date.
+ *
+ * **Mutable from slice 4.7a**, where the deadline is the thing under test: every
+ * service in this module reads this one function, so `advanceHours` moves the quote
+ * expiry, the request deadline and the sweep's idea of *now* together — which is
+ * what makes an expiry test exercise the same clock the product does.
+ */
 const TODAY = '2026-07-01';
-const now = (): Date => Time.startOfLocalDay(TODAY);
+let clock = Time.startOfLocalDay(TODAY);
+const now = (): Date => clock;
+
+/** Move every service's clock forward. */
+function advanceHours(hours: number): void {
+  clock = Time.addHours(clock, hours);
+}
 
 const A_QUOTE_REQUEST = {
   startDate: '2026-08-21',
@@ -76,6 +92,8 @@ beforeEach(async () => {
   identity = createIdentityFakes(audit);
   const profiles = createProfileFakes(audit);
   const categories = new InMemoryCategoryStore();
+  // Reset, or an expiry test leaves the next one starting two days late.
+  clock = Time.startOfLocalDay(TODAY);
   booking = createBookingFakes(now);
 
   identity.sessionVerifier
@@ -108,6 +126,8 @@ beforeEach(async () => {
         availability: booking.service,
         quotes: booking.quotes,
         bookings: booking.bookings,
+        requestExpiry: booking.requestExpiry,
+        internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
       }),
     ],
   }).compile();
@@ -478,5 +498,139 @@ describe('suspension', () => {
     });
 
     expect(response.statusCode).toBe(200);
+  });
+});
+
+describe('the internal expiry trigger (slice 4.7a, ADR 0048)', () => {
+  const trigger = (headers: Record<string, string> = {}) =>
+    app.inject({ method: 'POST', url: EXPIRE_REQUESTS_ROUTE, headers });
+
+  const secret = { [INTERNAL_TRIGGER_HEADER]: TEST_INTERNAL_TRIGGER_SECRET };
+
+  it('refuses a caller with no secret', async () => {
+    const response = await trigger();
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('refuses a caller with the wrong secret', async () => {
+    const response = await trigger({
+      [INTERNAL_TRIGGER_HEADER]: 'not-the-secret-but-the-same-sort-of-length',
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('refuses a session token, however valid', async () => {
+    /*
+     * **The one that matters most.** A signed-in person — any signed-in person —
+     * must not be able to set off platform-wide scheduled work. `AuthGuard` is not
+     * on this route, so a bearer token is simply not a credential here, and this
+     * pins that rather than leaving it to the absence of a decorator.
+     */
+    const response = await trigger(auth('ada-token'));
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('answers 200 and expires nothing when nothing is overdue', async () => {
+    await requestBooking('ada-token', await quoteFor('ada-token'));
+
+    const response = await trigger(secret);
+
+    expect(response.statusCode).toBe(200);
+    expect(parseExpirySweep(response.json())).toEqual({
+      expired: 0,
+      bookingIds: [],
+      reachedLimit: false,
+    });
+  });
+
+  it('expires an overdue request, and the renter reads EXPIRED back', async () => {
+    const made = parseBooking(
+      (await requestBooking('ada-token', await quoteFor('ada-token'))).json(),
+    );
+
+    // Past the category's configured 48 hours. `clock` is what every service in
+    // this module reads, so moving it moves the deadline for all of them at once.
+    advanceHours(49);
+
+    const response = await trigger(secret);
+
+    expect(parseExpirySweep(response.json())).toMatchObject({
+      expired: 1,
+      bookingIds: [made.id],
+    });
+
+    // Read back through the renter's own route, which is the only view they have
+    // of it until 4.8 — so this is what a person would actually see.
+    const after = await app.inject({
+      method: 'GET',
+      url: bookingPath(made.id),
+      headers: auth('ada-token'),
+    });
+    expect(parseBooking(after.json()).state).toBe('EXPIRED');
+  });
+
+  it('returns only ids, never a renter or an item', async () => {
+    /*
+     * The trigger has no user and no scope, so anything richer than an id would be
+     * handing an unscoped caller the terms of somebody's hire. `expirySweepSchema`
+     * is a `strictObject`, so a field added on the server fails here rather than
+     * being dropped in transit.
+     */
+    await requestBooking('ada-token', await quoteFor('ada-token'));
+    advanceHours(49);
+
+    const response = await trigger(secret);
+    const body = JSON.stringify(response.json());
+
+    expect(body).not.toContain(adaId);
+    expect(body).not.toContain('hedge trimmer');
+    expect(() => parseExpirySweep(response.json())).not.toThrow();
+  });
+
+  it('cannot expire a booking that was accepted first', async () => {
+    // The whole point, end to end through the routes: an owner's acceptance
+    // survives a sweep, however overdue the request's own deadline was.
+    const made = parseBooking(
+      (await requestBooking('ada-token', await quoteFor('ada-token'))).json(),
+    );
+    await app.inject({
+      method: 'POST',
+      url: bookingAcceptPath(made.id),
+      headers: auth('bob-token'),
+    });
+
+    advanceHours(49);
+    await trigger(secret);
+
+    const after = await app.inject({
+      method: 'GET',
+      url: bookingPath(made.id),
+      headers: auth('ada-token'),
+    });
+    expect(parseBooking(after.json()).state).toBe('ACCEPTED');
+  });
+});
+
+describe('one quote, one booking (slice 4.7a)', () => {
+  it('refuses a second request from the same quote with a sentence, not a 500', async () => {
+    /*
+     * A double-press or a second tab. Before the unique index this made two
+     * identical `REQUESTED` rows — invisible to §8.5.1's constraint, because §7.1
+     * leaves `REQUESTED` out of the occupying states so several renters can ask for
+     * the same dates.
+     */
+    const quoteId = await quoteFor('ada-token');
+    const first = await requestBooking('ada-token', quoteId);
+    expect(first.statusCode).toBe(201);
+
+    const second = await requestBooking('ada-token', quoteId);
+
+    expect(second.statusCode).toBe(422);
+    expect((second.json() as { message: string }).message).toContain(
+      'already requested',
+    );
   });
 });

@@ -55,11 +55,18 @@ import { OwnerAvailabilityController } from './booking/owner-availability.contro
 import {
   AVAILABILITY_SERVICE,
   BOOKINGS_SERVICE,
+  REQUEST_EXPIRY_SERVICE,
   QUOTES_SERVICE,
 } from './booking/booking.tokens.js';
 import type { AvailabilityService } from './booking/availability.service.js';
 import { QuotesController } from './booking/quotes.controller.js';
 import { BookingsController } from './booking/bookings.controller.js';
+import { RequestExpiryController } from './booking/request-expiry.controller.js';
+import {
+  INTERNAL_TRIGGER_LOGGER,
+  INTERNAL_TRIGGER_SECRET,
+} from './booking/internal-trigger.guard.js';
+import type { RequestExpiryService } from './booking/request-expiry.service.js';
 import type { QuotesService } from './booking/quotes.service.js';
 import type { BookingsService } from './booking/bookings.service.js';
 import { AdminFeatureFlagsController } from './feature-flags/admin-feature-flags.controller.js';
@@ -190,6 +197,23 @@ export interface AppModuleOptions {
    * Required rather than optional, for the reason every dependency here is.
    */
   readonly bookings: BookingsService;
+
+  /**
+   * Expiring unanswered requests (slice 4.7a, BRD §8.6).
+   *
+   * Required rather than optional, for the reason every dependency here is.
+   */
+  readonly requestExpiry: RequestExpiryService;
+
+  /**
+   * The secret a scheduled trigger must present (slice 4.7a, ADR 0048).
+   *
+   * **Passed in rather than read from the environment here**, exactly as
+   * `adminMfaBypass` is: it keeps this module with no opinion about where it is
+   * running, and it is what lets a test drive both a correct and an incorrect
+   * secret through the real routing.
+   */
+  readonly internalTriggerSecret: string;
 }
 
 /**
@@ -231,6 +255,12 @@ export class AppModule implements NestModule {
         OwnerAvailabilityController,
         QuotesController,
         BookingsController,
+        // Set off by a machine holding a shared secret, not by a person holding a
+        // session (slice 4.7a) — so it is the one controller here guarded by
+        // something other than `AuthGuard`. It is listed with the authenticated
+        // routes rather than with the unguarded four below, because it *is*
+        // guarded; see `internal-trigger.guard.ts`.
+        RequestExpiryController,
         // **Unguarded by design, all four**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
@@ -298,6 +328,9 @@ export class AppModule implements NestModule {
         { provide: AVAILABILITY_SERVICE, useValue: options.availability },
         { provide: QUOTES_SERVICE, useValue: options.quotes },
         { provide: BOOKINGS_SERVICE, useValue: options.bookings },
+        { provide: REQUEST_EXPIRY_SERVICE, useValue: options.requestExpiry },
+        { provide: INTERNAL_TRIGGER_SECRET, useValue: options.internalTriggerSecret },
+        { provide: INTERNAL_TRIGGER_LOGGER, useValue: options.logger },
       ],
     };
   }

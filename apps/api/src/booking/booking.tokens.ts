@@ -16,3 +16,12 @@ export const QUOTES_SERVICE = Symbol('QUOTES_SERVICE');
 
 /** Injection token for the request path (slice 4.5a). */
 export const BOOKINGS_SERVICE = Symbol('BOOKINGS_SERVICE');
+
+/**
+ * Injection token for the expiry sweep (slice 4.7a).
+ *
+ * Its own token rather than sharing `BOOKINGS_SERVICE`, because it is its own
+ * service — see `request-expiry.service.ts` for why a sweep with no actor does not
+ * belong beside the methods whose job is scoping to one.
+ */
+export const REQUEST_EXPIRY_SERVICE = Symbol('REQUEST_EXPIRY_SERVICE');

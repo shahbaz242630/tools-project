@@ -140,6 +140,39 @@ const schema = z.object({
 
   REDIS_HOST: z.string().min(1).default('localhost'),
   REDIS_PORT: port.default(6379),
+
+  /**
+   * The shared secret the worker presents to trigger scheduled work, and the API
+   * checks (slice 4.7a, ADR 0048).
+   *
+   * **In the shared loader because both processes need it** — the worker to send,
+   * the API to verify — which is the one thing that qualifies a field for this
+   * schema. Contrast `PERSONAL_DATA_ENCRYPTION_KEY`, which lives in its own loader
+   * precisely so a queue consumer cannot read a home address.
+   *
+   * **Required rather than optional, so an absent secret stops the process instead
+   * of opening the route.** An optional secret has to be handled at the guard, and
+   * the tempting handling is "no secret configured, so skip the check" — which is
+   * an unauthenticated mutating endpoint reached by forgetting a line in an env
+   * file. Refusing to boot is the same choice ADR 0038 made for
+   * `POSTGRES_SSLMODE`: a default is invisible, and this one would be invisible and
+   * open.
+   *
+   * **32 characters minimum, and length is the only thing checkable here.** It is a
+   * bearer secret rather than a key for a cipher, so there is no shape to validate
+   * — but a short one is guessable at leisure by anything that can reach the API,
+   * and "changeme" would otherwise pass. Generate with `openssl rand -base64 32`.
+   *
+   * It is not personal data and it is not a provider credential, but it is a
+   * credential: it belongs in the secret manager, must differ between staging and
+   * production, and rotating it means restarting both processes.
+   */
+  INTERNAL_TRIGGER_SECRET: z
+    .string()
+    .min(
+      32,
+      'must be at least 32 characters — generate one with: openssl rand -base64 32',
+    ),
 });
 
 /**

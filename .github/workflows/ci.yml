@@ -237,6 +237,7 @@ jobs:
             -e 'CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----ci-only-not-a-real-key-----END PUBLIC KEY-----' \
             -e CLERK_AUTHORIZED_PARTIES=http://localhost:3000 \
             -e PERSONAL_DATA_ENCRYPTION_KEY="$(head -c 32 /dev/zero | base64)" \
+            -e INTERNAL_TRIGGER_SECRET=ci-only-internal-trigger-secret-not-a-real-one \
             rental-api:ci
 
           # Generous: a cold Node start on a loaded runner has been seen to take
@@ -297,6 +298,7 @@ jobs:
           docker run -d --name worker-ci --stop-timeout 45 \
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             -e POSTGRES_SSLMODE=disable \
+            -e INTERNAL_TRIGGER_SECRET=ci-only-internal-trigger-secret-not-a-real-one \
             rental-worker:ci
 
           sleep 5
@@ -501,6 +503,7 @@ jobs:
               -e 's|^CLERK_JWT_PUBLIC_KEY=.*|CLERK_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----rehearsal-only-not-a-real-key-----END PUBLIC KEY-----|' \
               -e 's|^CLERK_AUTHORIZED_PARTIES=.*|CLERK_AUTHORIZED_PARTIES=http://localhost|' \
               -e "s|^PERSONAL_DATA_ENCRYPTION_KEY=.*|PERSONAL_DATA_ENCRYPTION_KEY=$(head -c 32 /dev/zero | base64)|" \
+              -e 's|^INTERNAL_TRIGGER_SECRET=.*|INTERNAL_TRIGGER_SECRET=rehearsal-only-internal-trigger-secret|' \
               infra/compose/app.env.example > "${RUNNER_TEMP}/release-root/staging.env"
 
           sed -e 's|^ACME_EMAIL=.*|ACME_EMAIL=rehearsal@example.invalid|' \
@@ -1081,6 +1084,11 @@ jobs:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: rental_test
           POSTGRES_TEST_DB: rental_test
+          # Required by @platform/config from slice 4.7a, and the db tests call
+          # `loadEnv()`. Any value over 32 characters — nothing here presents it,
+          # because the integration suite drives services directly rather than
+          # over HTTP; the guard itself is covered in the api project.
+          INTERNAL_TRIGGER_SECRET: ci-only-internal-trigger-secret-not-a-real-one
 
   security:
     name: Secrets and dependencies

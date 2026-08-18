@@ -3,9 +3,14 @@ import type { MoneyValue } from '@platform/core';
 import type { PrismaClient } from '@platform/database';
 import type { BookingEventType, BookingState } from '@platform/contracts';
 import { parseQuoteLineItems } from '@platform/contracts';
-import { BookingStateChangedError, OverlappingBookingError } from './booking-store.js';
+import {
+  BookingStateChangedError,
+  DuplicateQuoteBookingError,
+  OverlappingBookingError,
+} from './booking-store.js';
 import type {
   AcceptanceResult,
+  ExpirySweepResult,
   BookingEventRecord,
   BookingRecord,
   BookingStore,
@@ -86,6 +91,30 @@ function isOverlapViolation(error: unknown): boolean {
  */
 function isDeadlock(error: unknown): boolean {
   return describe(error).includes('40P01');
+}
+
+/**
+ * The unique index slice 4.7a put on `bookings.quoteId`.
+ *
+ * **Matched on the index name as well as the code**, which is stricter than
+ * `isUniqueViolation` in `prisma-identity-store.ts` and for the reason
+ * `OVERLAP_CONSTRAINT` gives: this table will gain other unique constraints, and
+ * translating any of them into "you already asked for this" would tell a renter
+ * something false about their own booking. `P2002` alone would do that silently the
+ * day a second one is added.
+ */
+const QUOTE_UNIQUE_INDEX = 'bookings_quoteId_key';
+
+function isDuplicateQuote(error: unknown): boolean {
+  const described = describe(error);
+
+  // The index by name is the reliable signal; `P2002` plus the field name is the
+  // fallback for a Prisma version that reports `meta.target` as the column rather
+  // than the constraint. Either is specific to this one index.
+  return (
+    described.includes(QUOTE_UNIQUE_INDEX) ||
+    (described.includes('P2002') && described.includes('quoteId'))
+  );
 }
 
 export class PrismaBookingStore implements BookingStore {
@@ -192,6 +221,16 @@ export class PrismaBookingStore implements BookingStore {
          */
         if (isOverlapViolation(error)) {
           throw new OverlappingBookingError(booking.listingId);
+        }
+
+        /*
+         * **One quote, one booking** (slice 4.7a). Untranslated this is a `P2002`
+         * and therefore a 500 on the second of two tabs — and the renter's first
+         * request succeeded, so a server error would be wrong about the outcome as
+         * well as unhelpful about the cause.
+         */
+        if (isDuplicateQuote(error)) {
+          throw new DuplicateQuoteBookingError(booking.quoteId);
         }
 
         // See `DEADLOCK_ATTEMPTS`: try again once, and let a second failure be
@@ -402,6 +441,89 @@ export class PrismaBookingStore implements BookingStore {
       });
 
       return toRecord(declined);
+    });
+  }
+
+  async expireRequests(now: Date, limit: number): Promise<ExpirySweepResult> {
+    return this.prisma.$transaction(async (tx) => {
+      /*
+       * **Two steps rather than one `updateManyAndReturn` with a `limit`, and the
+       * reason is ordering.** That call takes a `limit` and has no `orderBy`, so a
+       * bounded sweep would expire an arbitrary subset — which starves nobody
+       * (every row it takes leaves the candidate set) but does mean the renter who
+       * has waited longest is not the one served first when there is a backlog.
+       * Selecting the ids lets the order be the honest one, and costs one indexed
+       * read inside a transaction that was already open.
+       */
+      const candidates = await tx.booking.findMany({
+        where: { state: 'REQUESTED', requestExpiresAt: { lte: now } },
+        orderBy: [{ requestExpiresAt: 'asc' }, { id: 'asc' }],
+        take: limit,
+        select: { id: true },
+      });
+
+      if (candidates.length === 0) return { expired: [], reachedLimit: false };
+
+      /*
+       * **The state and the deadline are restated here, and this is the race
+       * guarantee.** The ids came from a read; between that read and this write an
+       * owner may have accepted or declined any of them. Postgres evaluates this
+       * `WHERE` while holding the row lock, so a booking that stopped being an
+       * overdue `REQUESTED` is simply not matched — and because only matched rows
+       * come back, the events below describe exactly what changed. Filtering by id
+       * alone would expire an acceptance made a millisecond ago, which is §8.5.1's
+       * check-then-write anti-pattern wearing a different hat.
+       *
+       * **No test fails if you delete these two lines, and that is recorded rather
+       * than hidden.** The `findMany` above filters the same rows a moment earlier,
+       * which closes every window reachable through this method — so a mutation
+       * removing them passes the whole suite. `prisma-booking-store.db.test.ts`
+       * proves the *mechanism* by interleaving the two halves with its own SQL, and
+       * says in as many words that it does not pin this line. Keep it: the window is
+       * real, 4.6a's acceptance runs in it, and the cost is two lines.
+       */
+      const expired = await tx.booking.updateManyAndReturn({
+        where: {
+          id: { in: candidates.map((row) => row.id) },
+          state: 'REQUESTED',
+          requestExpiresAt: { lte: now },
+        },
+        data: { state: 'EXPIRED' },
+        select: { id: true, renterId: true, listingId: true },
+      });
+
+      if (expired.length > 0) {
+        /*
+         * §6.2's history, one row per booking, in the same transaction as the
+         * state change — the rule `createWithEvent` states at length: a booking
+         * whose state moved without an event has a history with a gap in it.
+         *
+         * **`state-changed` rather than a new event type**, and `bookings.ts`
+         * asks 4.7 to justify that: `auto-declined` exists because
+         * `REQUESTED → DECLINED` had two possible causes and the difference lived
+         * in unprojected `metadata`. `REQUESTED → EXPIRED` has exactly one cause,
+         * and `toState` already says it.
+         *
+         * **`actorId: null` — nobody decided this.** The deadline did.
+         */
+        await tx.bookingEvent.createMany({
+          data: expired.map((booking) => ({
+            bookingId: booking.id,
+            type: 'state-changed' satisfies BookingEventType,
+            fromState: 'REQUESTED' satisfies BookingState,
+            toState: 'EXPIRED' satisfies BookingState,
+            actorId: null,
+            metadata: {},
+          })),
+        });
+      }
+
+      /*
+       * The bound is reported against what was *selected*, not what was written.
+       * A batch that filled up and then lost half its rows to concurrent
+       * acceptances still means there may be more overdue requests behind it.
+       */
+      return { expired, reachedLimit: candidates.length === limit };
     });
   }
 

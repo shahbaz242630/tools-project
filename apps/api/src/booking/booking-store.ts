@@ -146,6 +146,30 @@ export class OverlappingBookingError extends Error {
 }
 
 /**
+ * Thrown when a quote has already become a booking (slice 4.7a).
+ *
+ * **A named error rather than a leaked `P2002`**, for the reason every adapter here
+ * translates one: the caller has to tell "you already asked for this" apart from
+ * "the database is down", and without translation a renter's second tab produces a
+ * 500 on the most consequential button in the product.
+ *
+ * **It is deliberately not `OverlappingBookingError`.** Nothing is overlapping and
+ * nobody else took the dates — the renter asked twice for the same thing, which
+ * needs a different sentence and a different remedy (none, because the first
+ * request worked).
+ *
+ * It carries the quote rather than the winning booking's id: the caller knows which
+ * quote it presented, and reading the other row back to name it would be a query on
+ * the failure path for a fact the caller does not need.
+ */
+export class DuplicateQuoteBookingError extends Error {
+  constructor(readonly quoteId: string) {
+    super(`Quote ${quoteId} has already been used for a booking`);
+    this.name = 'DuplicateQuoteBookingError';
+  }
+}
+
+/**
  * A request waiting on an owner, and what saying yes would cost (slice 4.6).
  *
  * **The conflict count is computed with the request rather than fetched beside
@@ -190,6 +214,39 @@ export class BookingStateChangedError extends Error {
     super(`Booking ${bookingId} is ${actual}, not REQUESTED`);
     this.name = 'BookingStateChangedError';
   }
+}
+
+/**
+ * One request that a sweep moved to `EXPIRED` (§8.6, slice 4.7a).
+ *
+ * **The renter is carried and the owner is not.** §7.1's auto-decline already
+ * establishes who has to be told when a request dies without an answer: the person
+ * who asked. An owner who let a deadline pass has not been waiting for anything.
+ * Phase 6 is what delivers it.
+ *
+ * **Three ids and nothing else.** No dates, no money, no item name — a sweep is
+ * not a projection, and everything a later notification needs is already on the
+ * booking, reachable by id through `findForParty`. Widening this is how a
+ * background job comes to hold a copy of the row it just changed.
+ */
+export interface ExpiredRequest {
+  readonly id: string;
+  readonly renterId: string;
+  readonly listingId: string;
+}
+
+/**
+ * What one expiry sweep did (§14's *request expiry worker*, slice 4.7a).
+ *
+ * **`reachedLimit` rather than a total count of what is outstanding.** Counting
+ * everything overdue means a second query on every sweep, forever, to answer a
+ * question that only matters in the rare case where the batch filled up. The flag
+ * costs nothing and says the one thing a caller can act on: *ask again sooner*.
+ */
+export interface ExpirySweepResult {
+  readonly expired: readonly ExpiredRequest[];
+  /** The batch bound was hit, so more overdue requests may remain. */
+  readonly reachedLimit: boolean;
 }
 
 export interface BookingStore {
@@ -305,4 +362,35 @@ export interface BookingStore {
    * smoothing over — it is why saying no is cheap and saying yes is not.
    */
   decline(bookingId: string, ownerId: string, now: Date): Promise<BookingRecord | null>;
+
+  /**
+   * Move every `REQUESTED` booking past its §8.6 deadline to `EXPIRED`, and write
+   * an event for each (slice 4.7a).
+   *
+   * **No actor and no owner scope**, unlike every other write here. This is the
+   * platform acting on its own deadline, so the events it writes carry
+   * `actorId: null` — the schema's own words: *"recording one would be a lie about
+   * who decided."*
+   *
+   * **Idempotent by construction, not by a claim.** The state predicate lives in
+   * the `UPDATE` itself, so a booking accepted or declined a millisecond earlier is
+   * simply not matched: two sweeps racing, or one retried after a timeout, cannot
+   * expire the same booking twice or expire something that stopped being
+   * `REQUESTED`. That is what lets this run unattended and be re-run freely.
+   *
+   * **Bounded, and the bound is the caller's.** A sweep is the one operation here
+   * that can meet an arbitrarily large backlog — a worker down for a week returns to
+   * everything that lapsed meanwhile — and an unbounded `UPDATE` on that would hold
+   * locks for as long as it takes while the API waits behind it. The result says
+   * whether the bound was hit.
+   *
+   * **`requestExpiresAt` is read and no configuration is.** 4.5a stamped the
+   * deadline onto the row from the category version in force at the time, which is
+   * §8.2's copied-terms rule — so a request is judged against the deadline it was
+   * made under, and re-configuring the category cannot retroactively expire or
+   * revive anything.
+   *
+   * Returns the requests it expired, oldest deadline first.
+   */
+  expireRequests(now: Date, limit: number): Promise<ExpirySweepResult>;
 }

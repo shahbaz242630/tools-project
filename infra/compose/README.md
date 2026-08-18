@@ -142,6 +142,19 @@ one value that cannot be reissued:
 openssl rand -base64 32
 ```
 
+`INTERNAL_TRIGGER_SECRET` is generated the same way, per environment (slice 4.7a,
+ADR 0048). It is the shared secret the **worker** presents when it sets off
+scheduled work and the **api** checks, so both services read the one value from
+this file and they must agree.
+
+Unlike the key above it **can** be reissued freely — nothing is encrypted with it
+and no stored data depends on it. Rotating it means restarting both services
+together; there is deliberately no support for two valid secrets at once, because a
+rotation window is a second code path nobody would ever exercise.
+
+Both services **refuse to start** without it, which is why it is generated here
+rather than left for the first failed deploy to discover.
+
 Leave `IMAGE_TAG` empty. The deploy script fills it in.
 
 **Getting values into this file from a Windows machine is where secrets get
