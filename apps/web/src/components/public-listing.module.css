@@ -199,21 +199,6 @@
   line-height: 1.55;
 }
 
-/*
- * **Not a disabled "Book now".** BRD §15 forbids a control that does not do what
- * it says, and booking is Phase 4; a greyed-out button would tell a visitor the
- * platform does something it does not. This says so instead.
- */
-.notOpen {
-  padding: 14px 16px;
-  margin-top: 16px;
-  border-radius: var(--radius-control);
-  background: var(--surface-sunken);
-  color: var(--ink-secondary);
-  font-size: var(--text-helper);
-  line-height: 1.55;
-}
-
 .cardHeading {
   margin: 0 0 6px;
   font-size: 13px;

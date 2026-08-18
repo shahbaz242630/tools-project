@@ -71,11 +71,22 @@ function listing(over: Partial<PublicListing> = {}): PublicListing {
   };
 }
 
+/**
+ * A stand-in for whatever the page puts in the booking slot (slice 4.5b).
+ *
+ * **Deliberately not the real panel.** This component's job is to be certain
+ * about what a stranger may see, and the panel's is to price a hire; testing
+ * them together would mean every disclosure assertion here also depended on a
+ * server action. What is worth asserting is that the slot is rendered and that
+ * nothing is chosen for it, and a marker proves both.
+ */
+const A_PANEL = <div data-testid="request-panel">the booking panel</div>;
+
 describe('what the page shows', () => {
   it('renders the category’s own fields without knowing what they are', () => {
     // The exit gate of this phase, on the page a stranger reads. Nothing here
     // knows what `outdoor-gardening` contains.
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(screen.getByText('Power source')).toBeTruthy();
     expect(screen.getByText('Petrol')).toBeTruthy();
@@ -84,19 +95,19 @@ describe('what the page shows', () => {
   it('reads a scaled number back through its definition', () => {
     // A stored 52 means 5.2 kg, and only the pinned definition says so
     // (ADR 0029). Rendering the raw integer would advertise a 52 kg trimmer.
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(screen.getByText('5.2 kg')).toBeTruthy();
   });
 
   it('shows the district and the town', () => {
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('BS7, Bristol');
   });
 
   it('says the exact address comes later, so nobody reads the district as precise', () => {
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('exact address is shared once a');
   });
@@ -110,7 +121,7 @@ describe('the price', () => {
      * fee at checkout is drip pricing, which the DMCC prohibits — and it would
      * look completely normal on screen.
      */
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     const headline = screen.getByText(/a day, fees included/);
     expect(headline.textContent).toContain('£19.44');
@@ -118,7 +129,7 @@ describe('the price', () => {
   });
 
   it('discloses what the fee is, which is the other half of the same rule', () => {
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('£18.00');
     expect(document.body.textContent).toContain('£1.44');
@@ -127,7 +138,7 @@ describe('the price', () => {
   it('says a refundable hold may apply, and that it is not part of the price', () => {
     // §3.4.4 requires the damage security to be shown separately and never
     // folded into the headline. The amount is Phase 5; the disclosure is not.
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('refundable damage hold');
     expect(document.body.textContent).toContain('never part of the price');
@@ -136,6 +147,7 @@ describe('the price', () => {
   it('explains a bound minimum fee, so “per day” is not misleading', () => {
     render(
       <PublicListingView
+        requestPanel={A_PANEL}
         listing={listing({
           inclusiveDailyPrice: {
             rate: { amount: 500, currency: 'GBP' },
@@ -156,6 +168,7 @@ describe('the price', () => {
     // not drip pricing; showing it as the price would be.
     render(
       <PublicListingView
+        requestPanel={A_PANEL}
         listing={listing({
           rates: {
             daily: { amount: 1_800, currency: 'GBP' },
@@ -171,7 +184,7 @@ describe('the price', () => {
   });
 
   it('shows no longer-hire section when there is only a daily rate', () => {
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).not.toContain('Longer hires');
   });
@@ -182,7 +195,7 @@ describe('who you would be renting from', () => {
     // BRD §8.3's consumer-law disclosure, in the body of the page rather than
     // in small print: a renter has materially stronger rights against a
     // business, so they are entitled to know before they book.
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('A private individual');
     expect(document.body.textContent).toContain('lending their own item');
@@ -192,7 +205,7 @@ describe('who you would be renting from', () => {
     // The useful half. "Private individual" is the legal term and means
     // little to somebody who has not met it; "not a business" is the fact they
     // can act on.
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('Not a business');
     expect(document.body.textContent).toContain('rights differ');
@@ -206,7 +219,10 @@ describe('who you would be renting from', () => {
      * day traders are supported the page needs no edit.
      */
     render(
-      <PublicListingView listing={listing({ ownerStatus: 'professional_trader' })} />,
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ ownerStatus: 'professional_trader' })}
+      />,
     );
 
     expect(document.body.textContent).toContain('A business');
@@ -222,28 +238,39 @@ describe('what the page deliberately does not show', () => {
      * page about our form rather than about the item, and it tells a stranger
      * what somebody has not filled in.
      */
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(screen.queryByText('Condition notes')).toBeNull();
     expect(document.body.textContent).not.toContain('Not answered');
     expect(document.body.textContent).not.toContain('before you can publish');
   });
 
-  it('offers no booking control, and says why rather than showing a dead one', () => {
-    // BRD §15 forbids a control that calls no real behaviour. A disabled "Book
-    // now" is exactly that, and would tell a visitor the platform does
-    // something it does not.
-    render(<PublicListingView listing={listing()} />);
+  it('renders the booking slot it was given, and invents nothing for it', () => {
+    /*
+     * **This test used to assert the opposite** — that there was no control and
+     * a sentence saying booking was not open (2.10). BRD §15 forbids a control
+     * that calls no real behaviour, and until 4.5a there was none to call. There
+     * is now, so the sentence would be false and the assertion pinning it would
+     * have kept it true-looking.
+     *
+     * What survives is the part that is still a rule: this component **chooses
+     * no panel of its own**. Whether a visitor is signed in is the page's to
+     * know, and an auth branch in here would put a session check inside the one
+     * component whose job is certainty about what a stranger may see.
+     */
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
+    expect(screen.getByTestId('request-panel')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Booking is not open yet');
+    // No control of its own — every button on this page comes from the slot.
     expect(screen.queryByRole('button')).toBeNull();
-    expect(document.body.textContent).toContain('Booking is not open yet');
   });
 
   it('renders nothing that looks like an owner or a status', () => {
     // The projection carries none of it, so this is a guard against somebody
     // widening `PublicListing` and wiring the new field in here without
     // noticing what page they are on.
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     const text = document.body.textContent ?? '';
     expect(text).not.toContain('PUBLISHED');
@@ -254,14 +281,19 @@ describe('what the page deliberately does not show', () => {
 
 describe('collecting it', () => {
   it('names the vehicle a renter needs, and what it means', () => {
-    render(<PublicListingView listing={listing()} />);
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
     expect(document.body.textContent).toContain('Car boot');
     expect(document.body.textContent).toContain('boot of an ordinary car');
   });
 
   it('warns about a two-person lift, because somebody may travel alone', () => {
-    render(<PublicListingView listing={listing({ requiresTwoPersonLift: true })} />);
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ requiresTwoPersonLift: true })}
+      />,
+    );
 
     expect(document.body.textContent).toContain('two people to lift');
     expect(document.body.textContent).toContain('Bring somebody');
@@ -271,7 +303,12 @@ describe('collecting it', () => {
     // A category configured before 2.4c-i offers no options, so its listings
     // cannot state one and publication does not demand it. Silence would read
     // as "anything will do".
-    render(<PublicListingView listing={listing({ transportRequirement: null })} />);
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ transportRequirement: null })}
+      />,
+    );
 
     expect(document.body.textContent).toContain('has not said what is needed');
   });
