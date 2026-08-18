@@ -1172,8 +1172,23 @@ model Listing {
   /// Who decided, and when. Both null together or both set together
   /// (`moderation_authorship_is_complete`), and both null for a listing nobody
   /// has moderated — which distinguishes the default from a real decision.
+  ///
+  /// **`Restrict` is stated rather than left to Prisma's default**, and saying so
+  /// closes a drift that had been in this file since slice 2.8 (10 August 2026).
+  /// The migration wrote `ON DELETE RESTRICT`; this line said nothing, and
+  /// Prisma's default for an *optional* relation is `SetNull` — so the schema and
+  /// the database disagreed, `prisma migrate diff` emitted the difference on every
+  /// run, and the next generated migration would have silently carried it.
+  ///
+  /// **The database was the correct side.** `SetNull` would quietly rewrite
+  /// history to say *nobody* moderated a listing an administrator moderated,
+  /// leaving `moderatedAt` set beside a null author — which
+  /// `moderation_authorship_is_complete` forbids, so the erasure would fail on the
+  /// constraint rather than at the decision. Harmless today only because accounts
+  /// are soft-deleted (ADR 0018) and this never fires. It is the same latent
+  /// defect `booking_events.actorId` names and states its own `Restrict` to avoid.
   moderatedById String?   @db.Uuid
-  moderatedBy   User?     @relation("ListingModerator", fields: [moderatedById], references: [id])
+  moderatedBy   User?     @relation("ListingModerator", fields: [moderatedById], references: [id], onDelete: Restrict)
   moderatedAt   DateTime? @db.Timestamptz(3)
 
   /// The words this listing can be found by — BRD §8.4's free-text filter
@@ -1472,7 +1487,16 @@ model Booking {
   /// **Required, not optional.** There is one way to make a booking and it starts
   /// with a price somebody was shown. A nullable column would permit a booking
   /// whose money came from nowhere provable.
-  quoteId String @db.Uuid
+  ///
+  /// **`@unique` from slice 4.7a: one quote becomes at most one booking.** Without
+  /// it a double-press or a second tab turned one quote into two identical
+  /// `REQUESTED` rows, and §8.5.1's `EXCLUDE` constraint cannot see them — its
+  /// `WHERE` covers the nine calendar-occupying states and §7.1 deliberately leaves
+  /// `REQUESTED` out, so that several renters may ask for the same dates.
+  ///
+  /// Plain rather than scoped to live states: re-using a dead booking's quote is
+  /// re-pricing, and `Quote` refuses that idea already by having no `updatedAt`.
+  quoteId String @unique @db.Uuid
   quote   Quote  @relation(fields: [quoteId], references: [id])
 
   /// The configuration in force when this booking was made (BRD §6.2's *config
