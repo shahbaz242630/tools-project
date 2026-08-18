@@ -56,6 +56,23 @@ description = "Secret-looking assignment with a long literal value"
 regex = '''(?i)\b(secret|token|api[_-]?key|private[_-]?key|passwd|password)\b\s*[:=]\s*['"][^'"\s]{16,}['"]'''
 tags = ["generic"]
 [rules.allowlist]
+# `regexTarget = "match"` because without it this allowlist cannot work at all, and
+# for a long time it did not.
+#
+# By default gitleaks tests an allowlist regex against the **captured secret**, and
+# this rule's capture group is the *keyword* — `secret`, `token`, `password`. So the
+# regex below was being matched against the literal string "SECRET" and never against
+# the value beside it, which is the only thing that could contain "example" or
+# "placeholder". Nothing noticed because the rule needs quotes around the value, and
+# every placeholder in `.env.example` is unquoted, so it had never fired on one.
+#
+# Found in slice 4.7b, when two test constants holding obviously-fake values were
+# refused at the pre-push hook and adding `example-` to them changed nothing.
+#
+# `match` rather than `line`: it covers the keyword *and* the value, which is what we
+# want to inspect, while `line` would allow a real secret on any line that happened to
+# mention the word "example" — a comment, for instance.
+regexTarget = "match"
 regexes = [
   '''(?i)(example|placeholder|redacted|your[_-]?|xxx|changeme|local_dev_only)''',
 ]
