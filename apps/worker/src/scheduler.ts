@@ -52,6 +52,15 @@ export interface SchedulerOptions {
 export interface Scheduler {
   /** Register the repeatable sweep, or update it if the interval changed. */
   register(): Promise<void>;
+  /**
+   * The schedules Redis currently holds (slice H6).
+   *
+   * **Asked of Redis rather than remembered from `register()`.** A boolean set when
+   * registration succeeded would still be true after somebody deleted the schedule,
+   * after an `obliterate`, and after a rename left the old one running — which are
+   * the states worth noticing. This costs one command on the health interval.
+   */
+  registered(): Promise<readonly { key: string }[]>;
   /** Release the Redis connection this holds. Called from the shutdown sequence. */
   close(): Promise<void>;
 }
@@ -128,6 +137,14 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         job: EXPIRE_REQUESTS_JOB,
         everyMs: EXPIRE_REQUESTS_EVERY_MS,
       });
+    },
+
+    async registered(): Promise<readonly { key: string }[]> {
+      const schedules = await queue.getJobSchedulers();
+      // Narrowed to the one field `scheduleIsRegistered` reads. A scheduler entry
+      // carries the job template, and handing the whole thing to a health check
+      // would let it grow an opinion about the payload.
+      return schedules.map((schedule) => ({ key: schedule.key }));
     },
 
     async close(): Promise<void> {

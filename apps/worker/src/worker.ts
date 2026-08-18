@@ -1,4 +1,4 @@
-import type { Logger } from '@platform/observability';
+import type { Logger, Metrics } from '@platform/observability';
 import { Worker } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
 import { createJobProcessor } from './processor.js';
@@ -12,6 +12,14 @@ export interface MaintenanceWorkerOptions {
   readonly logger: Logger;
   /** Keyed by job name. An unknown name fails the job rather than the worker. */
   readonly handlers: Readonly<Record<string, JobHandler>>;
+  /**
+   * Where each job's duration and outcome are recorded (slice H6).
+   *
+   * Passed through to `createJobProcessor`, which is the one place every job already
+   * goes. Optional so the H1 signature still works and every existing test keeps
+   * compiling; a worker built without it records nothing.
+   */
+  readonly metrics?: Metrics;
   readonly concurrency?: number;
   /**
    * Redis key prefix. Lets separate environments share one Redis without one
@@ -27,9 +35,9 @@ export interface MaintenanceWorkerOptions {
  * against a real broker.
  */
 export function createMaintenanceWorker(options: MaintenanceWorkerOptions): Worker {
-  const { connection, logger, handlers, concurrency = 5, prefix } = options;
+  const { connection, logger, handlers, metrics, concurrency = 5, prefix } = options;
 
-  const worker = new Worker(MAINTENANCE_QUEUE, createJobProcessor(handlers), {
+  const worker = new Worker(MAINTENANCE_QUEUE, createJobProcessor(handlers, metrics), {
     connection,
     concurrency,
     ...(prefix !== undefined ? { prefix } : {}),

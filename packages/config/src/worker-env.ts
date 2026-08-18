@@ -62,6 +62,24 @@ const schema = z.object({
    * `INTERNAL_TRIGGER_SECRET` in the shared loader.
    */
   API_INTERNAL_URL: internalUrl,
+
+  /**
+   * The port the worker serves `/metrics` on (slice H6).
+   *
+   * **Worker-only, like the field above, which is why this schema exists.** The API
+   * has `API_PORT` in the shared loader and no use whatever for the worker's.
+   *
+   * **Defaulted rather than required, and the difference from `API_INTERNAL_URL` is
+   * the point.** A wrong address makes every sweep fail silently, so that one has to
+   * be typed. A wrong *metrics* port makes a scraper miss a target — loud in
+   * Prometheus as `up == 0`, harmless to the actual work, and identical in every
+   * environment we run. There is nothing here for an operator to decide.
+   *
+   * **9464 rather than 3000**: it is the conventional Prometheus exporter port, and a
+   * distinct number keeps `prometheus.yml` readable beside `api:3000`. Nothing
+   * publishes it — the worker joins `internal` only.
+   */
+  WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9_464),
 });
 
 export type WorkerEnv = z.infer<typeof schema>;

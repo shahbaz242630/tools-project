@@ -45,9 +45,30 @@ export interface DatabaseQuerySample {
   readonly failed?: boolean;
 }
 
+/**
+ * The queue names and job names that may become labels (slice H6).
+ *
+ * **Closed unions, because these are label values.** They were `string` from H1
+ * until the first caller arrived in H6, and `string` is the one thing CLAUDE.md
+ * forbids here: a series is created per label combination, held in process memory,
+ * and exported to a scraper with none of §10.1's retention or erasure rules.
+ *
+ * **A job name is not as safe as it looks.** It is read back from Redis, so it is
+ * whatever was stored — which after a deploy that removed a handler is a name this
+ * build has never heard of. Typed as `string` that mints a new series per unknown
+ * name; typed as a union, an unknown one has to be collapsed by the caller, which
+ * is the same treatment `routeTemplate` gives a URL.
+ *
+ * Adding a member is deliberate and cheap. Widening either back to `string` is the
+ * change to refuse.
+ */
+export type MetricQueue = 'maintenance';
+
+export type MetricJobName = 'heartbeat' | 'expire-requests' | 'unknown';
+
 export interface QueueJobSample {
-  readonly queue: string;
-  readonly jobName: string;
+  readonly queue: MetricQueue;
+  readonly jobName: MetricJobName;
   readonly durationMs: number;
   readonly outcome: 'completed' | 'failed';
 }
