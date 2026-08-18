@@ -7,6 +7,27 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      # Next 16.3.1 bumped its own `@swc/helpers` dependency (its changelog says
+      # so), and `@swc/helpers` exposes `./esm/*` as a **wildcard** export --
+      # which static file tracing cannot enumerate. So `output: 'standalone'`
+      # emits the package without its `esm/` directory, and next's own
+      # `require-hook.js` dies at boot looking for
+      # `@swc/helpers/esm/_interop_require_default.js`. Every request path is
+      # affected: the web container never becomes healthy.
+      #
+      # `Deploy rehearsal` caught it on #140 -- "web did not become healthy
+      # within 180s" -- which is exactly the job's purpose, and is why that
+      # check is required rather than advisory. 16.3.0 works and is what staging
+      # runs. 16.3.1 carries no fix we need (turbopack, next/image, cache and
+      # router backports).
+      #
+      # Pinned to the one broken version, so **16.3.2 comes through normally**.
+      # Note this entry only stops the pull request: what actually holds the
+      # version is the lockfile plus `--frozen-lockfile` in both Dockerfiles,
+      # because the manifest range is `^16.3.0` and permits 16.3.1.
+      - dependency-name: next
+        versions: ['16.3.1']
     # Group the noisy low-risk updates so review effort goes to the ones that
     # can actually break something.
     groups:
