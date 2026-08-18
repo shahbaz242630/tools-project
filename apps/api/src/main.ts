@@ -55,6 +55,7 @@ import { AvailabilityService } from './booking/availability.service.js';
 import { PrismaQuoteStore } from './booking/prisma-quote-store.js';
 import { QuotesService } from './booking/quotes.service.js';
 import { BookingsService } from './booking/bookings.service.js';
+import { RequestExpiryService } from './booking/request-expiry.service.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -498,6 +499,18 @@ async function bootstrap(): Promise<void> {
     availabilityStore,
   );
 
+  /*
+   * The expiry sweep (slice 4.7a). Its own service, sharing the one booking store
+   * above for the same reason `bookings` shares the availability store: two
+   * instances would be two views of the same rows.
+   *
+   * It is set off from outside — `apps/worker` holds the schedule (4.7b) — so
+   * nothing here starts a timer. That is deliberate: a sweep on an interval inside
+   * the request-serving process is a second scheduler nobody registered, and it
+   * would keep running after the worker's own was turned off.
+   */
+  const requestExpiry = new RequestExpiryService(bookingStore, logger);
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       // The same instance the services above were given (slice 3.1f). One
@@ -527,6 +540,8 @@ async function bootstrap(): Promise<void> {
       availability,
       quotes,
       bookings,
+      requestExpiry,
+      internalTriggerSecret: env.INTERNAL_TRIGGER_SECRET,
     }),
     /*
      * **One hop, not all of them, and not none.**

@@ -37,7 +37,7 @@ import {
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
-import { createBookingFakes } from './testing/fakes.js';
+import { TEST_INTERNAL_TRIGGER_SECRET, createBookingFakes } from './testing/fakes.js';
 
 const ADA = { clerkUserId: 'user_ada', sessionId: 'sess_a', email: 'ada@example.com' };
 const BOB = { clerkUserId: 'user_bob', sessionId: 'sess_b', email: 'bob@example.com' };
@@ -96,6 +96,8 @@ beforeEach(async () => {
         availability: booking.service,
         quotes: booking.quotes,
         bookings: booking.bookings,
+        requestExpiry: booking.requestExpiry,
+        internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
       }),
     ],
   }).compile();

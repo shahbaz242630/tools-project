@@ -24,7 +24,7 @@ import {
   createListingFakes,
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
-import { createBookingFakes } from './testing/fakes.js';
+import { TEST_INTERNAL_TRIGGER_SECRET, createBookingFakes } from './testing/fakes.js';
 
 /**
  * The owner's calendar through the real application: real routing, real guard,
@@ -89,6 +89,8 @@ beforeEach(async () => {
         availability: booking.service,
         quotes: booking.quotes,
         bookings: booking.bookings,
+        requestExpiry: booking.requestExpiry,
+        internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
       }),
     ],
   }).compile();

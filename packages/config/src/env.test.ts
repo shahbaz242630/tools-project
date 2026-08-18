@@ -13,6 +13,9 @@ const valid = {
   POSTGRES_USER: 'rental',
   POSTGRES_PASSWORD: 'local_dev_only',
   POSTGRES_DB: 'rental_dev',
+  // Required from slice 4.7a: an absent one stops the process rather than opening
+  // an unauthenticated mutating route. Length is all the schema can check.
+  INTERNAL_TRIGGER_SECRET: 'test-internal-trigger-secret-not-a-real-one',
 } satisfies NodeJS.ProcessEnv;
 
 describe('loadEnv', () => {
@@ -48,10 +51,17 @@ describe('loadEnv', () => {
       // Every required variable, not merely the first encountered — one
       // restart per missing value is the failure mode this exists to prevent.
       const reported = problems.join('\n');
-      for (const name of ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB']) {
+      for (const name of [
+        'POSTGRES_USER',
+        'POSTGRES_PASSWORD',
+        'POSTGRES_DB',
+        // Added by slice 4.7a. The count below is what makes a new required
+        // variable a deliberate edit here rather than a silent extra restart.
+        'INTERNAL_TRIGGER_SECRET',
+      ]) {
         expect(reported).toContain(name);
       }
-      expect(problems).toHaveLength(3);
+      expect(problems).toHaveLength(4);
     }
   });
 

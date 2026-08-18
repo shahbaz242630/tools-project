@@ -224,6 +224,11 @@ services:
       # key above this is a real secret, and losing it is unrecoverable: the
       # ciphertext in `addresses` is all there is.
       PERSONAL_DATA_ENCRYPTION_KEY: ${PERSONAL_DATA_ENCRYPTION_KEY:?set PERSONAL_DATA_ENCRYPTION_KEY}
+      # The secret the worker presents to set off scheduled work, checked here
+      # (slice 4.7a, ADR 0048). The same value is on the worker below and the two
+      # must agree — `:?` on both, so a missing one fails the deploy rather than
+      # producing a worker whose every trigger is refused with a 401 nobody reads.
+      INTERNAL_TRIGGER_SECRET: ${INTERNAL_TRIGGER_SECRET:?set INTERNAL_TRIGGER_SECRET}
 
     # Internal only. The API is not on `edge` and is therefore unreachable from
     # the ingress and from the internet: the browser never calls it directly,
@@ -287,6 +292,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
       # ADR 0038, and required for the same reason as on the API above.
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:?set POSTGRES_SSLMODE}
+      # The other half of the pair above (slice 4.7a). Same value, same file, and
+      # the worker refuses to start without it for the same reason the API does.
+      INTERNAL_TRIGGER_SECRET: ${INTERNAL_TRIGGER_SECRET:?set INTERNAL_TRIGGER_SECRET}
 
     # No `healthcheck:` here, and that is not an omission — the worker image
     # carries its own (apps/worker/Dockerfile) and compose inherits it. One home

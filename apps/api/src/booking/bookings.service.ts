@@ -8,7 +8,10 @@ import type {
 import { rentalPeriodDays } from '../pricing/rental-period.js';
 import type { AvailabilityStore, UnavailableReason } from './availability-store.js';
 import { assertTransition } from './booking-state-machine.js';
-import { OverlappingBookingError } from './booking-store.js';
+import {
+  DuplicateQuoteBookingError,
+  OverlappingBookingError,
+} from './booking-store.js';
 import type {
   BookingStore,
   BookingWithEvents,
@@ -142,7 +145,7 @@ export class BookingsService {
      */
     const state = assertTransition('DRAFT', 'REQUESTED');
 
-    const created = await this.bookings.createWithEvent(
+    const created = await this.createOrExplainDuplicate(
       {
         listingId: quote.listingId,
         renterId,
@@ -190,6 +193,39 @@ export class BookingsService {
       throw new Error('a booking vanished between write and read');
 
     return toWireBooking(withEvents);
+  }
+
+  /**
+   * Create the booking, and turn a re-used quote into a sentence (slice 4.7a).
+   *
+   * **The constraint is the guarantee and this is the manners.** `bookings.quoteId`
+   * is unique from 4.7a, so a double-press or a second tab is refused by Postgres
+   * rather than producing two identical `REQUESTED` rows — §7.1 leaves `REQUESTED`
+   * out of §8.5.1's occupying states on purpose, so the `EXCLUDE` constraint never
+   * saw them. Untranslated that refusal is a 500 on a button the renter has already
+   * successfully pressed, which is wrong about the outcome as well as the cause.
+   *
+   * **It deliberately does not return the first booking instead.** Reading it back
+   * and answering 200 would be friendlier and would also mean two presses and one
+   * press are indistinguishable to the caller — so a client with a genuine bug that
+   * submits twice would never find out. §8.6 gives the renter one request; saying so
+   * is the honest answer, and 4.8's dashboard is where they will see the one that
+   * exists.
+   */
+  private async createOrExplainDuplicate(
+    ...args: Parameters<BookingStore['createWithEvent']>
+  ): ReturnType<BookingStore['createWithEvent']> {
+    try {
+      return await this.bookings.createWithEvent(...args);
+    } catch (error) {
+      if (error instanceof DuplicateQuoteBookingError) {
+        throw new RequestRefusedError(
+          'You have already requested this hire. We have only kept the first ' +
+            'request — asking again would have made two.',
+        );
+      }
+      throw error;
+    }
   }
 
   /**

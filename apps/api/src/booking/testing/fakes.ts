@@ -1,9 +1,14 @@
 import { Time } from '@platform/core';
 import type { BookingEventType, BookingState } from '@platform/contracts';
 import { CALENDAR_OCCUPYING_STATES } from '../booking-state-machine.js';
-import { BookingStateChangedError, OverlappingBookingError } from '../booking-store.js';
+import {
+  BookingStateChangedError,
+  DuplicateQuoteBookingError,
+  OverlappingBookingError,
+} from '../booking-store.js';
 import type {
   AcceptanceResult,
+  ExpirySweepResult,
   BookingEventRecord,
   BookingRecord,
   BookingStore,
@@ -21,7 +26,9 @@ import type {
 import type { ListingOwnership } from '../listing-ownership.js';
 import type { ListingQuoteSource, QuotableListing } from '../listing-quote-source.js';
 import type { NewQuote, QuoteRecord, QuoteStore } from '../quote-store.js';
+import { createRecordingLogger } from '@platform/observability/testing';
 import { AvailabilityService } from '../availability.service.js';
+import { RequestExpiryService } from '../request-expiry.service.js';
 import { QuotesService } from '../quotes.service.js';
 import { BookingsService } from '../bookings.service.js';
 
@@ -96,6 +103,19 @@ export class InMemoryBookingStore implements BookingStore {
       );
 
     if (blocks) return Promise.reject(new OverlappingBookingError(booking.listingId));
+
+    /*
+     * **The unique index slice 4.7a put on `quoteId`, modelled for the same reason
+     * the overlap rule is.** A fake more permissive than the database lets a service
+     * pass a test the real store would fail — and this is precisely such a case: the
+     * `EXCLUDE` constraint cannot see two `REQUESTED` duplicates (§7.1 keeps
+     * `REQUESTED` out of the nine occupying states), so without this the fake would
+     * happily make two bookings from one quote and the refusal would only ever be
+     * discovered in production.
+     */
+    if (this.bookings.some((existing) => existing.quoteId === booking.quoteId)) {
+      return Promise.reject(new DuplicateQuoteBookingError(booking.quoteId));
+    }
 
     /*
      * `Time.nowUtc()` rather than `new Date()`, which the lint rule refuses
@@ -255,6 +275,38 @@ export class InMemoryBookingStore implements BookingStore {
     this.record(booking.id, 'state-changed', 'REQUESTED', 'DECLINED', ownerId, {});
 
     return Promise.resolve({ ...booking, state: 'DECLINED' });
+  }
+
+  /**
+   * The expiry sweep (slice 4.7a).
+   *
+   * **The ordering and the bound are modelled; the race is not.** What the real
+   * store guarantees is that the state predicate is evaluated under the row lock,
+   * so a booking accepted between the read and the write is not expired — and only
+   * `prisma-booking-store.db.test.ts` can be evidence of that. In memory there is
+   * nothing between the two, which is the same division every fake here draws.
+   */
+  expireRequests(now: Date, limit: number): Promise<ExpirySweepResult> {
+    const candidates = this.bookings
+      .filter((row) => row.state === 'REQUESTED' && row.requestExpiresAt <= now)
+      .sort(
+        (a, b) =>
+          a.requestExpiresAt.getTime() - b.requestExpiresAt.getTime() ||
+          a.id.localeCompare(b.id),
+      )
+      .slice(0, limit);
+
+    const expired = candidates.map((booking) => {
+      this.replace(booking, 'EXPIRED');
+      this.record(booking.id, 'state-changed', 'REQUESTED', 'EXPIRED', null, {});
+      return {
+        id: booking.id,
+        renterId: booking.renterId,
+        listingId: booking.listingId,
+      };
+    });
+
+    return Promise.resolve({ expired, reachedLimit: candidates.length === limit });
   }
 
   /** Move a booking to a new state in place, keeping the array identity stable. */
@@ -544,6 +596,17 @@ export class InMemoryListingQuoteSource implements ListingQuoteSource {
 }
 
 export class InMemoryListingOwnership implements ListingOwnership {
+  /*
+   * **`\0` as the separator, written as an escape rather than as the character
+   * itself.** It was a literal NUL byte until slice 4.7a, which is the same
+   * character to JavaScript and had one invisible cost: two NULs made git treat
+   * this whole file as **binary**, so every diff to it read `Bin 41293 -> 42871`
+   * and no change to any fake in here could be reviewed. Found by noticing that
+   * `grep` called it a binary file.
+   *
+   * The separator itself is right and stays: a key built by joining two ids needs a
+   * byte neither can contain, and a uuid cannot contain this one.
+   */
   private readonly owned = new Set<string>();
 
   /** Record that this listing is this owner's. */
@@ -579,6 +642,7 @@ export function createBookingFakes(
   readonly quotableListings: InMemoryListingQuoteSource;
   readonly quotes: QuotesService;
   readonly bookings: BookingsService;
+  readonly requestExpiry: RequestExpiryService;
 } {
   const store = new InMemoryBookingStore(now);
   // Built over the same booking store, because "booked" is not a second fact
@@ -617,6 +681,16 @@ export function createBookingFakes(
       now,
     ),
     /*
+     * **The sweep over the same store** (slice 4.7a), so a test can expire a
+     * request the request path created and then read the history back through
+     * `findForParty`. A second store here would expire rows nothing else can see.
+     *
+     * A recording logger rather than a shared silent one: what a sweep logs is
+     * asserted in `request-expiry.service.test.ts`, and this instance exists only
+     * so the service has somewhere to write.
+     */
+    requestExpiry: new RequestExpiryService(store, createRecordingLogger().logger, now),
+    /*
      * **The real service over fake storage**, which is the arrangement
      * `createListingFakes` uses and for the same reason: what an integration
      * test is exercising is the routing, the guard and the conversion between
@@ -646,6 +720,8 @@ export function bookingModuleFakes(): {
   readonly availability: AvailabilityService;
   readonly quotes: QuotesService;
   readonly bookings: BookingsService;
+  readonly requestExpiry: RequestExpiryService;
+  readonly internalTriggerSecret: string;
 } {
   const fakes = createBookingFakes();
 
@@ -653,5 +729,25 @@ export function bookingModuleFakes(): {
     availability: fakes.service,
     quotes: fakes.quotes,
     bookings: fakes.bookings,
+    requestExpiry: fakes.requestExpiry,
+    /*
+     * **Not a Booking service, and it still belongs here** (slice 4.7a). It is
+     * part of this module's slice of `AppModuleOptions` — the guard that reads it
+     * lives in `booking/` — and the whole promise of this helper is that a new
+     * field is added in one place rather than at every boot site.
+     */
+    internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
   };
 }
+
+/**
+ * The internal-trigger secret the tests use (slice 4.7a).
+ *
+ * Exported so a test can present the **right** one as well as a wrong one: a guard
+ * proved only by refusing is a guard that might be refusing everything.
+ *
+ * Longer than the environment schema's 32-character floor, and obviously fake so it
+ * can never be mistaken for one somebody generated.
+ */
+export const TEST_INTERNAL_TRIGGER_SECRET =
+  'test-internal-trigger-secret-not-a-real-one';

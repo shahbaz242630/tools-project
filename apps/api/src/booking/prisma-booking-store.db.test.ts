@@ -26,7 +26,11 @@ import { PrismaCategoryStore } from '../catalogue/prisma-category-store.js';
 import { PrismaListingStore } from '../catalogue/prisma-listing-store.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { CALENDAR_OCCUPYING_STATES } from './booking-state-machine.js';
-import { BookingStateChangedError, OverlappingBookingError } from './booking-store.js';
+import {
+  BookingStateChangedError,
+  DuplicateQuoteBookingError,
+  OverlappingBookingError,
+} from './booking-store.js';
 import type { NewBooking } from './booking-store.js';
 import { PrismaBookingStore } from './prisma-booking-store.js';
 import {
@@ -153,7 +157,15 @@ async function newListing(): Promise<string> {
 async function booking(
   listingId: string,
   renterId: string,
-  over: Partial<{ state: BookingState; startAt: Date; endAt: Date }> = {},
+  over: Partial<{
+    state: BookingState;
+    startAt: Date;
+    endAt: Date;
+    /** Overridable from slice 4.7a, where the deadline is the thing under test. */
+    requestExpiresAt: Date;
+    /** Overridable from slice 4.7a, to prove one quote cannot make two bookings. */
+    quoteId: string;
+  }> = {},
 ): Promise<NewBooking> {
   const startAt = over.startAt ?? MONDAY;
   const endAt = over.endAt ?? FRIDAY;
@@ -1028,5 +1040,303 @@ describe('declining a request (slice 4.6)', () => {
 
     expect(accepted?.booking.state).toBe('ACCEPTED');
     expect(accepted?.autoDeclinedIds).toEqual([]);
+  });
+});
+
+/**
+ * Slice 4.7a. Two guarantees only a database can give.
+ *
+ * `OVERDUE` and `SWEEP_AT` are a pair: a deadline in the past relative to the
+ * instant the sweep is told is *now*. Both are fixed, so nothing here depends on
+ * when the suite runs.
+ */
+const SWEEP_AT = new Date('2026-09-05T09:00:00Z');
+const OVERDUE = new Date('2026-09-03T09:00:00Z');
+const NOT_YET = new Date('2026-09-07T09:00:00Z');
+
+describe('expiring unanswered requests (§8.6, slice 4.7a)', () => {
+  it('moves an overdue request to EXPIRED and writes one event with no actor', async () => {
+    const listingId = await newListing();
+    const request = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: OVERDUE,
+      }),
+    );
+
+    const { expired, reachedLimit } = await store.expireRequests(SWEEP_AT, 500);
+
+    expect(expired.map((row) => row.id)).toEqual([request.id]);
+    expect(reachedLimit).toBe(false);
+
+    const after = await client.booking.findFirstOrThrow({ where: { id: request.id } });
+    expect(after.state).toBe('EXPIRED');
+
+    const events = await client.bookingEvent.findMany({
+      where: { bookingId: request.id },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'state-changed',
+      fromState: 'REQUESTED',
+      toState: 'EXPIRED',
+      // Null because the deadline decided this, not a person. The schema's own
+      // words: recording one would be a lie about who decided.
+      actorId: null,
+    });
+  });
+
+  it('leaves a request whose deadline has not passed', async () => {
+    const listingId = await newListing();
+    const request = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: NOT_YET,
+      }),
+    );
+
+    const { expired } = await store.expireRequests(SWEEP_AT, 500);
+
+    expect(expired).toEqual([]);
+    const after = await client.booking.findFirstOrThrow({ where: { id: request.id } });
+    expect(after.state).toBe('REQUESTED');
+  });
+
+  it('leaves every state but REQUESTED, however overdue the column says it is', async () => {
+    /*
+     * **The predicate that matters, and the one a refactor would drop.**
+     * `requestExpiresAt` stays on the row after the request is answered — nothing
+     * clears it, deliberately (§7 reaches `EXPIRED` from three states and each gets
+     * its own column). So a sweep filtering on the deadline *alone* would expire
+     * confirmed bookings, which is the worst thing in this slice: it would release
+     * a hire two people had agreed.
+     */
+    const listingId = await newListing();
+    const accepted = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'ACCEPTED',
+        requestExpiresAt: OVERDUE,
+      }),
+    );
+
+    const { expired } = await store.expireRequests(SWEEP_AT, 500);
+
+    expect(expired).toEqual([]);
+    const after = await client.booking.findFirstOrThrow({ where: { id: accepted.id } });
+    expect(after.state).toBe('ACCEPTED');
+    expect(await client.bookingEvent.count({ where: { bookingId: accepted.id } })).toBe(
+      0,
+    );
+  });
+
+  it('expires the longest-overdue first, and reports a filled batch', async () => {
+    const listingId = await newListing();
+    const older = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: new Date('2026-09-01T09:00:00Z'),
+      }),
+    );
+    await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: new Date('2026-09-02T09:00:00Z'),
+      }),
+    );
+
+    const first = await store.expireRequests(SWEEP_AT, 1);
+
+    expect(first.expired.map((row) => row.id)).toEqual([older.id]);
+    // The bound was reached, so the caller is told to come back rather than
+    // being left to assume the queue is empty.
+    expect(first.reachedLimit).toBe(true);
+
+    const second = await store.expireRequests(SWEEP_AT, 1);
+    expect(second.expired).toHaveLength(1);
+    expect(second.expired[0]?.id).not.toBe(older.id);
+  });
+
+  it('expires nothing on a second sweep', async () => {
+    const listingId = await newListing();
+    await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: OVERDUE,
+      }),
+    );
+
+    await store.expireRequests(SWEEP_AT, 500);
+    const again = await store.expireRequests(SWEEP_AT, 500);
+
+    expect(again.expired).toEqual([]);
+  });
+
+  it('lets exactly one of two simultaneous sweeps expire each request', async () => {
+    /*
+     * Two sweeps launched together, and **what this proves is narrower than it
+     * looks — it was written claiming more and a mutation test caught it.** With
+     * the state predicate removed from the `UPDATE` this still passed all 66 tests,
+     * because the two transactions serialise: by the time the second one *reads*
+     * its candidates the first has committed, so the row is already `EXPIRED` and
+     * never reaches the predicate at all.
+     *
+     * So this is a test that a sweep is safe to run twice at once — no double
+     * claim, no double event, no deadlock — which is worth having on its own. The
+     * predicate it does **not** isolate is the subject of the test below, which
+     * interleaves the two halves deliberately.
+     */
+    const listingId = await newListing();
+    const request = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: OVERDUE,
+      }),
+    );
+
+    const second = createPrismaClient({ connectionString });
+    try {
+      const results = await Promise.all([
+        store.expireRequests(SWEEP_AT, 500),
+        new PrismaBookingStore(second).expireRequests(SWEEP_AT, 500),
+      ]);
+
+      const winners = results.flatMap((result) => result.expired.map((row) => row.id));
+      expect(winners).toEqual([request.id]);
+
+      // The assertion that actually matters: one state change, one event.
+      expect(
+        await client.bookingEvent.count({ where: { bookingId: request.id } }),
+      ).toBe(1);
+    } finally {
+      await second.$disconnect();
+    }
+  });
+
+  it('does not expire a request that was answered after the candidates were read', async () => {
+    /*
+     * **The predicate inside the `UPDATE`, isolated.** The test above cannot reach
+     * it because two whole sweeps serialise; this one holds the first sweep open
+     * *between* its read and its write, lets a complete second sweep commit in the
+     * gap, and only then lets the first one write.
+     *
+     * That is the real production race, and it is not hypothetical: 4.6a's
+     * acceptance runs exactly there. An owner pressing Accept while a sweep is
+     * mid-flight must not have their confirmed booking expired out from under them.
+     *
+     * **What this pins is the mechanism, not the adapter, and the distinction is
+     * not a quibble.** The two statements are restated here because
+     * `expireRequests` correctly offers no way to pause halfway — so this test
+     * drives its own SQL, and **removing the predicate from the adapter does not
+     * make this test fail.** An earlier version of this comment claimed it did;
+     * that was wrong, and the mutation run is what said so.
+     *
+     * So the honest position, also recorded in the adapter: the in-`UPDATE`
+     * predicate is **defence in depth that no test can currently pin**, because the
+     * candidates read filters the same rows a moment earlier and closes every window
+     * a test can reach through the public method. It is kept because the window it
+     * covers is real — 4.6a's acceptance runs in exactly that gap — and because this
+     * test proves the mechanism it depends on: an `UPDATE` blocked on a row lock
+     * re-evaluates its `WHERE` against the committed row and matches nothing.
+     *
+     * Do not delete the predicate on the grounds that nothing fails.
+     */
+    const listingId = await newListing();
+    const request = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        requestExpiresAt: OVERDUE,
+      }),
+    );
+
+    let release = (): void => {};
+    const gap = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const second = createPrismaClient({ connectionString });
+    try {
+      // The first sweep: read, wait, then write.
+      const interrupted = client.$transaction(async (tx) => {
+        const candidates = await tx.booking.findMany({
+          where: { state: 'REQUESTED', requestExpiresAt: { lte: SWEEP_AT } },
+          orderBy: [{ requestExpiresAt: 'asc' }, { id: 'asc' }],
+          take: 500,
+          select: { id: true },
+        });
+
+        // It saw the request while it was still REQUESTED.
+        expect(candidates.map((row) => row.id)).toEqual([request.id]);
+
+        await gap;
+
+        return tx.booking.updateManyAndReturn({
+          where: {
+            id: { in: candidates.map((row) => row.id) },
+            state: 'REQUESTED',
+            requestExpiresAt: { lte: SWEEP_AT },
+          },
+          data: { state: 'EXPIRED' },
+          select: { id: true },
+        });
+      });
+
+      // In the gap, a complete second sweep expires it and commits.
+      const winner = await new PrismaBookingStore(second).expireRequests(SWEEP_AT, 500);
+      expect(winner.expired.map((row) => row.id)).toEqual([request.id]);
+
+      release();
+      const loser = await interrupted;
+
+      // **The assertion.** The first sweep held a matching id and wrote nothing,
+      // because the row is no longer an overdue REQUESTED.
+      expect(loser).toEqual([]);
+
+      // And therefore exactly one event exists, not two.
+      expect(
+        await client.bookingEvent.count({ where: { bookingId: request.id } }),
+      ).toBe(1);
+    } finally {
+      await second.$disconnect();
+    }
+  });
+});
+
+describe('one quote, one booking (slice 4.7a)', () => {
+  it('refuses a second booking made from the same quote', async () => {
+    /*
+     * The migration's whole subject. §7.1 leaves `REQUESTED` out of §8.5.1's nine
+     * occupying states so several renters can ask for the same dates — which means
+     * the `EXCLUDE` constraint cannot see this, and a double-press produced two
+     * identical rows until the unique index existed.
+     */
+    const listingId = await newListing();
+    const renterId = await newUser();
+    const first = await booking(listingId, renterId, { state: 'REQUESTED' });
+    await store.create(first);
+
+    await expect(
+      store.create(
+        await booking(listingId, renterId, {
+          state: 'REQUESTED',
+          quoteId: first.quoteId,
+          // Different dates, so the refusal cannot be the overlap constraint.
+          startAt: FRIDAY,
+          endAt: SUNDAY,
+        }),
+      ),
+    ).rejects.toThrow(DuplicateQuoteBookingError);
+  });
+
+  it('still lets two different quotes become two bookings', async () => {
+    // The constraint must bind the quote and nothing else — §7.1 requires several
+    // renters to be able to request the same dates.
+    const listingId = await newListing();
+    await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    await expect(
+      store.create(await booking(listingId, await newUser(), { state: 'REQUESTED' })),
+    ).resolves.toMatchObject({ state: 'REQUESTED' });
   });
 });
