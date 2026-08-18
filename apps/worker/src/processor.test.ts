@@ -1,4 +1,5 @@
 import { getCorrelationId, getContext } from '@platform/observability';
+import { createRecordingMetrics } from '@platform/observability/testing';
 import { describe, expect, it } from 'vitest';
 import { createJobProcessor } from './processor.js';
 import type { JobHandler } from './processor.js';
@@ -105,5 +106,88 @@ describe('createJobProcessor', () => {
     await expect(
       createJobProcessor(handlers)(job('heartbeat', envelope({}))),
     ).rejects.toThrow('downstream unavailable');
+  });
+});
+
+describe('what a job records (slice H6)', () => {
+  /*
+   * `recordQueueJob` had sat unused in the `Metrics` port since H1. It is wired here
+   * rather than in each handler because this is the one place every job already
+   * passes through — so a job type added later is measured without its author
+   * remembering to, which is the difference between a metric and a convention.
+   */
+  const succeeds: JobHandler = () => Promise.resolve();
+  const fails: JobHandler = () => Promise.reject(new Error('nope'));
+
+  it('records a completed job under its own name', async () => {
+    const metrics = createRecordingMetrics();
+
+    await createJobProcessor(
+      { heartbeat: succeeds },
+      metrics.metrics,
+    )(job('heartbeat', envelope({})));
+
+    expect(metrics.queueJobs).toEqual([
+      {
+        queue: 'maintenance',
+        jobName: 'heartbeat',
+        durationMs: expect.any(Number),
+        outcome: 'completed',
+      },
+    ]);
+  });
+
+  it('records a failed job and still throws', async () => {
+    // The metric observes the path; it must not participate in it. BullMQ's retry
+    // bookkeeping and `worker.ts`'s `failed` handler both act on this error.
+    const metrics = createRecordingMetrics();
+    const process = createJobProcessor({ heartbeat: fails }, metrics.metrics);
+
+    await expect(process(job('heartbeat', envelope({})))).rejects.toThrow('nope');
+
+    expect(metrics.queueJobs[0]).toMatchObject({
+      jobName: 'heartbeat',
+      outcome: 'failed',
+    });
+  });
+
+  it('collapses an unknown job name rather than labelling it', async () => {
+    /*
+     * **The reason `MetricJobName` is a closed union.** `job.name` is read back from
+     * Redis, so after a deploy that removed a handler it is a name this build has
+     * never heard of. Labelled verbatim it mints a series per unknown name, in a
+     * registry held in process memory and exported to a scraper with none of §10.1's
+     * retention rules.
+     */
+    const metrics = createRecordingMetrics();
+    const process = createJobProcessor({ heartbeat: succeeds }, metrics.metrics);
+
+    await expect(process(job('some-removed-job', envelope({})))).rejects.toThrow();
+
+    expect(metrics.queueJobs[0]).toMatchObject({
+      jobName: 'unknown',
+      outcome: 'failed',
+      // Nothing ran, so nothing is claimed about how long it took.
+      durationMs: 0,
+    });
+  });
+
+  it('records the real job names it knows without collapsing them', async () => {
+    const metrics = createRecordingMetrics();
+
+    await createJobProcessor(
+      { 'expire-requests': succeeds },
+      metrics.metrics,
+    )(job('expire-requests', envelope({})));
+
+    expect(metrics.queueJobs[0]?.jobName).toBe('expire-requests');
+  });
+
+  it('records nothing when no metrics were given', async () => {
+    // The H1 signature still works, and a worker built without metrics behaves
+    // identically rather than branching inside the processor.
+    await expect(
+      createJobProcessor({ heartbeat: succeeds })(job('heartbeat', envelope({}))),
+    ).resolves.toBeUndefined();
   });
 });

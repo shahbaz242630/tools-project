@@ -152,15 +152,18 @@ describe('database and queue metrics', () => {
   it('records a queue job with its outcome', async () => {
     const m = metrics();
     m.recordQueueJob({
+      // A real job name, not an invented one: `MetricJobName` is a closed union from
+      // slice H6, because these become Prometheus labels and a `string` here is how a
+      // series-per-unknown-name gets minted.
       queue: 'maintenance',
-      jobName: 'sweep',
+      jobName: 'expire-requests',
       durationMs: 1_200,
       outcome: 'completed',
     });
 
     const text = await m.render();
     expect(text).toContain('queue="maintenance"');
-    expect(text).toContain('job="sweep"');
+    expect(text).toContain('job="expire-requests"');
     expect(text).toContain('outcome="completed"');
   });
 });
@@ -499,8 +502,8 @@ describe('metrics turned off', () => {
       });
       m.recordDatabaseQuery({ operation: 'x', durationMs: 1 });
       m.recordQueueJob({
-        queue: 'q',
-        jobName: 'j',
+        queue: 'maintenance',
+        jobName: 'heartbeat',
         durationMs: 1,
         outcome: 'completed',
       });

@@ -59,6 +59,33 @@ describe('loadWorkerEnv', () => {
     expect(() => loadWorkerEnv({ API_INTERNAL_URL: value })).toThrow(EnvironmentError);
   });
 
+  it('defaults the metrics port, because there is nothing to decide', () => {
+    expect(
+      loadWorkerEnv({ API_INTERNAL_URL: 'http://api:3000' }).WORKER_METRICS_PORT,
+    ).toBe(9_464);
+  });
+
+  it('takes a metrics port that was given, as a number', () => {
+    // Coerced, because an environment variable is always a string.
+    expect(
+      loadWorkerEnv({
+        API_INTERNAL_URL: 'http://api:3000',
+        WORKER_METRICS_PORT: '9999',
+      }).WORKER_METRICS_PORT,
+    ).toBe(9_999);
+  });
+
+  it('refuses a metrics port that is not one', () => {
+    for (const value of ['0', '70000', 'nine', '-1', '80.5']) {
+      expect(() =>
+        loadWorkerEnv({
+          API_INTERNAL_URL: 'http://api:3000',
+          WORKER_METRICS_PORT: value,
+        }),
+      ).toThrow(EnvironmentError);
+    }
+  });
+
   it('ignores everything else in the environment', () => {
     /*
      * **The reason this schema is separate at all.** It must not grow into a second
@@ -71,6 +98,14 @@ describe('loadWorkerEnv', () => {
       INTERNAL_TRIGGER_SECRET: 'lives-in-the-shared-loader-not-this-one',
     });
 
-    expect(Object.keys(env)).toEqual(['API_INTERNAL_URL']);
+    /*
+     * **Sorted and compared whole, so adding a field here is a deliberate edit.**
+     * `WORKER_METRICS_PORT` joined in H6; anything from the shared loader appearing
+     * in this list would mean the split had quietly collapsed.
+     */
+    expect(Object.keys(env).sort()).toEqual([
+      'API_INTERNAL_URL',
+      'WORKER_METRICS_PORT',
+    ]);
   });
 });

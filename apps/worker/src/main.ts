@@ -6,13 +6,21 @@ import { describeEnv, loadEnv, loadWorkerEnv } from '@platform/config';
 import {
   createLogger,
   createNoopErrorTracker,
+  createNoopMetrics,
+  createPrometheusMetrics,
   installProcessHandlers,
 } from '@platform/observability';
 import { createShutdown } from '@platform/runtime';
 import { hasNothingToDrain } from './drain.js';
 import { createExpireRequestsHandler } from './expire-requests.handler.js';
 import { createHeartbeatHandler } from './heartbeat.handler.js';
-import { EXPIRE_REQUESTS_JOB, HEARTBEAT_JOB } from './queues.js';
+import { createMetricsServer } from './metrics-server.js';
+import {
+  EXPIRE_REQUESTS_JOB,
+  EXPIRE_REQUESTS_SCHEDULER,
+  HEARTBEAT_JOB,
+} from './queues.js';
+import { scheduleIsRegistered } from './schedule-health.js';
 import { createScheduler } from './scheduler.js';
 import { createMaintenanceWorker } from './worker.js';
 
@@ -123,6 +131,18 @@ function main(): void {
     onFatal: () => process.exit(1),
   });
 
+  /*
+   * One registry for this process (slice H6), the same rule `apps/api/src/main.ts`
+   * states: a service and the HTTP surface must not each hold their own, or only one
+   * of them is ever scraped.
+   *
+   * `service: 'worker'` is what distinguishes these series from the API's in a
+   * scraper that sees both.
+   */
+  const metrics = env.METRICS_ENABLED
+    ? createPrometheusMetrics({ service: 'worker' })
+    : createNoopMetrics(logger);
+
   const worker = createMaintenanceWorker({
     // Connection options rather than a client we built: BullMQ requires
     // `maxRetriesPerRequest: null` on a worker's connection, and letting it
@@ -142,6 +162,9 @@ function main(): void {
         logger,
       }),
     },
+    // Every job's duration and outcome, recorded in `processor.ts` — one place, so a
+    // job type added later is measured without its author remembering to (slice H6).
+    metrics,
   });
 
   /*
@@ -264,6 +287,34 @@ function main(): void {
         }
         await connection.info();
 
+        /*
+         * **Fourth question, added in slice H6: is the schedule actually there?**
+         *
+         * The three above prove the broker answers. None of them catches the failure
+         * 4.7b introduced and recorded — `upsertJobScheduler` failing while Redis is
+         * healthy, after which this worker answers every round trip, refreshes this
+         * file, reads healthy and never sweeps again.
+         *
+         * Asked last because it is the only one that costs a command against Redis
+         * rather than reading a status, and because the three before it are what make
+         * asking it safe: a command is only ever issued on a connection already known
+         * to be ready.
+         *
+         * **Returning early rather than throwing**, exactly as the checks above do:
+         * the file simply stops being refreshed and the container probe draws the
+         * conclusion. That is the right place for it — one missed check during a
+         * reconnection is not an unhealthy worker, and four consecutive ones are.
+         */
+        if (
+          !scheduleIsRegistered(await scheduler.registered(), EXPIRE_REQUESTS_SCHEDULER)
+        ) {
+          logger.warn('health signal not refreshed', {
+            reason: 'the expiry schedule is not registered',
+            scheduler: EXPIRE_REQUESTS_SCHEDULER,
+          });
+          return;
+        }
+
         // `openSync` rather than `writeFileSync`'s `flag` option: the option is
         // typed `string` and the string flags have no spelling for `O_NOFOLLOW`,
         // so the numeric mask has to be passed to `open` itself.
@@ -289,6 +340,29 @@ function main(): void {
   // an interval writing a file nobody reads must not be what keeps it running.
   health.unref();
 
+  /*
+   * The scrape endpoint (slice H6). Started after the worker and the schedule exist,
+   * so the first thing a scraper can read is a process that is already working.
+   *
+   * **Fired rather than awaited, and a failure is not fatal.** A port collision must
+   * not stop the worker from sweeping: this endpoint exists so somebody can watch the
+   * work, and losing the ability to watch is strictly better than losing the work.
+   * The failure is loud in two places — an error line here, and `up == 0` in
+   * Prometheus, which is the condition a scraper already knows how to alarm on.
+   */
+  const metricsServer = createMetricsServer({
+    metrics,
+    logger,
+    port: workerEnv.WORKER_METRICS_PORT,
+  });
+
+  void metricsServer.listen().catch((error: unknown) => {
+    logger.error('could not start the metrics endpoint; the worker continues', {
+      port: workerEnv.WORKER_METRICS_PORT,
+      error,
+    });
+  });
+
   const shutdown = createShutdown({
     logger,
     // Longer than the API's: a worker mid-job has to finish it, and an
@@ -307,6 +381,15 @@ function main(): void {
         close: async () => {
           clearInterval(health);
         },
+      },
+      {
+        /*
+         * First, with the health signal: a draining container should stop answering
+         * scrapes at about the moment it stops claiming to be healthy. It is bounded
+         * internally, so a scraper holding a connection cannot delay the drain.
+         */
+        name: 'metrics endpoint',
+        close: () => metricsServer.close(),
       },
       {
         /*
@@ -338,6 +421,7 @@ function main(): void {
     queue: 'maintenance',
     handlers: [HEARTBEAT_JOB, EXPIRE_REQUESTS_JOB],
     apiBaseUrl: workerEnv.API_INTERNAL_URL,
+    metricsPort: workerEnv.WORKER_METRICS_PORT,
     ...describeEnv(env),
   });
 }

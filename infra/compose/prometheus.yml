@@ -33,6 +33,27 @@ scrape_configs:
         labels:
           service: api
 
+  # The worker, from slice H6. Until then it was the one running service nothing
+  # could see: `recordQueueJob` had sat unused in the `Metrics` port since H1 and
+  # no number about the queue outlived a deploy. 4.7b put a schedule in it, which
+  # is what made that matter — "the sweep ran" and "the sweep has not run since
+  # Tuesday" looked identical from outside.
+  #
+  # 9464 rather than 3000: the conventional exporter port, and a distinct number
+  # keeps this file readable beside `api:3000`. Not a published port — the worker
+  # joins `internal` only, and there must not be one.
+  #
+  # **`up{service="worker"} == 0` is now a real signal.** The worker has no
+  # inbound traffic of its own, so a failure to scrape means the process is gone
+  # or wedged — which is the second alert rule this project should write, after
+  # the geocoder.
+  - job_name: worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['worker:9464']
+        labels:
+          service: worker
+
   # Prometheus watching itself. Cheap, and it is the only thing that can tell
   # you the scraper stopped — a dashboard that goes flat looks identical to a
   # platform with no traffic.
