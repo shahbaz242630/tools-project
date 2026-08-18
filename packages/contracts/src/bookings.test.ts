@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOOKINGS_ROUTE,
+  BOOKING_ACCEPT_ROUTE,
+  BOOKING_DECLINE_ROUTE,
   BOOKING_EVENT_TYPES,
   BOOKING_ROUTE,
+  LISTING_REQUESTS_ROUTE,
+  bookingAcceptPath,
+  bookingDeclinePath,
   bookingPath,
+  listingRequestsPath,
   parseBooking,
   parseBookingRequest,
 } from './bookings.js';
@@ -39,15 +45,36 @@ describe('the booking routes', () => {
     expect(bookingPath('booking-1')).toBe('/bookings/booking-1');
     expect(BOOKING_ROUTE).toBe('/bookings/:bookingId');
     expect(BOOKINGS_ROUTE).toBe('/bookings');
+    expect(bookingAcceptPath('booking-1')).toBe('/bookings/booking-1/accept');
+    expect(BOOKING_ACCEPT_ROUTE).toBe('/bookings/:bookingId/accept');
+    expect(bookingDeclinePath('booking-1')).toBe('/bookings/booking-1/decline');
+    expect(BOOKING_DECLINE_ROUTE).toBe('/bookings/:bookingId/decline');
+    expect(listingRequestsPath('listing-1')).toBe('/listings/listing-1/requests');
+    expect(LISTING_REQUESTS_ROUTE).toBe('/listings/:id/requests');
   });
 });
 
 describe('the event vocabulary', () => {
   it('names only what can happen today', () => {
-    // Two members, deliberately: 4.5a can create a request and nothing else.
-    // Adding 4.6's names now would put unreachable values in a vocabulary every
-    // consumer must handle.
-    expect(BOOKING_EVENT_TYPES).toEqual(['requested', 'state-changed']);
+    /*
+     * **Three members from 4.6, and the third had to be argued for.** An
+     * acceptance and an owner's decline are both `state-changed` — `fromState`
+     * and `toState` already say which, and a `'declined'` member would repeat
+     * `toState` in a second vocabulary that could disagree with it.
+     *
+     * `auto-declined` exists because **nothing else can carry it**: an
+     * auto-decline is `REQUESTED — DECLINED` exactly like an owner's decline, the
+     * difference lives in `metadata`, and `bookingEventSchema` deliberately does
+     * not project metadata to a party. Without the type the losing renter would
+     * read *"declined"* where §7.1 requires them to be told it was a conflict.
+     *
+     * 4.7's expiry should ask the same question before adding a fourth.
+     */
+    expect(BOOKING_EVENT_TYPES).toEqual([
+      'requested',
+      'state-changed',
+      'auto-declined',
+    ]);
   });
 });
 

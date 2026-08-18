@@ -26,7 +26,7 @@ import { PrismaCategoryStore } from '../catalogue/prisma-category-store.js';
 import { PrismaListingStore } from '../catalogue/prisma-listing-store.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { CALENDAR_OCCUPYING_STATES } from './booking-state-machine.js';
-import { OverlappingBookingError } from './booking-store.js';
+import { BookingStateChangedError, OverlappingBookingError } from './booking-store.js';
 import type { NewBooking } from './booking-store.js';
 import { PrismaBookingStore } from './prisma-booking-store.js';
 import {
@@ -699,5 +699,334 @@ describe('the booking a request creates (slice 4.5a)', () => {
     await expect(
       client.quote.delete({ where: { id: toWrite.quoteId } }),
     ).rejects.toThrow();
+  });
+});
+
+/** Who owns a listing `newListing()` made, which it does not hand back. */
+async function ownerOf(listingId: string): Promise<string> {
+  const listing = await client.listing.findFirstOrThrow({ where: { id: listingId } });
+  return listing.ownerId;
+}
+
+const LATER = new Date('2026-09-01T09:00:00Z');
+
+describe('accepting a request (§7.1, slice 4.6)', () => {
+  it('locks the dates and auto-declines every overlapping request', async () => {
+    /*
+     * §7.1 in one test: *"move the accepted booking to `ACCEPTED`; and move every
+     * other `REQUESTED` booking whose dates overlap the accepted period to
+     * `DECLINED` with reason `AUTO_DECLINED_CONFLICT`."*
+     */
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+
+    const winner = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+    const overlapping = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        startAt: WEDNESDAY,
+        endAt: SUNDAY,
+      }),
+    );
+    // Starts exactly where the winner ends. `[)` says these do not touch, so it
+    // must survive — the assertion that would catch an overlap rule using `<=`.
+    const adjacent = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        startAt: FRIDAY,
+        endAt: SUNDAY,
+      }),
+    );
+
+    const result = await store.accept(winner.id, owner, LATER);
+
+    expect(result?.booking.state).toBe('ACCEPTED');
+    expect(result?.autoDeclinedIds).toEqual([overlapping.id]);
+
+    const states = await client.booking.findMany({
+      where: { listingId },
+      select: { id: true, state: true },
+    });
+    expect(new Map(states.map((row) => [row.id, row.state]))).toEqual(
+      new Map([
+        [winner.id, 'ACCEPTED'],
+        [overlapping.id, 'DECLINED'],
+        [adjacent.id, 'REQUESTED'],
+      ]),
+    );
+  });
+
+  it('records the auto-decline as its own event type, with the reason', async () => {
+    /*
+     * **The reason has to reach the losing renter, and only the *type* can carry
+     * it.** `bookingEventSchema` does not project `metadata` to a party, so an
+     * auto-decline written as an ordinary `state-changed` would read to them as
+     * "the owner said no" — which is not what happened, and not what §7.1 requires
+     * them to be told.
+     */
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const winner = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+    const loser = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    await store.accept(winner.id, owner, LATER);
+
+    const [event] = await client.bookingEvent.findMany({
+      where: { bookingId: loser.id },
+    });
+    expect(event?.type).toBe('auto-declined');
+    expect(event?.fromState).toBe('REQUESTED');
+    expect(event?.toState).toBe('DECLINED');
+    // Nobody decided it, so nobody is named. §6.2's actor is null for the platform.
+    expect(event?.actorId).toBeNull();
+    expect(event?.metadata).toMatchObject({
+      reason: 'AUTO_DECLINED_CONFLICT',
+      conflictingBookingId: winner.id,
+    });
+  });
+
+  it("writes the acceptance into the booking's own history", async () => {
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const request = await store.createWithEvent(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+      {
+        type: 'requested',
+        fromState: null,
+        toState: 'REQUESTED',
+        actorId: null,
+        metadata: {},
+      },
+    );
+
+    await store.accept(request.id, owner, LATER);
+
+    const events = await client.bookingEvent.findMany({
+      where: { bookingId: request.id },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    expect(events.map((event) => [event.fromState, event.toState])).toEqual([
+      [null, 'REQUESTED'],
+      ['REQUESTED', 'ACCEPTED'],
+    ]);
+    // The owner decided this one, unlike the auto-decline above.
+    expect(events[1]?.actorId).toBe(owner);
+  });
+
+  it("refuses a booking that is not this owner's, without saying so", async () => {
+    const listingId = await newListing();
+    const request = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    // Null rather than a throw: "not yours" and "no such booking" are one answer,
+    // so nobody learns a booking id is real by guessing at it.
+    expect(await store.accept(request.id, await newUser(), LATER)).toBeNull();
+    expect(await store.accept(randomUUID(), await newUser(), LATER)).toBeNull();
+  });
+
+  it('refuses a request that has already been answered', async () => {
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const request = await store.create(
+      await booking(listingId, await newUser(), { state: 'DECLINED' }),
+    );
+
+    await expect(store.accept(request.id, owner, LATER)).rejects.toBeInstanceOf(
+      BookingStateChangedError,
+    );
+  });
+
+  it('leaves nothing behind when the dates were taken first', async () => {
+    /*
+     * **The transaction, proved rather than asserted.** A losing acceptance must
+     * roll back its own event *and* every auto-decline it had already written —
+     * which is the one thing the in-memory fake structurally cannot show.
+     */
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+
+    await store.create(
+      await booking(listingId, await newUser(), { state: 'RESERVED' }),
+    );
+    const doomed = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+    const bystander = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    await expect(store.accept(doomed.id, owner, LATER)).rejects.toBeInstanceOf(
+      OverlappingBookingError,
+    );
+
+    // Both still requests, and no event was written for either.
+    const after = await client.booking.findMany({
+      where: { id: { in: [doomed.id, bystander.id] } },
+      select: { state: true },
+    });
+    expect(after.map((row) => row.state)).toEqual(['REQUESTED', 'REQUESTED']);
+    expect(
+      await client.bookingEvent.count({
+        where: { bookingId: { in: [doomed.id, bystander.id] } },
+      }),
+    ).toBe(0);
+  });
+});
+
+describe('two acceptances at once (Phase 4 exit gate)', () => {
+  it('lets exactly one win, and declines the loser', async () => {
+    /*
+     * **The exit gate in its own words** — *"two simultaneous acceptances cannot
+     * reserve the same listing and period"*. 4.2 proved it for two *creations*
+     * already in occupying states; this proves it for the thing the gate names,
+     * which is two owners' clicks arriving at once on two live requests.
+     *
+     * Two Prisma clients, so these are genuinely two connections: one client
+     * would serialise them in the pool and the failure would look like a pass.
+     */
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+
+    const first = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+    const second = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    const one = createPrismaClient({ connectionString });
+    const two = createPrismaClient({ connectionString });
+
+    try {
+      const results = await Promise.allSettled([
+        new PrismaBookingStore(one).accept(first.id, owner, LATER),
+        new PrismaBookingStore(two).accept(second.id, owner, LATER),
+      ]);
+
+      /*
+       * **One of three shapes is acceptable, and all three mean the same thing.**
+       * The loser either loses the constraint race (`OverlappingBookingError`) or
+       * arrives after the winner's auto-decline has already moved it out of
+       * `REQUESTED` (`BookingStateChangedError`). What must never happen is both
+       * succeeding.
+       */
+      const won = results.filter(
+        (result) => result.status === 'fulfilled' && result.value !== null,
+      );
+      expect(won).toHaveLength(1);
+
+      const occupying = await client.booking.findMany({
+        where: { listingId, state: { in: [...CALENDAR_OCCUPYING_STATES] } },
+      });
+      expect(occupying).toHaveLength(1);
+    } finally {
+      await one.$disconnect();
+      await two.$disconnect();
+    }
+  });
+});
+
+describe('the requests waiting on an owner (slice 4.6)', () => {
+  it('offers only live requests, and counts what each would displace', async () => {
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+
+    const first = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+    const overlapping = await store.create(
+      await booking(listingId, await newUser(), {
+        state: 'REQUESTED',
+        startAt: WEDNESDAY,
+        endAt: SUNDAY,
+      }),
+    );
+    // Answered already, so not waiting on anybody.
+    await store.create(
+      await booking(listingId, await newUser(), { state: 'DECLINED' }),
+    );
+
+    const pending = await store.findPendingRequests(listingId, owner, LATER);
+
+    expect(pending.map((request) => request.booking.id)).toEqual([
+      first.id,
+      overlapping.id,
+    ]);
+    // §7.1: the owner must be shown that accepting either declines the other.
+    expect(pending.map((request) => request.conflictCount)).toEqual([1, 1]);
+  });
+
+  it('does not offer a request whose deadline has passed', async () => {
+    // §8.6 gives a request a deadline. Offering an expired one as acceptable
+    // would be the deadline not existing — 4.7's worker does not exist yet.
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    const wellAfterTheDeadline = new Date('2027-01-01T00:00:00Z');
+    expect(
+      await store.findPendingRequests(listingId, owner, wellAfterTheDeadline),
+    ).toEqual([]);
+  });
+
+  it("tells a stranger nothing about somebody else's listing", async () => {
+    const listingId = await newListing();
+    await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    // Empty rather than forbidden, so the id is not confirmed to exist.
+    expect(await store.findPendingRequests(listingId, await newUser(), LATER)).toEqual(
+      [],
+    );
+  });
+});
+
+describe('declining a request (slice 4.6)', () => {
+  it('moves it out of REQUESTED and says who did it', async () => {
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const request = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    const declined = await store.decline(request.id, owner, LATER);
+
+    expect(declined?.state).toBe('DECLINED');
+    const [event] = await client.bookingEvent.findMany({
+      where: { bookingId: request.id },
+    });
+    // `state-changed`, not `auto-declined`: a person decided this one, and the
+    // renter is owed the difference.
+    expect(event?.type).toBe('state-changed');
+    expect(event?.actorId).toBe(owner);
+  });
+
+  it('frees nothing, so a later acceptance of the same dates still works', async () => {
+    // The asymmetry between the two decisions, made visible: declining releases
+    // no lock because a request never held one (§7.1).
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const first = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+    const second = await store.create(
+      await booking(listingId, await newUser(), { state: 'REQUESTED' }),
+    );
+
+    await store.decline(first.id, owner, LATER);
+    const accepted = await store.accept(second.id, owner, LATER);
+
+    expect(accepted?.booking.state).toBe('ACCEPTED');
+    expect(accepted?.autoDeclinedIds).toEqual([]);
   });
 });

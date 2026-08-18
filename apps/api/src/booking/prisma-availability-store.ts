@@ -37,8 +37,16 @@ import type {
  * is what makes `<` and `>` correct rather than `<=` and `>=`: a block ending at
  * 09:00 and a hire starting at 09:00 do not touch, because the item changes
  * hands. Same bound the trigger writes into `period`.
+ *
+ * **Exported from slice 4.6, for the booking store next door.** §7.1's
+ * auto-decline has to find every `REQUESTED` booking overlapping the accepted
+ * period, which is this predicate again — and the phase already carries *"the
+ * `[)` bound is stated twice"* as tech debt. A third statement of it would be the
+ * one that eventually disagrees; sharing keeps the count at two — this function
+ * and the trigger that builds `period` — with a db test pinning them to the same
+ * answer.
  */
-function overlaps(startAt: Date, endAt: Date) {
+export function overlaps(startAt: Date, endAt: Date) {
   return { startAt: { lt: endAt }, endAt: { gt: startAt } };
 }
 
