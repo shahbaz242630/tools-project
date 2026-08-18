@@ -89,6 +89,175 @@ describe('BookingsService', () => {
     );
   });
 
+  describe('answering a request (§8.6, §7.1, slice 4.6)', () => {
+    /** A request from Ada, the way one is actually made. */
+    async function givenARequest(): Promise<string> {
+      const quoteId = await givenAQuote();
+      const booking = await service.request(ADA, { quoteId });
+      if (booking === null) throw new Error('expected a booking');
+      return booking.id;
+    }
+
+    it('accepts it, and rests in ACCEPTED', async () => {
+      /*
+       * **Not `AWAITING_PAYMENT`, and the choice is argued in the service.**
+       * §7.1 says to move it to `ACCEPTED`; the two states after it are
+       * *"payment secured"* and *"awaiting payment"*, and neither is true while
+       * Phase 5 does not exist.
+       */
+      const bookingId = await givenARequest();
+
+      const accepted = await service.accept(bookingId, OWNER);
+
+      expect(accepted?.state).toBe('ACCEPTED');
+    });
+
+    it("records the acceptance in the booking's history", async () => {
+      const bookingId = await givenARequest();
+
+      const accepted = await service.accept(bookingId, OWNER);
+
+      expect(accepted?.events.map((event) => [event.fromState, event.toState])).toEqual(
+        [
+          [null, 'REQUESTED'],
+          ['REQUESTED', 'ACCEPTED'],
+        ],
+      );
+    });
+
+    it('declines it, and says a person did', async () => {
+      const bookingId = await givenARequest();
+
+      const declined = await service.decline(bookingId, OWNER);
+
+      expect(declined?.state).toBe('DECLINED');
+      // `state-changed` rather than `auto-declined`: the renter is owed the
+      // difference between "the owner said no" and "somebody else was quicker".
+      expect(declined?.events.at(-1)?.type).toBe('state-changed');
+    });
+
+    it("answers nothing about a booking that is not this owner's", async () => {
+      const bookingId = await givenARequest();
+
+      // Null both ways, so a stranger cannot learn a booking id is real.
+      expect(await service.accept(bookingId, 'user-stranger')).toBeNull();
+      expect(await service.decline(bookingId, 'user-stranger')).toBeNull();
+    });
+
+    it('refuses to accept one that has already been answered', async () => {
+      const bookingId = await givenARequest();
+      await service.decline(bookingId, OWNER);
+
+      await expect(service.accept(bookingId, OWNER)).rejects.toThrow(
+        /no longer waiting for an answer/,
+      );
+    });
+
+    it('refuses to accept one whose deadline has passed', async () => {
+      /*
+       * §8.6's deadline. 4.7's worker will move these to `EXPIRED`; until then the
+       * deadline is only real if whoever would act past it refuses to.
+       */
+      const bookingId = await givenARequest();
+      const service48hLater = new BookingsService(
+        bookingStore,
+        quoteStore,
+        listings,
+        availability,
+        () => Time.addHours(NOW, 49),
+      );
+
+      await expect(service48hLater.accept(bookingId, OWNER)).rejects.toThrow(/expired/);
+    });
+
+    it('still lets a late request be declined', async () => {
+      /*
+       * **The asymmetry, and it is deliberate.** The deadline exists so a renter
+       * is not held indefinitely; saying no after it costs them nothing they had
+       * not already lost, and refusing would leave the owner unable to clear a
+       * request they can see.
+       */
+      const bookingId = await givenARequest();
+      const service48hLater = new BookingsService(
+        bookingStore,
+        quoteStore,
+        listings,
+        availability,
+        () => Time.addHours(NOW, 49),
+      );
+
+      expect((await service48hLater.decline(bookingId, OWNER))?.state).toBe('DECLINED');
+    });
+
+    it('refuses when the owner has since blocked the dates themselves', async () => {
+      /*
+       * **The check the phase handoff names**: `EXCLUDE` cannot span two tables,
+       * so an availability block placed *after* a request arrived is invisible to
+       * the constraint. Accepting would contradict the owner's own calendar.
+       */
+      const bookingId = await givenARequest();
+      await availability.block({
+        listingId: MOWER,
+        startAt: Time.fromIsoUtc('2026-08-21T00:00:00.000Z'),
+        endAt: Time.fromIsoUtc('2026-08-24T00:00:00.000Z'),
+        reason: 'Away',
+      });
+
+      await expect(service.accept(bookingId, OWNER)).rejects.toThrow(
+        /blocked some of those dates/,
+      );
+    });
+
+    it('lists what is waiting, and what accepting each would displace', async () => {
+      // §7.1: *"Owners must be shown, before accepting, that competing requests
+      // exist and will be declined."*
+      await givenARequest();
+      await givenARequest();
+
+      const { requests } = await service.pendingRequests(MOWER, OWNER);
+
+      expect(requests).toHaveLength(2);
+      expect(requests.map((request) => request.conflictCount)).toEqual([1, 1]);
+      // Dates on the wire, never instants — 4.3b's rule, and `strictObject`
+      // is what would fail if an instant appeared here.
+      expect(requests[0]?.startDate).toBe('2026-08-21');
+      expect(requests[0]?.endDate).toBe('2026-08-23');
+    });
+
+    it('names no renter and states no payout', async () => {
+      /*
+       * **Two omissions, both deliberate and both easy to "fix" back in.** An
+       * owner is deciding about dates and a price, not about a person (§8.4.1);
+       * and §3.4 deducts the owner's commission from a payout that does not exist
+       * until Phase 5, so any figure labelled as theirs would be a false sentence
+       * about money.
+       */
+      await givenARequest();
+
+      const { requests } = await service.pendingRequests(MOWER, OWNER);
+
+      expect(Object.keys(requests[0] ?? {}).sort()).toEqual([
+        'conflictCount',
+        'days',
+        'endDate',
+        'id',
+        'itemCharge',
+        'requestExpiresAt',
+        'startDate',
+      ]);
+      // The owner's own money, before our cut — not the renter's inclusive total.
+      expect(requests[0]?.itemCharge).toEqual(gbp(5_400));
+    });
+
+    it("shows an owner nothing about somebody else's listing", async () => {
+      await givenARequest();
+
+      expect(await service.pendingRequests(MOWER, 'user-stranger')).toEqual({
+        requests: [],
+      });
+    });
+  });
+
   describe('making a request', () => {
     it('creates a booking in REQUESTED with the terms from the quote', async () => {
       const quoteId = await givenAQuote();

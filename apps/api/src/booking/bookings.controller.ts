@@ -13,11 +13,14 @@ import {
 } from '@nestjs/common';
 import {
   BOOKINGS_ROUTE,
+  BOOKING_ACCEPT_ROUTE,
+  BOOKING_DECLINE_ROUTE,
   BOOKING_ROUTE,
   ContractViolationError,
+  LISTING_REQUESTS_ROUTE,
   parseBookingRequest,
 } from '@platform/contracts';
-import type { Booking } from '@platform/contracts';
+import type { Booking, ListingRequests } from '@platform/contracts';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -117,6 +120,99 @@ export class BookingsController {
     if (booking === null) throw new NotFoundException();
 
     return booking;
+  }
+
+  /**
+   * The requests waiting on an owner for one listing (§8.6, §7.1, slice 4.6).
+   *
+   * **Nested under the listing, unlike the three routes above.** Those answer
+   * about one booking whose id the caller already held; this asks *what is
+   * waiting on me for this item*, which is a question about the listing.
+   *
+   * **`@AllowsSuspended()`: reading what is waiting on you is not transacting.**
+   * ADR 0024 suspends the ability to act, not the ability to see — and an owner
+   * who cannot read their requests cannot understand why their calendar is
+   * filling up. Accepting and declining below are *not* marked.
+   *
+   * **An empty list for a listing that is not theirs**, never a 403. The store
+   * scopes by owner in the query, so a stranger learns nothing about whether the
+   * id is real.
+   */
+  @Get(LISTING_REQUESTS_ROUTE)
+  @AllowsSuspended()
+  requests(
+    @Param('id') listingId: string,
+    @CurrentUser() owner: MirroredUser,
+  ): Promise<ListingRequests> {
+    return this.bookings.pendingRequests(listingId, owner.id);
+  }
+
+  /**
+   * Accept a request (§8.6), which locks the dates and declines the rest (§7.1).
+   *
+   * **Four failures, four codes**, the same vocabulary the request route uses:
+   *
+   * - **404** — not this owner's booking, or no such booking. One answer for both.
+   * - **422** — it cannot be accepted and the owner can act on why: it is no longer
+   *   a request, it expired, or their own calendar now blocks the dates.
+   * - **409** — somebody else's acceptance already holds the period. Its own code
+   *   because nothing the owner changes fixes it, exactly as on the request route.
+   * - **400** — never, from here: there is no body to be wrong.
+   *
+   * **Not `@AllowsSuspended()`.** Accepting binds a suspended account to a hire,
+   * which is precisely the transacting ADR 0024 suspends.
+   */
+  @Post(BOOKING_ACCEPT_ROUTE)
+  async accept(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser() owner: MirroredUser,
+  ): Promise<Booking> {
+    return this.decide(() => this.bookings.accept(bookingId, owner.id));
+  }
+
+  /**
+   * Decline a request (§8.6).
+   *
+   * **The same codes as accepting, minus the 409** — a decline locks nothing, so
+   * there is no race to lose. It is still routed through the same translation,
+   * because a shared helper that handles a case one caller cannot reach is
+   * cheaper than two helpers that drift.
+   */
+  @Post(BOOKING_DECLINE_ROUTE)
+  async decline(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser() owner: MirroredUser,
+  ): Promise<Booking> {
+    return this.decide(() => this.bookings.decline(bookingId, owner.id));
+  }
+
+  /**
+   * One translation for both decisions.
+   *
+   * Accepting and declining fail in the same vocabulary and differ only in which
+   * failures they can reach, so the mapping lives once. Two copies is how a
+   * status added on one route stops being handled on the other — the H3a lesson
+   * this codebase has now been taught twice.
+   */
+  private async decide(decision: () => Promise<Booking | null>): Promise<Booking> {
+    try {
+      const booking = await decision();
+      if (booking === null) throw new NotFoundException();
+
+      return booking;
+    } catch (error) {
+      if (error instanceof RequestRefusedError) {
+        throw new UnprocessableEntityException({ message: error.refusal });
+      }
+      if (error instanceof OverlappingBookingError) {
+        throw new ConflictException({
+          message:
+            'Those dates have just been taken by another booking, so this request ' +
+            'can no longer be accepted.',
+        });
+      }
+      throw error;
+    }
   }
 }
 

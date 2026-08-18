@@ -24,9 +24,13 @@ import { createRecordingLogger } from '@platform/observability/testing';
 import {
   BOOKINGS_ROUTE,
   ME_PATH,
+  bookingAcceptPath,
+  bookingDeclinePath,
   bookingPath,
   listingQuotesPath,
+  listingRequestsPath,
   parseBooking,
+  parseListingRequests,
   parseRentalQuote,
 } from '@platform/contracts';
 import { AppModule } from '../app.module.js';
@@ -172,6 +176,154 @@ const requestBooking = (token: string | null, quoteId: string) =>
     ...(token === null ? {} : { headers: auth(token) }),
     payload: { quoteId },
   });
+
+/** A live request from Ada against Bob's mower, made through the routes. */
+async function aRequest(): Promise<string> {
+  const quoteId = await quoteFor('ada-token');
+  const response = await requestBooking('ada-token', quoteId);
+  return parseBooking(response.json()).id;
+}
+
+const decide = (path: string, token: string | null) =>
+  app.inject({
+    method: 'POST',
+    url: path,
+    ...(token === null ? {} : { headers: auth(token) }),
+  });
+
+describe('answering a request (slice 4.6)', () => {
+  /*
+   * **What only this file can show.** The service is handed an owner id;
+   * everything deciding *whose* it is lives in the guard and the decorator. What
+   * is pinned here and nowhere else: that a renter cannot accept their own
+   * request, that a stranger gets **404 and never 403**, that a suspended owner
+   * may *read* what is waiting and not *answer* it, and that both projections
+   * match the contract exactly.
+   */
+
+  it('accepts, and returns the booking in the shape the contract describes', async () => {
+    const bookingId = await aRequest();
+
+    const response = await decide(bookingAcceptPath(bookingId), 'bob-token');
+
+    expect(response.statusCode).toBe(201);
+    // Parsed rather than eyeballed: `strictObject`, so an instant or a stray
+    // field reaching the wire fails here.
+    const accepted = parseBooking(response.json());
+    expect(accepted.state).toBe('ACCEPTED');
+    expect(accepted.events.map((event) => event.toState)).toEqual([
+      'REQUESTED',
+      'ACCEPTED',
+    ]);
+  });
+
+  it('declines', async () => {
+    const bookingId = await aRequest();
+
+    const response = await decide(bookingDeclinePath(bookingId), 'bob-token');
+
+    expect(parseBooking(response.json()).state).toBe('DECLINED');
+  });
+
+  it('refuses anonymous decisions', async () => {
+    const bookingId = await aRequest();
+
+    expect((await decide(bookingAcceptPath(bookingId), null)).statusCode).toBe(401);
+    expect((await decide(bookingDeclinePath(bookingId), null)).statusCode).toBe(401);
+  });
+
+  it('answers 404 to the renter, who is a party but not the decider', async () => {
+    /*
+     * **The one that matters most here.** Ada can *read* this booking — §8.6 gives
+     * her the record — and must not be able to accept it on her own behalf. A 403
+     * would be worse than useless: it would confirm the booking is real to
+     * anybody who guessed an id, which is the whole reason scoped reads here
+     * answer 404.
+     */
+    const bookingId = await aRequest();
+
+    expect((await decide(bookingAcceptPath(bookingId), 'ada-token')).statusCode).toBe(
+      404,
+    );
+    expect((await decide(bookingDeclinePath(bookingId), 'ada-token')).statusCode).toBe(
+      404,
+    );
+  });
+
+  it('answers 404 to a stranger', async () => {
+    const bookingId = await aRequest();
+
+    expect((await decide(bookingAcceptPath(bookingId), 'cat-token')).statusCode).toBe(
+      404,
+    );
+  });
+
+  it('answers 422 when the request has already been answered', async () => {
+    const bookingId = await aRequest();
+    await decide(bookingDeclinePath(bookingId), 'bob-token');
+
+    const response = await decide(bookingAcceptPath(bookingId), 'bob-token');
+
+    expect(response.statusCode).toBe(422);
+    // A sentence and no `issues` array: nothing about the *shape* of the request
+    // was wrong, so there is no field to put an error under.
+    expect(response.json()).toMatchObject({ message: expect.any(String) });
+    expect(response.json()).not.toHaveProperty('issues');
+  });
+
+  it('lists what is waiting, in the shape the contract describes', async () => {
+    await aRequest();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingRequestsPath(MOWER),
+      headers: auth('bob-token'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const { requests } = parseListingRequests(response.json());
+    expect(requests).toHaveLength(1);
+    // §7.1's disclosure, on the wire rather than only in the service.
+    expect(requests[0]?.conflictCount).toBe(0);
+  });
+
+  it('shows an owner nothing about a listing that is not theirs', async () => {
+    await aRequest();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: listingRequestsPath(MOWER),
+      headers: auth('cat-token'),
+    });
+
+    // 200 with nothing in it, never 403: an empty list tells a stranger nothing
+    // about whether the listing id is real.
+    expect(response.statusCode).toBe(200);
+    expect(parseListingRequests(response.json()).requests).toEqual([]);
+  });
+
+  it('lets a suspended owner read what is waiting, and not answer it', async () => {
+    /*
+     * **ADR 0024's line, on the two halves of one page.** Suspension takes away
+     * the ability to transact, not the ability to see — an owner who cannot read
+     * their requests cannot understand why their calendar is filling up, and
+     * accepting one binds them to a hire.
+     */
+    const bookingId = await aRequest();
+    identity.users.suspend(bobId, 'admin', 'under review');
+
+    const read = await app.inject({
+      method: 'GET',
+      url: listingRequestsPath(MOWER),
+      headers: auth('bob-token'),
+    });
+    expect(read.statusCode).toBe(200);
+
+    expect((await decide(bookingAcceptPath(bookingId), 'bob-token')).statusCode).toBe(
+      403,
+    );
+  });
+});
 
 describe('requesting a booking', () => {
   it('creates one and returns it in the shape the contract describes', async () => {

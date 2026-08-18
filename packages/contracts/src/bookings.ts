@@ -26,6 +26,32 @@ export function bookingPath(id: string): string {
 
 export const BOOKING_ROUTE = '/bookings/:bookingId';
 
+export function bookingAcceptPath(id: string): string {
+  return `/bookings/${id}/accept`;
+}
+
+export const BOOKING_ACCEPT_ROUTE = '/bookings/:bookingId/accept';
+
+export function bookingDeclinePath(id: string): string {
+  return `/bookings/${id}/decline`;
+}
+
+export const BOOKING_DECLINE_ROUTE = '/bookings/:bookingId/decline';
+
+/**
+ * The requests against one listing, as its owner reads them (slice 4.6).
+ *
+ * **Nested under the listing, unlike every other booking route.** The two above
+ * answer about one booking whose id the caller already had; this asks *what is
+ * waiting on me for this item*, which is a question about the listing. It is also
+ * the only owner-scoped read in this module.
+ */
+export function listingRequestsPath(id: string): string {
+  return `/listings/${id}/requests`;
+}
+
+export const LISTING_REQUESTS_ROUTE = '/listings/:id/requests';
+
 /**
  * What happened to a booking (§6.2's *event type*).
  *
@@ -34,12 +60,27 @@ export const BOOKING_ROUTE = '/bookings/:bookingId';
  * thing a phase discovers a new member of, and a Postgres enum needs a migration
  * to gain one.
  *
- * **Only two members today, and that is honest rather than unfinished.** 4.5a can
- * create a request and nothing else — 4.6 adds acceptance, decline and §7.1's
- * auto-decline, 4.7 adds expiry. Adding those names now would put unreachable
- * values in a vocabulary that everything downstream must handle.
+ * **4.6 added exactly one member, and the restraint is the point.** An acceptance
+ * and an owner's decline are both `state-changed`: `fromState` and `toState`
+ * already say which, and a `'declined'` type would only repeat `toState` in a
+ * second vocabulary that could disagree with it.
+ *
+ * **`auto-declined` earns its place because nothing else can carry it.** §7.1
+ * requires an auto-declined renter to be *"notified with the reason"*, and an
+ * auto-decline is `REQUESTED — DECLINED` exactly like an owner's decline — the only
+ * difference is why. That difference is stored in `metadata`, and **`bookingEvent
+ * Schema` deliberately does not project metadata**, because it also holds facts
+ * about the other party. So without a distinct type the renter would read *"your
+ * request was declined"* when the truth is *"somebody else's acceptance took the
+ * dates"* — a meaningfully different thing to be told, and the one §7.1 names.
+ *
+ * 4.7 adds expiry, and it should ask the same question before adding a member.
  */
-export const BOOKING_EVENT_TYPES = ['requested', 'state-changed'] as const;
+export const BOOKING_EVENT_TYPES = [
+  'requested',
+  'state-changed',
+  'auto-declined',
+] as const;
 
 export type BookingEventType = (typeof BOOKING_EVENT_TYPES)[number];
 
@@ -131,4 +172,60 @@ export type Booking = z.infer<typeof bookingSchema>;
 
 export function parseBooking(raw: unknown): Booking {
   return parseWith(bookingSchema, 'The booking', raw);
+}
+
+/**
+ * One request, as the **owner** deciding on it reads it (BRD §8.6, §7.1, slice
+ * 4.6).
+ *
+ * **A different projection from `bookingSchema`, not a subset of it.** The two
+ * answer different questions: that one is *what did I agree to*, read by either
+ * party about a booking that exists; this one is *what am I being asked, and what
+ * would saying yes cost me*. The overlap is real and the audiences are not, which
+ * is what makes one shape with optional fields the wrong economy.
+ *
+ * **The renter is not named, and that is deliberate.** An owner deciding whether
+ * to hire out a drill is deciding about dates and a price, not about a person —
+ * and §8.4.1's whole posture is that identity arrives with commitment rather than
+ * before it. Phase 6 opens a conversation once there is a booking; nothing here
+ * needs a name, so nothing here carries one.
+ *
+ * **`itemCharge` is the owner's own money and is labelled as such, and there is
+ * deliberately no payout figure.** §3.4 deducts the owner's commission from the
+ * payout, and neither the commission arithmetic nor the payout exists until Phase
+ * 5. Showing the renter's inclusive total to an owner would read as what they
+ * receive, which would be a false sentence about money — the exact class of defect
+ * the Phase 0–3 audit found three of.
+ */
+export const listingRequestSchema = z.strictObject({
+  id: z.string().min(1),
+  startDate: calendarDateSchema,
+  /** Inclusive, as the renter asked for it. */
+  endDate: calendarDateSchema,
+  days: z.number().int().positive(),
+  /** What the hire earns at the owner's own rates, before the platform's cut. */
+  itemCharge: moneySchema,
+  /** When this request expires unanswered (§8.6), as an ISO instant. */
+  requestExpiresAt: z.string().min(1),
+  /**
+   * The other requests this one would auto-decline if accepted (§7.1).
+   *
+   * **§7.1 requires this and it is easy to read past**: *"Owners must be shown,
+   * before accepting, that competing requests exist and will be declined."* A
+   * count rather than a list, because the owner is owed the consequence of their
+   * click and not a roster of strangers' dates.
+   */
+  conflictCount: z.number().int().nonnegative(),
+});
+
+export type ListingRequest = z.infer<typeof listingRequestSchema>;
+
+export const listingRequestsSchema = z.strictObject({
+  requests: z.array(listingRequestSchema),
+});
+
+export type ListingRequests = z.infer<typeof listingRequestsSchema>;
+
+export function parseListingRequests(raw: unknown): ListingRequests {
+  return parseWith(listingRequestsSchema, 'The requests', raw);
 }
