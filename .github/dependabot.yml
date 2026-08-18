@@ -44,10 +44,34 @@ updates:
         update-types:
           - minor
           - patch
+      # NestJS ships its packages in lockstep and they must be version-matched at
+      # runtime, so they are grouped **including minors** -- which no other group
+      # here does.
+      #
+      # This exists because session 49 watched it fail. Dependabot raised
+      # 11.1.28 -> 11.2.1 as **four separate pull requests** (#148-#151), because
+      # both groups below cover patches only and this was a minor. `@nestjs/core`
+      # alone then failed three checks: 11.2.1's `router-execution-context`
+      # requires `@nestjs/common/decorators/http/sse-signal.decorator`, which
+      # exists only in `common@11.2.1`, so the lockfile's
+      # `core@11.2.1_common@11.1.28` could not even boot the application.
+      #
+      # Nothing was wrong with the release -- taken together the four are clean.
+      # What was wrong was shipping a framework half-upgraded, and a group is the
+      # only thing that prevents it, because merging four PRs in the right order
+      # is a habit rather than a control.
+      nestjs:
+        patterns:
+          - '@nestjs/*'
+        update-types:
+          - minor
+          - patch
       production-patches:
         patterns:
           - '*'
         exclude-patterns:
+          # Grouped above, including minors.
+          - '@nestjs/*'
           - '@types/*'
           - 'eslint*'
           - '@eslint/*'
