@@ -8,6 +8,7 @@ import {
   ContractViolationError,
 } from '@platform/contracts';
 import { clientIpFrom } from '../../../../lib/client-ip';
+import { asStandaloneSentence } from '../../../../lib/contract-issues';
 import { listingCalendarPath } from '../../../../lib/page-paths';
 import { blockPeriod, unblockPeriod } from '../../../../lib/availability';
 import { webEnv } from '../../../../lib/env';
@@ -64,7 +65,10 @@ export async function blockPeriodAction(
       // The field name is stripped: `endDate: the last day cannot fall before
       // the first` is a sentence about our JSON, and the person is looking at a
       // control labelled "Last day".
-      return calendarError(describeFirst(error), submitted);
+      return calendarError(
+        asStandaloneSentence(error.issues, 'Those dates were not accepted.'),
+        submitted,
+      );
     }
     throw error;
   }
@@ -206,21 +210,4 @@ export async function unblockPeriodAction(
     case 'malformed':
       return calendarError(`That did not complete — ${outcome.reason}`);
   }
-}
-
-/**
- * The first issue, without the field prefix `parseWith` adds.
- *
- * A form with two date controls and one note has nowhere to attach `endDate:`,
- * and the prefix is the JSON's name for a control the person sees labelled
- * something else.
- */
-function describeFirst(error: ContractViolationError): string {
-  const [first] = error.issues;
-  if (first === undefined) return 'Those dates were not accepted.';
-
-  const withoutField = first.includes(': ')
-    ? first.slice(first.indexOf(': ') + 2)
-    : first;
-  return `${withoutField.charAt(0).toUpperCase()}${withoutField.slice(1)}.`;
 }

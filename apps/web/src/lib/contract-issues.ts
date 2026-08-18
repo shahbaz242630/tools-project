@@ -50,3 +50,34 @@ export function asSentence(issue: ContractIssue): string {
 export function asSentences(issues: readonly ContractIssue[]): string {
   return issues.map(asSentence).join('; ');
 }
+
+/**
+ * The first issue as a standalone sentence, with the field name stripped off.
+ *
+ * **The counterpart to `asSentence`, for forms whose controls are not named
+ * after the JSON.** That function's rule — prefix a fragment with its path — is
+ * right where the path *is* the label. It is wrong on a form with two date
+ * controls labelled "First day" and "Last day", where `endDate: the last day
+ * cannot fall before the first` names the field twice and once in a vocabulary
+ * the reader has never seen.
+ *
+ * **The first issue only**, because a message area above a three-field form can
+ * carry one sentence usefully and a semicolon-joined list of three badly. The
+ * fields a person is looking at are the other half of the message.
+ *
+ * `fallback` is the caller's, because a violation with no issues in it is a
+ * situation only the caller can describe — it has never been observed and the
+ * alternative is an empty message area under a form that refused.
+ */
+export function asStandaloneSentence(
+  issues: readonly string[],
+  fallback: string,
+): string {
+  const [first] = issues;
+  if (first === undefined) return fallback;
+
+  const withoutField = first.includes(': ')
+    ? first.slice(first.indexOf(': ') + 2)
+    : first;
+  return `${withoutField.charAt(0).toUpperCase()}${withoutField.slice(1)}.`;
+}

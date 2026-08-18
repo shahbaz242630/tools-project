@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { Money } from '@platform/core';
 import {
@@ -23,7 +24,24 @@ import styles from './public-listing.module.css';
  * carries, and for the same reason. D8 changed where things sit on the page and
  * added no field and no sentence.
  */
-export function PublicListingView({ listing }: { readonly listing: PublicListing }) {
+export function PublicListingView({
+  listing,
+  requestPanel,
+}: {
+  readonly listing: PublicListing;
+  /**
+   * The renter's request panel, or the prompt a signed-out visitor gets instead
+   * (slice 4.5b).
+   *
+   * **A slot rather than something this component builds.** Whether there is a
+   * session is the page's to know — it is the only layer that can call `auth()`
+   * — and this component's whole discipline is that it chooses no fields and
+   * makes no disclosure decisions it was not handed. Reaching for the session in
+   * here would put an authentication branch inside the one component in the app
+   * whose job is to be certain about what a stranger may see.
+   */
+  readonly requestPanel: ReactNode;
+}) {
   /*
    * Only the attributes that have an answer, and that is a disclosure decision
    * rather than a layout one. The owner's page lists unanswered fields because
@@ -107,16 +125,13 @@ export function PublicListingView({ listing }: { readonly listing: PublicListing
           </p>
 
           {/*
-            **No booking control, and it says so rather than showing a dead one.**
-            BRD §15 forbids a control that does not call real behaviour, and
-            booking is Phase 4. A disabled "Book now" would be exactly the dead
-            control that rule exists to prevent, and would tell a visitor the
-            platform does something it does not.
+            **Where the "booking is not open yet" paragraph used to be** (2.10).
+            That paragraph existed because §15 forbids a control that calls
+            nothing, and a disabled "Book now" would have been exactly that.
+            Booking opened in 4.5a and the panel below calls it, so the sentence
+            goes rather than sitting above a control that contradicts it.
           */}
-          <p className={styles.notOpen}>
-            <strong>Booking is not open yet.</strong> This listing is visible while the
-            platform is being built — there is nothing to book here.
-          </p>
+          {requestPanel}
         </div>
 
         <div className={styles.card}>
