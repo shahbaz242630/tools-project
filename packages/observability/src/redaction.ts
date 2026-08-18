@@ -33,6 +33,22 @@ const SENSITIVE_KEY_PATTERNS = [
   'credential',
   'privatekey',
   'private_key',
+  /*
+   * The machine-to-machine trigger header (ADR 0048, slice 4.7b).
+   *
+   * **Here rather than only at the one call site, because it is a *key* and this is
+   * where keys are judged.** It normalises to `xinternaltrigger`, which matches none
+   * of the words above — so without this entry a log line carrying the header would
+   * print the shared secret in full, and the redaction that exists for exactly this
+   * would sail past it.
+   *
+   * It earns its place because the header travels in an **outbound** request, and an
+   * error thrown from `fetch` can carry that request on its `cause` — which
+   * `redact` deliberately recurses into. So the path from "a connection failed" to
+   * "the secret is in Loki" is short, and the worker's own `failed` handler logs the
+   * whole error object.
+   */
+  'x-internal-trigger',
 
   // Payment data. Never stored (BRD §8.7) but may appear in provider payloads.
   'cardnumber',

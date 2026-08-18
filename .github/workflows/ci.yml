@@ -299,6 +299,7 @@ jobs:
             -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
             -e POSTGRES_SSLMODE=disable \
             -e INTERNAL_TRIGGER_SECRET=ci-only-internal-trigger-secret-not-a-real-one \
+            -e API_INTERNAL_URL=http://api.invalid:3000 \
             rental-worker:ci
 
           sleep 5

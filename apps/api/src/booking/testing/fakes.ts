@@ -748,6 +748,14 @@ export function bookingModuleFakes(): {
  *
  * Longer than the environment schema's 32-character floor, and obviously fake so it
  * can never be mistaken for one somebody generated.
+ *
+ * **It begins with `example-` to satisfy `.gitleaks.toml`, not for readability.** The
+ * `generic-secret-assignment` rule fires on any `secret = "<16+ chars>"` and allows
+ * values containing `example`, `placeholder` and a few others. This value previously
+ * began `test-` and passed the scan **only because Prettier had wrapped the literal
+ * onto its own line** — gitleaks matches per line, so the assignment and the value
+ * were never on one. That is a scan passing by accident of formatting, and a
+ * reflow would have broken the push.
  */
 export const TEST_INTERNAL_TRIGGER_SECRET =
-  'test-internal-trigger-secret-not-a-real-one';
+  'example-internal-trigger-secret-not-a-real-one';

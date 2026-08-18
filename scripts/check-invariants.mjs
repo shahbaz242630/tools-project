@@ -108,7 +108,23 @@ const PRISMA_WRITES = [
 const PROVIDER_SDKS = [
   { specifier: '@clerk/backend', adapters: ['apps/api/src/main.ts'] },
   { specifier: 'ioredis', adapters: ['apps/api/src/main.ts'] },
-  { specifier: 'bullmq', adapters: ['apps/worker/src/worker.ts'] },
+  /*
+   * **Two files, and the split is consumer and producer.** `worker.ts` wraps
+   * `Worker`; `scheduler.ts` wraps `Queue`, added in slice 4.7b when the project
+   * gained its first job producer — nothing had ever enqueued anything before.
+   *
+   * They are deliberately not one file. A `Worker` needs
+   * `maxRetriesPerRequest: null` on its connection and a `Queue` wants the default,
+   * so a single wrapper holding both would have to choose which of the two is
+   * wrong. Each owns its own connection and its own `error` handler.
+   *
+   * Listed here rather than waived on the line, which is what the rule's own
+   * message asks for: the point is that the next person can see who reaches what.
+   */
+  {
+    specifier: 'bullmq',
+    adapters: ['apps/worker/src/worker.ts', 'apps/worker/src/scheduler.ts'],
+  },
   { specifier: 'prom-client', adapters: ['packages/observability/src/metrics.ts'] },
   { specifier: '@prisma/adapter-pg', adapters: ['packages/database/src/client.ts'] },
   { specifier: '@prisma/client', adapters: ['packages/database/src/client.ts'] },

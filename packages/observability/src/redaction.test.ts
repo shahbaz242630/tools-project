@@ -111,4 +111,35 @@ describe('redact', () => {
     expect(redact(undefined)).toBe(undefined);
     expect(redact(true)).toBe(true);
   });
+
+  describe('the internal trigger header (ADR 0048, slice 4.7b)', () => {
+    const SECRET = 'example-shared-secret-that-must-never-be-logged';
+
+    it('redacts it as a key', () => {
+      // It normalises to `xinternaltrigger` and matches none of the credential words,
+      // so it is in the list by name. Without that entry this prints in full.
+      expect(redact({ 'x-internal-trigger': SECRET })).toEqual({
+        'x-internal-trigger': '[redacted]',
+      });
+    });
+
+    it('redacts it inside an error cause, which is the path that matters', () => {
+      /*
+       * **This is the assertion the worker's handler relies on.** The header travels
+       * in an outbound `fetch`, a rejection can carry that request on `cause`,
+       * `redact` recurses into `cause`, and the worker's `failed` handler logs the
+       * whole error. So this is the last thing between a refused connection and the
+       * secret sitting in Loki for fourteen days.
+       */
+      const underlying = new TypeError('fetch failed');
+      (underlying as { cause?: unknown }).cause = {
+        headers: { 'x-internal-trigger': SECRET },
+      };
+      const thrown = new Error('expiry trigger failed to reach the API', {
+        cause: underlying,
+      });
+
+      expect(JSON.stringify(redact(thrown))).not.toContain(SECRET);
+    });
+  });
 });
