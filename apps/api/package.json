@@ -27,7 +27,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@nestjs/testing": "^11.1.28",
+    "@nestjs/testing": "^11.2.1",
     "@types/node": "^26.2.0"
   }
 }
