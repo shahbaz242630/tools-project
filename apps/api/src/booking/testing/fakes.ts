@@ -548,12 +548,12 @@ export class InMemoryListingOwnership implements ListingOwnership {
 
   /** Record that this listing is this owner's. */
   give(listingId: string, ownerId: string): this {
-    this.owned.add(`${ownerId} ${listingId}`);
+    this.owned.add(`${ownerId}\0${listingId}`);
     return this;
   }
 
   isOwnedBy(listingId: string, ownerId: string): Promise<boolean> {
-    return Promise.resolve(this.owned.has(`${ownerId} ${listingId}`));
+    return Promise.resolve(this.owned.has(`${ownerId}\0${listingId}`));
   }
 }
 
