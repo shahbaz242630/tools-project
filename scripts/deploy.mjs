@@ -37,6 +37,7 @@ import {
   planDeploy,
   planFailureResponse,
   planRollback,
+  releaseImagesToRemove,
   ReleaseError,
   setEnvValue,
   USAGE,
@@ -423,6 +424,57 @@ function runningImage(env, service) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+/**
+ * Delete release images no rollback can reach.
+ *
+ * **Failure here is never fatal.** A box that cannot prune is a box with a
+ * disk problem, and the release that just passed its health check is serving
+ * traffic — aborting would turn a housekeeping failure into an outage, which is
+ * the wrong way round. It says what it could not do and returns.
+ *
+ * The decision is in `releaseImagesToRemove`, which is unit tested; this reads
+ * the box and performs the removal, which the `Deploy rehearsal` job covers.
+ */
+function pruneReleaseImages(state) {
+  const repository = process.env.IMAGE_REPOSITORY;
+
+  /*
+   * Scoped to our own repository rather than every image on the box. The
+   * observability stack (Prometheus, Loki, Grafana, Promtail) and Redis live
+   * here too, and none of them carries a commit SHA — an unscoped sweep would
+   * read their tags as unrecognised releases.
+   */
+  if (repository === undefined || repository === '') {
+    say('  Skipped image pruning: IMAGE_REPOSITORY is not set.');
+    return;
+  }
+
+  const listed = run('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}']);
+  if (listed.status !== 0) {
+    say('  Skipped image pruning: could not list images.');
+    return;
+  }
+
+  const present = listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`${repository}/`));
+
+  const removable = releaseImagesToRemove(present, state);
+  if (removable.length === 0) return;
+
+  // One call, so a single undeletable image does not strand the rest. `docker
+  // rmi` refuses an image a container is using, which is a second guard under
+  // the one in `releaseImagesToRemove` and is why a failure here is only noted.
+  const removed = run('docker', ['rmi', ...removable]);
+
+  say(
+    removed.status === 0
+      ? `  Pruned ${removable.length} image(s) from releases older than the rollback window.`
+      : `  Pruned what it could; ${removable.length} image(s) were offered and some are still in use.`,
+  );
+}
+
 // --- Modes -------------------------------------------------------------------
 
 function showStatus(env) {
@@ -493,9 +545,13 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
     writeState(env, next);
     recordTagInEnvFile(env, plan.target);
 
-    // Dangling images only — never a tagged one, so nothing that could still be
-    // a rollback target is removed.
+    // Dangling images first — cheap, and unrelated to releases.
     run('docker', ['image', 'prune', '--force']);
+
+    // Then the release images no rollback can reach. See
+    // `releaseImagesToRemove`: the dangling prune above had reclaimed nothing
+    // since the box was built, because a release image is always tagged.
+    pruneReleaseImages(next);
 
     say('');
     say(`${env} is serving ${plan.target}`);
