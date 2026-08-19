@@ -33,6 +33,7 @@ import {
 } from './booking-store.js';
 import type { NewBooking } from './booking-store.js';
 import { PrismaBookingStore } from './prisma-booking-store.js';
+import { PrismaQuoteStore } from './prisma-quote-store.js';
 import {
   DEFAULT_MAXIMUM_RENTAL_DAYS,
   DEFAULT_REQUEST_EXPIRY_HOURS,
@@ -55,6 +56,14 @@ const listings = new PrismaListingStore(
   createFieldEncryptor(Buffer.alloc(32, 7).toString('base64')),
 );
 const store = new PrismaBookingStore(client);
+/*
+ * **Here rather than in `prisma-quote-store.db.test.ts`** (slice 4.8d). The one
+ * property worth proving about the export section is that it is the *mirror* of
+ * the eraser — the rows it lists are exactly the rows deletion takes — and that
+ * needs a real booking to make one quote booked and leave another not. This file
+ * is the only one that has both.
+ */
+const quoteStore = new PrismaQuoteStore(client);
 
 /** Any two instants; the calendar arithmetic is 4.4's, not this slice's. */
 const MONDAY = new Date('2026-09-07T09:00:00Z');
@@ -1517,5 +1526,103 @@ describe('one quote, one booking (slice 4.7a)', () => {
     await expect(
       store.create(await booking(listingId, await newUser(), { state: 'REQUESTED' })),
     ).resolves.toMatchObject({ state: 'REQUESTED' });
+  });
+});
+
+describe('the export mirrors the eraser (§10.1, slice 4.8d)', () => {
+  /*
+   * **What only this file can show.** `InMemoryQuoteStore` is *told* which quotes
+   * are booked — its docblock refuses to infer it, because a double deciding that
+   * rule is how a fake comes to pass a test the database would fail. So the
+   * service test proves the service honours the distinction, and this proves the
+   * two predicates are actually the same predicate.
+   *
+   * The stakes: 4.4b left a renter's postcode erasable and unexportable. If these
+   * two queries ever disagree, a subject-access response either omits data we
+   * hold or promises to delete data we keep — and both are wrong in a way that
+   * only surfaces when somebody exercises a right.
+   */
+
+  it('lists exactly the quotes a deletion would take, and no others', async () => {
+    const listingId = await newListing();
+    const ada = await newUser();
+
+    // One quote that became a booking, and one that became nothing.
+    const booked = await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY });
+    await store.create(booked);
+    const unbooked = await booking(listingId, ada, {
+      startAt: FRIDAY,
+      endAt: SUNDAY,
+    });
+
+    const listed = await quoteStore.listUnbookedForRenter(ada, 10);
+
+    expect(listed.map((quote) => quote.id)).toEqual([unbooked.quoteId]);
+
+    // And the erasure agrees, row for row.
+    expect(await quoteStore.deleteUnbookedForRenter(ada)).toBe(1);
+    expect(await quoteStore.listUnbookedForRenter(ada, 10)).toEqual([]);
+
+    // The booked quote survives, because the terms belong to the counterparty
+    // too — which is what keeps the hire's postcode exportable afterwards.
+    const surviving = await client.quote.findUnique({ where: { id: booked.quoteId } });
+    expect(surviving).not.toBe(null);
+  });
+
+  it('joins the item’s title, which a quote does not copy', async () => {
+    // Unlike a booking (§8.2), a quote keeps no terms of its own. The join is
+    // safe because `quotes.listingId` is ON DELETE CASCADE, so a quote outliving
+    // its listing is unrepresentable.
+    const listingId = await newListing();
+    const ada = await newUser();
+    await booking(listingId, ada);
+
+    const [quote] = await quoteStore.listUnbookedForRenter(ada, 10);
+
+    expect(quote?.itemTitle).toBe('Petrol hedge trimmer');
+  });
+
+  it('never lists another renter’s quote', async () => {
+    const listingId = await newListing();
+    const ada = await newUser();
+    const bob = await newUser();
+    await booking(listingId, bob);
+
+    expect(await quoteStore.listUnbookedForRenter(ada, 10)).toEqual([]);
+  });
+
+  it('returns no more rows than it was asked for', async () => {
+    const listingId = await newListing();
+    const ada = await newUser();
+    await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY });
+    await booking(listingId, ada, { startAt: FRIDAY, endAt: SUNDAY });
+
+    expect(await quoteStore.listUnbookedForRenter(ada, 1)).toHaveLength(1);
+  });
+
+  it('gives a booking’s postcode back, scoped to the renter who typed it', async () => {
+    /*
+     * **The datum this whole section exists for.** A booked quote is kept on
+     * erasure, so its postcode is retained data and Article 15 requires it to be
+     * disclosable — and the renter scope is what stops the owner's half of the
+     * export ever reaching one.
+     */
+    const listingId = await newListing();
+    const ada = await newUser();
+    const bob = await newUser();
+    const hers = await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY });
+    await store.create(hers);
+
+    expect(await quoteStore.postcodesFor([hers.quoteId], ada)).toEqual(
+      new Map([[hers.quoteId, 'BS7 8AA']]),
+    );
+    // Asked for by somebody who is not the renter: nothing comes back.
+    expect(await quoteStore.postcodesFor([hers.quoteId], bob)).toEqual(new Map());
+  });
+
+  it('goes nowhere near the database for an empty list', async () => {
+    const ada = await newUser();
+
+    expect(await quoteStore.postcodesFor([], ada)).toEqual(new Map());
   });
 });

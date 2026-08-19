@@ -14,6 +14,7 @@ import type { AuditFakes } from '../audit/testing/fakes.js';
 import {
   RecordingEraser,
   StubDataSource,
+  StubBookingDataSource,
   StubListingDataSource,
 } from './testing/fakes.js';
 import { InMemoryAuthenticationEvents } from './testing/fakes.js';
@@ -737,9 +738,11 @@ describe('exportFor', () => {
     // bump. Version 2 added `signIns` in slice 1.11a; version 3 added
     // `listings` in 2.5a; version 4 added `listingsTruncated` in H2; version 5
     // added **disclosures** — what was done *to* the subject — plus the author,
-    // the reason and `activityTruncated`. Each of those bumps announced itself
-    // by failing this line, which is the whole reason it is a literal.
-    expect(document?.schemaVersion).toBe(5);
+    // the reason and `activityTruncated`; version 6 added **bookings** in 4.8d,
+    // when Booking stopped being a module that could be erased without being
+    // exportable. Each of those bumps announced itself by failing this line,
+    // which is the whole reason it is a literal — 4.8d's did.
+    expect(document?.schemaVersion).toBe(6);
     expect(document?.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
@@ -1444,6 +1447,7 @@ function identityFor(
       audit,
       options.source ?? new StubDataSource(),
       new StubListingDataSource(),
+      new StubBookingDataSource(),
       events,
       erasure,
     ),

@@ -55,6 +55,7 @@ import { AvailabilityService } from './booking/availability.service.js';
 import { PrismaQuoteStore } from './booking/prisma-quote-store.js';
 import { QuotesService } from './booking/quotes.service.js';
 import { BookingsService } from './booking/bookings.service.js';
+import { BookingDataService } from './booking/booking-data.service.js';
 import { RequestExpiryService } from './booking/request-expiry.service.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
@@ -268,6 +269,13 @@ async function bootstrap(): Promise<void> {
     audit,
     { exportFor: (userId: string) => profiles.exportFor(userId) },
     { exportFor: (userId: string) => listings.exportFor(userId) },
+    /*
+     * Booking's section (slice 4.8d) — the third module to hold personal data,
+     * and the first that had an eraser without a source. Composed here like the
+     * other two rather than injected into Identity, which owns the document and
+     * deliberately owns none of its sections.
+     */
+    { exportFor: (userId: string) => bookingData.exportFor(userId) },
     authenticationEvents,
     erasure,
   );
@@ -510,6 +518,19 @@ async function bootstrap(): Promise<void> {
    * would keep running after the worker's own was turned off.
    */
   const requestExpiry = new RequestExpiryService(bookingStore, logger);
+
+  /*
+   * Booking's half of §10.1 (slice 4.8d). It shares both stores above, for the
+   * reason every service in this module shares them: a second instance would be a
+   * second view of the same rows, and a data export that disagreed with the
+   * dashboards about what somebody had booked is the one place that cannot be
+   * shrugged off.
+   *
+   * **Constructed before `accountData` needs it**, which is why it lives here
+   * rather than beside the other Booking services — `main.ts` is a composition
+   * root and the order is the dependency order.
+   */
+  const bookingData = new BookingDataService(bookingStore, quoteStore);
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({

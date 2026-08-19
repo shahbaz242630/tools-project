@@ -58,6 +58,7 @@ import type {
 import type {
   AdminProfile,
   ExportedListings,
+  ExportedBookingsSection,
   ExportedListingsSection,
   ExportedProfile,
 } from '@platform/contracts';
@@ -332,6 +333,33 @@ export class StubDataSource implements PersonalDataSource<ExportedProfile> {
  * to be seeded with it — which is exactly the default a test forgets, leaving
  * an assertion about listings passing against null.
  */
+/**
+ * Booking's export section, without the module (slice 4.8d).
+ *
+ * **A stub rather than the real `BookingDataService`**, matching
+ * `StubListingDataSource` beside it and for its reason: these tests are about the
+ * document Identity assembles, not about what Booking puts in its section. Wiring
+ * the real one would make an assertion about the export fail when a quote's shape
+ * changed.
+ */
+export class StubBookingDataSource implements PersonalDataSource<ExportedBookingsSection> {
+  private section: ExportedBookingsSection = {
+    hires: [],
+    lettings: [],
+    quotes: [],
+    truncated: false,
+  };
+
+  returns(section: Partial<ExportedBookingsSection>): this {
+    this.section = { ...this.section, ...section };
+    return this;
+  }
+
+  exportFor(): Promise<ExportedBookingsSection> {
+    return Promise.resolve(this.section);
+  }
+}
+
 export class StubListingDataSource implements PersonalDataSource<ExportedListingsSection> {
   private listings: ExportedListings = [];
   private truncated = false;
@@ -607,6 +635,7 @@ export interface IdentityFakes {
   readonly source: StubDataSource;
   /** Catalogue's section of the export (slice 2.5a). */
   readonly listingSource: StubListingDataSource;
+  readonly bookingSource: StubBookingDataSource;
   readonly summaries: StubProfileSummarySource;
   readonly approvals: InMemoryAdminApprovalStore;
   readonly authenticationEvents: InMemoryAuthenticationEvents;
@@ -626,6 +655,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
   const eraser = new RecordingEraser();
   const source = new StubDataSource();
   const listingSource = new StubListingDataSource();
+  const bookingSource = new StubBookingDataSource();
   const summaries = new StubProfileSummarySource();
   const approvals = new InMemoryAdminApprovalStore();
   const authenticationEvents = new InMemoryAuthenticationEvents();
@@ -659,6 +689,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     eraser,
     source,
     listingSource,
+    bookingSource,
     summaries,
     approvals,
     authenticationEvents,
@@ -677,6 +708,7 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
       audit.service,
       source,
       listingSource,
+      bookingSource,
       authenticationEvents,
       erasure,
     ),
