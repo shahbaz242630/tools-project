@@ -100,4 +100,63 @@ export interface QuoteStore {
    * would be the kind of name a later reader trusts and should not.
    */
   deleteUnbookedForRenter(renterId: string): Promise<number>;
+
+  /**
+   * The quotes this person was given that became nothing (§10.1, slice 4.8d).
+   *
+   * **Exactly the rows `deleteUnbookedForRenter` would take**, expressed with the
+   * same `bookings: { none: {} }` predicate rather than a second description of
+   * it. That is what makes the export a mirror of the eraser instead of a
+   * separate view that can drift from it: what appears here is what disappears on
+   * deletion, and what does not appear is kept because the terms belong to the
+   * counterparty too.
+   *
+   * **The item's title comes from the listing**, which is a join rather than a
+   * copy because a quote — unlike a booking (§8.2) — keeps no terms of its own.
+   * `quotes.listingId` is `ON DELETE CASCADE`, so a quote outliving its listing
+   * is unrepresentable and the title is always there.
+   *
+   * Bounded, and one more than asked for, so the caller can tell a full page from
+   * a complete list. Newest first.
+   */
+  listUnbookedForRenter(
+    renterId: string,
+    limit: number,
+  ): Promise<readonly ExportableQuote[]>;
+
+  /**
+   * The postcode on each of these quotes (§10.1, slice 4.8d).
+   *
+   * **A map rather than a list, keyed by quote**, because the caller holds
+   * bookings and needs the postcode that belongs to each one. Returning rows
+   * would make the caller do the pairing, which is where an off-by-one puts one
+   * person's postcode against another person's hire.
+   *
+   * **Renter-scoped, so a booking's postcode can only be read by the person who
+   * gave it.** The owner's side of the export deliberately carries no postcode at
+   * all; without the scope here that would be one forgotten argument away.
+   */
+  postcodesFor(
+    quoteIds: readonly string[],
+    renterId: string,
+  ): Promise<ReadonlyMap<string, string>>;
+}
+
+/**
+ * A quote as the data export describes it (slice 4.8d).
+ *
+ * **Not `QuoteRecord`.** That carries the line items, the fee split, the pinned
+ * category version and the timezone — the machinery of pricing, none of which is
+ * personal data and all of which would make a subject-access response harder to
+ * read rather than more complete.
+ */
+export interface ExportableQuote {
+  readonly id: string;
+  readonly startAt: Date;
+  readonly endAt: Date;
+  readonly itemTitle: string;
+  readonly total: MoneyValue;
+  readonly renterPostcode: string;
+  readonly createdAt: Date;
+  readonly expiresAt: Date;
 }

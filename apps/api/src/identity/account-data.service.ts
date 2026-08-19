@@ -2,6 +2,7 @@ import { Paging, Time } from '@platform/core';
 import { EXPORT_SCHEMA_VERSION } from '@platform/contracts';
 import type {
   DataExport,
+  ExportedBookingsSection,
   ExportedListingsSection,
   ExportedProfile,
 } from '@platform/contracts';
@@ -86,6 +87,17 @@ export class AccountDataService {
      * and reached here through `AccountErasure`.
      */
     private readonly listingSource: PersonalDataSource<ExportedListingsSection>,
+    /**
+     * Booking's section — what this person hired, what was hired from them, and
+     * the prices they were quoted and did not take (slice 4.8d).
+     *
+     * **A third source rather than a wider second one**, for the reason the
+     * second exists: each module supplies what it holds and knows how to make
+     * readable. It is also the module that could be *erased* and not exported
+     * until this slice, which is the failure the two ports are shaped to make
+     * visible.
+     */
+    private readonly bookingSource: PersonalDataSource<ExportedBookingsSection>,
     private readonly authenticationEvents: AuthenticationEvents,
     /**
      * Shared with the mirror, which performs the same erasure when Clerk
@@ -113,7 +125,7 @@ export class AccountDataService {
     const user = await this.users.findById(actor.userId);
     if (user === null) return null;
 
-    const [profile, activity, signIns, listings] = await Promise.all([
+    const [profile, activity, signIns, listings, bookings] = await Promise.all([
       this.profileSource.exportFor(user.id),
       // **Both halves** — what they did and what was done to them (slice 1.12).
       // Through schema 4 this was `listForActor` alone, and an administrator's
@@ -125,6 +137,7 @@ export class AccountDataService {
       // exactly is otherwise indistinguishable from a truncated one.
       this.authenticationEvents.listFor(user.id, Paging.probe(EXPORTED_SIGN_IN_LIMIT)),
       this.listingSource.exportFor(user.id),
+      this.bookingSource.exportFor(user.id),
     ]);
 
     // The same probe-and-fit the listings section performs for itself, now
@@ -216,6 +229,19 @@ export class AccountDataService {
       // would be the guess `Paging.probe` exists to remove.
       listings: listings.listings,
       listingsTruncated: listings.truncated,
+      /*
+       * **Three arrays under one key** (slice 4.8d), because they are three
+       * answers to one question — what this person is party to — and splitting
+       * them across the top level would make a reader hunt for the other two.
+       * The truncation flag is the section's own, for the reason the other three
+       * are: only the module that applied the bound knows whether it bit.
+       */
+      bookings: {
+        hires: bookings.hires,
+        lettings: bookings.lettings,
+        quotes: bookings.quotes,
+      },
+      bookingsTruncated: bookings.truncated,
     };
   }
 

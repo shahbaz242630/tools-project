@@ -32,9 +32,13 @@ export const ME_EXPORT_PATH = '/me/export';
  * which reads like corruption. Version 2 added `signIns` and
  * `signInsTruncated` in slice 1.11a; version 3 added `listings` in 2.5a, when
  * Catalogue became the second module holding personal data; version 4 added
- * `listingsTruncated` in H2, when the listings read stopped being unbounded.
+ * `listingsTruncated` in H2, when the listings read stopped being unbounded;
+ * version 6 added `bookings` in 4.8d, when Booking became the third module
+ * holding personal data — and the first that could be *erased* without being
+ * exportable, which is the asymmetry `PersonalDataSource` exists to make
+ * obvious.
  */
-export const EXPORT_SCHEMA_VERSION = 5;
+export const EXPORT_SCHEMA_VERSION = 6;
 
 /** The account itself, as Identity & Access holds it. */
 export const exportedAccountSchema = z.object({
@@ -226,6 +230,125 @@ export interface ExportedListingsSection {
 }
 
 /**
+ * A hire this person asked for, as Booking holds it (slice 4.8d).
+ *
+ * **The postcode is why this section exists.** 4.4b gave the module a
+ * `PersonalDataEraser` and no `PersonalDataSource`, so a renter's postcode on a
+ * quote was erasable and appeared in no subject-access response — the one
+ * direction of the pair that fails silently. It is the renter's own data and it
+ * is here in full.
+ *
+ * **The terms are the copy the booking kept** (§8.2), not a join through the
+ * listing, so a hire stays legible in a file somebody opens years later after the
+ * item has been retitled, repriced or erased.
+ *
+ * **The other party is not named**, exactly as `bookingSchema` does not name
+ * them. Article 15 is about the data we hold on *this* person; the owner's
+ * identity is somebody else's.
+ */
+export const exportedHireSchema = z.array(
+  z.object({
+    id: z.string(),
+    state: z.string(),
+    startDate: z.string(),
+    /** Inclusive, as the renter asked for it. */
+    endDate: z.string(),
+    itemTitle: z.string(),
+    categoryName: z.string(),
+    total: z.object({ amount: z.number().int(), currency: z.string() }),
+    /**
+     * The postcode given when the price was asked for.
+     *
+     * Null only for a booking whose quote has since been erased, which cannot
+     * happen today — `quotes.renterId` is `RESTRICT` and a booked quote is kept
+     * deliberately, because the terms belong to the counterparty too.
+     */
+    collectionPostcode: z.string().nullable(),
+    createdAt: z.iso.datetime(),
+  }),
+);
+export type ExportedHires = z.infer<typeof exportedHireSchema>;
+
+/**
+ * A booking somebody made on this person's own listing (slice 4.8d).
+ *
+ * **Here because a letting is a record about the owner too** — what their item
+ * did, and what it earned. A file answering *what do you hold about me* that
+ * showed the hires somebody made and none of the four bookings on their drill
+ * would be an incomplete answer to the question §10.1 makes a legal one.
+ *
+ * **It carries no renter and no postcode**, which is the whole reason it is a
+ * separate shape rather than the array above with a flag. The counterparty's
+ * address is not this person's data, and §8.4.1's posture is that identity
+ * arrives with commitment — Phase 6 opens that conversation and nothing here
+ * pre-empts it.
+ *
+ * **`itemCharge` and no payout.** §3.4's commission arithmetic is Phase 5, so a
+ * figure labelled as what the owner received would be false in a document
+ * somebody may rely on.
+ */
+export const exportedLettingSchema = z.array(
+  z.object({
+    id: z.string(),
+    listingId: z.uuid(),
+    state: z.string(),
+    startDate: z.string(),
+    endDate: z.string(),
+    itemTitle: z.string(),
+    /** What the hire earns at the owner's own rates, before the platform's cut. */
+    itemCharge: z.object({ amount: z.number().int(), currency: z.string() }),
+    createdAt: z.iso.datetime(),
+  }),
+);
+export type ExportedLettings = z.infer<typeof exportedLettingSchema>;
+
+/**
+ * A price this person was quoted and did not take up (slice 4.8d).
+ *
+ * **Only the ones that became nothing.** A quote a booking was made from is
+ * represented by the hire above, which carries its postcode and its money;
+ * listing it twice would make a reader wonder which was authoritative.
+ *
+ * **These are exactly the rows erasure deletes**, which is what makes the section
+ * a mirror of the eraser rather than a second view of it: what is here goes when
+ * the account does, and what is in `hires` is kept because the terms belong to
+ * the counterparty too. §10.1 requires the deletion workflow to explain what
+ * survives, and this is the half that does not.
+ */
+export const exportedQuoteSchema = z.array(
+  z.object({
+    id: z.string(),
+    startDate: z.string(),
+    endDate: z.string(),
+    itemTitle: z.string(),
+    total: z.object({ amount: z.number().int(), currency: z.string() }),
+    collectionPostcode: z.string(),
+    createdAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime(),
+  }),
+);
+export type ExportedQuotes = z.infer<typeof exportedQuoteSchema>;
+
+/**
+ * Booking's contribution to the document, as it hands it over.
+ *
+ * **A shape rather than three bare arrays**, matching `ExportedListingsSection`
+ * and for its reason: all three reads are bounded, and the module that applied
+ * the bound is the only one that knows whether it bit. One flag covers all three
+ * because a person who has hit the bound on any of them is owed the same
+ * sentence, and three flags would be three ways to say it.
+ *
+ * Not a schema, because it never crosses the wire: it is the internal type of a
+ * `PersonalDataSource` section.
+ */
+export interface ExportedBookingsSection {
+  readonly hires: ExportedHires;
+  readonly lettings: ExportedLettings;
+  readonly quotes: ExportedQuotes;
+  readonly truncated: boolean;
+}
+
+/**
  * Everything the platform holds about one person.
  *
  * `retained` is not decoration: BRD §10.1 requires the deletion workflow to
@@ -250,6 +373,20 @@ export const dataExportSchema = z.object({
   activityTruncated: z.boolean(),
   signIns: exportedSignInsSchema,
   listings: exportedListingsSchema,
+  /**
+   * What this person hired, what was hired from them, and what they were quoted
+   * and did not take (schema 6, slice 4.8d).
+   *
+   * **Three arrays rather than one**, because they answer to different rules:
+   * `hires` and `quotes` are the renter's own and carry their postcode;
+   * `lettings` is the owner's and deliberately carries nothing about the person
+   * on the other side.
+   */
+  bookings: z.object({
+    hires: exportedHireSchema,
+    lettings: exportedLettingSchema,
+    quotes: exportedQuoteSchema,
+  }),
 
   /**
    * Whether `signIns` was cut short.
@@ -278,6 +415,15 @@ export const dataExportSchema = z.object({
    * short and says so.
    */
   listingsTruncated: z.boolean(),
+
+  /**
+   * Whether any of the three booking arrays was cut short (schema 6).
+   *
+   * The fourth section to declare it, after sign-ins, listings and activity.
+   * H2's rule, unchanged: an export that truncates without saying so is one
+   * somebody reads as their whole record.
+   */
+  bookingsTruncated: z.boolean(),
 });
 export type DataExport = z.infer<typeof dataExportSchema>;
 

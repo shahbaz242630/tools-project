@@ -181,6 +181,15 @@ beforeEach(async () => {
     audit.service,
     { exportFor: (userId: string) => profiles.exportFor(userId) },
     { exportFor: (userId: string) => listings.service.exportFor(userId) },
+    /*
+     * An empty section, because these tests are about Identity's document and
+     * not about Booking's contribution to it. `StubBookingDataSource` is what a
+     * test that cares about the contents uses.
+     */
+    {
+      exportFor: () =>
+        Promise.resolve({ hires: [], lettings: [], quotes: [], truncated: false }),
+    },
     authenticationEvents,
     erasure,
   );

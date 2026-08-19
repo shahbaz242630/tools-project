@@ -3,7 +3,12 @@ import type { MoneyValue } from '@platform/core';
 import type { QuoteLineItem } from '@platform/contracts';
 import { parseQuoteLineItems } from '@platform/contracts';
 import type { PrismaClient } from '@platform/database';
-import type { NewQuote, QuoteRecord, QuoteStore } from './quote-store.js';
+import type {
+  ExportableQuote,
+  NewQuote,
+  QuoteRecord,
+  QuoteStore,
+} from './quote-store.js';
 
 /**
  * Quotes in Postgres (slice 4.4b).
@@ -61,6 +66,59 @@ export class PrismaQuoteStore implements QuoteStore {
     const row = await this.prisma.quote.findFirst({ where: { id, renterId } });
 
     return row === null ? null : toRecord(row);
+  }
+
+  async listUnbookedForRenter(
+    renterId: string,
+    limit: number,
+  ): Promise<readonly ExportableQuote[]> {
+    const rows = await this.prisma.quote.findMany({
+      // **The eraser's predicate, verbatim.** See the port: the export is a
+      // mirror of the erasure and drifts from it the moment this is rewritten.
+      where: { renterId, bookings: { none: {} } },
+      select: {
+        id: true,
+        startAt: true,
+        endAt: true,
+        totalAmount: true,
+        currency: true,
+        renterPostcode: true,
+        createdAt: true,
+        expiresAt: true,
+        listing: { select: { title: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      startAt: row.startAt,
+      endAt: row.endAt,
+      itemTitle: row.listing.title,
+      total: Money.money(row.totalAmount, row.currency as MoneyValue['currency']),
+      renterPostcode: row.renterPostcode,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+    }));
+  }
+
+  async postcodesFor(
+    quoteIds: readonly string[],
+    renterId: string,
+  ): Promise<ReadonlyMap<string, string>> {
+    // An empty `IN ()` is a round trip to be told nothing, on the export path
+    // for somebody who has never booked — which is most people.
+    if (quoteIds.length === 0) return new Map();
+
+    const rows = await this.prisma.quote.findMany({
+      // Scoped by renter as well as by id, so the postcodes this can return are
+      // only ever the caller's own.
+      where: { id: { in: [...quoteIds] }, renterId },
+      select: { id: true, renterPostcode: true },
+    });
+
+    return new Map(rows.map((row) => [row.id, row.renterPostcode]));
   }
 
   async deleteUnbookedForRenter(renterId: string): Promise<number> {

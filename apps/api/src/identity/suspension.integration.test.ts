@@ -119,6 +119,15 @@ beforeEach(async () => {
     // Catalogue's section, stubbed empty — this file is about what suspension
     // refuses, and it creates no listings.
     { exportFor: () => Promise.resolve({ listings: [], truncated: false }) },
+    /*
+     * An empty section, because these tests are about Identity's document and
+     * not about Booking's contribution to it. `StubBookingDataSource` is what a
+     * test that cares about the contents uses.
+     */
+    {
+      exportFor: () =>
+        Promise.resolve({ hires: [], lettings: [], quotes: [], truncated: false }),
+    },
     authenticationEvents,
     erasure,
   );

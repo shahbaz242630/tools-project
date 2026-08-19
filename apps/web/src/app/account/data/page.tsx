@@ -54,13 +54,28 @@ export default function DataExportPage() {
             <strong>Every listing you have created</strong>, each with the collection
             address you gave for it — including listings that are still drafts
           </li>
+          {/*
+            **Added in 4.8d with the section itself, and the pairing is the
+            point.** This list is the disclosure: it is what somebody reads to
+            decide whether to download a file, and a file that contains more than
+            the list says is a §10.1 answer that under-states itself. Nothing
+            would have failed — the export was correct and the page describing it
+            was not — and it was found by reading this page after the section
+            shipped.
+          */}
+          <li>
+            <strong>Everything you have booked or been booked for</strong> — the hires
+            you asked for, what other people booked on your listings, and the prices you
+            were quoted and did not take up, each with the postcode you gave
+          </li>
         </ul>
       </section>
 
       <p>
-        Because it contains your home address, the collection address of every listing
-        and the places you have signed in from, treat the file the way you would treat a
-        bank statement. Downloading it is recorded in your account activity.
+        Because it contains your home address, the collection address of every listing,
+        the postcode you gave for each hire and the places you have signed in from,
+        treat the file the way you would treat a bank statement. Downloading it is
+        recorded in your account activity.
       </p>
 
       <p>

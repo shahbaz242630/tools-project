@@ -26,7 +26,12 @@ import type {
 } from '../availability-store.js';
 import type { ListingOwnership } from '../listing-ownership.js';
 import type { ListingQuoteSource, QuotableListing } from '../listing-quote-source.js';
-import type { NewQuote, QuoteRecord, QuoteStore } from '../quote-store.js';
+import type {
+  ExportableQuote,
+  NewQuote,
+  QuoteRecord,
+  QuoteStore,
+} from '../quote-store.js';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { AvailabilityService } from '../availability.service.js';
 import { RequestExpiryService } from '../request-expiry.service.js';
@@ -640,6 +645,61 @@ export class InMemoryQuoteStore implements QuoteStore {
    * pass a test the database would fail.
    */
   bookedQuoteIds = new Set<string>();
+
+  listUnbookedForRenter(
+    renterId: string,
+    limit: number,
+  ): Promise<readonly ExportableQuote[]> {
+    /*
+     * **The same two conditions `deleteUnbookedForRenter` applies**, written the
+     * same way rather than as a general "is this exportable" — the export is a
+     * mirror of the erasure, and a fake that disagreed with its own delete would
+     * let a test prove the mirror while the real pair had drifted.
+     *
+     * **The title is synthetic**, because this store holds no listings. What a
+     * test can assert here is *which* quotes appear and what the postcode is; the
+     * join is the db test's subject.
+     */
+    return Promise.resolve(
+      this.quotes
+        .filter(
+          (quote) => quote.renterId === renterId && !this.bookedQuoteIds.has(quote.id),
+        )
+        .sort(
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+        )
+        .slice(0, limit)
+        .map((quote) => ({
+          id: quote.id,
+          startAt: quote.startAt,
+          endAt: quote.endAt,
+          itemTitle: 'Petrol hedge trimmer',
+          total: quote.total,
+          renterPostcode: quote.renterPostcode,
+          createdAt: quote.createdAt,
+          expiresAt: quote.expiresAt,
+        })),
+    );
+  }
+
+  postcodesFor(
+    quoteIds: readonly string[],
+    renterId: string,
+  ): Promise<ReadonlyMap<string, string>> {
+    const wanted = new Set(quoteIds);
+
+    return Promise.resolve(
+      new Map(
+        this.quotes
+          // Renter-scoped as well as id-scoped, mirroring the real query: without
+          // it a test could pass while the adapter handed out somebody else's
+          // postcode.
+          .filter((quote) => wanted.has(quote.id) && quote.renterId === renterId)
+          .map((quote) => [quote.id, quote.renterPostcode] as const),
+      ),
+    );
+  }
 
   deleteUnbookedForRenter(renterId: string): Promise<number> {
     const before = this.quotes.length;
