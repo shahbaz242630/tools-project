@@ -2,7 +2,7 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
-  LISTINGS_PATH,
+  LISTINGS_ROUTE,
   ME_PATH,
   adminListingModerationPath,
   listingPath,
@@ -165,7 +165,7 @@ async function promoteAdmin(): Promise<void> {
 async function givenAPublishedListing(): Promise<string> {
   const created = await app.inject({
     method: 'POST',
-    url: LISTINGS_PATH,
+    url: LISTINGS_ROUTE,
     headers: auth('alice-token'),
     payload: {
       categorySlug: CATEGORY,

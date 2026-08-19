@@ -91,11 +91,23 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    # Group every action update including majors into one pull request. Actions
-    # are pinned by major tag and their failure mode is loud and immediate — CI
-    # either runs or it does not — so they are safe to review together. Five
-    # separate pull requests for five routine tag bumps is noise that trains
-    # you to stop reading them.
+    # Group every action update including majors into one pull request. An
+    # action's failure mode is loud and immediate — CI either runs or it does
+    # not — so they are safe to review together. Five separate pull requests for
+    # five routine bumps is noise that trains you to stop reading them.
+    #
+    # **Actions are pinned by commit SHA, not by tag, from 19 August 2026.** A
+    # tag is a mutable pointer: whoever can push to the action's repository can
+    # repoint `@v7` at new code, and it runs on the next workflow — including in
+    # `release.yml`, the one job holding `packages: write`. That is not
+    # hypothetical; it is how the March 2025 `tj-actions/changed-files` compromise
+    # reached thousands of repositories, which had pinned exactly as we had.
+    #
+    # **This entry is what makes the pin affordable.** A SHA never floats, so
+    # without something raising the update, pinning trades a supply-chain risk
+    # for an unpatched-action risk. Dependabot rewrites the SHA *and* the `# v7`
+    # comment beside it, so the tag stays readable and the bump stays reviewable.
+    # Do not "tidy" the pins back to tags to reduce diff noise.
     groups:
       github-actions:
         patterns:

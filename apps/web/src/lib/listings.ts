@@ -9,10 +9,10 @@
 
 import {
   AUTHORIZATION_HEADER,
-  CATEGORY_OPTIONS_PATH,
+  CATEGORY_OPTIONS_ROUTE,
   CLIENT_IP_HEADER,
-  LISTINGS_PATH,
-  PUBLIC_CATEGORIES_PATH,
+  LISTINGS_ROUTE,
+  PUBLIC_CATEGORIES_ROUTE,
   listingPath,
   listingPublicationPath,
   parseCategoryOptions,
@@ -361,7 +361,7 @@ export function fetchCategoryOptions(
   clientIp: string | null = null,
 ): Promise<ListingOutcome<readonly CategoryOption[]>> {
   return call(
-    new URL(CATEGORY_OPTIONS_PATH, apiBaseUrl).toString(),
+    new URL(CATEGORY_OPTIONS_ROUTE, apiBaseUrl).toString(),
     token,
     clientIp,
     fetchImpl,
@@ -377,7 +377,7 @@ export function createListing(
   clientIp: string | null = null,
 ): Promise<ListingOutcome<OwnerListing>> {
   return call(
-    new URL(LISTINGS_PATH, apiBaseUrl).toString(),
+    new URL(LISTINGS_ROUTE, apiBaseUrl).toString(),
     token,
     clientIp,
     fetchImpl,
@@ -472,7 +472,7 @@ export function fetchPublicCategories(
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
 ): Promise<PublicOutcome<readonly PublicCategory[]>> {
   return publicCall(
-    new URL(PUBLIC_CATEGORIES_PATH, apiBaseUrl).toString(),
+    new URL(PUBLIC_CATEGORIES_ROUTE, apiBaseUrl).toString(),
     fetchImpl,
     (raw) => parsePublicCategories(raw).categories,
   );
@@ -567,7 +567,7 @@ export function fetchOwnedListings(
   clientIp: string | null = null,
 ): Promise<ListingOutcome<OwnedListings>> {
   return call(
-    new URL(LISTINGS_PATH, apiBaseUrl).toString(),
+    new URL(LISTINGS_ROUTE, apiBaseUrl).toString(),
     token,
     clientIp,
     fetchImpl,

@@ -2,7 +2,7 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
-  ADMIN_CATEGORIES_PATH,
+  ADMIN_CATEGORIES_ROUTE,
   ME_PATH,
   adminCategoryPath,
   parseAdminCategory,
@@ -141,7 +141,7 @@ afterEach(async () => {
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
-const createPath = `${ADMIN_CATEGORIES_PATH}?reason=${encodeURIComponent(REASON)}`;
+const createPath = `${ADMIN_CATEGORIES_ROUTE}?reason=${encodeURIComponent(REASON)}`;
 
 async function createCategory(
   token = 'admin-token',
@@ -177,14 +177,14 @@ async function promoteAdmin(): Promise<void> {
 
 describe('authorisation', () => {
   it('refuses an anonymous caller', async () => {
-    const response = await app.inject({ method: 'GET', url: ADMIN_CATEGORIES_PATH });
+    const response = await app.inject({ method: 'GET', url: ADMIN_CATEGORIES_ROUTE });
     expect(response.statusCode).toBe(401);
   });
 
   it('refuses an ordinary signed-in user', async () => {
     const response = await app.inject({
       method: 'GET',
-      url: ADMIN_CATEGORIES_PATH,
+      url: ADMIN_CATEGORIES_ROUTE,
       headers: auth('bob-token'),
     });
     // 403, not 404: the route exists and they are simply not allowed to use it.
@@ -205,7 +205,7 @@ describe('authorisation', () => {
     // asking — the role check alone would pass here.
     const response = await app.inject({
       method: 'GET',
-      url: ADMIN_CATEGORIES_PATH,
+      url: ADMIN_CATEGORIES_ROUTE,
       headers: auth('stale-token'),
     });
     expect(response.statusCode).toBe(403);
@@ -248,7 +248,7 @@ describe('creating a category', () => {
     // action. Without the query parameter there is nothing to record.
     const response = await app.inject({
       method: 'POST',
-      url: ADMIN_CATEGORIES_PATH,
+      url: ADMIN_CATEGORIES_ROUTE,
       headers: auth('admin-token'),
       payload: { ...DRAFT },
     });
@@ -258,7 +258,7 @@ describe('creating a category', () => {
   it('rejects a reason too short to mean anything', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: `${ADMIN_CATEGORIES_PATH}?reason=${encodeURIComponent('why')}`,
+      url: `${ADMIN_CATEGORIES_ROUTE}?reason=${encodeURIComponent('why')}`,
       headers: auth('admin-token'),
       payload: { ...DRAFT },
     });
@@ -410,7 +410,7 @@ describe('reading categories', () => {
   it('lists them', async () => {
     const response = await app.inject({
       method: 'GET',
-      url: ADMIN_CATEGORIES_PATH,
+      url: ADMIN_CATEGORIES_ROUTE,
       headers: auth('admin-token'),
     });
 
@@ -445,7 +445,7 @@ describe('reading categories', () => {
     // ritual that devalues the ones that matter.
     const response = await app.inject({
       method: 'GET',
-      url: ADMIN_CATEGORIES_PATH,
+      url: ADMIN_CATEGORIES_ROUTE,
       headers: auth('admin-token'),
     });
     expect(response.statusCode).toBe(200);

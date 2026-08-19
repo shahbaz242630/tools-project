@@ -14,6 +14,23 @@
 import { execFileSync } from 'node:child_process';
 
 const REQUIRED_EXTENSIONS = ['postgis', 'btree_gist', 'pg_trgm', 'citext'];
+
+/**
+ * The PostGIS minor line staging serves, asserted rather than assumed.
+ *
+ * ADR 0032's radius search is measured against whatever PostGIS is underneath
+ * it, and the Phase 3 exit gate is a number produced on one of them. The local
+ * image tag is `17-3.5`, which floats: upstream publishes **no patch tags at
+ * all**, so the tag can move from 3.5.0 to 3.5.2 — as it had by 19 August 2026,
+ * while Neon still served 3.5.0 — and nothing said so. A patch difference is
+ * tolerable and a minor one is not, so the minor is what is checked.
+ *
+ * **Raise this only after Neon has moved**, and check Neon by asking it rather
+ * than by reading a note. From the box:
+ *
+ *     psql "$DIRECT_URL" -c "SELECT extversion FROM pg_extension WHERE extname='postgis'"
+ */
+const EXPECTED_POSTGIS_MINOR = '3.5';
 const DATABASES = ['rental_dev', 'rental_test'];
 const PG_CONTAINER = 'rental-postgres';
 const REDIS_CONTAINER = 'rental-redis';
@@ -83,6 +100,20 @@ if (pgUp) {
           `SELECT extversion FROM pg_extension WHERE extname='${extension}'`,
         );
         report(version !== '', `${database}: ${extension}`, version || 'not installed');
+
+        if (extension === 'postgis' && version !== '') {
+          // Minor, not patch — see EXPECTED_POSTGIS_MINOR. Compared as the
+          // first two dot-separated parts so `3.5.0` and `3.5.2` agree and
+          // `3.6.0` does not.
+          const minor = version.split('.').slice(0, 2).join('.');
+          report(
+            minor === EXPECTED_POSTGIS_MINOR,
+            `${database}: postgis is on the ${EXPECTED_POSTGIS_MINOR} line`,
+            minor === EXPECTED_POSTGIS_MINOR
+              ? version
+              : `found ${version}, staging serves ${EXPECTED_POSTGIS_MINOR}.x`,
+          );
+        }
       } catch (error) {
         report(false, `${database}: ${extension}`, String(error).split('\n')[0]);
       }

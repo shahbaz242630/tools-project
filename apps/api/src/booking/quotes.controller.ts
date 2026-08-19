@@ -93,8 +93,22 @@ export class QuotesController {
   /**
    * Read a quote back.
    *
-   * **Here so a price survives a page reload**, which is the whole point of it
-   * having an expiry rather than a lifetime of one response.
+   * **This was written so a price could survive a page reload, and no price
+   * does — nothing calls this route.** Found by the pre-Phase-5 audit on
+   * 19 August 2026: `quotePath` appears only in tests, and `request-panel.tsx`
+   * holds its quote in form-action state, so a reload drops it and the renter
+   * re-quotes. The sentence here claimed the opposite until now, which is the
+   * defect class this project keeps finding — a purpose written down at the
+   * moment of building and never checked against a caller.
+   *
+   * **Re-quoting is not harmful**, which is why this is a note rather than a
+   * bug: dates are still on the page, quoting is a `POST` a renter can repeat,
+   * and a fresh quote is priced from the same versioned configuration. What is
+   * lost is only the expiry clock, and starting that again is the honest answer
+   * to a reload anyway.
+   *
+   * **So it is unused surface with a deadline**, exactly as `GET
+   * /bookings/:bookingId` is: if Phase 5 closes without a caller, delete it.
    *
    * **An expired quote is 200, not 404 or 410.** It exists, it is theirs, and
    * `expiresAt` says it has passed — a renter who left the page open is owed

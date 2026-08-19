@@ -33,8 +33,33 @@ import { clerkMiddleware } from '@clerk/nextjs/server';
  * without a session — `/browse` and `/hire` are the whole product to a stranger.
  * `/api/webhooks/clerk` is public by necessity: Clerk cannot hold a session, and
  * that route verifies a signature instead (slice 1.2).
+ *
+ * **That paragraph used to be the only place the public set was written down,
+ * and this list the only place the private one was — so a page added to neither
+ * was in neither, silently.** `/bookings` shipped that way in 4.8a and stayed
+ * open for a session: `noindex`, holding both parties' hire history, telling a
+ * visitor *"Only you can see this page"* while a stranger read it. Nothing
+ * leaked — the fetch helper short-circuits on an absent token and the API
+ * refuses anyway — but it is the same defect the Phase 0–3 audit fixed on the
+ * three prefixes below, reintroduced by a page written seven sessions later.
+ * **`proxy.test.ts` now derives the page list from the filesystem and fails on
+ * any page classified as neither**, so the next one cannot ship undecided.
+ *
+ * **Default-deny was considered and rejected**, though it is what the API's
+ * `@AllowsSuspended` does and the argument there is the same one. The
+ * difference is `not-found.tsx`: this matcher sees every path a browser asks
+ * for, not only the ones that are pages, so protecting by default would send a
+ * signed-out visitor who mistyped a URL to sign in instead of to a 404 — a
+ * marketplace whose whole public surface is strangers following links should
+ * not do that. The test below is what makes opt-in safe: the omission that
+ * caused this bug is now a failing test rather than a silent default.
  */
-const SIGNED_IN_ONLY_PREFIXES = ['/account', '/admin', '/listings'] as const;
+const SIGNED_IN_ONLY_PREFIXES = [
+  '/account',
+  '/admin',
+  '/bookings',
+  '/listings',
+] as const;
 
 /**
  * Exact segment matching, never a bare `startsWith` on the prefix alone.

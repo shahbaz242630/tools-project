@@ -17,7 +17,7 @@
 
 import {
   BOOKINGS_ROUTE,
-  OWNER_BOOKINGS_PATH,
+  OWNER_BOOKINGS_ROUTE,
   parseBooking,
   parseBookingSummaries,
   parseOwnerBookings,
@@ -109,7 +109,7 @@ export function fetchBookingsOnMyListings(
   clientIp: string | null = null,
 ): Promise<ListingOutcome<OwnerBookings>> {
   return call(
-    new URL(OWNER_BOOKINGS_PATH, apiBaseUrl).toString(),
+    new URL(OWNER_BOOKINGS_ROUTE, apiBaseUrl).toString(),
     token,
     clientIp,
     fetchImpl,

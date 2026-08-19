@@ -13,6 +13,19 @@ services:
   postgres:
     # PostGIS is a hard dependency (BRD §4.2) — use the PostGIS image rather
     # than plain postgres so the extension is present, not just installable.
+    #
+    # **`17-3.5` is a floating minor tag and cannot be pinned tighter — upstream
+    # publishes no patch tags at all** (only `17-3.5` and `17-3.5-alpine`). So it
+    # guarantees the PostGIS *minor* matches Neon and nothing finer: on 19 August
+    # 2026 this tag served **3.5.2** while Neon's PG17 served **3.5.0**, checked
+    # by querying `pg_extension` on the staging database rather than by trusting
+    # the note that said they matched.
+    #
+    # That is the drift worth having: ADR 0032's radius search depends on
+    # PostGIS behaviour, which is stable across a patch release and is emphatically
+    # not across a minor. `scripts/verify-stack.mjs` asserts the minor, so a
+    # `17-3.6` image fails `pnpm db:verify` loudly instead of quietly changing
+    # what the Phase 3 gate was measured against.
     image: postgis/postgis:17-3.5
     container_name: rental-postgres
     restart: unless-stopped

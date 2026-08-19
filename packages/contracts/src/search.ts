@@ -423,7 +423,6 @@ export function listingSearchQueryString(search: ListingSearchQuery): string {
  * nothing else, and §8.17's landing pages are the only other thing that will
  * want it.
  */
-export const PUBLIC_CATEGORIES_PATH = '/public/categories';
 export const PUBLIC_CATEGORIES_ROUTE = '/public/categories';
 
 /**

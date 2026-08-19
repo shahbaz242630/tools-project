@@ -9,7 +9,6 @@ import {
   bookingAcceptPath,
   bookingDeclinePath,
   bookingPath,
-  OWNER_BOOKINGS_PATH,
   OWNER_BOOKINGS_ROUTE,
   listingRequestsPath,
   parseBooking,
@@ -169,7 +168,6 @@ const AN_OWNER_SUMMARY = {
 
 describe('the dashboard routes', () => {
   it('names its audience in the path, as /public/ and /admin/ do', () => {
-    expect(OWNER_BOOKINGS_PATH).toBe('/owner/bookings');
     expect(OWNER_BOOKINGS_ROUTE).toBe('/owner/bookings');
   });
 

@@ -13,7 +13,7 @@
  */
 
 import {
-  ADMIN_CATEGORIES_PATH,
+  ADMIN_CATEGORIES_ROUTE,
   AUTHORIZATION_HEADER,
   CLIENT_IP_HEADER,
   adminCategoryPath,
@@ -207,7 +207,7 @@ export function fetchCategories(
   clientIp: string | null = null,
 ): Promise<AdminCategoryOutcome<readonly AdminCategory[]>> {
   return call(
-    new URL(ADMIN_CATEGORIES_PATH, apiBaseUrl).toString(),
+    new URL(ADMIN_CATEGORIES_ROUTE, apiBaseUrl).toString(),
     token,
     clientIp,
     fetchImpl,
@@ -223,7 +223,7 @@ export function createCategory(
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
   clientIp: string | null = null,
 ): Promise<AdminCategoryOutcome<AdminCategory>> {
-  const url = new URL(ADMIN_CATEGORIES_PATH, apiBaseUrl);
+  const url = new URL(ADMIN_CATEGORIES_ROUTE, apiBaseUrl);
   url.searchParams.set('reason', reason);
 
   return call(url.toString(), token, clientIp, fetchImpl, parseAdminCategory, {
