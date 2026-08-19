@@ -276,3 +276,139 @@ export type ListingRequests = z.infer<typeof listingRequestsSchema>;
 export function parseListingRequests(raw: unknown): ListingRequests {
   return parseWith(listingRequestsSchema, 'The requests', raw);
 }
+
+/**
+ * Where each party reads the bookings they are part of (§14's *booking
+ * dashboards for both parties*, slice 4.8a).
+ *
+ * **Two routes rather than one with a `?role=`, and it is a security decision
+ * before it is a design one.** A role parameter is a scope the *caller* chooses.
+ * Every scoped read in this system takes its scope from the session and puts it
+ * in the query — `GET /listings` is the owner's own, and `findForParty` puts the
+ * party comparison in the `where` precisely so no line afterwards can be deleted.
+ * A route that branched on a parameter would be the first place a caller named
+ * their own scope, and the failure mode if that branch is ever wrong is one
+ * person reading another's bookings.
+ *
+ * **They are also two different projections, not one shape with optional
+ * fields** — the argument `listingRequestSchema` already makes at length. A
+ * single response would have to either hand the owner the renter's inclusive
+ * total, which reads as what they receive and is a false sentence about money, or
+ * withhold the total from the renter, who is owed it under §3.4.4.
+ *
+ * **`/owner/` names an audience, as `/public/`, `/admin/` and `/internal/` do.**
+ * ADR 0048's reasoning: a prefix that says who a route is for is one a log line,
+ * a route table and an eventual edge rule can all read at a glance. The
+ * alternatives considered — `/bookings/received` and `/listings/bookings` — both
+ * depend on the router preferring a static segment to a parametric one, which is
+ * true of Fastify and is a dependency a reader has to already know about.
+ *
+ * **The renter's list is `GET /bookings`, the bare collection**, which in this
+ * codebase already means *mine, as the session names me*. It is the sibling of
+ * the `POST` that creates one.
+ */
+export const OWNER_BOOKINGS_PATH = '/owner/bookings';
+
+export const OWNER_BOOKINGS_ROUTE = '/owner/bookings';
+
+/**
+ * One booking in the renter's own list.
+ *
+ * **A summary rather than `bookingSchema`, and the omissions are the point.**
+ * The line items and the event history are what a *record* of one hire is, and
+ * they are a click away on `GET /bookings/:bookingId`. Putting them on every row
+ * of a list would ship an unbounded nested array per booking to render a line of
+ * text.
+ *
+ * **The inclusive `total` and no breakdown.** §3.4.4 requires the figure a renter
+ * is shown to include mandatory fees wherever a price appears, and a list of
+ * hires is such a place; the split into charge and fee belongs beside the detail
+ * that explains it.
+ *
+ * **`requestExpiresAt` is carried on every row, not only a requested one**, for
+ * `bookingSchema`'s reason: it records what the deadline *was*, and a booking
+ * that beat it is more legible with it than without.
+ */
+export const bookingSummarySchema = z.strictObject({
+  id: z.string().min(1),
+  listingId: z.string().min(1),
+  state: bookingStateSchema,
+  startDate: calendarDateSchema,
+  /** Inclusive, as the renter asked for it. */
+  endDate: calendarDateSchema,
+  days: z.number().int().positive(),
+  itemTitle: z.string().min(1),
+  categoryName: z.string().min(1),
+  /** Inclusive of mandatory fees (§3.4.4). */
+  total: moneySchema,
+  /** When this expired unanswered, or would have (§8.6). ISO 8601 UTC. */
+  requestExpiresAt: z.string().min(1),
+});
+
+export type BookingSummary = z.infer<typeof bookingSummarySchema>;
+
+/**
+ * The renter's bookings, newest first.
+ *
+ * **`truncated` rather than silence**, which is H2's rule and §10.1's: a list cut
+ * short without saying so is one somebody reads as their whole record, and the
+ * person who hits the bound is by definition the one with most to look at.
+ */
+export const bookingSummariesSchema = z.strictObject({
+  bookings: z.array(bookingSummarySchema),
+  truncated: z.boolean(),
+});
+
+export type BookingSummaries = z.infer<typeof bookingSummariesSchema>;
+
+export function parseBookingSummaries(raw: unknown): BookingSummaries {
+  return parseWith(bookingSummariesSchema, 'The bookings', raw);
+}
+
+/**
+ * One booking in the owner's list, across all of their listings.
+ *
+ * **`itemCharge` and deliberately no payout**, which is the wording 4.6b settled
+ * and this reuses rather than reinvents: it is what the hire earns at the owner's
+ * own rates, before the platform's cut. §3.4 deducts commission from a payout and
+ * neither the arithmetic nor the payout exists until Phase 5, so a figure here
+ * that read as *what I receive* would be false.
+ *
+ * **The renter is not named.** `listingRequestSchema` argues it for a request, and
+ * nothing changes on acceptance: identity arriving with commitment is a decision
+ * with no mechanism behind it yet, Phase 6 owns the conversation, and a name is
+ * additive later where removing one is not.
+ *
+ * **`itemTitle` is here where the request projection omits it**, and the reason is
+ * the scope: `listingRequestSchema` is already nested under one listing, so the
+ * page knows what the item is. This list spans every listing an owner has, and a
+ * row without the item's name would be a date range belonging to nothing.
+ */
+export const ownerBookingSummarySchema = z.strictObject({
+  id: z.string().min(1),
+  listingId: z.string().min(1),
+  state: bookingStateSchema,
+  startDate: calendarDateSchema,
+  /** Inclusive, as the renter asked for it. */
+  endDate: calendarDateSchema,
+  days: z.number().int().positive(),
+  itemTitle: z.string().min(1),
+  /** What the hire earns at the owner's own rates, before the platform's cut. */
+  itemCharge: moneySchema,
+  /** When this expired unanswered, or would have (§8.6). ISO 8601 UTC. */
+  requestExpiresAt: z.string().min(1),
+});
+
+export type OwnerBookingSummary = z.infer<typeof ownerBookingSummarySchema>;
+
+/** The bookings on this owner's listings, newest first. */
+export const ownerBookingsSchema = z.strictObject({
+  bookings: z.array(ownerBookingSummarySchema),
+  truncated: z.boolean(),
+});
+
+export type OwnerBookings = z.infer<typeof ownerBookingsSchema>;
+
+export function parseOwnerBookings(raw: unknown): OwnerBookings {
+  return parseWith(ownerBookingsSchema, 'The bookings', raw);
+}

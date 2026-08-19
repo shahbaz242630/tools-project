@@ -551,6 +551,38 @@ export class PrismaBookingStore implements BookingStore {
     return new Set(rows.map((row) => row.listingId));
   }
 
+  async findForRenter(
+    renterId: string,
+    limit: number,
+  ): Promise<readonly BookingRecord[]> {
+    const rows = await this.prisma.booking.findMany({
+      where: { renterId },
+      orderBy: newestFirst(),
+      take: limit,
+    });
+
+    return rows.map(toRecord);
+  }
+
+  async findForOwner(
+    ownerId: string,
+    limit: number,
+  ): Promise<readonly BookingRecord[]> {
+    const rows = await this.prisma.booking.findMany({
+      /*
+       * **Through the listing, because the owner is not a column here.** The
+       * schema keeps `ownerId` on `listings` alone so a booking row cannot
+       * disagree with its listing about who is owed the money — `findForParty`'s
+       * owner half is expressed the same way and for the same reason.
+       */
+      where: { listing: { ownerId } },
+      orderBy: newestFirst(),
+      take: limit,
+    });
+
+    return rows.map(toRecord);
+  }
+
   async findForParty(id: string, userId: string): Promise<BookingWithEvents | null> {
     /*
      * **Both parties in one `OR`, in the query.** §8.6 gives the owner the
@@ -588,6 +620,19 @@ export class PrismaBookingStore implements BookingStore {
       events: row.events.map(toEventRecord),
     };
   }
+}
+
+/**
+ * Newest first, with a tiebreak that is not decoration (slice 4.8a).
+ *
+ * Two bookings written in the same millisecond compare equal on `createdAt`
+ * alone, and a stable sort then returns them in whatever order the rows arrive —
+ * which is how an owner's listings came back oldest-first about one run in eight
+ * in session 37. Phase 3's search carries the same `id` tiebreak, and for the
+ * same reason: a list without a total order is a list that pages inconsistently.
+ */
+function newestFirst() {
+  return [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
 }
 
 function toRecord(row: {

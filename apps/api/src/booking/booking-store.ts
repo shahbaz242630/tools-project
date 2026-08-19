@@ -299,6 +299,46 @@ export interface BookingStore {
   findForParty(id: string, userId: string): Promise<BookingWithEvents | null>;
 
   /**
+   * Every booking this person requested, newest first (slice 4.8a).
+   *
+   * **Renter-scoped in the query**, the rule `findForParty` states at length.
+   *
+   * **No events and no line items, unlike `findForParty`.** A list renders a line
+   * of text per booking; joining an unbounded history and a breakdown onto every
+   * row would fetch the whole of §6.2 to draw a date range. The detail read is
+   * what those are for, and it is one click away.
+   *
+   * **Bounded, and it returns one more row than asked for**, so the caller can
+   * tell a full page from a complete list rather than guessing — `Paging.probe`'s
+   * whole reason. The caller trims.
+   *
+   * **Newest first, by `createdAt` then `id`.** The tiebreak is not decoration:
+   * two rows written in the same millisecond compare equal, and a stable sort then
+   * returns them in insertion order, which is how a fake sorted an owner's
+   * listings oldest-first about one run in eight (session 37). Phase 3's search
+   * carries the same tiebreak for the same reason.
+   */
+  findForRenter(renterId: string, limit: number): Promise<readonly BookingRecord[]>;
+
+  /**
+   * Every booking on this owner's listings, newest first (slice 4.8a).
+   *
+   * **Owner-scoped through the listing**, because the owner is deliberately not a
+   * column on `bookings` — duplicating it would let a row disagree with itself
+   * about who is owed the money. Same shape as `findForParty`'s owner half.
+   *
+   * **Every state, including `REQUESTED`.** This is not a second copy of
+   * `findPendingRequests`: that one answers *what must I decide on this listing*
+   * and excludes anything past its §8.6 deadline; this answers *what is happening
+   * across everything I own*, and a dashboard that hid the pending ones would send
+   * an owner hunting listing by listing for them. The decision controls stay where
+   * 4.6b put them, so one action still lives in one place.
+   *
+   * Bounded and ordered exactly as `findForRenter` is.
+   */
+  findForOwner(ownerId: string, limit: number): Promise<readonly BookingRecord[]>;
+
+  /**
    * The subset of these listings that any booking refers to.
    *
    * **This is what `catalogue/booking-references.ts` declares**, answered here.
