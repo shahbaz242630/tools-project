@@ -1,0 +1,157 @@
+/*
+ * The bookings a person is part of (slice 4.8b).
+ *
+ * **One row shape for both sides**, which is the only thing the two lists share
+ * — they read different projections and say different things, and sharing a
+ * shape is what a stylesheet is for. The wording differences live in the
+ * components, and the state vocabulary lives in `booking-state.module.css`.
+ *
+ * Rows are separated rather than boxed, following `owner-requests.module.css`:
+ * a card inside a card is the nesting this design avoids everywhere else, and
+ * these already sit inside the page's section card.
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`.
+ */
+
+.list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.row {
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.row:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: none;
+}
+
+/*
+ * The item and its state on one line, because they are read together: *what*
+ * and *where it stands*. They stack on a narrow screen rather than shrinking the
+ * title, since the title is the thing somebody scans for.
+ */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+/*
+ * An `h3` because each row is a thing with a name, under the section's `h2`.
+ * Sized as body text — the heading level is for structure and navigation, not
+ * for shouting.
+ */
+.item {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.period {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: var(--text-body);
+}
+
+.days {
+  color: var(--ink-secondary);
+}
+
+.money {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: var(--text-body);
+}
+
+/*
+ * The qualifier that keeps the figure honest — "fees included" on the renter's
+ * side, "at your rates, before our commission" on the owner's. Quieter than the
+ * number and deliberately not hidden: it is what stops the figure being read as
+ * something it is not.
+ */
+.moneyNote {
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+}
+
+.category {
+  margin: 0 0 4px;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+}
+
+/*
+ * What the state means, in a sentence. Set apart from the facts above it because
+ * it is the platform explaining rather than reporting — the same distinction
+ * `listing-visibility.module.css` draws between a status line and a notice.
+ */
+.meaning {
+  margin: 6px 0 0;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+.empty {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+/*
+ * A read that failed, or a list that stopped short. Tinted, because both are the
+ * page telling somebody something is not as it appears — and both are `alert`
+ * rather than `status` in the markup, since neither followed anything they did.
+ */
+.problem {
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-card);
+  background: var(--danger-tint);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+/*
+ * When a request lapses, on the renter's row. Quieter than the facts above it
+ * and louder than the explanation below — it is the only thing on this page with
+ * a clock running on it.
+ */
+.deadline {
+  margin: 0 0 4px;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+}
+
+/*
+ * How many requests are waiting on the owner, above the list.
+ *
+ * **Rendered only when the count is more than nought**, so it stays a prompt
+ * rather than becoming furniture. Tinted like the page's other notices but in
+ * the neutral surface rather than the danger one: somebody asking to hire your
+ * drill is good news, and drawing it in red would say otherwise.
+ */
+.waiting {
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface-sunken);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}

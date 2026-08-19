@@ -29,6 +29,17 @@ import type { ListingSearchQuery, SearchRadiusMiles } from '@platform/contracts'
 export const BROWSE_PATH = '/browse';
 
 /**
+ * Both sides of a person's bookings (slice 4.8b).
+ *
+ * **Not `BOOKINGS_ROUTE` from the contracts package**, which is the API's
+ * `/bookings` — the pair this module's docblock exists about. They spell the
+ * same string today and mean different things: one returns JSON scoped to the
+ * renter, and this one renders a page with a section for each party. Either
+ * could move without the other.
+ */
+export const BOOKINGS_PAGE_PATH = '/bookings';
+
+/**
  * One listing, as a stranger reads it.
  *
  * **Not `publicListingPath` from the contracts package**, which is the API route
