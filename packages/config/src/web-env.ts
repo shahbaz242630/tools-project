@@ -97,8 +97,19 @@ const schema = z.object({
    * only process on the edge network, and verification needs the raw unparsed
    * body — which exists there and nowhere downstream. Forwarding raw bytes
    * inward just to re-verify them adds a place for the payload to be re-encoded
-   * and the signature to stop matching, and buys nothing: an attacker who can
-   * reach the API internally can already reach Postgres beside it.
+   * and the signature to stop matching.
+   *
+   * **The reason that used to be given for the last clause was wrong, and ADR
+   * 0050 replaces it.** It said re-verifying at the API "buys nothing: an
+   * attacker who can reach the API internally can already reach Postgres beside
+   * it" — which is false for `web` in particular, the one container an external
+   * attacker reaches first: it holds **no** database credentials, deliberately.
+   *
+   * What actually settles it is one line below this: a compromised web app holds
+   * `CLERK_SECRET_KEY` and can therefore manipulate identity at Clerk directly,
+   * so protecting our *mirror* from it defends nothing. **That argument does not
+   * transfer to money**, and ADR 0050 accordingly requires Phase 5's payment
+   * webhooks to be verified at the API rather than here.
    *
    * Genuinely secret. The webhook is the sole external writer of the identity
    * mirror, so forging one means creating and modifying accounts.
