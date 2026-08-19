@@ -537,3 +537,58 @@ export function interpretWebProbe({ exitCode, stdout }) {
 
   return { outcome: 'starting', detail: body };
 }
+
+/**
+ * Which of the box's release images may be deleted.
+ *
+ * **The prune that existed before this was `docker image prune --force`, which
+ * removes only *dangling* images — and a release image is never dangling,
+ * because every one of them is tagged with a commit SHA.** So it reclaimed
+ * nothing, every time, for as long as the box had been deploying. On 19 August
+ * 2026 that filled a 38 GB disk: 277 images, 35.5 GB, and a deploy that failed
+ * with `ENOSPC` *after* swapping the containers, leaving the recorded release
+ * and the running one disagreeing. Its comment — "never a tagged one, so
+ * nothing that could still be a rollback target is removed" — was true and was
+ * the whole problem.
+ *
+ * **The rule is the one the state file already implies: keep an image for
+ * anything a rollback can name.** `history` is exactly that list and is capped
+ * at {@link MAX_HISTORY}, so it needs no second retention setting to disagree
+ * with — the number of releases we can roll back to and the number we keep
+ * images for are now the same number by construction.
+ *
+ * Everything else goes. A tag pruned early is not lost: images are published to
+ * ghcr and `docker compose pull` fetches one back, so the cost of being wrong
+ * here is a slower rollback rather than an impossible one. The cost of being
+ * wrong the other way is a full disk, which is an outage.
+ *
+ * Pure so it can be tested. `deploy.mjs` supplies the tags and performs the
+ * removal — the same split the rest of this file uses.
+ *
+ * @param {readonly string[]} present every release image on the box, as `repo:tag`
+ * @param {{ current: string, history: readonly string[] }} state the release record
+ * @returns {string[]} the entries of `present` that are safe to remove
+ */
+export function releaseImagesToRemove(present, state) {
+  /*
+   * `current` as well as `history`, belt and braces. They should never disagree
+   * — `nextStateAfterDeploy` always prepends — but this function is what stands
+   * between a state file and `docker rmi`, and the failure mode of trusting the
+   * invariant is deleting the image that is running.
+   */
+  const keep = new Set([state.current, ...state.history]);
+
+  return present.filter((image) => {
+    const tag = image.slice(image.lastIndexOf(':') + 1);
+
+    /*
+     * An image whose name we cannot parse is kept. This runs against whatever
+     * `docker images` printed, and the safe answer to "I do not understand this
+     * line" is to leave it on disk — a stray image costs space, and a wrong
+     * deletion costs the release.
+     */
+    if (tag === '' || tag === image) return false;
+
+    return !keep.has(tag);
+  });
+}

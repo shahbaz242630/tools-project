@@ -15,6 +15,7 @@ import {
   planDeploy,
   planFailureResponse,
   planRollback,
+  releaseImagesToRemove,
   REHEARSAL_PROFILE,
   ReleaseError,
   setEnvValue,
@@ -522,5 +523,81 @@ describe('interpretWorkerProbe', () => {
 
     expect(result.outcome).toBe('ready');
     expect(result.unverified).toBe(true);
+  });
+});
+
+describe('releaseImagesToRemove', () => {
+  const repo = 'ghcr.io/owner/project';
+  const image = (service, tag) => `${repo}/${service}:${tag}`;
+
+  it('keeps every tag a rollback can name', () => {
+    const state = { version: 1, current: A, history: [A, B] };
+    const present = [
+      image('api', A),
+      image('web', A),
+      image('api', B),
+      image('api', C),
+    ];
+
+    expect(releaseImagesToRemove(present, state)).toEqual([image('api', C)]);
+  });
+
+  it('keeps the running release even if history somehow omits it', () => {
+    // Should be impossible — nextStateAfterDeploy always prepends. This is the
+    // case where trusting that invariant would delete the image being served.
+    const state = { version: 1, current: A, history: [B] };
+
+    expect(releaseImagesToRemove([image('api', A)], state)).toEqual([]);
+  });
+
+  it('removes nothing when every image is still reachable', () => {
+    const state = { version: 1, current: A, history: [A, B, C] };
+    const present = [image('api', A), image('worker', B), image('migrations', C)];
+
+    expect(releaseImagesToRemove(present, state)).toEqual([]);
+  });
+
+  it('keeps a line it cannot parse rather than guessing', () => {
+    const state = { version: 1, current: A, history: [A] };
+
+    // No tag at all, and an empty tag. Neither is a release image; both are
+    // left alone, because a wrong deletion costs more than a stray image.
+    expect(releaseImagesToRemove([`${repo}/api`, `${repo}/api:`], state)).toEqual([]);
+  });
+
+  it('removes every service of a release that has aged out, not just one', () => {
+    const state = { version: 1, current: A, history: [A] };
+    const present = [
+      image('api', A),
+      image('api', B),
+      image('web', B),
+      image('worker', B),
+      image('migrations', B),
+    ];
+
+    expect(releaseImagesToRemove(present, state)).toEqual([
+      image('api', B),
+      image('web', B),
+      image('worker', B),
+      image('migrations', B),
+    ]);
+  });
+
+  it('bounds what is kept by MAX_HISTORY, so disk use cannot grow without limit', () => {
+    // The property that matters: history is capped, so the set of images this
+    // function protects is capped by the same number rather than by a second
+    // setting that could disagree with it.
+    let state = { version: 1, current: sha(0), history: [sha(0)] };
+    for (let i = 1; i <= MAX_HISTORY + 5; i += 1) {
+      state = nextStateAfterDeploy(state, sha(i));
+    }
+
+    const present = Array.from({ length: MAX_HISTORY + 6 }, (_, i) =>
+      image('api', sha(i)),
+    );
+
+    expect(present.length - releaseImagesToRemove(present, state).length).toBe(
+      MAX_HISTORY,
+    );
   });
 });
