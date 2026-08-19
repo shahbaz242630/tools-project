@@ -1,3 +1,5 @@
+import { CALENDAR_OCCUPYING_STATES } from '../booking/booking-state-machine.js';
+import { periodFromLocalDates } from '../booking/local-period.js';
 import { Prisma } from '@platform/database';
 import type { PrismaClient } from '@platform/database';
 import type { ListingStatus, ModerationState } from '@platform/contracts';
@@ -147,6 +149,83 @@ export class PrismaListingSearch implements ListingSearchRepository {
         : Prisma.sql`AND l."searchDocument" @@ websearch_to_tsquery('english', ${search.keyword})`;
 
     /*
+     * **Free for the whole period, asked inside the radius query** (slice 4.9).
+     *
+     * ## Why it is here and not a filter afterwards
+     *
+     * ADR 0046 settled this for the category and the reasoning is identical: a
+     * predicate applied *after* `LIMIT`/`OFFSET` is the filter-after-paginate
+     * bug. Page one would come back short, page two would skip rows, and
+     * `truncated` would describe a set nobody was shown. So availability has to
+     * narrow the same statement the radius does.
+     *
+     * ## Why this file reads two of Booking's tables
+     *
+     * It is a **predicate-only read, never projected** — the shape ADR 0044
+     * already permits for `listings.status` and `listings.moderationState`, and
+     * the module invariant forbids cross-module *writes*. Nothing about a block
+     * or a booking leaves this query: no id, no renter, no note, no money. What
+     * comes out is the same listing id and distance an undated search returns.
+     *
+     * The alternative — Booking answering *which of these are free* through a
+     * port — is the filter-after-paginate bug wearing a port's clothes, because
+     * the only ids it could be handed are the ones already paginated.
+     *
+     * ## The two halves, and the one that is easy to get wrong
+     *
+     * **A block** is the owner saying no, and any overlap disqualifies.
+     *
+     * **A booking** disqualifies only in §8.5.1's nine calendar-occupying
+     * states, read from the same constant `reasonUnavailable` and the calendar
+     * use. **`REQUESTED` is deliberately not among them** (§7.1): several
+     * renters may hold a request for one period and the first acceptance takes
+     * it, so hiding a listing because somebody else has *asked* would remove it
+     * from search on the strength of a request that reserves nothing — and would
+     * let one person quietly suppress a listing by requesting it.
+     *
+     * **The comparison is half-open at both ends**, matching the `EXCLUDE`
+     * constraint, the trigger that builds `period` and `overlaps()` in the
+     * availability adapter: a hire ending as another begins does not overlap,
+     * which is what lets a Friday return and a Friday collection both happen.
+     * The bounds are built here from the inclusive dates the wire carries — the
+     * one conversion this file performs, and it is the same one
+     * `local-period.ts` performs for a booking.
+     *
+     * **Absent rather than always-true when no dates were chosen**, exactly as
+     * the category and keyword fragments are, so an undated search stays the
+     * statement slice 3.1c measured the exit gate against.
+     */
+    /*
+     * **`periodFromLocalDates`, not arithmetic written again here.** It is the
+     * function the calendar and the quote engine already use, so *"the 20th to
+     * the 22nd"* has one meaning in this system rather than three — and the
+     * third copy is exactly where they would drift. It is also the only place
+     * this file touches a timezone.
+     */
+    const period =
+      search.dates === null
+        ? null
+        : periodFromLocalDates(search.dates.from, search.dates.to);
+
+    const freeForDates =
+      period === null
+        ? Prisma.empty
+        : Prisma.sql`
+        AND NOT EXISTS (
+          SELECT 1 FROM "availability_blocks" b
+          WHERE b."listingId" = l."id"
+            AND b."startAt" < ${period.endAt}
+            AND b."endAt" > ${period.startAt}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "bookings" bk
+          WHERE bk."listingId" = l."id"
+            AND bk."state" = ANY(${[...CALENDAR_OCCUPYING_STATES]}::text[])
+            AND bk."startAt" < ${period.endAt}
+            AND bk."endAt" > ${period.startAt}
+        )`;
+
+    /*
      * **`ST_MakePoint` takes longitude first — x then y** — which is the reverse
      * of how the pair is spoken and written everywhere else in this codebase,
      * and is the single easiest thing here to get wrong. The trigger that
@@ -189,6 +268,7 @@ export class PrismaListingSearch implements ListingSearchRepository {
         AND l."moderationState" = ${PUBLICLY_VISIBLE_MODERATION}
         ${inCategory}
         ${matchesKeyword}
+        ${freeForDates}
         AND ST_DWithin(
               loc."fuzzedPoint",
               ST_SetSRID(ST_MakePoint(${origin.longitude}, ${origin.latitude}), 4326)::geography,

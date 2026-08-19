@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { Time } from '@platform/core';
+import { calendarDateSchema } from './availability.js';
+import { MAX_MAXIMUM_RENTAL_DAYS } from './catalogue.js';
 import { coarseLocationSchema, postcodeSchema } from './address.js';
 import type { CoarseLocation } from './address.js';
 import {
@@ -388,6 +391,20 @@ export function listingSearchQueryString(search: ListingSearchQuery): string {
   if (search.page !== FIRST_SEARCH_PAGE) {
     parts.push(`page=${String(search.page)}`);
   }
+  /*
+   * **Both or neither, which the type already guarantees** (slice 4.9). The pair
+   * is one field precisely so this cannot write one parameter and forget the
+   * other — a half-range in a URL is a search the parser then refuses, and the
+   * searcher would see a 400 for a link the page itself minted.
+   *
+   * **Omitted entirely when absent**, like the three above and for the same
+   * reason: one search, one URL. An undated search must not mint a second
+   * address for the page slice 2.12 has to declare canonical.
+   */
+  if (search.dates !== null) {
+    parts.push(`availableFrom=${search.dates.from}`);
+    parts.push(`availableTo=${search.dates.to}`);
+  }
 
   return parts.join('&');
 }
@@ -462,13 +479,122 @@ export function parsePublicCategories(raw: unknown): {
  * 3.3a). Same absent-means-all treatment, and see `searchKeywordSchema` for why
  * it is bounded and why it is a filter rather than a sort.
  */
-export const listingSearchQuerySchema = z.object({
+/** Treat a blank or whitespace-only parameter as though it were not sent. */
+function blankIsAbsent<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema.optional(),
+  );
+}
+
+/**
+ * The dates a searcher wants the item for (BRD §8.4 as amended, slice 4.9).
+ *
+ * **A pair or nothing, and never half of one.** Two independent nullable fields
+ * would make `availableFrom` without `availableTo` representable, and every
+ * layer downstream would then have to decide what a half-range means — which is
+ * three places to decide it and two of them wrong. The parse collapses the two
+ * query parameters into one value, so a URL builder cannot emit half a filter
+ * and the SQL cannot be handed one.
+ *
+ * **Inclusive at both ends**, as every date on this platform's wires is: "the
+ * 20th to the 22nd" is three days and the last one is the 22nd. The conversion
+ * to the half-open pair the database holds happens once, on the server.
+ *
+ * **Bounded by the statutory ceiling** rather than left open. §8.5.3 makes 88
+ * days the longest hire anybody may agree to anywhere on the platform — a hire
+ * *capable of subsisting* beyond three months is regulated consumer hire under
+ * the CCA 1974 — so a longer search is asking for something no listing can
+ * answer. Refusing it with a sentence is better than running a query guaranteed
+ * to return nothing, which would read as *there is nothing near you*.
+ */
+export const searchDatesSchema = z
+  .object({
+    /*
+     * **Blank is absent, not a bad date.** A plain GET form submits every named
+     * control, so an untouched pair of date inputs sends
+     * `availableFrom=&availableTo=` — and refusing that would 400 the most
+     * ordinary search on the page. It is the same case `searchCategorySchema`
+     * swallows for the "All categories" option, and it is preprocessed here for
+     * the same reason: the alternative is a form that cannot be submitted
+     * without touching a filter nobody wanted.
+     */
+    availableFrom: blankIsAbsent(calendarDateSchema),
+    availableTo: blankIsAbsent(calendarDateSchema),
+  })
+  .superRefine((value, context) => {
+    const from = value.availableFrom;
+    const to = value.availableTo;
+
+    if ((from === undefined) !== (to === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        // Named on the field that is missing, so a form can put the message
+        // beside the control somebody has to fix.
+        path: [from === undefined ? 'availableFrom' : 'availableTo'],
+        message: 'give both dates or neither',
+      });
+      return;
+    }
+    if (from === undefined || to === undefined) return;
+
+    // String comparison is date comparison for `YYYY-MM-DD`, which is the one
+    // useful property of the format and the reason it is the format.
+    if (to < from) {
+      context.addIssue({
+        code: 'custom',
+        path: ['availableTo'],
+        message: 'the last day cannot fall before the first',
+      });
+      return;
+    }
+
+    if (
+      Time.rentalDayCount(Time.startOfLocalDay(from), Time.startOfLocalDay(to)) + 1 >
+      MAX_MAXIMUM_RENTAL_DAYS
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['availableTo'],
+        message: `a hire cannot run longer than ${String(MAX_MAXIMUM_RENTAL_DAYS)} days`,
+      });
+    }
+  })
+  .transform((value) =>
+    value.availableFrom === undefined || value.availableTo === undefined
+      ? null
+      : { from: value.availableFrom, to: value.availableTo },
+  );
+
+export type SearchDates = z.infer<typeof searchDatesSchema>;
+
+/**
+ * The fields a search carries one at a time, as an object that keeps its
+ * `.shape`.
+ *
+ * **Separate from the full schema because the browse page salvages fields
+ * individually.** When a whole query is refused, that page re-parses each field
+ * on its own to decide what to leave in the form — a bad category falls back to
+ * "all" while the postcode is echoed back for the person to fix. Zod's
+ * intersection has no `.shape`, so folding the dates in directly would have
+ * taken that away; naming the object is what keeps both.
+ */
+export const listingSearchFieldsSchema = z.object({
   postcode: postcodeSchema,
   radiusMiles: searchRadiusMilesSchema.default(DEFAULT_SEARCH_RADIUS_MILES),
   page: searchPageSchema.default(FIRST_SEARCH_PAGE),
   category: searchCategorySchema,
   keyword: searchKeywordSchema,
 });
+
+export const listingSearchQuerySchema = listingSearchFieldsSchema
+  /*
+   * **The dates are parsed from the same object and folded in**, rather than
+   * declared as a field beside the others, because they are two parameters that
+   * become one value. `z.object` cannot express that on its own; the intersection
+   * lets the pair keep its own refinements and still arrive as `search.dates`.
+   */
+  .and(searchDatesSchema.transform((dates) => ({ dates })));
 
 /**
  * One search, as every layer names it.
@@ -616,6 +742,19 @@ export interface PublicListingSearchResults {
    * for a few seconds during a deploy, which is the honest failure; the
    * alternative fails open into the bug.
    */
+  /**
+   * Which dates this was narrowed to, or null for any (slice 4.9).
+   *
+   * **Echoed for `category`'s and `keyword`'s reason**: a response that did not
+   * say which question it answered reads as an answer to a different one. Here
+   * that would be a dated search looking like an undated one that found little —
+   * *"nothing near you"* when the truth is *"nothing near you free that week"*,
+   * which is a claim about the area we would be making on no evidence.
+   *
+   * It is also what the pager reads to keep its links pointing at the search
+   * that actually ran, and what the empty state offers to drop.
+   */
+  readonly dates: { readonly from: string; readonly to: string } | null;
   readonly originStatus: SearchOriginStatus;
 }
 
@@ -641,6 +780,8 @@ const publicListingSearchResultsSchema = z.object({
   // "all of them", whereas an absent origin status means the server did not
   // tell us whether it looked — which is precisely the thing that must never be
   // guessed. Same treatment as `page`, for the same reason.
+  /** The period searched for, or null for any (slice 4.9). Dates, never instants. */
+  dates: z.object({ from: calendarDateSchema, to: calendarDateSchema }).nullable(),
   originStatus: searchOriginStatusSchema,
 });
 

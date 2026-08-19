@@ -32,6 +32,7 @@ const page = (
   page: 1,
   category: null,
   keyword: null,
+  dates: null,
   // The default is the ordinary case — we placed the origin and ran the query —
   // so every test below reads as being about what the search *found*. The one
   // group that overrides it is the one about not having searched at all.
@@ -52,6 +53,7 @@ const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery =
   page: 1,
   category: null,
   keyword: null,
+  dates: null,
   ...over,
 });
 
@@ -1138,5 +1140,70 @@ describe('whether a search was narrowed', () => {
     ['both', { category: 'outdoor-gardening', keyword: 'hedge trimmer' }],
   ])('is narrowed by %s', (_name, over) => {
     expect(isNarrowed(searchFor(over))).toBe(true);
+  });
+});
+
+describe('what a dated search says it found (slice 4.9)', () => {
+  const DATES = { from: '2026-09-15', to: '2026-09-17' };
+
+  it('says the tools are free then, not merely near you', () => {
+    /*
+     * **"1 tool near you" is false once the filter is on**, in the way that
+     * matters: there were two near them and one was booked. A searcher reading
+     * it concludes the area is thin and widens the radius, when what they should
+     * change is the dates. The same class as the geocoder outage the Phase 0–3
+     * audit found — a narrower question answered in a wider question's words.
+     */
+    render(
+      <BrowseResults
+        search={searchFor({ dates: DATES })}
+        results={page({ dates: DATES })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      '1 tool free 15 Sept 2026 to 17 Sept 2026',
+    );
+  });
+
+  it('still says "near you" when no dates were asked for', () => {
+    // The undated page must read exactly as it did before this slice.
+    render(<BrowseResults search={searchFor()} results={page()} categoryName={null} />);
+
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      '1 tool near you',
+    );
+  });
+
+  it('names the dates when it found nothing', () => {
+    // "Nothing within 20 miles" is a statement about the catalogue; "nothing
+    // free on those dates" is a statement about three days. The first sends
+    // somebody away, the second sends them to a different week.
+    render(
+      <BrowseResults
+        search={searchFor({ dates: DATES })}
+        results={page({ results: [], dates: DATES })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      /free 15 Sept 2026 to 17 Sept 2026/,
+    );
+  });
+
+  it('says a single day once rather than twice', () => {
+    render(
+      <BrowseResults
+        search={searchFor({ dates: { from: '2026-09-15', to: '2026-09-15' } })}
+        results={page({ dates: { from: '2026-09-15', to: '2026-09-15' } })}
+        categoryName={null}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      '1 tool free 15 Sept 2026',
+    );
   });
 });

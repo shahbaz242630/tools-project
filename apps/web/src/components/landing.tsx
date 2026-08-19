@@ -118,6 +118,9 @@ export function Landing() {
           category={null}
           categories={[]}
           keyword={null}
+          /* The hero is an entry point: it carries no dates to preserve, exactly
+             as it carries no keyword and no categories. */
+          dates={null}
           keywordField={false}
           error={null}
           className={styles.heroSearch}

@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildQuery, percentile, TARGET_P95_MS } from './search-query.mjs';
+import { Time } from '@platform/core';
+import {
+  buildQuery,
+  percentile,
+  readCalendarOccupyingStates,
+  TARGET_P95_MS,
+} from './search-query.mjs';
 
 const ADAPTER = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -13,6 +19,18 @@ const ADAPTER = join(
   'src',
   'search-location',
   'prisma-listing-search.ts',
+);
+
+/** The state machine, read the same way the adapter is (slice 4.9). */
+const MACHINE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'apps',
+  'api',
+  'src',
+  'booking',
+  'booking-state-machine.ts',
 );
 
 const PARAMETERS = {
@@ -186,5 +204,83 @@ describe('the target', () => {
     // A constant rather than prose, because a gate number that lives only in a
     // docblock is one somebody re-decides by accident.
     expect(TARGET_P95_MS).toBe(200);
+  });
+});
+
+describe('the date filter (slice 4.9)', () => {
+  /*
+   * **`Time.fromIsoUtc`, not `new Date`.** `no-restricted-globals` refuses the
+   * constructor across this repository (ADR 0003) — and it is right to here as
+   * well as in application code: the two instants below are the bounds the
+   * predicate is measured against, and a constructor that parses a bare date as
+   * midnight UTC is the exact class of bug the rule exists for.
+   */
+  const DATES = {
+    startAt: Time.fromIsoUtc('2026-09-01T00:00:00.000Z'),
+    endAt: Time.fromIsoUtc('2026-09-04T00:00:00.000Z'),
+  };
+
+  it('leaves no availability predicate at all when no dates were asked for', () => {
+    // The undated statement has to stay the one slice 3.1c measured the exit
+    // gate against, which means an absent filter contributes nothing — not an
+    // always-true clause (ADR 0046).
+    const sql = buildQuery(readFileSync(ADAPTER, 'utf8'), PARAMETERS);
+
+    expect(sql).not.toContain('availability_blocks');
+    expect(sql).not.toContain('bookings');
+  });
+
+  it('excludes blocks and calendar-occupying bookings when they were', () => {
+    const sql = buildQuery(readFileSync(ADAPTER, 'utf8'), {
+      ...PARAMETERS,
+      dates: DATES,
+      occupyingStates: ['ACCEPTED', 'RESERVED'],
+    });
+
+    expect(sql).toContain('"availability_blocks"');
+    expect(sql).toContain('"bookings"');
+    expect(sql).toContain("ARRAY['ACCEPTED','RESERVED']::text[]");
+    expect(sql).toContain("'2026-09-04T00:00:00.000Z'::timestamptz");
+  });
+
+  it('refuses to guess the states', () => {
+    // A script that measured a cheaper query than the one that runs would make
+    // the gate number a fiction, and fewer states is exactly the direction the
+    // mistake goes in.
+    expect(() =>
+      buildQuery(readFileSync(ADAPTER, 'utf8'), { ...PARAMETERS, dates: DATES }),
+    ).toThrow(/occupyingStates/);
+  });
+
+  it('leaves no placeholder behind with the filter on', () => {
+    const sql = buildQuery(readFileSync(ADAPTER, 'utf8'), {
+      ...PARAMETERS,
+      dates: DATES,
+      occupyingStates: ['ACCEPTED'],
+    });
+
+    expect(sql).not.toMatch(/\$\{/);
+  });
+});
+
+describe('reading the nine states out of the state machine (slice 4.9)', () => {
+  it('reads them rather than restating them', () => {
+    // The same discipline as lifting the SQL: a copied list is the one thing
+    // here that could silently disagree with the application.
+    const states = readCalendarOccupyingStates(readFileSync(MACHINE, 'utf8'));
+
+    expect(states).toContain('ACCEPTED');
+    expect(states).toContain('PAYMENT_FAILED');
+    expect(states).toContain('SECURITY_FAILED');
+    // §7.1 keeps a request off the calendar on purpose.
+    expect(states).not.toContain('REQUESTED');
+    expect(states).not.toContain('DECLINED');
+    expect(states).toHaveLength(9);
+  });
+
+  it('throws rather than guessing when it cannot find them', () => {
+    expect(() => readCalendarOccupyingStates('export const SOMETHING = [];')).toThrow(
+      /CALENDAR_OCCUPYING_STATES/,
+    );
   });
 });

@@ -3051,12 +3051,20 @@ describe('searching for listings near a postcode', () => {
     page = 1,
     category = null as string | null,
     keyword = null as string | null,
+    dates = null as { from: string; to: string } | null,
   } = {}) {
     // **No authorization header**, which is the whole point of the route. A
     // test that passed a token would prove nothing about the case that matters.
     return app.inject({
       method: 'GET',
-      url: publicListingSearchPath({ postcode, radiusMiles, page, category, keyword }),
+      url: publicListingSearchPath({
+        postcode,
+        radiusMiles,
+        page,
+        category,
+        keyword,
+        dates,
+      }),
     });
   }
 
