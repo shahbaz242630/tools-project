@@ -172,11 +172,30 @@ an unlicensed package; nothing written here changes what the GPL requires.
 
 # Overrides applied
 
-## `find-my-way@<9.7.0` → `>=9.7.0` — CVE-2026-47219
+## ~~`find-my-way@<9.7.0` → `>=9.7.0`~~ — CVE-2026-47219. **REMOVED 2026-08-19**
+
+**The override is gone, because the condition it named for its own removal was
+met.** The row below said _"drop the pin once it depends on `>=9.7.0` itself"_,
+and `@nestjs/platform-fastify@11.2.1` — the version `apps/api` resolves today —
+pins `find-my-way: "9.7.0"` exactly. The entry described 11.1.28 and 9.6.0, both
+of which the project had already moved off.
+
+Verified rather than assumed: with the override deleted, the lockfile still
+resolves `find-my-way@9.7.0` at every one of the three call sites, only
+`find-my-way@9.7.0` is in the store, and `pnpm audit` stays clean. So the pin was
+doing nothing except waiting to hold the router back — which is exactly what the
+last line of this entry warned about.
+
+Found by the pre-Phase-5 audit on 19 August 2026, by checking a stated review
+trigger against the installed tree rather than re-reading the prose. **That is
+the generalisable part: a review trigger nobody evaluates is a comment.**
+
+The original entry follows, for the record.
 
 |                         |                                                                                          |
 | ----------------------- | ---------------------------------------------------------------------------------------- |
 | Added                   | 2026-07-27                                                                               |
+| Removed                 | **2026-08-19**                                                                           |
 | Severity                | High (CVSS 7.5)                                                                          |
 | Advisory range          | vulnerable `<=9.6.0`, patched `>=9.7.0`                                                  |
 | Reached through         | `@app/api` → `@nestjs/platform-fastify` → `find-my-way`                                  |

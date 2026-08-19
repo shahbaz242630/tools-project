@@ -306,9 +306,18 @@ export function parseListingRequests(raw: unknown): ListingRequests {
  * **The renter's list is `GET /bookings`, the bare collection**, which in this
  * codebase already means *mine, as the session names me*. It is the sibling of
  * the `POST` that creates one.
+ *
+ * **One name per route, and `_ROUTE` is it.** This was `OWNER_BOOKINGS_PATH`
+ * and `OWNER_BOOKINGS_ROUTE`, two exported constants holding the same literal
+ * on adjacent lines — the web app dialled one, the API registered the other,
+ * and a test pinned each to `'/owner/bookings'` separately. That did stop them
+ * diverging, but by watching two names rather than by having one. Four other
+ * routes carried the same pair. The distinction they suggested is not real:
+ * `_ROUTE` may hold a `:param` template and `_PATH` a concrete URL, but for a
+ * route with no parameter those are the same string, and `BOOKINGS_ROUTE`
+ * above never had a twin. A parameterised route gets a builder function
+ * instead — {@link bookingPath} — which is where the two ideas genuinely part.
  */
-export const OWNER_BOOKINGS_PATH = '/owner/bookings';
-
 export const OWNER_BOOKINGS_ROUTE = '/owner/bookings';
 
 /**

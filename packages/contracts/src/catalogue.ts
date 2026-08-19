@@ -791,7 +791,6 @@ export function parseCategoryConfiguration(raw: unknown): CategoryConfigurationI
 }
 
 /** Where an administrator lists and creates categories. */
-export const ADMIN_CATEGORIES_PATH = '/admin/categories';
 export const ADMIN_CATEGORIES_ROUTE = '/admin/categories';
 
 /** One category, addressed by the slug rather than the id — it is the identity. */

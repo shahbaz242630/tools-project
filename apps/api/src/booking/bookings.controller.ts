@@ -155,6 +155,18 @@ export class BookingsController {
    *
    * **Either party, 404 to anybody else.** §8.6 gives the owner the decision and
    * the renter the record; both read the same booking.
+   *
+   * **Nothing in the product calls this**, found by the pre-Phase-5 audit on
+   * 19 August 2026: `bookingPath` appears only in tests, and there is no
+   * `/bookings/[id]` page — both dashboards read the collection routes instead.
+   * It is kept rather than deleted because Phase 5 has to put payment state
+   * somewhere and this is the read half of a resource whose write half is
+   * already in use, not a feature built for a user who does not exist.
+   *
+   * **That reasoning has a deadline, deliberately.** If Phase 5 closes without a
+   * caller, delete it — an endpoint kept for a future that did not arrive is the
+   * thing this project's own principle refuses, and "we might need it" is how
+   * surface accumulates. Same for `GET /quotes/:quoteId`.
    */
   @Get(BOOKING_ROUTE)
   @AllowsSuspended()

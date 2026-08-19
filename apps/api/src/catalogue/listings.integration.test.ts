@@ -2,12 +2,13 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
-  CATEGORY_OPTIONS_PATH,
-  LISTINGS_PATH,
+  CATEGORY_OPTIONS_ROUTE,
+  LISTINGS_ROUTE,
   LISTING_STATUSES,
   MAX_SEARCH_PAGE,
   ME_PATH,
   MODERATION_STATES,
+  PUBLIC_CATEGORIES_ROUTE,
   listingPath,
   listingPublicationPath,
   parseCategoryOptions,
@@ -298,7 +299,7 @@ async function reconfiguredWithFee(renterFeeBasisPoints: number): Promise<void> 
 function createListing(token = 'alice-token', body: Record<string, unknown> = DRAFT) {
   return app.inject({
     method: 'POST',
-    url: LISTINGS_PATH,
+    url: LISTINGS_ROUTE,
     headers: auth(token),
     payload: body,
   });
@@ -307,11 +308,11 @@ function createListing(token = 'alice-token', body: Record<string, unknown> = DR
 describe('authorisation', () => {
   it('refuses an anonymous caller', async () => {
     expect(
-      (await app.inject({ method: 'POST', url: LISTINGS_PATH, payload: DRAFT }))
+      (await app.inject({ method: 'POST', url: LISTINGS_ROUTE, payload: DRAFT }))
         .statusCode,
     ).toBe(401);
     expect(
-      (await app.inject({ method: 'GET', url: CATEGORY_OPTIONS_PATH })).statusCode,
+      (await app.inject({ method: 'GET', url: CATEGORY_OPTIONS_ROUTE })).statusCode,
     ).toBe(401);
   });
 
@@ -1279,11 +1280,11 @@ describe('listing everything an owner has', () => {
   beforeEach(() => givenACategory());
 
   async function listMine(token = 'alice-token') {
-    return app.inject({ method: 'GET', url: LISTINGS_PATH, headers: auth(token) });
+    return app.inject({ method: 'GET', url: LISTINGS_ROUTE, headers: auth(token) });
   }
 
   it('refuses an anonymous caller', async () => {
-    expect((await app.inject({ method: 'GET', url: LISTINGS_PATH })).statusCode).toBe(
+    expect((await app.inject({ method: 'GET', url: LISTINGS_ROUTE })).statusCode).toBe(
       401,
     );
   });
@@ -1332,7 +1333,7 @@ describe('listing everything an owner has', () => {
   it('carries the summary projection, and no collection address', async () => {
     await app.inject({
       method: 'POST',
-      url: LISTINGS_PATH,
+      url: LISTINGS_ROUTE,
       headers: auth('alice-token'),
       payload: { ...DRAFT, collectionLocation: ADDRESS },
     });
@@ -1409,7 +1410,7 @@ describe('the categories an owner may list in', () => {
   it('is empty before any category exists, rather than failing', async () => {
     const response = await app.inject({
       method: 'GET',
-      url: CATEGORY_OPTIONS_PATH,
+      url: CATEGORY_OPTIONS_ROUTE,
       headers: auth('alice-token'),
     });
 
@@ -1422,7 +1423,7 @@ describe('the categories an owner may list in', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: CATEGORY_OPTIONS_PATH,
+      url: CATEGORY_OPTIONS_ROUTE,
       headers: auth('alice-token'),
     });
 
@@ -1448,7 +1449,7 @@ describe('the categories an owner may list in', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: CATEGORY_OPTIONS_PATH,
+      url: CATEGORY_OPTIONS_ROUTE,
       headers: auth('alice-token'),
     });
 
@@ -1598,7 +1599,7 @@ describe('the transport requirement', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: CATEGORY_OPTIONS_PATH,
+      url: CATEGORY_OPTIONS_ROUTE,
       headers: auth('alice-token'),
     });
 
@@ -1938,7 +1939,7 @@ describe('the rate card and the inclusive price', () => {
       (
         await app.inject({
           method: 'GET',
-          url: LISTINGS_PATH,
+          url: LISTINGS_ROUTE,
           headers: auth('alice-token'),
         })
       ).json(),
@@ -4049,7 +4050,7 @@ describe('searching for listings near a postcode', () => {
  */
 describe('the public category list', () => {
   function publicCategories() {
-    return app.inject({ method: 'GET', url: '/public/categories' });
+    return app.inject({ method: 'GET', url: PUBLIC_CATEGORIES_ROUTE });
   }
 
   it('is an empty list rather than an error when nothing is configured', async () => {

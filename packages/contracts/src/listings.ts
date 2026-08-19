@@ -47,7 +47,6 @@ import { parseWith } from './parse.js';
  * {@link OwnerListingSummary}, which is deliberately a narrower shape than the
  * one `GET /listings/:id` serves — see that type for what it leaves out and why.
  */
-export const LISTINGS_PATH = '/listings';
 export const LISTINGS_ROUTE = '/listings';
 
 /** One listing, addressed by id — it has no stable public slug until 2.12. */
@@ -115,7 +114,6 @@ export const PUBLIC_LISTING_ROUTE = '/public/listings/:id';
  * factor. This returns the minimum an owner needs to choose one, and it exists
  * because a create form with nothing to choose from is a dead control.
  */
-export const CATEGORY_OPTIONS_PATH = '/categories';
 export const CATEGORY_OPTIONS_ROUTE = '/categories';
 
 /**

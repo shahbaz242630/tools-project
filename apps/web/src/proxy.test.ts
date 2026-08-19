@@ -13,6 +13,9 @@
  * header's "List a tool" reached `/listings/new` and was served the page.
  */
 
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 type Protect = () => Promise<void>;
@@ -68,6 +71,7 @@ describe('the proxy', () => {
     '/listings/new',
     '/listings/11111111-1111-4111-8111-111111111111',
     '/listings/11111111-1111-4111-8111-111111111111/edit',
+    '/bookings',
   ])('sends an anonymous visitor to sign in for %s', async (pathname) => {
     expect(await protects(pathname)).toBe(true);
   });
@@ -110,4 +114,121 @@ describe('the proxy', () => {
   it('still runs on every route that is not a static asset', () => {
     expect(config.matcher).toContain('/(api|trpc)(.*)');
   });
+});
+
+/**
+ * Every page and route handler in the app, read off disk.
+ *
+ * **The tests above enumerate paths somebody typed, which is why they were all
+ * green while `/bookings` was open to strangers.** They can only assert about
+ * routes a person remembered; they have no way to know a route exists. So this
+ * block asks the filesystem instead, and the declaration below is the *only*
+ * place a new page can be answered for — leave it out and the first test here
+ * fails, naming the route.
+ *
+ * Deriving from `page.tsx` and `route.ts` is what App Router itself does, so
+ * this cannot drift from the real route table without the route table moving.
+ */
+const APP_DIRECTORY = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app');
+
+/** Whether a signed-out visitor may be served this route. */
+const CLASSIFIED: Readonly<Record<string, 'signed-in' | 'public'>> = {
+  '/': 'public',
+  '/account': 'signed-in',
+  '/account/activity': 'signed-in',
+  '/account/data': 'signed-in',
+  '/account/data/download': 'signed-in',
+  '/account/delete': 'signed-in',
+  '/account/email/[[...rest]]': 'signed-in',
+  '/account/profile': 'signed-in',
+  '/admin': 'signed-in',
+  '/admin/activity': 'signed-in',
+  '/admin/approvals': 'signed-in',
+  '/admin/categories': 'signed-in',
+  '/admin/feature-flags': 'signed-in',
+  '/admin/listings': 'signed-in',
+  '/admin/users': 'signed-in',
+  // Clerk cannot hold a session and signs the delivery instead (slice 1.2).
+  // A sign-in redirect here would stop every `user.created` reaching the
+  // mirror, with nothing failing loudly.
+  '/api/webhooks/clerk': 'public',
+  '/bookings': 'signed-in',
+  '/browse': 'public',
+  '/hire/[id]': 'public',
+  '/listings': 'signed-in',
+  '/listings/[id]': 'signed-in',
+  '/listings/[id]/calendar': 'signed-in',
+  '/listings/[id]/edit': 'signed-in',
+  '/listings/new': 'signed-in',
+  '/sign-in/[[...sign-in]]': 'public',
+  '/sign-up/[[...sign-up]]': 'public',
+  '/status': 'public',
+  '/users/[userId]': 'public',
+};
+
+/** Every route App Router will serve, as its bracketed pattern. */
+function routePatternsOnDisk(directory: string, prefix = ''): string[] {
+  const found: string[] = [];
+
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      /*
+       * A parenthesised segment is a route group — it organises files and
+       * contributes nothing to the URL. There are none today; handling it here
+       * means the first one added does not silently mint a route this test
+       * then reports as unclassified.
+       */
+      const segment = /^\(.*\)$/.test(entry.name) ? '' : `/${entry.name}`;
+      found.push(
+        ...routePatternsOnDisk(path.join(directory, entry.name), prefix + segment),
+      );
+      continue;
+    }
+
+    if (entry.name === 'page.tsx' || entry.name === 'route.ts') {
+      found.push(prefix === '' ? '/' : prefix);
+    }
+  }
+
+  return found;
+}
+
+/** The pattern as a URL a browser could actually ask for. */
+function sampleUrlFor(pattern: string): string {
+  const filled = pattern
+    // An optional catch-all matches the bare parent, which is the case that
+    // matters: `/sign-in` is what somebody types, not `/sign-in/anything`.
+    .replace(/\/\[\[\.\.\..+?\]\]/g, '')
+    .replace(/\[.+?\]/g, '11111111-1111-4111-8111-111111111111');
+
+  return filled === '' ? '/' : filled;
+}
+
+describe('every route the app serves', () => {
+  const onDisk = routePatternsOnDisk(APP_DIRECTORY).sort();
+
+  /*
+   * The test `/bookings` would have failed. It is first because the other two
+   * are only meaningful once the set they run over is known to be complete.
+   */
+  it('is classified as needing a session or not', () => {
+    expect(onDisk.filter((pattern) => CLASSIFIED[pattern] === undefined)).toEqual([]);
+  });
+
+  it('has no classification for a route that no longer exists', () => {
+    expect(
+      Object.keys(CLASSIFIED)
+        .filter((p) => !onDisk.includes(p))
+        .sort(),
+    ).toEqual([]);
+  });
+
+  it.each(Object.entries(CLASSIFIED))(
+    'treats %s as %s',
+    async (pattern, classification) => {
+      expect(await protects(sampleUrlFor(pattern))).toBe(
+        classification === 'signed-in',
+      );
+    },
+  );
 });
