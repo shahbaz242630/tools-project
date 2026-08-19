@@ -68,6 +68,13 @@ describe('AccountMenu', () => {
       'href',
       '/listings',
     );
+
+    // Both sides of a booking behind one entry (4.8b). Two would ask somebody to
+    // classify themselves before they can look.
+    expect(screen.getByRole('link', { name: 'Your bookings' })).toHaveAttribute(
+      'href',
+      '/bookings',
+    );
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
   });
 
@@ -199,7 +206,7 @@ describe('MobileMenu', () => {
 
     await user.click(screen.getByRole('button', { name: 'Menu' }));
 
-    for (const label of ['Account', 'Your profile', 'Your listings']) {
+    for (const label of ['Account', 'Your profile', 'Your listings', 'Your bookings']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     }
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();

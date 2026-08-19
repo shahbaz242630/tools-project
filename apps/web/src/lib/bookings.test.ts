@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { requestBooking } from './bookings';
+import { fetchBookingsOnMyListings, fetchMyBookings, requestBooking } from './bookings';
 import type { FetchLike } from './listings';
 
 const API = 'http://api.internal:3001';
@@ -135,5 +135,116 @@ describe('requestBooking', () => {
     );
 
     expect(outcome.kind).toBe('malformed');
+  });
+});
+
+const A_SUMMARY = {
+  id: '44444444-4444-4444-8444-444444444444',
+  listingId: '11111111-1111-4111-8111-111111111111',
+  state: 'ACCEPTED',
+  startDate: '2026-09-14',
+  endDate: '2026-09-16',
+  days: 3,
+  itemTitle: 'Petrol hedge trimmer, 60cm blade',
+  categoryName: 'Outdoor & gardening',
+  total: { amount: 5832, currency: 'GBP' },
+  requestExpiresAt: '2026-09-01T09:00:00.000Z',
+};
+
+const AN_OWNER_SUMMARY = {
+  id: '55555555-5555-4555-8555-555555555555',
+  listingId: '22222222-2222-4222-8222-222222222222',
+  state: 'ACCEPTED',
+  startDate: '2026-09-14',
+  endDate: '2026-09-16',
+  days: 3,
+  itemTitle: 'SDS+ rotary hammer drill',
+  itemCharge: { amount: 5400, currency: 'GBP' },
+  requestExpiresAt: '2026-09-01T09:00:00.000Z',
+};
+
+describe('the two dashboard reads (slice 4.8b)', () => {
+  it('asks the renter route for what this person requested', async () => {
+    const { calls, fetchImpl } = capturing(
+      200,
+      JSON.stringify({ bookings: [A_SUMMARY], truncated: false }),
+    );
+
+    const outcome = await fetchMyBookings(API, TOKEN, fetchImpl);
+
+    expect(calls[0]?.url).toBe(`${API}/bookings`);
+    expect(outcome).toEqual({
+      kind: 'loaded',
+      value: { bookings: [A_SUMMARY], truncated: false },
+    });
+  });
+
+  it('asks the owner route for what is booked on their listings', async () => {
+    const { calls, fetchImpl } = capturing(
+      200,
+      JSON.stringify({ bookings: [AN_OWNER_SUMMARY], truncated: false }),
+    );
+
+    const outcome = await fetchBookingsOnMyListings(API, TOKEN, fetchImpl);
+
+    expect(calls[0]?.url).toBe(`${API}/owner/bookings`);
+    expect(outcome).toEqual({
+      kind: 'loaded',
+      value: { bookings: [AN_OWNER_SUMMARY], truncated: false },
+    });
+  });
+
+  it('sends no role parameter on either, because neither route takes one', async () => {
+    /*
+     * **The security decision, asserted where it could be undone.** A role a
+     * caller names is a scope a caller chooses; both routes take theirs from the
+     * session. Nothing in this file passes a role, so nothing in this file can
+     * pass the wrong one — and this is what would fail if somebody "simplified"
+     * the two calls into one parameterised helper.
+     */
+    const mine = capturing(200, JSON.stringify({ bookings: [], truncated: false }));
+    const owned = capturing(200, JSON.stringify({ bookings: [], truncated: false }));
+
+    await fetchMyBookings(API, TOKEN, mine.fetchImpl);
+    await fetchBookingsOnMyListings(API, TOKEN, owned.fetchImpl);
+
+    for (const { url } of [...mine.calls, ...owned.calls]) {
+      expect(url).not.toMatch(/[?&]role=/);
+      expect(url).not.toMatch(/[?&]party=/);
+    }
+  });
+
+  it('carries the truncation flag rather than dropping it', async () => {
+    // H2's rule: the array alone loses the one fact the reader has to be told,
+    // at the one boundary where the loss is invisible.
+    const outcome = await fetchMyBookings(
+      API,
+      TOKEN,
+      responds(200, JSON.stringify({ bookings: [A_SUMMARY], truncated: true })),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'loaded',
+      value: { bookings: [A_SUMMARY], truncated: true },
+    });
+  });
+
+  it('refuses a payload that is not the projection', async () => {
+    // `strictObject` on the contract. A field added on the server and forgotten
+    // here fails loudly rather than being dropped in transit.
+    const outcome = await fetchMyBookings(
+      API,
+      TOKEN,
+      responds(200, JSON.stringify({ bookings: [{ ...A_SUMMARY, renterId: 'u-1' }] })),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('reports a signed-out caller rather than an empty list', async () => {
+    // The distinction the pages are built around: "you have none" and "we could
+    // not ask" must never look the same.
+    expect((await fetchMyBookings(API, null)).kind).toBe('signed-out');
+    expect((await fetchBookingsOnMyListings(API, null)).kind).toBe('signed-out');
   });
 });

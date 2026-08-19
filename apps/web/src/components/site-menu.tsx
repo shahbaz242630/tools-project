@@ -3,7 +3,7 @@
 import { SignOutButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { BROWSE_PATH } from '../lib/page-paths';
+import { BOOKINGS_PAGE_PATH, BROWSE_PATH } from '../lib/page-paths';
 import styles from './site-menu.module.css';
 
 /**
@@ -31,6 +31,13 @@ const ACCOUNT_LINKS: readonly { readonly href: string; readonly label: string }[
   { href: '/account', label: 'Account' },
   { href: '/account/profile', label: 'Your profile' },
   { href: '/listings', label: 'Your listings' },
+  /*
+   * **Both sides of a booking behind one entry** (slice 4.8b). The page has a
+   * section each for what you are hiring and what is hired from you; two entries
+   * would ask somebody to classify themselves before they can look, and at this
+   * platform's scale the same account is routinely both parties.
+   */
+  { href: BOOKINGS_PAGE_PATH, label: 'Your bookings' },
 ];
 
 /**

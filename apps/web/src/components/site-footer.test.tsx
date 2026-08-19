@@ -84,7 +84,7 @@ describe('what the footer offers a stranger', () => {
     );
   });
 
-  it.each(['Your account', 'Your profile', 'Your listings'])(
+  it.each(['Your account', 'Your profile', 'Your listings', 'Your bookings'])(
     'does not offer %s, which needs a session',
     (label) => {
       render(<SiteFooter signedIn={false} />);
@@ -102,6 +102,10 @@ describe('what it offers somebody signed in', () => {
       ['Your account', '/account'],
       ['Your profile', '/account/profile'],
       ['Your listings', '/listings'],
+      // Added in 4.8b. The header menu gained this entry and the footer did not,
+      // which is what two lists of the same links do — found by looking at the
+      // page, so it is asserted here rather than left to the next reader.
+      ['Your bookings', '/bookings'],
     ] as const) {
       expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
     }

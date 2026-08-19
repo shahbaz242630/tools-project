@@ -1,0 +1,41 @@
+/*
+ * How a booking's state is drawn (slice 4.8b).
+ *
+ * **Colour never carries the meaning on its own** (WCAG 1.4.1). Every one of
+ * these renders a word; the tint only emphasises what the word already says.
+ * `VisibilityLabel` follows the same rule and keeps its text when it goes green.
+ *
+ * The tokens are D1's, reused rather than redefined — a fifth palette invented
+ * here is a fifth place a theme change has to reach.
+ */
+
+.confirmed {
+  color: var(--success);
+  font-weight: 500;
+}
+
+/*
+ * Waiting is not a warning. It is the ordinary state of a request nobody has
+ * answered yet, and drawing it in the danger colour would tell an owner that
+ * something is wrong every time somebody asks to hire their drill.
+ */
+.waiting {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/*
+ * Declined and expired: over, and neither is a fault. Muted rather than red,
+ * because a renter whose request lapsed has done nothing wrong and an owner who
+ * declined one made a decision they meant to make.
+ */
+.closed {
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+/* The states no phase has built yet. See `booking-state.tsx`. */
+.neutral {
+  color: var(--ink-muted);
+  font-weight: 500;
+}

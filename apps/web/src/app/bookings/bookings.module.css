@@ -1,0 +1,51 @@
+/*
+ * The bookings page (slice 4.8b).
+ *
+ * **`--page-width` has to be set on `<main>`**, which is the element
+ * `globals.css` reads it on — the trap `listings.module.css` records. Narrower
+ * than the listings table's 1000px because these are rows of prose rather than a
+ * five-column table, and a sentence set across a full desktop width is one
+ * nobody finishes reading.
+ */
+
+.page {
+  --page-width: 760px;
+}
+
+/*
+ * The two sides, each a card. They are separate sections rather than one merged
+ * list because the same person is two different parties, the projections differ,
+ * and merging them would need a column saying which is which — a worse answer
+ * than a heading that says it once.
+ */
+.section {
+  padding: 24px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.heading {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* What the section is, in one line, so neither heading has to carry it alone. */
+.blurb {
+  margin: 0 0 16px;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+.footnote {
+  margin-top: 20px;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}

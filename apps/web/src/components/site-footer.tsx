@@ -1,6 +1,6 @@
 import { BRAND } from '@platform/config';
 import Link from 'next/link';
-import { BROWSE_PATH } from '../lib/page-paths';
+import { BOOKINGS_PAGE_PATH, BROWSE_PATH } from '../lib/page-paths';
 import styles from './site-footer.module.css';
 
 /**
@@ -50,6 +50,15 @@ const SIGNED_IN_LINKS: readonly { readonly href: string; readonly label: string 
   { href: '/account', label: 'Your account' },
   { href: '/account/profile', label: 'Your profile' },
   { href: '/listings', label: 'Your listings' },
+  /*
+   * **Added in 4.8b, and its absence was found by looking at the page rather
+   * than by a test.** The header menu gained this entry and the footer did not,
+   * so the same signed-in person had one route to their bookings from the top of
+   * the page and none from the bottom. Two lists of the same links is how that
+   * happens; they are still two because the footer's signed-out half has no
+   * counterpart in the menu.
+   */
+  { href: BOOKINGS_PAGE_PATH, label: 'Your bookings' },
 ];
 
 /** And what it offers before there is one. */
