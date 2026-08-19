@@ -5,7 +5,11 @@ import { useActionState, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { Time } from '@platform/core';
 import { MAX_BLOCK_REASON_LENGTH, firstDayOf, monthOf } from '@platform/contracts';
-import type { AvailabilityBlock, ListingAvailability } from '@platform/contracts';
+import type {
+  AvailabilityBlock,
+  BookedPeriod,
+  ListingAvailability,
+} from '@platform/contracts';
 import {
   blockPeriodAction,
   unblockPeriodAction,
@@ -33,10 +37,17 @@ import styles from './availability-calendar.module.css';
  * would reinterpret them in the browser's timezone, which is the one thing the
  * whole slice is arranged to prevent.
  *
- * **What it does not show is bookings.** §8.5 names three things — available,
- * unavailable and booked — and nothing can create a booking until slice 4.5, so
- * a "booked" layer would be a legend that is empty on every render for every
- * owner. The page says so in one sentence rather than drawing an empty key.
+ * **It shows all three of §8.5's concepts from 4.8c** — available, unavailable
+ * and booked. Until then it drew two, and the page carried a sentence saying
+ * bookings were not built; that sentence stopped being true when 4.6a shipped
+ * and stayed on the page until this slice, which is why a placeholder that
+ * describes what does not exist yet has to name the slice that removes it.
+ *
+ * **Blocked wins over booked in a cell, and it is the same precedence
+ * `reasonUnavailable` applies** — read `UnavailableReason` for the argument. Two
+ * places deciding what a day means differently is how a calendar comes to
+ * disagree with the request path, and this is the second of those places. The
+ * accessible name still says which, so nothing is hidden by the ordering.
  */
 export function AvailabilityCalendar({
   listingId,
@@ -48,9 +59,18 @@ export function AvailabilityCalendar({
   return (
     <>
       <MonthNav listingId={listingId} month={calendar.month} />
-      <MonthGrid month={calendar.month} blocks={calendar.blocks} />
+      <MonthGrid
+        month={calendar.month}
+        blocks={calendar.blocks}
+        bookings={calendar.bookings}
+      />
+      <Legend />
       <BlockPeriodForm listingId={listingId} month={calendar.month} />
-      <PeriodList listingId={listingId} blocks={calendar.blocks} />
+      <PeriodList
+        listingId={listingId}
+        blocks={calendar.blocks}
+        bookings={calendar.bookings}
+      />
     </>
   );
 }
@@ -86,16 +106,19 @@ function MonthNav({
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-/** The month as a grid, with the blocked days marked. */
+/** The month as a grid, with the unavailable and booked days marked. */
 function MonthGrid({
   month,
   blocks,
+  bookings,
 }: {
   readonly month: string;
   readonly blocks: readonly AvailabilityBlock[];
+  readonly bookings: readonly BookedPeriod[];
 }) {
   const days = daysOf(month);
-  const blocked = blockedDaysIn(blocks);
+  const blocked = daysCovering(blocks);
+  const booked = daysCovering(bookings);
   // Monday-first, from the ISO weekday: 1 for Monday means no leading blanks.
   const offset = Time.weekdayOf(days[0] ?? firstDayOf(month)) - 1;
 
@@ -118,15 +141,18 @@ function MonthGrid({
         <div
           key={date}
           role="gridcell"
-          className={blocked.has(date) ? styles.blockedDay : styles.freeDay}
+          className={classFor(styles, blocked.has(date), booked.has(date))}
           /*
             **The state is in the accessible name, not only in the colour.** A
             grid where "unavailable" is a shade of grey says nothing to a screen
-            reader and little to anybody who cannot distinguish the two shades.
+            reader and little to anybody who cannot distinguish the two shades —
+            and from 4.8c there are two shades of unavailable, which makes the
+            name carry more rather than less.
           */
-          aria-label={`${Time.formatLocalDate(date)}: ${
-            blocked.has(date) ? 'unavailable' : 'available'
-          }`}
+          aria-label={`${Time.formatLocalDate(date)}: ${describeDay(
+            blocked.has(date),
+            booked.has(date),
+          )}`}
         >
           <span aria-hidden="true">{Number(date.slice(8))}</span>
         </div>
@@ -236,18 +262,45 @@ function BlockPeriodForm({
   );
 }
 
-/** The periods themselves, in words, each with its own remove control. */
+/**
+ * The periods themselves, in words, each with its own remove control.
+ *
+ * **The list is the blocks' and not the bookings'**, deliberately. A block is the
+ * owner's to withdraw and every row here carries the control that does it; a
+ * booking cannot be withdrawn at all — §7 gives `ACCEPTED` no cancel edge until
+ * Phase 5 — so a row for one would be a dead control or an inconsistent list.
+ * Bookings are on the grid, in the legend, and on the owner's booking list (4.8b).
+ *
+ * **Its empty state has to know about bookings even though its rows do not**, and
+ * that asymmetry is what made the sentence below false for a month. See it.
+ */
 function PeriodList({
   listingId,
   blocks,
+  bookings,
 }: {
   readonly listingId: string;
   readonly blocks: readonly AvailabilityBlock[];
+  readonly bookings: readonly BookedPeriod[];
 }) {
   if (blocks.length === 0) {
     return (
       <p className={styles.empty} role="status">
-        Nothing is blocked in this month, so every date is available to book.
+        {/*
+          **This said "so every date is available to book" and was printed over a
+          month with three days booked.** It was written in 4.3b, when a block was
+          the only thing that could take a date off the calendar, and it stayed
+          true right up to the moment this slice drew the second layer above it.
+
+          Found by reading October rather than by a test — the same way the
+          page's footnote was found to be claiming bookings did not exist. A
+          sentence about *nothing being blocked* is safe; the clause that
+          generalised from it to *everything being available* is the one that
+          could not survive a new kind of unavailable.
+        */}
+        {bookings.length === 0
+          ? 'Nothing is blocked in this month, so every date is available to book.'
+          : 'You have not blocked anything this month. The dates shaded above are held by confirmed bookings and are not yours to remove.'}
       </p>
     );
   }
@@ -358,6 +411,63 @@ function describePeriod(block: AvailabilityBlock): string {
 }
 
 /** Every date in the month, as `YYYY-MM-DD`. */
+/**
+ * What a day is, in the words the accessible name uses (slice 4.8c).
+ *
+ * **Both are said when both are true**, which is the one place the grid does not
+ * follow `reasonUnavailable`'s precedence — and deliberately. That rule exists to
+ * decide a *refusal message*, where one sentence has to be chosen; a name on a
+ * cell has room for the whole truth, and an owner who removes a block from a day
+ * that is also booked would otherwise watch it stay shaded with no explanation.
+ */
+function describeDay(blocked: boolean, booked: boolean): string {
+  if (blocked && booked) return 'unavailable — you blocked it, and it is booked';
+  if (blocked) return 'unavailable — you blocked it';
+  if (booked) return 'booked';
+  return 'available';
+}
+
+/**
+ * Which class a cell takes.
+ *
+ * **Blocked wins, matching `reasonUnavailable`.** A cell has one background and
+ * the tie has to break somewhere; breaking it the same way the API does means
+ * there is one rule rather than two. The name above still says both.
+ */
+function classFor(
+  css: Record<string, string>,
+  blocked: boolean,
+  booked: boolean,
+): string | undefined {
+  if (blocked) return css.blockedDay;
+  if (booked) return css.bookedDay;
+  return css.freeDay;
+}
+
+/**
+ * What the two shades mean (slice 4.8c).
+ *
+ * **It earns its place now and would not have before.** 4.3b drew one kind of
+ * unavailable, where a key explaining a single colour is furniture; there are two
+ * now, and they mean quite different things to an owner — one they can remove and
+ * one they cannot.
+ */
+function Legend() {
+  return (
+    <ul className={styles.legend}>
+      <li>
+        <span className={styles.swatchBlocked} aria-hidden="true" /> Blocked by you
+      </li>
+      <li>
+        <span className={styles.swatchBooked} aria-hidden="true" /> Booked
+      </li>
+      <li>
+        <span className={styles.swatchFree} aria-hidden="true" /> Available
+      </li>
+    </ul>
+  );
+}
+
 function daysOf(month: string): readonly string[] {
   const days: string[] = [];
   let date = firstDayOf(month);
@@ -373,19 +483,27 @@ function daysOf(month: string): readonly string[] {
 /**
  * Which individual days any period covers.
  *
- * **Expanded from the inclusive pair the API sends**, so a block that started
+ * **Expanded from the inclusive pair the API sends**, so a period that started
  * last month shades the first days of this one. It walks rather than compares
  * ranges because the grid asks about one day at a time, and a set lookup is what
  * keeps that from being quadratic in a month with a lot of periods.
+ *
+ * **Taken over the two fields both period shapes share, from 4.8c**, rather than
+ * over `AvailabilityBlock`. A block carries a private note and a booking carries
+ * an id, and neither matters to a question about which squares to shade — so the
+ * one function serves both and there is no second copy of the walk to get the
+ * inclusive end wrong in.
  */
-function blockedDaysIn(blocks: readonly AvailabilityBlock[]): ReadonlySet<string> {
+function daysCovering(
+  periods: readonly { readonly startDate: string; readonly endDate: string }[],
+): ReadonlySet<string> {
   const days = new Set<string>();
 
-  for (const block of blocks) {
-    let date = block.startDate;
+  for (const period of periods) {
+    let date = period.startDate;
     // String comparison is date comparison for `YYYY-MM-DD`, and the end is
-    // inclusive — the day the owner named is blocked.
-    while (date <= block.endDate) {
+    // inclusive — the day the owner named is covered.
+    while (date <= period.endDate) {
       days.add(date);
       date = Time.addLocalDays(date, 1);
     }

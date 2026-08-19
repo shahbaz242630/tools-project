@@ -126,6 +126,7 @@ describe('parseListingAvailability', () => {
       blocks: [
         { id: 'b1', startDate: '2026-07-28', endDate: '2026-08-03', reason: null },
       ],
+      bookings: [],
     });
     expect(parsed.blocks).toHaveLength(1);
     // A block starting in July on August's page: what "touches the month" means.
@@ -133,9 +134,9 @@ describe('parseListingAvailability', () => {
   });
 
   it('accepts a month with nothing in it', () => {
-    expect(parseListingAvailability({ month: '2026-08', blocks: [] }).blocks).toEqual(
-      [],
-    );
+    expect(
+      parseListingAvailability({ month: '2026-08', blocks: [], bookings: [] }).blocks,
+    ).toEqual([]);
   });
 
   it('refuses a month that is a date', () => {
@@ -186,5 +187,55 @@ describe('month helpers', () => {
     expect(monthOf('2026-08-20')).toBe('2026-08');
     expect(firstDayOf('2026-08')).toBe('2026-08-01');
     expect(monthOf(firstDayOf('2026-12'))).toBe('2026-12');
+  });
+});
+
+describe('the booked layer (slice 4.8c)', () => {
+  const A_MONTH = {
+    month: '2026-08',
+    blocks: [],
+    bookings: [{ id: 'booking-1', startDate: '2026-08-10', endDate: '2026-08-12' }],
+  };
+
+  it('accepts the projection the API sends', () => {
+    expect(() => parseListingAvailability(A_MONTH)).not.toThrow();
+  });
+
+  it('requires the layer to be present, even when it is empty', () => {
+    /*
+     * **Required rather than optional**, so a server that stopped sending it
+     * fails here instead of drawing every booked day as free — which is exactly
+     * what the page did between 4.6a and this slice.
+     */
+    expect(() => parseListingAvailability({ month: '2026-08', blocks: [] })).toThrow();
+  });
+
+  it('carries no renter and no money', () => {
+    // §8.4.1: identity arrives with commitment. A grid of shaded squares must
+    // not disclose more than the request itself does.
+    const parsed = parseListingAvailability(A_MONTH);
+
+    expect(parsed.bookings[0]).not.toHaveProperty('renterId');
+    expect(parsed.bookings[0]).not.toHaveProperty('total');
+    expect(parsed.bookings[0]).not.toHaveProperty('itemCharge');
+  });
+
+  it('refuses a renter smuggled onto a period', () => {
+    // `strictObject`. The failure is loud rather than a field quietly rendered.
+    expect(() =>
+      parseListingAvailability({
+        ...A_MONTH,
+        bookings: [{ ...A_MONTH.bookings[0], renterId: 'user-1' }],
+      }),
+    ).toThrow();
+  });
+
+  it('refuses an instant where a date belongs', () => {
+    expect(() =>
+      parseListingAvailability({
+        ...A_MONTH,
+        bookings: [{ ...A_MONTH.bookings[0], startDate: '2026-08-10T23:00:00Z' }],
+      }),
+    ).toThrow();
   });
 });

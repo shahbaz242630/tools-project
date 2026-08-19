@@ -14,7 +14,9 @@ import { randomUUID } from 'node:crypto';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { BOOKING_STATES } from '@platform/contracts';
 import type { BookingState } from '@platform/contracts';
+import { CALENDAR_OCCUPYING_STATES } from './booking-state-machine.js';
 import { PrismaCategoryStore } from '../catalogue/prisma-category-store.js';
 import { PrismaListingStore } from '../catalogue/prisma-listing-store.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
@@ -564,5 +566,116 @@ describe('the service, from local dates to stored instants', () => {
         reason: null,
       },
     ]);
+  });
+});
+
+describe('the booked periods a calendar draws (slice 4.8c)', () => {
+  /*
+   * **What only this file can show.** The service test runs over an array that
+   * filters on `CALENDAR_OCCUPYING_STATES` because a fake was written to; here
+   * the filter is a `WHERE state IN (…)` against a `text` column that Postgres
+   * will happily hold anything in. The rule that matters — a request nobody has
+   * answered is not booked — is only proved once it is proved here.
+   */
+
+  const AUGUST_FROM = new Date('2026-09-01T00:00:00Z');
+  const AUGUST_TO = new Date('2026-10-01T00:00:00Z');
+
+  it('returns a booking that holds the calendar', async () => {
+    const listingId = await newListing();
+    await givenABooking(listingId, 'ACCEPTED');
+
+    const periods = await store.listBookedPeriods(listingId, AUGUST_FROM, AUGUST_TO);
+
+    expect(periods).toHaveLength(1);
+    expect(periods[0]?.startAt).toEqual(MONDAY);
+    expect(periods[0]?.endAt).toEqual(FRIDAY);
+  });
+
+  it('does not return a request nobody has answered', async () => {
+    /*
+     * **§7.1's design, proved against the real column.** `REQUESTED` is
+     * deliberately outside §8.5.1's nine so several renters may ask for the same
+     * dates and the first acceptance takes them. A calendar that drew one would
+     * tell an owner a day was gone while the request path would still book it.
+     */
+    const listingId = await newListing();
+    await givenABooking(listingId, 'REQUESTED');
+
+    expect(await store.listBookedPeriods(listingId, AUGUST_FROM, AUGUST_TO)).toEqual(
+      [],
+    );
+  });
+
+  it('does not return a booking that went away', async () => {
+    const listingId = await newListing();
+    await givenABooking(listingId, 'DECLINED');
+    await givenABooking(listingId, 'EXPIRED', WEDNESDAY, SUNDAY);
+
+    expect(await store.listBookedPeriods(listingId, AUGUST_FROM, AUGUST_TO)).toEqual(
+      [],
+    );
+  });
+
+  it('counts exactly the nine states the constraint occupies', async () => {
+    /*
+     * **Read from the same constant the query uses, and asserted against real
+     * rows rather than against itself.** Two lists of calendar-occupying states
+     * is how a calendar comes to disagree with the request path about one day;
+     * this walks every state §7 defines and checks the database's answer matches
+     * the constant's membership.
+     */
+    for (const state of BOOKING_STATES) {
+      const listingId = await newListing();
+      await givenABooking(listingId, state);
+
+      const periods = await store.listBookedPeriods(listingId, AUGUST_FROM, AUGUST_TO);
+
+      expect(
+        periods.length,
+        `${state} should ${
+          CALENDAR_OCCUPYING_STATES.includes(state) ? 'occupy' : 'not occupy'
+        } the calendar`,
+      ).toBe(CALENDAR_OCCUPYING_STATES.includes(state) ? 1 : 0);
+    }
+  });
+
+  it('includes a booking that merely touches the window', async () => {
+    // `listBlocks`' rule: a hire beginning before the month starts is part of
+    // what that month looks like.
+    const listingId = await newListing();
+    await givenABooking(listingId, 'ACCEPTED');
+
+    // A window that begins inside the booking and ends after it.
+    const periods = await store.listBookedPeriods(listingId, WEDNESDAY, SUNDAY);
+
+    expect(periods).toHaveLength(1);
+  });
+
+  it('excludes a booking that ends exactly as the window opens', async () => {
+    // The `[)` bound, again: back-to-back does not overlap.
+    const listingId = await newListing();
+    await givenABooking(listingId, 'ACCEPTED', MONDAY, WEDNESDAY);
+
+    expect(await store.listBookedPeriods(listingId, WEDNESDAY, SUNDAY)).toEqual([]);
+  });
+
+  it('never returns a booking on somebody else’s listing', async () => {
+    const mine = await newListing();
+    const theirs = await newListing();
+    await givenABooking(theirs, 'ACCEPTED');
+
+    expect(await store.listBookedPeriods(mine, AUGUST_FROM, AUGUST_TO)).toEqual([]);
+  });
+
+  it('carries the period and nothing about the renter', async () => {
+    // §8.4.1. The port hands back three fields so a calendar cannot disclose
+    // more than the request itself does.
+    const listingId = await newListing();
+    await givenABooking(listingId, 'ACCEPTED');
+
+    const [period] = await store.listBookedPeriods(listingId, AUGUST_FROM, AUGUST_TO);
+
+    expect(Object.keys(period ?? {}).sort()).toEqual(['endAt', 'id', 'startAt']);
   });
 });

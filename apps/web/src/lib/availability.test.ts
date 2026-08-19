@@ -14,7 +14,17 @@ const A_BLOCK = {
   reason: 'Away',
 };
 
-const A_MONTH = { month: '2026-08', blocks: [A_BLOCK] };
+/*
+ * **Both layers from 4.8c.** `bookings` is required on the projection rather than
+ * optional, so a server that stopped sending it fails a parse here instead of
+ * drawing every booked day as free — which is what the page did between 4.6a and
+ * that slice.
+ */
+const A_MONTH = {
+  month: '2026-08',
+  blocks: [A_BLOCK],
+  bookings: [{ id: 'k1', startDate: '2026-08-10', endDate: '2026-08-12' }],
+};
 
 const A_PERIOD = { startDate: '2026-08-20', endDate: '2026-08-22', reason: 'Away' };
 

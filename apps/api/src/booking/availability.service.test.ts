@@ -396,7 +396,9 @@ describe('readMonth', () => {
     // yours", and a page that could not tell them apart would show a refusal.
     const quiet = await availability.readMonth(MOWER, ADA, '2026-11');
 
-    expect(quiet).toEqual({ month: '2026-11', blocks: [] });
+    // Both layers present and both empty, from 4.8c. A month with nothing in it
+    // still answers all three of §8.5's concepts.
+    expect(quiet).toEqual({ month: '2026-11', blocks: [], bookings: [] });
   });
 
   it('refuses somebody else’s calendar', async () => {
@@ -452,3 +454,104 @@ describe('unblock', () => {
 function dayOf(date: string): [Date, Date] {
   return [Time.startOfLocalDay(date), Time.startOfLocalDay(Time.addLocalDays(date, 1))];
 }
+
+describe('the booked layer (BRD section 8.5, slice 4.8c)', () => {
+  /*
+   * §8.5 names three concepts — available, unavailable and booked — and 4.3b
+   * delivered two. What this file pins is the rule that makes the third safe: a
+   * request nobody has answered is **not** booked. §7.1 keeps `REQUESTED` out of
+   * §8.5.1's nine calendar-occupying states on purpose, so a calendar that shaded
+   * one would disagree with the request path about the same day.
+   */
+
+  /** A booking over a named period, put straight into the store. */
+  function given(
+    state: 'ACCEPTED' | 'REQUESTED' | 'DECLINED' | 'EXPIRED' | 'CANCELLED',
+    from: string,
+    toExclusive: string,
+  ) {
+    bookings.holds(MOWER, {
+      state,
+      startAt: Time.startOfLocalDay(from),
+      endAt: Time.startOfLocalDay(toExclusive),
+    });
+  }
+
+  it('draws a booking that holds the calendar', async () => {
+    given('ACCEPTED', '2026-08-10', '2026-08-13');
+
+    const month = await availability.readMonth(MOWER, ADA, '2026-08');
+
+    // The inclusive end, as a block's is: a hire to the 12th ends at the start
+    // of the 13th, which is what lets another begin that day.
+    expect(month?.bookings).toEqual([
+      { id: 'booking-1', startDate: '2026-08-10', endDate: '2026-08-12' },
+    ]);
+  });
+
+  it('does not draw a request nobody has answered', async () => {
+    /*
+     * **The rule this slice turns on.** §7.1 makes `REQUESTED` non-blocking so
+     * several renters may ask for the same dates and the first acceptance takes
+     * them. Shading one would tell an owner a day was gone while the request
+     * path would still book it.
+     */
+    given('REQUESTED', '2026-08-10', '2026-08-13');
+
+    const month = await availability.readMonth(MOWER, ADA, '2026-08');
+
+    expect(month?.bookings).toEqual([]);
+  });
+
+  it('does not draw a booking that went away', async () => {
+    // Declined, expired and cancelled are all outside the nine. Keeping them
+    // would shade dates nobody holds.
+    given('DECLINED', '2026-08-05', '2026-08-07');
+    given('EXPIRED', '2026-08-10', '2026-08-13');
+    given('CANCELLED', '2026-08-20', '2026-08-22');
+
+    const month = await availability.readMonth(MOWER, ADA, '2026-08');
+
+    expect(month?.bookings).toEqual([]);
+  });
+
+  it('draws a booking that began in the previous month', async () => {
+    // `listBlocks`' rule applied to the second layer: a hire beginning on
+    // 28 July is part of what August looks like, and a calendar drawing only
+    // contained periods would show its first days free.
+    given('ACCEPTED', '2026-07-28', '2026-08-03');
+
+    const month = await availability.readMonth(MOWER, ADA, '2026-08');
+
+    expect(month?.bookings[0]?.startDate).toBe('2026-07-28');
+    expect(month?.bookings[0]?.endDate).toBe('2026-08-02');
+  });
+
+  it('reads an empty layer when nothing is booked', async () => {
+    const month = await availability.readMonth(MOWER, ADA, '2026-08');
+
+    expect(month?.bookings).toEqual([]);
+  });
+
+  it('says nothing at all about a listing that is not this owner’s', async () => {
+    // The ownership check is unchanged and still runs first. The booked layer
+    // must not become a way to read somebody else's calendar.
+    given('ACCEPTED', '2026-08-10', '2026-08-13');
+
+    expect(await availability.readMonth(MOWER, BOB, '2026-08')).toBe(null);
+  });
+
+  it('draws both layers at once without either swallowing the other', async () => {
+    await availability.block(MOWER, ADA, {
+      startDate: '2026-08-20',
+      endDate: '2026-08-22',
+      reason: null,
+    });
+    given('ACCEPTED', '2026-08-10', '2026-08-13');
+
+    const month = await availability.readMonth(MOWER, ADA, '2026-08');
+
+    expect(month?.blocks).toHaveLength(1);
+    expect(month?.bookings).toHaveLength(1);
+  });
+});

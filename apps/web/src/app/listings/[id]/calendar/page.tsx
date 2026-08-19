@@ -83,15 +83,23 @@ export default async function CalendarPage({
       )}
 
       {/*
-        **Said once, plainly, rather than drawn as an empty legend.** §8.5 wants
-        available, unavailable and booked; nothing can create a booking until
-        slice 4.5, so a "booked" key would be empty on every render for every
-        owner — a dead control in a colour swatch. The sentence goes when there
-        is something to show.
+        **This sentence was false for three days and no test could see it.** It
+        read *"Bookings are not built yet, so nothing else can take a date off
+        this calendar"* — written in 4.3b when that was true, and left standing
+        when 4.6a made an accepted booking hold dates. The calendar drew them as
+        free while the request path refused them.
+
+        The replacement says the two things an owner actually needs and neither
+        of them is a promise: which of the two shades is theirs to remove, and
+        that a request nobody has answered is not on here at all. That last part
+        is §7.1's design rather than an omission — a request reserves nothing,
+        several people may hold one for the same dates, and the first acceptance
+        takes them.
       */}
       <p className={styles.footnote}>
-        This shows the dates you have blocked. Bookings are not built yet, so nothing
-        else can take a date off this calendar.
+        Blocked dates are yours to remove; booked dates are held by a confirmed booking
+        and cannot be. Requests nobody has answered yet are not shown here — they hold
+        no dates until you accept one.
       </p>
 
       <p className={styles.footnote}>

@@ -19,6 +19,7 @@ import type {
 } from '../booking-store.js';
 import type {
   AvailabilityBlockRecord,
+  BookedPeriodRecord,
   AvailabilityStore,
   NewAvailabilityBlock,
   UnavailableReason,
@@ -426,21 +427,58 @@ export class InMemoryBookingStore implements BookingStore {
   }
 
   /**
+   * The calendar-occupying bookings touching this window (slice 4.8c).
+   *
+   * **The same two conditions `occupies` applies**, returning the rows rather
+   * than a boolean — and written as those conditions rather than as a general
+   * "does this clash" for the reason `create` gives: a fake that was more
+   * permissive would let the calendar pass while the database drew something
+   * else, and a stricter one would make a legitimate back-to-back hire look
+   * broken in tests only.
+   */
+  occupying(listingId: string, from: Date, to: Date): readonly BookingRecord[] {
+    return this.bookings
+      .filter(
+        (existing) =>
+          existing.listingId === listingId &&
+          CALENDAR_OCCUPYING_STATES.includes(existing.state) &&
+          existing.startAt < to &&
+          existing.endAt > from,
+      )
+      .sort(
+        (a, b) => a.startAt.getTime() - b.startAt.getTime() || a.id.localeCompare(b.id),
+      );
+  }
+
+  /**
    * Put a booking in without going through `create`, for the erasure tests.
    *
    * **It skips the overlap check deliberately.** Those tests are about which
    * listings are *referenced*, and making them construct a non-conflicting
    * period would be arranging around a rule they are not testing.
    */
-  holds(listingId: string): this {
+  holds(
+    listingId: string,
+    /**
+     * The state and period, for callers that care (slice 4.8c).
+     *
+     * **Widened rather than copied.** The calendar's booked layer needs a booking
+     * in a *named* state over a *named* period — which is what its whole rule is
+     * about, since §7.1 keeps `REQUESTED` off the calendar — and a second helper
+     * beside this one would be two places that decide what a synthetic booking
+     * looks like. The defaults are unchanged, so every existing caller is too.
+     */
+    over: Partial<Pick<BookingRecord, 'state' | 'startAt' | 'endAt'>> = {},
+  ): this {
     const now = this.now();
+    const startAt = over.startAt ?? now;
     this.bookings.push({
       id: `booking-${String(this.nextId++)}`,
       listingId,
       renterId: 'renter',
-      state: 'REQUESTED',
-      startAt: now,
-      endAt: Time.addRentalDays(now, 1, 'Europe/London'),
+      state: over.state ?? 'REQUESTED',
+      startAt,
+      endAt: over.endAt ?? Time.addRentalDays(startAt, 1, 'Europe/London'),
       timeZone: 'Europe/London',
       // The terms slice 4.5a made required. Obviously synthetic, because these
       // tests are about which listings are referenced and nothing reads a price.
@@ -508,6 +546,20 @@ export class InMemoryAvailabilityStore implements AvailabilityStore {
           (a, b) =>
             a.startAt.getTime() - b.startAt.getTime() || a.id.localeCompare(b.id),
         ),
+    );
+  }
+
+  listBookedPeriods(
+    listingId: string,
+    from: Date,
+    to: Date,
+  ): Promise<readonly BookedPeriodRecord[]> {
+    return Promise.resolve(
+      this.bookings.occupying(listingId, from, to).map((booking) => ({
+        id: booking.id,
+        startAt: booking.startAt,
+        endAt: booking.endAt,
+      })),
     );
   }
 

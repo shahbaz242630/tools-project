@@ -16,6 +16,21 @@
  * it does for proximity and for booking references.
  */
 
+/**
+ * A period a booking holds (slice 4.8c).
+ *
+ * **Deliberately not a `BookingRecord`.** That type carries the money, the terms
+ * and the renter; the calendar asks about time. A port that handed back the whole
+ * row would put every one of those facts one property access away from a grid of
+ * shaded squares, and §8.4.1's posture is that identity arrives with commitment.
+ */
+export interface BookedPeriodRecord {
+  readonly id: string;
+  readonly startAt: Date;
+  /** Exclusive, as the column holds it. The service converts. */
+  readonly endAt: Date;
+}
+
 /** A period the owner has declared unavailable. */
 export interface AvailabilityBlockRecord {
   readonly id: string;
@@ -88,6 +103,27 @@ export interface AvailabilityStore {
     from: Date,
     to: Date,
   ): Promise<readonly AvailabilityBlockRecord[]>;
+
+  /**
+   * The bookings holding any part of this window, in date order (slice 4.8c).
+   *
+   * **Only §8.5.1's nine calendar-occupying states**, exactly as
+   * `reasonUnavailable` counts them and read from the same constant rather than
+   * restated. **`REQUESTED` is not one of them and that is the whole point of
+   * §7.1**: a request reserves nothing, several renters may hold one for the same
+   * dates, and a calendar that shaded them would tell an owner a day was gone
+   * while the request path would still happily book it.
+   *
+   * **Periods that merely touch the window are included**, matching `listBlocks`:
+   * a hire beginning on 28 July is part of what August looks like, and a calendar
+   * that only drew contained periods would show the first days of the month free
+   * while the database refused them.
+   */
+  listBookedPeriods(
+    listingId: string,
+    from: Date,
+    to: Date,
+  ): Promise<readonly BookedPeriodRecord[]>;
 
   /**
    * Why this period cannot be booked, or null if it can.

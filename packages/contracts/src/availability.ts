@@ -172,16 +172,58 @@ export const availabilityBlockSchema = z.strictObject({
 export type AvailabilityBlock = z.infer<typeof availabilityBlockSchema>;
 
 /**
+ * A period a booking holds (BRD §8.5, slice 4.8c).
+ *
+ * **Dates and an id, and deliberately nothing about the person.** §8.4.1's
+ * posture is that identity arrives with commitment rather than before it, and
+ * `listingRequestSchema` already refuses to name a renter on the surface where an
+ * owner is *deciding*. A calendar is a question about time; putting a name on it
+ * would disclose more from a grid of shaded squares than from the request itself.
+ *
+ * **No money either.** What a hire earns is on the owner's booking list (4.8b),
+ * beside the sentence that keeps it from being read as a payout. A figure on a
+ * calendar cell would have nowhere to carry that qualification.
+ *
+ * **The id is here for the page's keys and nothing else today.** There is no
+ * per-booking page to link to; 4.8b's list is where a booking is read. It is
+ * carried rather than omitted because a period with no identity cannot be
+ * rendered as a stable list, and inventing one in the browser is how two renders
+ * disagree.
+ */
+export const bookedPeriodSchema = z.strictObject({
+  id: z.string().min(1),
+  startDate: calendarDateSchema,
+  /** Inclusive, exactly as a block's is. */
+  endDate: calendarDateSchema,
+});
+
+export type BookedPeriod = z.infer<typeof bookedPeriodSchema>;
+
+/**
  * A month of one listing's calendar.
  *
  * **The blocks are the ones that *touch* the month, not the ones contained by
  * it**, so a fortnight running from 28 July appears on August's page with its
  * real dates. A page that only received contained blocks would draw the first
- * days of the month as free while the API refused bookings for them.
+ * days of the month as free while the API refused bookings for them. The booked
+ * periods are read the same way, for the same reason.
+ *
+ * **`bookings` arrived in 4.8c and completes §8.5's three concepts** — available,
+ * unavailable, booked. Until then the page carried a sentence saying bookings
+ * were not built, which stopped being true when 4.6a shipped and stayed on the
+ * page until this slice.
+ *
+ * **Only §8.5.1's nine calendar-occupying states appear here, and `REQUESTED` is
+ * emphatically not one of them.** §7.1 makes a pending request non-blocking on
+ * purpose: several renters may ask for the same dates and the first acceptance
+ * takes them. Drawing one as booked would tell an owner a date was gone when
+ * anybody could still book it — and would make the calendar disagree with the
+ * request path about the same day.
  */
 export const listingAvailabilitySchema = z.strictObject({
   month: calendarMonthSchema,
   blocks: z.array(availabilityBlockSchema),
+  bookings: z.array(bookedPeriodSchema),
 });
 
 export type ListingAvailability = z.infer<typeof listingAvailabilitySchema>;

@@ -49,6 +49,12 @@ const AUGUST: ListingAvailability = {
     { id: 'b1', startDate: '2026-07-28', endDate: '2026-08-03', reason: 'Away' },
     { id: 'b2', startDate: '2026-08-20', endDate: '2026-08-22', reason: null },
   ],
+  /*
+   * **Deliberately clear of the blocks above.** The two layers overlapping is a
+   * real case and it has its own test; mixing it into the shared fixture would
+   * make every assertion about a blocked day also an assertion about precedence.
+   */
+  bookings: [{ id: 'k1', startDate: '2026-08-10', endDate: '2026-08-12' }],
 };
 
 function idle() {
@@ -80,7 +86,9 @@ describe('the month grid', () => {
     idle();
     render(<AvailabilityCalendar listingId={LISTING} calendar={AUGUST} />);
 
-    expect(dayCell('20 Aug 2026')).toHaveAccessibleName('20 Aug 2026: unavailable');
+    expect(dayCell('20 Aug 2026')).toHaveAccessibleName(
+      '20 Aug 2026: unavailable — you blocked it',
+    );
     expect(dayCell('19 Aug 2026')).toHaveAccessibleName('19 Aug 2026: available');
   });
 
@@ -90,8 +98,12 @@ describe('the month grid', () => {
 
     // The 1st to the 3rd are covered by a block that starts on 28 July. Drawing
     // them as free would tell an owner dates are bookable that the API refuses.
-    expect(dayCell('1 Aug 2026')).toHaveAccessibleName('1 Aug 2026: unavailable');
-    expect(dayCell('3 Aug 2026')).toHaveAccessibleName('3 Aug 2026: unavailable');
+    expect(dayCell('1 Aug 2026')).toHaveAccessibleName(
+      '1 Aug 2026: unavailable — you blocked it',
+    );
+    expect(dayCell('3 Aug 2026')).toHaveAccessibleName(
+      '3 Aug 2026: unavailable — you blocked it',
+    );
     expect(dayCell('4 Aug 2026')).toHaveAccessibleName('4 Aug 2026: available');
   });
 
@@ -101,7 +113,9 @@ describe('the month grid', () => {
     idle();
     render(<AvailabilityCalendar listingId={LISTING} calendar={AUGUST} />);
 
-    expect(dayCell('22 Aug 2026')).toHaveAccessibleName('22 Aug 2026: unavailable');
+    expect(dayCell('22 Aug 2026')).toHaveAccessibleName(
+      '22 Aug 2026: unavailable — you blocked it',
+    );
     expect(dayCell('23 Aug 2026')).toHaveAccessibleName('23 Aug 2026: available');
   });
 });
@@ -126,7 +140,7 @@ describe('moving between months', () => {
     render(
       <AvailabilityCalendar
         listingId={LISTING}
-        calendar={{ month: '2026-12', blocks: [] }}
+        calendar={{ month: '2026-12', blocks: [], bookings: [] }}
       />,
     );
 
@@ -160,6 +174,7 @@ describe('the list of periods', () => {
           blocks: [
             { id: 'b3', startDate: '2026-08-20', endDate: '2026-08-20', reason: null },
           ],
+          bookings: [],
         }}
       />,
     );
@@ -182,7 +197,7 @@ describe('the list of periods', () => {
     render(
       <AvailabilityCalendar
         listingId={LISTING}
-        calendar={{ month: '2026-11', blocks: [] }}
+        calendar={{ month: '2026-11', blocks: [], bookings: [] }}
       />,
     );
 
@@ -264,3 +279,159 @@ describe('the form', () => {
 function offsetOfAugust2026(): number {
   return Time.weekdayOf('2026-08-01') - 1;
 }
+
+describe('the booked layer (slice 4.8c)', () => {
+  /*
+   * §8.5 names three concepts and 4.3b delivered two. Until this slice the page
+   * carried a sentence saying bookings were not built — written when that was
+   * true and left standing when 4.6a made an accepted booking hold dates, so the
+   * calendar drew days as free that the request path refused.
+   */
+
+  it('shades a booked day, and says so in words', () => {
+    idle();
+    render(<AvailabilityCalendar listingId={LISTING} calendar={AUGUST} />);
+
+    expect(dayCell('10 Aug 2026')).toHaveAccessibleName('10 Aug 2026: booked');
+    expect(dayCell('12 Aug 2026')).toHaveAccessibleName('12 Aug 2026: booked');
+  });
+
+  it('frees the day after the last one booked', () => {
+    // The inclusive end, exactly as a block's. A hire to the 12th ends at the
+    // start of the 13th, which is what lets another begin that day.
+    idle();
+    render(<AvailabilityCalendar listingId={LISTING} calendar={AUGUST} />);
+
+    expect(dayCell('13 Aug 2026')).toHaveAccessibleName('13 Aug 2026: available');
+  });
+
+  it('draws a booking that began in the previous month', () => {
+    // The case a calendar showing only contained periods gets wrong: it would
+    // draw the first days of August free while the database refused them.
+    idle();
+    render(
+      <AvailabilityCalendar
+        listingId={LISTING}
+        calendar={{
+          month: '2026-08',
+          blocks: [],
+          bookings: [{ id: 'k9', startDate: '2026-07-29', endDate: '2026-08-02' }],
+        }}
+      />,
+    );
+
+    expect(dayCell('1 Aug 2026')).toHaveAccessibleName('1 Aug 2026: booked');
+    expect(dayCell('3 Aug 2026')).toHaveAccessibleName('3 Aug 2026: available');
+  });
+
+  it('says both when a day is blocked and booked', () => {
+    /*
+     * **The cell takes the blocked shade, matching `reasonUnavailable`'s
+     * precedence — and the name says both.** That rule exists to choose one
+     * sentence for a refusal; a name has room for the whole truth, and an owner
+     * who removed the block would otherwise watch the day stay shaded with no
+     * explanation.
+     */
+    idle();
+    render(
+      <AvailabilityCalendar
+        listingId={LISTING}
+        calendar={{
+          month: '2026-08',
+          blocks: [
+            { id: 'b9', startDate: '2026-08-10', endDate: '2026-08-12', reason: null },
+          ],
+          bookings: [{ id: 'k9', startDate: '2026-08-11', endDate: '2026-08-14' }],
+        }}
+      />,
+    );
+
+    expect(dayCell('10 Aug 2026')).toHaveAccessibleName(
+      '10 Aug 2026: unavailable — you blocked it',
+    );
+    expect(dayCell('11 Aug 2026')).toHaveAccessibleName(
+      '11 Aug 2026: unavailable — you blocked it, and it is booked',
+    );
+    expect(dayCell('13 Aug 2026')).toHaveAccessibleName('13 Aug 2026: booked');
+  });
+
+  it('offers no way to remove a booked period', () => {
+    /*
+     * A block is the owner's to withdraw; a booking is not — §7 gives `ACCEPTED`
+     * no cancel edge until Phase 5. The list beneath the grid is the blocks', and
+     * a Remove button beside a booking would be a control that cannot work.
+     */
+    idle();
+    render(<AvailabilityCalendar listingId={LISTING} calendar={AUGUST} />);
+
+    expect(screen.queryByRole('button', { name: /Remove 10 Aug 2026/ })).toBeNull();
+  });
+
+  it('explains the two shades, which one key could not', () => {
+    idle();
+    render(<AvailabilityCalendar listingId={LISTING} calendar={AUGUST} />);
+
+    expect(screen.getByText('Blocked by you')).toBeInTheDocument();
+    expect(screen.getByText('Booked')).toBeInTheDocument();
+    expect(screen.getByText('Available')).toBeInTheDocument();
+  });
+});
+
+describe('what reading October found (slice 4.8c)', () => {
+  /*
+   * Two sentences on this page generalised from "nothing is blocked" to
+   * "everything is available", and both were written in 4.3b when a block was
+   * the only thing that could take a date off a calendar. Neither failed a test;
+   * both were printed over a month with three days booked.
+   */
+
+  it('does not claim every date is free when some are booked', () => {
+    idle();
+    render(
+      <AvailabilityCalendar
+        listingId={LISTING}
+        calendar={{
+          month: '2026-08',
+          blocks: [],
+          bookings: [{ id: 'k1', startDate: '2026-08-10', endDate: '2026-08-12' }],
+        }}
+      />,
+    );
+
+    const status = screen.getByRole('status').textContent ?? '';
+    expect(status).not.toContain('every date is available');
+    expect(status).toContain('held by confirmed bookings');
+  });
+
+  it('still says a genuinely quiet month is free', () => {
+    // The sentence is right when it is right. Replacing it unconditionally would
+    // have swapped one wrong answer for another.
+    idle();
+    render(
+      <AvailabilityCalendar
+        listingId={LISTING}
+        calendar={{ month: '2026-11', blocks: [], bookings: [] }}
+      />,
+    );
+
+    expect(screen.getByRole('status').textContent).toContain('every date is available');
+  });
+
+  it('says a booked period is not the owner’s to remove', () => {
+    // §7 gives `ACCEPTED` no cancel edge until Phase 5, so the page says so
+    // rather than leaving an owner hunting for a control that does not exist.
+    idle();
+    render(
+      <AvailabilityCalendar
+        listingId={LISTING}
+        calendar={{
+          month: '2026-08',
+          blocks: [],
+          bookings: [{ id: 'k1', startDate: '2026-08-10', endDate: '2026-08-12' }],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('status').textContent).toContain('not yours to remove');
+  });
+});

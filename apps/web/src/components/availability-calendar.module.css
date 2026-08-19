@@ -44,8 +44,16 @@
   min-height: 40px;
 }
 
+/*
+ * **All three day states share the box, and `.bookedDay` was left out of this
+ * list when 4.8c added it.** The cell kept its background and lost the flex
+ * centring, the minimum height and the tabular figures — so booked days drew
+ * their number hard against the top-left corner while every other day was
+ * centred. Nothing failed; it was found by looking at September.
+ */
 .freeDay,
-.blockedDay {
+.blockedDay,
+.bookedDay {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -64,6 +72,24 @@
   background: var(--accent-tint);
   color: var(--ink-secondary);
   text-decoration: line-through;
+}
+
+/*
+ * A day a booking holds (slice 4.8c).
+ *
+ * **A different shade from a blocked day, because they mean different things to
+ * the owner**: one is theirs to remove and one is not. Drawing both the same
+ * would make the calendar answer "unavailable" and stop, which is the question
+ * §8.5 asks it to go past.
+ *
+ * **No line-through.** The strike on a blocked day reads as *cancelled, by you*;
+ * a booked day is the item earning, which is the opposite kind of news. The
+ * accessible name carries the distinction either way — the colour is never the
+ * only signal (WCAG 1.4.1).
+ */
+.bookedDay {
+  background: var(--success-tint);
+  color: var(--ink-secondary);
 }
 
 .add {
@@ -137,4 +163,48 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/*
+ * What the two shades mean (slice 4.8c).
+ *
+ * **It would have been furniture in 4.3b and is not now.** One kind of
+ * unavailable needs no key; two that an owner can act on differently do.
+ */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 0;
+  margin: -12px 0 24px;
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  list-style: none;
+}
+
+.legend li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.swatchFree,
+.swatchBlocked,
+.swatchBooked {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.swatchFree {
+  background: var(--surface-sunken);
+}
+
+.swatchBlocked {
+  background: var(--accent-tint);
+}
+
+.swatchBooked {
+  background: var(--success-tint);
 }
