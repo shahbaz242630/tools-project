@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Money } from '@platform/core';
+import { Money, Time } from '@platform/core';
 import {
   FIRST_SEARCH_PAGE,
   SEARCH_PAGE_SIZE,
@@ -88,6 +88,10 @@ export function BrowseResults({
     page: results.page,
     category: results.category,
     keyword: results.keyword,
+    // Read from the response for the same reason the keyword is: the server is
+    // the authority on what actually ran, and the pager's links have to point at
+    // that rather than at what was asked for.
+    dates: results.dates,
   };
 
   /*
@@ -139,11 +143,22 @@ export function BrowseResults({
           "tools 1–24" is a worse sentence than "24 tools" for the only page most
           searches will ever have.
         */}
+        {/*
+          **"near you" becomes "free then" for a dated search** (slice 4.9), and
+          it is a correction rather than a flourish. With the filter on, *"1 tool
+          near you"* is false in the way that matters: there were two near them
+          and one was booked. A searcher who reads it concludes the area is thin
+          and widens the radius, when what they should do is change the dates.
+
+          This is the same class as the geocoder outage the Phase 0–3 audit
+          found — a page describing a narrower question in the words of a wider
+          one — and it is the reason the response echoes `dates` at all.
+        */}
         {current.page === FIRST_SEARCH_PAGE
           ? results.results.length === 1
-            ? '1 tool near you'
-            : `${String(results.results.length)} tools near you`
-          : `Tools ${String(first)}–${String(last)} near you`}
+            ? `1 tool ${whereOrWhen(results.dates)}`
+            : `${String(results.results.length)} tools ${whereOrWhen(results.dates)}`
+          : `Tools ${String(first)}–${String(last)} ${whereOrWhen(results.dates)}`}
       </h2>
 
       <ul className={styles.grid}>
@@ -360,8 +375,44 @@ export function emptyHeading(
 ): string {
   const inCategory = categoryName === null ? '' : ` in ${categoryName}`;
   const matching = search.keyword === null ? '' : ` matching “${search.keyword}”`;
+  /*
+   * **The dates are named last and they matter most** (slice 4.9). Without them
+   * this reads *"Nothing within 20 miles"* — a statement about the catalogue —
+   * when the truth is *"nothing within 20 miles free on those dates"*, which is
+   * a statement about three days. The first sends somebody away; the second
+   * sends them to a different week.
+   */
+  const free = search.dates === null ? '' : ` free ${describePeriod(search.dates)}`;
 
-  return `Nothing${inCategory}${matching} within ${String(search.radiusMiles)} miles`;
+  return `Nothing${inCategory}${matching}${free} within ${String(search.radiusMiles)} miles`;
+}
+
+/** "near you", or "free 15–17 Sept 2026" once dates are in play (slice 4.9). */
+function whereOrWhen(
+  dates: { readonly from: string; readonly to: string } | null,
+): string {
+  return dates === null ? 'near you' : `free ${describePeriod(dates)}`;
+}
+
+/**
+ * A period, as a person reads one.
+ *
+ * **`Time.formatLocalDate`, never a `Date`** — 4.3b's rule, and the reason it is
+ * a rule: these strings are `YYYY-MM-DD` and constructing a date from one in the
+ * browser reinterprets it in whatever timezone the device is in.
+ *
+ * A single day says itself once rather than "the 15th to the 15th".
+ */
+function describePeriod({
+  from,
+  to,
+}: {
+  readonly from: string;
+  readonly to: string;
+}): string {
+  return from === to
+    ? Time.formatLocalDate(from)
+    : `${Time.formatLocalDate(from)} to ${Time.formatLocalDate(to)}`;
 }
 
 /**

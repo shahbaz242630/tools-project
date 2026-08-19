@@ -78,6 +78,7 @@ describe('parsing a search request', () => {
         page: FIRST_SEARCH_PAGE,
         category: null,
         keyword: null,
+        dates: null,
       },
     );
   });
@@ -89,6 +90,7 @@ describe('parsing a search request', () => {
       page: FIRST_SEARCH_PAGE,
       category: null,
       keyword: null,
+      dates: null,
     });
   });
 
@@ -211,6 +213,7 @@ describe('the search path', () => {
       page: FIRST_SEARCH_PAGE,
       category: null,
       keyword: null,
+      dates: null,
       ...overrides,
     };
   }
@@ -276,6 +279,7 @@ describe('the search path', () => {
       page: 4,
       category: 'outdoor-gardening',
       keyword: null,
+      dates: null,
     });
   });
 
@@ -310,6 +314,7 @@ describe('the search path', () => {
         page: 4,
         category: 'outdoor-gardening',
         keyword: 'hedge trimmer',
+        dates: { from: '2026-09-01', to: '2026-09-03' },
       }),
     );
     const query = Object.fromEntries(
@@ -325,6 +330,7 @@ describe('the search path', () => {
       page: 4,
       category: 'outdoor-gardening',
       keyword: 'hedge trimmer',
+      dates: { from: '2026-09-01', to: '2026-09-03' },
     });
   });
 });
@@ -511,6 +517,7 @@ describe('parsing search results', () => {
     radiusMiles: 5,
     page: 1,
     category: null,
+    dates: null,
     originStatus: 'placed',
   };
 
@@ -640,5 +647,134 @@ describe('parsing search results', () => {
         parsePublicListingSearchResults({ ...RESULTS, originStatus: 'searched' }),
       ).toThrow();
     });
+  });
+});
+
+describe('the date filter (§8.4 as amended, slice 4.9)', () => {
+  const base = { postcode: 'BS7 8AA' };
+
+  it('takes a pair and gives back one value', () => {
+    const parsed = parseListingSearchQuery({
+      ...base,
+      availableFrom: '2026-09-01',
+      availableTo: '2026-09-03',
+    });
+
+    expect(parsed.dates).toEqual({ from: '2026-09-01', to: '2026-09-03' });
+  });
+
+  it('is absent when neither date was given', () => {
+    expect(parseListingSearchQuery(base).dates).toBe(null);
+  });
+
+  it('treats an empty pair as absent, because a GET form submits every control', () => {
+    // The same case `searchCategorySchema` swallows: an untouched pair of date
+    // inputs sends `availableFrom=&availableTo=`, and refusing it would 400 the
+    // most ordinary search on the page.
+    expect(
+      parseListingSearchQuery({ ...base, availableFrom: '', availableTo: '' }).dates,
+    ).toBe(null);
+  });
+
+  it('refuses half a range rather than guessing the other end', () => {
+    /*
+     * **The reason the pair is one field.** Two independent nullable values would
+     * make a half-range representable, and every layer downstream would have to
+     * decide what it means — three places to decide it and two of them wrong.
+     */
+    expect(() =>
+      parseListingSearchQuery({ ...base, availableFrom: '2026-09-01' }),
+    ).toThrow();
+    expect(() =>
+      parseListingSearchQuery({ ...base, availableTo: '2026-09-03' }),
+    ).toThrow();
+  });
+
+  it('refuses a range that ends before it starts', () => {
+    expect(() =>
+      parseListingSearchQuery({
+        ...base,
+        availableFrom: '2026-09-03',
+        availableTo: '2026-09-01',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts a single day, which is a legitimate hire', () => {
+    const parsed = parseListingSearchQuery({
+      ...base,
+      availableFrom: '2026-09-01',
+      availableTo: '2026-09-01',
+    });
+
+    expect(parsed.dates).toEqual({ from: '2026-09-01', to: '2026-09-01' });
+  });
+
+  it('refuses a range longer than anybody may agree to anywhere', () => {
+    /*
+     * §8.5.3: a hire *capable of subsisting* beyond three months is regulated
+     * consumer hire under the CCA 1974, so 88 days is the ceiling on the whole
+     * platform. A longer search is asking for something no listing can answer,
+     * and running it would return nothing — which reads as *there is nothing
+     * near you* rather than as *nobody may hire anything for that long*.
+     */
+    expect(() =>
+      parseListingSearchQuery({
+        ...base,
+        availableFrom: '2026-09-01',
+        availableTo: '2026-12-01',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts a range exactly at the ceiling', () => {
+    // 88 days inclusive: the 1st plus 87.
+    const parsed = parseListingSearchQuery({
+      ...base,
+      availableFrom: '2026-09-01',
+      availableTo: '2026-11-27',
+    });
+
+    expect(parsed.dates).not.toBe(null);
+  });
+
+  it('refuses a date that is not a date', () => {
+    // Validated by the same function that later converts it, so `2026-02-30`
+    // cannot be accepted here and throw in the conversion.
+    expect(() =>
+      parseListingSearchQuery({
+        ...base,
+        availableFrom: '2026-02-30',
+        availableTo: '2026-03-02',
+      }),
+    ).toThrow();
+  });
+
+  const aSearch = (over = {}) => ({
+    postcode: 'BS7 8AA',
+    radiusMiles: 10 as const,
+    page: FIRST_SEARCH_PAGE,
+    category: null,
+    keyword: null,
+    dates: null,
+    ...over,
+  });
+
+  it('mints no date parameters for an undated search', () => {
+    // One search, one URL — the rule `?page=1`, `?category=` and `?keyword=` all
+    // follow, and what slice 2.12 needs for §8.17's canonicals.
+    const path = publicListingSearchPath(aSearch());
+
+    expect(path).not.toContain('availableFrom');
+    expect(path).not.toContain('availableTo');
+  });
+
+  it('writes both parameters or neither, never one', () => {
+    const path = publicListingSearchPath(
+      aSearch({ dates: { from: '2026-09-01', to: '2026-09-03' } }),
+    );
+
+    expect(path).toContain('availableFrom=2026-09-01');
+    expect(path).toContain('availableTo=2026-09-03');
   });
 });

@@ -110,6 +110,22 @@ export interface ProximitySearch {
    * is nearest-first whatever this holds.
    */
   readonly keyword: string | null;
+  /**
+   * The period the item must be free for, or **null for any dates** (§8.4 as
+   * amended, slice 4.9).
+   *
+   * **Dates here, instants on the far side of the port.** Catalogue takes the
+   * two `YYYY-MM-DD` strings the wire carries and Search & Location compares
+   * `timestamptz`; the conversion happens once, in `LocationService`, in the
+   * platform's timezone. That is the rule 4.3b set and the reason no `Date` is
+   * constructed in a browser or in a controller.
+   *
+   * **`to` is the inclusive last day**, as it is everywhere a person reads one.
+   *
+   * **It narrows what is found and never reorders it**, exactly as the keyword
+   * does: nearest-first is nearest-first whatever this holds.
+   */
+  readonly dates: { readonly from: string; readonly to: string } | null;
   readonly window: ResultWindow;
 }
 

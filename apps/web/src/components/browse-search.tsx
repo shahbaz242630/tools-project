@@ -32,6 +32,7 @@ export function BrowseSearch({
   categories,
   keyword,
   keywordField,
+  dates,
   error,
   className,
 }: {
@@ -77,6 +78,13 @@ export function BrowseSearch({
    * handed the parsed query, which has already been through the same schema.
    */
   readonly keyword: string | null;
+  /**
+   * The dates already searched for, echoed back into the controls (slice 4.9).
+   *
+   * **A pair or nothing**, as the contract has it, so this component cannot
+   * render half a range back into a form that would then be refused.
+   */
+  readonly dates: { readonly from: string; readonly to: string } | null;
   /**
    * Whether to draw a control for it (slice 3.3b).
    *
@@ -210,6 +218,52 @@ export function BrowseSearch({
             {error}
           </p>
         )}
+      </div>
+
+      {/*
+        **Two controls for one filter, and the contract refuses half of it**
+        (slice 4.9). `searchDatesSchema` insists on both dates or neither, so a
+        searcher who fills one box in gets a sentence rather than a silently
+        widened search — which is the failure mode this whole form is arranged
+        against.
+
+        **`type="date"`** gives a real picker on every current browser and
+        submits `YYYY-MM-DD` whatever the reader's locale displays, which is the
+        format the API takes. The same reasoning as the availability form's.
+
+        **No `min`, deliberately.** The obvious one is today — but "today" means
+        reading a clock, and the only clock this component can reach is the
+        rendering server's. 4.3b's rule is that a date becomes an instant in
+        exactly one place, on the server, and a component that starts consulting
+        a clock is the second. It would also make every test of this form depend
+        on the day it runs. A hire in the past is refused where it matters, by
+        the quote engine, in a sentence.
+
+        **Empty is absent, not an error.** A plain GET form submits every named
+        control, so an untouched pair sends `availableFrom=&availableTo=`; the
+        contract treats an empty string as absent for the same reason it swallows
+        an empty `category=`.
+      */}
+      <div className={styles.datesField}>
+        <label htmlFor="availableFrom">From</label>
+        <input
+          id="availableFrom"
+          name="availableFrom"
+          type="date"
+          defaultValue={dates?.from ?? ''}
+        />
+      </div>
+
+      <div className={styles.datesField}>
+        {/* Inclusive, and labelled as such — "to" alone is the word that makes
+            somebody wonder whether the last day is included. */}
+        <label htmlFor="availableTo">Until (inclusive)</label>
+        <input
+          id="availableTo"
+          name="availableTo"
+          type="date"
+          defaultValue={dates?.to ?? ''}
+        />
       </div>
 
       <div className={styles.radiusField}>

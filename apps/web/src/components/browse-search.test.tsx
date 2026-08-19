@@ -32,6 +32,7 @@ function renderSearch(
     category: null,
     categories: [] as readonly PublicCategory[],
     keyword: null,
+    dates: null,
     keywordField: true,
     error: null,
     ...overrides,

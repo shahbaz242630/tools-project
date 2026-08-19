@@ -48,6 +48,84 @@ export const DEEPEST_OFFSET = (20 - 1) * PAGE_SIZE;
  * the alternative is a query that runs and measures something else — and a
  * green number for the wrong statement is worse than no number at all.
  */
+/**
+ * The nine states §8.5.1 lets occupy a calendar, read out of the state machine
+ * rather than restated (slice 4.9).
+ *
+ * **The same discipline this whole file exists for.** It lifts the SQL out of
+ * the adapter so what is measured is what ships; a hand-copied list of states
+ * would be the one thing here that could silently disagree with the application,
+ * and it would disagree in the direction that makes the number look better —
+ * fewer states, fewer rows excluded, a cheaper query than the one that runs.
+ *
+ * Throws rather than guessing. A script that cannot find the list has no
+ * business reporting a duration.
+ */
+export function readCalendarOccupyingStates(machineSource) {
+  const marker = 'CALENDAR_OCCUPYING_STATES';
+  const start = machineSource.indexOf(`${marker}: readonly BookingState[]`);
+  if (start === -1) throw new Error(`No ${marker} found in the state machine.`);
+
+  /*
+   * **From the `=`, not from the name.** The declaration is
+   * `CALENDAR_OCCUPYING_STATES: readonly BookingState[] = Object.freeze([…])`,
+   * and the first bracket after the name belongs to the *type annotation* — so
+   * the obvious `indexOf('[')` lifts an empty pair and parses to nothing. Caught
+   * by the test below, which is why the failure mode here is a throw rather than
+   * an empty list quietly measuring a query with no state filter at all.
+   */
+  const assignment = machineSource.indexOf('=', start);
+  const open = machineSource.indexOf('[', assignment);
+  const close = machineSource.indexOf(']', open);
+  if (assignment === -1 || open === -1 || close === -1) {
+    throw new Error(`No ${marker} array literal.`);
+  }
+
+  const states = machineSource
+    .slice(open + 1, close)
+    .split(',')
+    .map((entry) => entry.trim().replace(/^'|'$/g, ''))
+    .filter((entry) => /^[A-Z_]+$/.test(entry));
+
+  if (states.length === 0) throw new Error(`${marker} parsed to nothing.`);
+  return states;
+}
+
+/**
+ * The availability predicate, as the adapter composes it.
+ *
+ * **Written out here rather than lifted**, unlike every other substitution in
+ * this file, and the asymmetry is worth stating: the rest of the statement is
+ * read out of `prisma-listing-search.ts`, but this fragment lives inside a
+ * ternary that the crude template-literal lift cannot reach. What keeps the two
+ * honest is the guard below — an adapter that grows a placeholder this file does
+ * not know refuses to be measured at all — plus the states being read rather
+ * than copied.
+ *
+ * The instants are interpolated rather than left as placeholders, because the
+ * substitution pass does not re-scan what it produced.
+ */
+function freeForDates({ startAt, endAt }, states) {
+  const from = `'${startAt.toISOString()}'::timestamptz`;
+  const to = `'${endAt.toISOString()}'::timestamptz`;
+  const list = states.map((state) => `'${state}'`).join(',');
+
+  return `
+        AND NOT EXISTS (
+          SELECT 1 FROM "availability_blocks" b
+          WHERE b."listingId" = l."id"
+            AND b."startAt" < ${to}
+            AND b."endAt" > ${from}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "bookings" bk
+          WHERE bk."listingId" = l."id"
+            AND bk."state" = ANY(ARRAY[${list}]::text[])
+            AND bk."startAt" < ${to}
+            AND bk."endAt" > ${from}
+        )`;
+}
+
 export function buildQuery(
   source,
   {
@@ -58,8 +136,20 @@ export function buildQuery(
     offset,
     categoryId = null,
     keyword = null,
+    dates = null,
+    /**
+     * The nine, read from the state machine by the caller (slice 4.9).
+     *
+     * Required whenever `dates` is given, and deliberately not defaulted to a
+     * literal here: a default would be the copied list this file refuses to keep.
+     */
+    occupyingStates = null,
   },
 ) {
+  if (dates !== null && occupyingStates === null) {
+    throw new Error('buildQuery needs occupyingStates when dates are given.');
+  }
+
   const start = source.indexOf('$queryRaw');
   if (start === -1) throw new Error('No $queryRaw found in the adapter.');
 
@@ -131,6 +221,18 @@ export function buildQuery(
         ? ''
         : `AND l."searchDocument" @@ websearch_to_tsquery('english', '${String(keyword).replaceAll("'", "''")}')`,
     ],
+    /*
+     * **The third composed predicate, on the same terms** — slice 4.9. Absent
+     * substitutes to the empty string, so the undated statement stays the one
+     * slice 3.1c measured the exit gate against.
+     *
+     * **The instants are supplied already converted.** `periodFromLocalDates` is
+     * TypeScript in another module, and re-implementing its timezone arithmetic
+     * here would be the second implementation ADR 0003 exists to prevent. What
+     * this measures is the shape and cost of the predicate; the arithmetic
+     * behind its bounds is the adapter's and its tests'.
+     */
+    ['freeForDates', dates === null ? '' : freeForDates(dates, occupyingStates)],
   ]);
 
   return source

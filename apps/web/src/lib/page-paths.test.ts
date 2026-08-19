@@ -26,6 +26,7 @@ const searchFor = (over: Partial<ListingSearchQuery> = {}): ListingSearchQuery =
   page: 1,
   category: null,
   keyword: null,
+  dates: null,
   ...over,
 });
 

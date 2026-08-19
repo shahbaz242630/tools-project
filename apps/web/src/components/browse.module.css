@@ -307,3 +307,26 @@
   margin: 0 auto;
   color: var(--ink-secondary);
 }
+
+/*
+ * The date filter's two controls (slice 4.9).
+ *
+ * **Two fields for one filter**, sized like the radius selector beside them
+ * rather than like the postcode box: they are chosen from a picker, not typed
+ * into, so they need no room to grow.
+ */
+.datesField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.datesField input {
+  min-width: 0;
+}
+
+@media (max-width: 744px) {
+  .datesField {
+    grid-column: span 1;
+  }
+}

@@ -127,6 +127,7 @@ export class PublicListingSearchController {
         page: request.page,
         category: request.category,
         keyword: request.keyword,
+        dates: request.dates,
         originStatus: 'unplaceable',
       };
     }
@@ -165,6 +166,9 @@ export class PublicListingSearchController {
       page: request.page,
       category: request.category,
       keyword: request.keyword,
+      // Echoed from the request like the four above, and for the same reason:
+      // a dated search that came back empty must not read as "nothing near you".
+      dates: request.dates,
       originStatus: 'placed',
     };
   }

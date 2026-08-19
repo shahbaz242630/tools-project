@@ -81,6 +81,23 @@ export interface NearbySearch {
    * for why that is a product decision rather than a shortcut.
    */
   readonly keyword: string | null;
+  /**
+   * The period the item must be free for, or **null for any dates** (§8.4 as
+   * amended, slice 4.9).
+   *
+   * **Calendar dates, not instants, and `to` is the inclusive last day.** This
+   * port and `catalogue/listing-proximity.ts` are structurally identical by
+   * design — one module states what it needs, the other what it offers, and
+   * `main.ts` hands the object over whole so a field added to one and forgotten
+   * on the other fails to compile at the seam. Typing this one in instants would
+   * have bought a conversion and spent that property, which is worth more.
+   *
+   * The conversion to the half-open `[startAt, endAt)` pair the database holds
+   * happens in the adapter, through `periodFromLocalDates` — the same function
+   * the calendar and the quote engine use, so there is one implementation of
+   * *"the 20th to the 22nd"* rather than three.
+   */
+  readonly dates: { readonly from: string; readonly to: string } | null;
   readonly window: ResultWindow;
 }
 

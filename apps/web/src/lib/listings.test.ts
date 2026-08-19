@@ -844,6 +844,7 @@ describe('fetchListingSearch', () => {
     radiusMiles: 5,
     page: 1,
     category: null,
+    dates: null,
     originStatus: 'placed',
   };
 
@@ -854,6 +855,7 @@ describe('fetchListingSearch', () => {
     page: 1,
     category: null,
     keyword: null,
+    dates: null,
     ...over,
   });
 
@@ -916,6 +918,7 @@ describe('fetchListingSearch', () => {
         page: 1,
         category: null,
         keyword: null,
+        dates: null,
         originStatus: 'placed',
       },
     });

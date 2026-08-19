@@ -968,6 +968,13 @@ export class ListingsService {
        * and got a real answer.
        */
       keyword: search.keyword,
+      /*
+       * **Passed straight through too** (slice 4.9), and for the keyword's
+       * reason: there is nothing here for Catalogue to resolve. The contract has
+       * already refused a half-range, an inverted one and one longer than §8.5.3
+       * permits anywhere, so what arrives is either a usable period or null.
+       */
+      dates: search.dates,
       window: {
         limit: SEARCH_RESULT_LIMIT,
         offset: resultsToSkip(pageNumber),

@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import {
   DEFAULT_SEARCH_RADIUS_MILES,
   SEARCH_CATEGORY_MESSAGE,
+  listingSearchFieldsSchema,
+  searchDatesSchema,
   listingSearchQuerySchema,
 } from '@platform/contracts';
 import type { PublicCategory, SearchRadiusMiles } from '@platform/contracts';
@@ -114,6 +116,7 @@ export default async function BrowsePage({
           category={categoryFrom(params.category)}
           categories={categories}
           keyword={keywordFrom(params.keyword)}
+          dates={datesFrom(params)}
           keywordField
           error={null}
         />
@@ -148,6 +151,25 @@ export default async function BrowsePage({
      * result rather than a bad request.
      */
     keyword: first(params.keyword) ?? undefined,
+    /*
+     * **And the dates** (slice 4.9) — **and their absence here was a live bug
+     * for the length of one manual check.**
+     *
+     * ADR 0046's promise is that adding a filter is a compile error in every URL
+     * builder, and it kept it: five builders and both ports failed to compile
+     * until they carried `dates`. **This object is where that promise stops.**
+     * Zod parses `unknown`, so a field this mapping forgets is not a type error
+     * — it is a filter that silently does nothing, which is precisely the
+     * failure ADR 0046 exists to prevent, arriving through the one door it does
+     * not cover.
+     *
+     * It was found by searching for dates in a browser and getting a listing
+     * back that a booking already held. The API was right; this page never asked
+     * it the question. **A filter added after this one must be added here too,
+     * and nothing will tell you.**
+     */
+    availableFrom: first(params.availableFrom) ?? undefined,
+    availableTo: first(params.availableTo) ?? undefined,
   });
 
   if (!parsed.success) {
@@ -159,6 +181,7 @@ export default async function BrowsePage({
           category={categoryFrom(params.category)}
           categories={categories}
           keyword={keywordFrom(params.keyword)}
+          dates={datesFrom(params)}
           keywordField
           error={messageFor(parsed.error.issues)}
         />
@@ -195,6 +218,7 @@ export default async function BrowsePage({
           category={null}
           categories={categories}
           keyword={parsed.data.keyword}
+          dates={parsed.data.dates}
           keywordField
           error={`Category ${SEARCH_CATEGORY_MESSAGE}.`}
         />
@@ -212,6 +236,7 @@ export default async function BrowsePage({
         category={parsed.data.category}
         categories={categories}
         keyword={parsed.data.keyword}
+        dates={parsed.data.dates}
         keywordField
         error={null}
       />
@@ -316,7 +341,7 @@ function nameOf(
 
 /** What to leave in the selector when the query is refused. */
 function radiusFrom(value: string | string[] | undefined): SearchRadiusMiles {
-  const parsed = listingSearchQuerySchema.shape.radiusMiles.safeParse(
+  const parsed = listingSearchFieldsSchema.shape.radiusMiles.safeParse(
     first(value) ?? undefined,
   );
   return parsed.success ? parsed.data : DEFAULT_SEARCH_RADIUS_MILES;
@@ -334,7 +359,7 @@ function radiusFrom(value: string | string[] | undefined): SearchRadiusMiles {
  * value forward.
  */
 function categoryFrom(value: string | string[] | undefined): string | null {
-  const parsed = listingSearchQuerySchema.shape.category.safeParse(
+  const parsed = listingSearchFieldsSchema.shape.category.safeParse(
     first(value) ?? undefined,
   );
   return parsed.success ? parsed.data : null;
@@ -352,8 +377,32 @@ function categoryFrom(value: string | string[] | undefined): string | null {
  * the problem. The only way to reach this is a hand-edited or stale URL, since
  * the input carries `maxLength`.
  */
+/**
+ * The same, for the dates (slice 4.9).
+ *
+ * **It takes the whole params object, unlike the three above**, because the
+ * filter is a pair: `searchDatesSchema` refuses one date without the other, so
+ * salvaging them one at a time would be the very shape the contract exists to
+ * make unrepresentable.
+ *
+ * **A refused range is dropped rather than echoed**, which is the category's
+ * treatment rather than the postcode's. Both dates come from a picker, so a
+ * range the parser rejected is not something a person can fix by reading it
+ * back — and leaving it in the form would mean the next submission is refused
+ * for the same reason, with the error still showing.
+ */
+function datesFrom(
+  params: Record<string, string | string[] | undefined>,
+): { from: string; to: string } | null {
+  const parsed = searchDatesSchema.safeParse({
+    availableFrom: first(params['availableFrom']) ?? undefined,
+    availableTo: first(params['availableTo']) ?? undefined,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
 function keywordFrom(value: string | string[] | undefined): string | null {
-  const parsed = listingSearchQuerySchema.shape.keyword.safeParse(
+  const parsed = listingSearchFieldsSchema.shape.keyword.safeParse(
     first(value) ?? undefined,
   );
   return parsed.success ? parsed.data : null;

@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { Time } from '@platform/core';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
 import { LISTING_STATUSES, MODERATION_STATES } from '@platform/contracts';
@@ -162,6 +163,9 @@ function searchFor(overrides: Partial<NearbySearch> = {}): NearbySearch {
     radiusMiles: 5,
     categoryId: null,
     keyword: null,
+    // `dates: null` joins on the same terms in slice 4.9: every test predating
+    // the date filter must keep meaning what it meant.
+    dates: null,
     window: PAGE_ONE,
     ...overrides,
   };
@@ -1120,5 +1124,187 @@ describe('an origin that cannot be placed', () => {
       'unavailable',
       'found',
     ]);
+  });
+});
+
+describe('the date filter (§8.4 as amended, slice 4.9)', () => {
+  /*
+   * **What only this file can show.** The predicate lives inside the radius
+   * query — ADR 0046's rule, because filtering after `LIMIT`/`OFFSET` is the
+   * filter-after-paginate bug — so there is no service-level seam to test it at.
+   * It is SQL against two of Booking's tables, and the only honest way to check
+   * it is to write real rows and search.
+   *
+   * The rule that matters most is the one §7.1 makes: **a request nobody has
+   * answered must not hide a listing.** Several renters may hold a request for
+   * one period and the first acceptance takes it; hiding the listing on the
+   * strength of a request would let one person quietly suppress somebody else's
+   * item by asking for it.
+   */
+
+  const SEPTEMBER = { from: '2026-09-10', to: '2026-09-12' } as const;
+
+  /** A period, as the column holds it: half-open, local midnights. */
+  function period(from: string, toInclusive: string) {
+    return {
+      startAt: Time.startOfLocalDay(from),
+      endAt: Time.startOfLocalDay(Time.addLocalDays(toInclusive, 1)),
+    };
+  }
+
+  async function block(listingId: string, from: string, toInclusive: string) {
+    const { startAt, endAt } = period(from, toInclusive);
+    await client.availabilityBlock.create({
+      data: { listingId, startAt, endAt, reason: null },
+    });
+  }
+
+  async function bookingIn(
+    listingId: string,
+    state: string,
+    from: string,
+    toInclusive: string,
+  ) {
+    const renterId = await newUser();
+    const { startAt, endAt } = period(from, toInclusive);
+    const version = await client.categoryVersion.findFirstOrThrow({
+      where: { listings: { some: { id: listingId } } },
+    });
+    const quote = await client.quote.create({
+      data: {
+        listingId,
+        renterId,
+        startAt,
+        endAt,
+        timeZone: 'Europe/London',
+        renterPostcode: 'BS7 8AA',
+        itemChargeAmount: 1_800,
+        renterFeeAmount: 144,
+        totalAmount: 1_944,
+        currency: 'GBP',
+        minimumFeeApplied: false,
+        // Not `[]`: a CHECK constraint refuses a quote with no breakdown, which
+        // is §3.4.4 enforced in the database rather than only in the service.
+        lineItems: [
+          {
+            unit: 'day',
+            count: 1,
+            unitPrice: { amount: 1_800, currency: 'GBP' },
+            subtotal: { amount: 1_800, currency: 'GBP' },
+          },
+        ],
+        categoryVersionId: version.id,
+        expiresAt: endAt,
+      },
+    });
+    await client.booking.create({
+      data: {
+        listingId,
+        renterId,
+        state,
+        startAt,
+        endAt,
+        timeZone: 'Europe/London',
+        quoteId: quote.id,
+        categoryVersionId: version.id,
+        itemChargeAmount: 1_800,
+        renterFeeAmount: 144,
+        totalAmount: 1_944,
+        currency: 'GBP',
+        itemTitle: 'Petrol hedge trimmer',
+        categoryName: 'Outdoor and gardening',
+        requestExpiresAt: endAt,
+      },
+    });
+  }
+
+  it('returns a listing nothing has taken', async () => {
+    const listingId = await givenAListing(northOf(500));
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+
+    expect(page?.matches.map((match) => match.listingId)).toContain(listingId);
+  });
+
+  it('hides a listing whose owner has blocked the dates', async () => {
+    const listingId = await givenAListing(northOf(500));
+    await block(listingId, '2026-09-11', '2026-09-11');
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+
+    expect(page?.matches.map((match) => match.listingId)).not.toContain(listingId);
+  });
+
+  it('hides a listing an accepted booking holds', async () => {
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'ACCEPTED', '2026-09-11', '2026-09-13');
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+
+    expect(page?.matches.map((match) => match.listingId)).not.toContain(listingId);
+  });
+
+  it('does NOT hide a listing somebody has merely requested', async () => {
+    /*
+     * **§7.1's design, and the most consequential assertion in this file.** A
+     * request reserves nothing: several renters may hold one for the same dates
+     * and the first acceptance takes them. Hiding the listing would remove it
+     * from search on the strength of a request that binds nobody — and would let
+     * anybody suppress a competitor's listing by requesting it and walking away.
+     */
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'REQUESTED', '2026-09-11', '2026-09-13');
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+
+    expect(page?.matches.map((match) => match.listingId)).toContain(listingId);
+  });
+
+  it('does not hide a listing whose booking went away', async () => {
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'DECLINED', '2026-09-11', '2026-09-13');
+    await bookingIn(listingId, 'EXPIRED', '2026-09-10', '2026-09-12');
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+
+    expect(page?.matches.map((match) => match.listingId)).toContain(listingId);
+  });
+
+  it('lets a hire begin the day another ends', async () => {
+    // The `[)` bound, matching the EXCLUDE constraint and the calendar: back to
+    // back does not overlap, which is what makes a Friday return and a Friday
+    // collection both possible.
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'ACCEPTED', '2026-09-07', '2026-09-09');
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+
+    expect(page?.matches.map((match) => match.listingId)).toContain(listingId);
+  });
+
+  it('leaves an undated search entirely alone', async () => {
+    // The absent filter contributes no SQL at all (ADR 0046), so a listing that
+    // is fully booked is still found by somebody who named no dates.
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'ACCEPTED', '2026-09-10', '2026-09-12');
+
+    const page = await search.findWithin(searchFor());
+
+    expect(page?.matches.map((match) => match.listingId)).toContain(listingId);
+  });
+
+  it('discloses nothing about the booking that hid a listing', async () => {
+    // A predicate-only read (ADR 0044's shape): what comes back is the same
+    // listing id and distance an undated search returns, and nothing else.
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'ACCEPTED', '2026-09-11', '2026-09-13');
+    const other = await givenAListing(northOf(600));
+
+    const page = await search.findWithin(searchFor({ dates: SEPTEMBER }));
+    const match = page?.matches.find((row) => row.listingId === other);
+
+    expect(match).toBeDefined();
+    expect(Object.keys(match ?? {}).sort()).toEqual(['distance', 'listingId']);
+    expect(page?.matches.map((row) => row.listingId)).not.toContain(listingId);
   });
 });
