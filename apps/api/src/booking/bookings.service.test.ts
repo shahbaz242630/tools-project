@@ -522,4 +522,204 @@ describe('BookingsService', () => {
       expect(await service.find('booking-nonexistent', ADA)).toBe(null);
     });
   });
+
+  describe('the dashboards (BRD section 14, slice 4.8a)', () => {
+    const BOB = 'user-bob';
+    const DRILL = 'listing-drill';
+    const OTHER_OWNER = 'user-other-owner';
+
+    /** One request from `renter`, made the way one actually is. */
+    async function givenARequestFrom(renter: string, listingId = MOWER) {
+      const quote = await quotes.quote(listingId, renter, QUOTE_REQUEST);
+      if (quote === null) throw new Error('expected a quote');
+      const booking = await service.request(renter, { quoteId: quote.id });
+      if (booking === null) throw new Error('expected a booking');
+      return booking;
+    }
+
+    /** A second listing, owned by somebody else, to prove the scopes bite. */
+    function givenASecondListing(): void {
+      listings.give(mower({ id: DRILL, ownerId: OTHER_OWNER, title: 'Rotary hammer' }));
+      bookingStore.givenOwner(DRILL, OTHER_OWNER);
+    }
+
+    it('gives a renter the bookings they asked for', async () => {
+      const mine = await givenARequestFrom(ADA);
+
+      const listed = await service.listForRenter(ADA);
+
+      expect(listed.bookings.map((booking) => booking.id)).toEqual([mine.id]);
+    });
+
+    it('never gives a renter a booking somebody else made', async () => {
+      await givenARequestFrom(ADA);
+
+      const listed = await service.listForRenter(BOB);
+
+      expect(listed.bookings).toEqual([]);
+    });
+
+    it('gives an owner every booking on their listings', async () => {
+      const first = await givenARequestFrom(ADA);
+      const second = await givenARequestFrom(BOB);
+
+      const listed = await service.listForOwner(OWNER);
+
+      expect(listed.bookings.map((booking) => booking.id).sort()).toEqual(
+        [first.id, second.id].sort(),
+      );
+    });
+
+    it('never gives an owner a booking on a listing that is not theirs', async () => {
+      givenASecondListing();
+      await givenARequestFrom(ADA, DRILL);
+
+      const listed = await service.listForOwner(OWNER);
+
+      expect(listed.bookings).toEqual([]);
+    });
+
+    it('reads empty for somebody who has never booked or listed anything', async () => {
+      // Not a 404 and not a refusal: a collection scoped to the session always
+      // exists, and an empty one is the truth.
+      expect(await service.listForRenter('user-nobody')).toEqual({
+        bookings: [],
+        truncated: false,
+      });
+      expect(await service.listForOwner('user-nobody')).toEqual({
+        bookings: [],
+        truncated: false,
+      });
+    });
+
+    it('orders newest first, breaking a same-millisecond tie by id', async () => {
+      /*
+       * **The fake stamps every row from one clock**, so ties are the normal case
+       * here rather than the rare one — which is precisely when a list without a
+       * total order returns insertion order and a test passes for the wrong
+       * reason. Session 37's flake was this, one run in eight.
+       */
+      const first = await givenARequestFrom(ADA);
+      const second = await givenARequestFrom(ADA);
+      const third = await givenARequestFrom(ADA);
+
+      const listed = await service.listForRenter(ADA);
+
+      expect(listed.bookings.map((booking) => booking.id)).toEqual([
+        third.id,
+        second.id,
+        first.id,
+      ]);
+    });
+
+    it('says so when the list was cut short', async () => {
+      await givenARequestFrom(ADA);
+      await givenARequestFrom(ADA);
+      await givenARequestFrom(ADA);
+
+      const listed = await service.listForRenter(ADA, 2);
+
+      expect(listed.bookings).toHaveLength(2);
+      expect(listed.truncated).toBe(true);
+    });
+
+    it('does not claim a cut when the list fits exactly', async () => {
+      // The case the probe exists for: a full page and a complete list are
+      // otherwise indistinguishable, and the guess goes wrong for the person
+      // with the most to look at.
+      await givenARequestFrom(ADA);
+      await givenARequestFrom(ADA);
+
+      const listed = await service.listForRenter(ADA, 2);
+
+      expect(listed.bookings).toHaveLength(2);
+      expect(listed.truncated).toBe(false);
+    });
+
+    it('falls back rather than reaching for the maximum on a nonsense limit', async () => {
+      await givenARequestFrom(ADA);
+
+      const listed = await service.listForRenter(ADA, Number.NaN);
+
+      expect(listed.bookings).toHaveLength(1);
+    });
+
+    it('gives the renter an inclusive total and no breakdown', async () => {
+      // Section 3.4.4 wherever a price appears; the split belongs beside the
+      // detail that explains it.
+      const booking = await givenARequestFrom(ADA);
+
+      const [row] = (await service.listForRenter(ADA)).bookings;
+
+      expect(row?.total).toEqual(booking.total);
+      expect(row).not.toHaveProperty('lineItems');
+      expect(row).not.toHaveProperty('events');
+    });
+
+    it('gives the owner their own charge, and no total and no renter', async () => {
+      /*
+       * The renter's inclusive total on an owner's row reads as what they
+       * receive, and section 3.4's commission arithmetic does not exist until
+       * Phase 5. 4.6b settled the wording; this is the same decision on a second
+       * surface.
+       */
+      const booking = await givenARequestFrom(ADA);
+
+      const [row] = (await service.listForOwner(OWNER)).bookings;
+
+      expect(row?.itemCharge).toEqual(booking.itemCharge);
+      expect(row).not.toHaveProperty('total');
+      expect(row).not.toHaveProperty('renterFee');
+      expect(row).not.toHaveProperty('renterId');
+    });
+
+    it('shows the owner requests still waiting, unlike the decision panel', async () => {
+      // `pendingRequests` answers *what must I decide on this listing*; this
+      // answers *what is happening across everything I own*. A dashboard that
+      // hid the pending ones would send an owner hunting listing by listing.
+      const waiting = await givenARequestFrom(ADA);
+
+      const listed = await service.listForOwner(OWNER);
+
+      expect(listed.bookings.map((booking) => booking.state)).toEqual(['REQUESTED']);
+      expect(listed.bookings[0]?.id).toBe(waiting.id);
+    });
+
+    it('keeps showing a booking after it has been answered', async () => {
+      // The hole 4.8 exists to close: an accepted booking left the owner's
+      // requests panel the moment it was answered and appeared nowhere else.
+      const booking = await givenARequestFrom(ADA);
+      await service.accept(booking.id, OWNER);
+
+      const owner = await service.listForOwner(OWNER);
+      const renter = await service.listForRenter(ADA);
+
+      expect(owner.bookings[0]?.state).toBe('ACCEPTED');
+      expect(renter.bookings[0]?.state).toBe('ACCEPTED');
+    });
+
+    it('carries the terms it was made under, not the listing as it stands', async () => {
+      // Section 8.2: the copy is what lets a list render after a retitle.
+      // Changing the source and re-reading is the only way to prove it is a copy.
+      const booking = await givenARequestFrom(ADA);
+      listings.give(mower({ title: 'Renamed since' }));
+
+      const [row] = (await service.listForRenter(ADA)).bookings;
+
+      expect(row?.itemTitle).toBe(booking.itemTitle);
+      expect(row?.itemTitle).not.toBe('Renamed since');
+    });
+
+    it('states the last day inclusively, as the renter asked for it', async () => {
+      // The column holds the exclusive bound. "The 21st to the 23rd" ends at the
+      // start of the 24th, and every projection converts back.
+      await givenARequestFrom(ADA);
+
+      const [row] = (await service.listForRenter(ADA)).bookings;
+
+      expect(row?.startDate).toBe('2026-08-21');
+      expect(row?.endDate).toBe('2026-08-23');
+      expect(row?.days).toBe(3);
+    });
+  });
 });

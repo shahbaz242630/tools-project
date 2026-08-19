@@ -1,9 +1,13 @@
-import { Time } from '@platform/core';
+import { Paging, Time } from '@platform/core';
 import type {
   Booking,
   BookingRequest,
+  BookingSummaries,
+  BookingSummary,
   ListingRequest,
   ListingRequests,
+  OwnerBookings,
+  OwnerBookingSummary,
 } from '@platform/contracts';
 import { rentalPeriodDays } from '../pricing/rental-period.js';
 import type { AvailabilityStore, UnavailableReason } from './availability-store.js';
@@ -13,6 +17,7 @@ import {
   OverlappingBookingError,
 } from './booking-store.js';
 import type {
+  BookingRecord,
   BookingStore,
   BookingWithEvents,
   PendingRequest,
@@ -376,6 +381,54 @@ export class BookingsService {
   }
 
   /**
+   * Every booking this person requested (§14's *dashboards for both parties*,
+   * slice 4.8a).
+   *
+   * **The first place a renter can see a booking after making it.** Until this,
+   * 4.5b's confirmation panel was the only place one was ever shown to them and a
+   * reload lost it — so a request could expire, be accepted or be declined with
+   * nothing anywhere telling them.
+   *
+   * **Bounded with the cut declared**, never silently. See
+   * `DEFAULT_BOOKING_LIST_LIMIT` for why the bound is what it is.
+   */
+  async listForRenter(
+    renterId: string,
+    limit: number = DEFAULT_BOOKING_LIST_LIMIT,
+  ): Promise<BookingSummaries> {
+    const bounded = boundedBookingLimit(limit);
+    const rows = await this.bookings.findForRenter(renterId, Paging.probe(bounded));
+    const page = Paging.fitTo(rows, bounded);
+
+    return { bookings: page.items.map(toBookingSummary), truncated: page.truncated };
+  }
+
+  /**
+   * Every booking on this owner's listings (slice 4.8a).
+   *
+   * **Every state, and it is deliberately not a second `pendingRequests`.** That
+   * one answers *what must I decide on this listing* and honours §8.6's deadline
+   * by excluding anything past it; this answers *what is happening across
+   * everything I own*. An owner whose dashboard hid the pending ones would go
+   * hunting listing by listing for them, and one whose dashboard offered the
+   * decision controls would put the same action in two places — so the rows link
+   * to the listing and 4.6b keeps the buttons.
+   */
+  async listForOwner(
+    ownerId: string,
+    limit: number = DEFAULT_BOOKING_LIST_LIMIT,
+  ): Promise<OwnerBookings> {
+    const bounded = boundedBookingLimit(limit);
+    const rows = await this.bookings.findForOwner(ownerId, Paging.probe(bounded));
+    const page = Paging.fitTo(rows, bounded);
+
+    return {
+      bookings: page.items.map(toOwnerBookingSummary),
+      truncated: page.truncated,
+    };
+  }
+
+  /**
    * One booking, as either party reads it.
    *
    * Null for "no such booking" and for "not yours", which the route answers 404
@@ -453,7 +506,7 @@ function toListingRequest({ booking, conflictCount }: PendingRequest): ListingRe
     startDate: Time.toLocalDateString(booking.startAt),
     // Inclusive on the wire and exclusive in the column, exactly as
     // `toWireBooking` has it: "the 20th to the 22nd" ends at the start of the 23rd.
-    endDate: Time.addLocalDays(Time.toLocalDateString(booking.endAt), -1),
+    endDate: inclusiveEndDate(booking.endAt),
     days: rentalPeriodDays(booking.startAt, booking.endAt, booking.timeZone),
     itemCharge: booking.itemCharge,
     requestExpiresAt: Time.toIsoUtc(booking.requestExpiresAt),
@@ -481,7 +534,7 @@ function toWireBooking({ booking, lineItems, events }: BookingWithEvents): Booki
     startDate: Time.toLocalDateString(booking.startAt),
     // Back to the inclusive last day the renter asked for — the mirror of
     // `local-period.ts`, and the same conversion `toWireQuote` performs.
-    endDate: Time.addLocalDays(Time.toLocalDateString(booking.endAt), -1),
+    endDate: inclusiveEndDate(booking.endAt),
     days: rentalPeriodDays(booking.startAt, booking.endAt, booking.timeZone),
     itemTitle: booking.itemTitle,
     categoryName: booking.categoryName,
@@ -496,6 +549,95 @@ function toWireBooking({ booking, lineItems, events }: BookingWithEvents): Booki
       toState: event.toState,
       at: Time.toIsoUtc(event.createdAt),
     })),
+  };
+}
+
+/**
+ * How many bookings a dashboard reads at once.
+ *
+ * **The same 50 that the activity list and the sign-in list use**, and shared with
+ * neither on purpose: those bounds answer questions about their own collections,
+ * and a constant three modules import is one that cannot be changed for one of
+ * them. The number is a page a person can scroll, not a guess about scale.
+ */
+export const DEFAULT_BOOKING_LIST_LIMIT = 50;
+
+/**
+ * An engineering bound on one query's cost, mirroring `MAX_ACTIVITY_LIMIT`.
+ *
+ * **No route exposes a limit today**, so nothing can reach this yet — it is here
+ * because the service takes a number and a service that takes an unclamped number
+ * is one a later controller can hand a query parameter to. `Paging.boundedLimit`
+ * turns `NaN` into the fallback rather than the maximum, which is the whole point
+ * of routing it through there rather than a `Math.min`.
+ */
+export const MAX_BOOKING_LIST_LIMIT = 200;
+
+function boundedBookingLimit(limit: number): number {
+  return Paging.boundedLimit(limit, {
+    fallback: DEFAULT_BOOKING_LIST_LIMIT,
+    max: MAX_BOOKING_LIST_LIMIT,
+  });
+}
+
+/**
+ * The inclusive last day, from the exclusive bound the column holds.
+ *
+ * Extracted in 4.8a because four projections now perform it — `toWireBooking`,
+ * `toListingRequest` and both summaries. "The 20th to the 22nd" ends at the start
+ * of the 23rd, and the conversion back is the one piece of arithmetic every
+ * booking projection shares.
+ */
+function inclusiveEndDate(endAt: Date): string {
+  return Time.addLocalDays(Time.toLocalDateString(endAt), -1);
+}
+
+/**
+ * One booking in the renter's list (slice 4.8a).
+ *
+ * **The inclusive total and no breakdown** — §3.4.4 requires the figure to include
+ * mandatory fees wherever a price appears, and the split into charge and fee
+ * belongs beside the detail that explains it, on `GET /bookings/:bookingId`.
+ *
+ * **No events.** §6.2's history is what a record of one hire is; fetching an
+ * unbounded array per row to draw a line of text is the thing a summary exists to
+ * avoid.
+ */
+function toBookingSummary(booking: BookingRecord): BookingSummary {
+  return {
+    id: booking.id,
+    listingId: booking.listingId,
+    state: booking.state,
+    startDate: Time.toLocalDateString(booking.startAt),
+    endDate: inclusiveEndDate(booking.endAt),
+    days: rentalPeriodDays(booking.startAt, booking.endAt, booking.timeZone),
+    itemTitle: booking.itemTitle,
+    categoryName: booking.categoryName,
+    total: booking.total,
+    requestExpiresAt: Time.toIsoUtc(booking.requestExpiresAt),
+  };
+}
+
+/**
+ * One booking in the owner's list (slice 4.8a).
+ *
+ * **`itemCharge` and no payout, and the renter is not named** — both are
+ * `listingRequestSchema`'s decisions, reused here rather than re-argued. The
+ * commission arithmetic is Phase 5, so any figure presented as *what I receive*
+ * would be false today; and identity arriving with commitment is a decision with
+ * no mechanism behind it, which makes a name additive later and unremovable now.
+ */
+function toOwnerBookingSummary(booking: BookingRecord): OwnerBookingSummary {
+  return {
+    id: booking.id,
+    listingId: booking.listingId,
+    state: booking.state,
+    startDate: Time.toLocalDateString(booking.startAt),
+    endDate: inclusiveEndDate(booking.endAt),
+    days: rentalPeriodDays(booking.startAt, booking.endAt, booking.timeZone),
+    itemTitle: booking.itemTitle,
+    itemCharge: booking.itemCharge,
+    requestExpiresAt: Time.toIsoUtc(booking.requestExpiresAt),
   };
 }
 

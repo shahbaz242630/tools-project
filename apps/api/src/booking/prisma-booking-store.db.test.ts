@@ -1301,6 +1301,185 @@ describe('expiring unanswered requests (§8.6, slice 4.7a)', () => {
   });
 });
 
+describe('the dashboards, against the real query (slice 4.8a)', () => {
+  /*
+   * **What only this file can show.** The service tests run over an in-memory
+   * array that knows who owns a listing because a test told it; here the owner is
+   * a column on another table and the scope is a join. A scope that lives in the
+   * query is the whole argument for these reads — a comparison afterwards is a
+   * line somebody can delete — and this is the only place that argument is
+   * actually tested.
+   */
+
+  it('gives a renter their own bookings and nobody else’s', async () => {
+    const listingId = await newListing();
+    const ada = await newUser();
+    const bob = await newUser();
+    const hers = await store.create(
+      await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY }),
+    );
+    await store.create(
+      await booking(listingId, bob, { startAt: FRIDAY, endAt: SUNDAY }),
+    );
+
+    const listed = await store.findForRenter(ada, 10);
+
+    expect(listed.map((row) => row.id)).toEqual([hers.id]);
+  });
+
+  it('gives an owner every booking on their listings, through the join', async () => {
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const ada = await newUser();
+    const bob = await newUser();
+    const first = await store.create(
+      await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY }),
+    );
+    const second = await store.create(
+      await booking(listingId, bob, { startAt: FRIDAY, endAt: SUNDAY }),
+    );
+
+    const listed = await store.findForOwner(owner, 10);
+
+    expect(listed.map((row) => row.id).sort()).toEqual([first.id, second.id].sort());
+  });
+
+  it('never gives an owner a booking on somebody else’s listing', async () => {
+    // Two listings with different owners, one booking each. The owner of the
+    // first must not see the second, and the scope that stops it is the join.
+    const mine = await newListing();
+    const theirs = await newListing();
+    const owner = await ownerOf(mine);
+    const ada = await newUser();
+    const onMine = await store.create(await booking(mine, ada));
+    await store.create(await booking(theirs, ada));
+
+    const listed = await store.findForOwner(owner, 10);
+
+    expect(listed.map((row) => row.id)).toEqual([onMine.id]);
+  });
+
+  it('reads empty for somebody with no bookings and no listings', async () => {
+    const stranger = await newUser();
+
+    expect(await store.findForRenter(stranger, 10)).toEqual([]);
+    expect(await store.findForOwner(stranger, 10)).toEqual([]);
+  });
+
+  it('orders newest first', async () => {
+    const listingId = await newListing();
+    const ada = await newUser();
+    const first = await store.create(
+      await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY }),
+    );
+    const second = await store.create(
+      await booking(listingId, ada, { startAt: FRIDAY, endAt: SUNDAY }),
+    );
+
+    const listed = await store.findForRenter(ada, 10);
+
+    expect(listed.map((row) => row.id)).toEqual([second.id, first.id]);
+  });
+
+  it('breaks a same-millisecond tie by id, so the order is total', async () => {
+    /*
+     * **Written because mutation showed nothing pinned it.** Removing the `id`
+     * from the `ORDER BY` left all 75 tests in this file green: Postgres stamps
+     * two inserts with different clock readings, so the tie the tiebreak exists
+     * for never occurs by accident here.
+     *
+     * **It is not hypothetical, and it is not even rare.** `bookings.createdAt`
+     * is `Timestamptz(3)` — milliseconds — and the local development fixture
+     * already contains two pairs of bookings stamped to the same millisecond
+     * (`09:15:45.172Z` and `09:43:40.375Z`), read back through this adapter on
+     * 19 August 2026. §7.1's acceptance transaction is a structural source of
+     * them: it writes the accepted booking and every auto-declined one together.
+     * Without a total order those rows may come back in either order on either
+     * read. `booking_events` already carries an `[bookingId, createdAt, id]`
+     * index for exactly this reason.
+     *
+     * So the tie is forced rather than waited for.
+     */
+    const listingId = await newListing();
+    const ada = await newUser();
+    const first = await store.create(
+      await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY }),
+    );
+    const second = await store.create(
+      await booking(listingId, ada, { startAt: FRIDAY, endAt: SUNDAY }),
+    );
+
+    const sameMoment = new Date('2026-09-01T12:00:00.000Z');
+    await client.booking.updateMany({
+      where: { id: { in: [first.id, second.id] } },
+      data: { createdAt: sameMoment },
+    });
+
+    const listed = await store.findForRenter(ada, 10);
+
+    // Descending by id, deterministically, rather than by whatever order the
+    // rows happen to arrive in.
+    const expected = [first.id, second.id].sort().reverse();
+    expect(listed.map((row) => row.id)).toEqual(expected);
+  });
+
+  it('returns no more rows than it was asked for', async () => {
+    // The caller passes `Paging.probe(limit)` and trims. If `take` were ignored
+    // the truncation flag would be decided by a number the database never
+    // honoured, and the page would silently be complete.
+    const listingId = await newListing();
+    const ada = await newUser();
+    await store.create(
+      await booking(listingId, ada, { startAt: MONDAY, endAt: WEDNESDAY }),
+    );
+    await store.create(
+      await booking(listingId, ada, { startAt: FRIDAY, endAt: SUNDAY }),
+    );
+
+    expect(await store.findForRenter(ada, 1)).toHaveLength(1);
+  });
+
+  it('reads back the terms the booking was made under', async () => {
+    // §8.2's copy, proved through the real columns rather than a fake's echo.
+    const listingId = await newListing();
+    const ada = await newUser();
+    const created = await store.create(await booking(listingId, ada));
+
+    const [row] = await store.findForRenter(ada, 10);
+
+    expect(row?.itemTitle).toBe(created.itemTitle);
+    expect(row?.total).toEqual(created.total);
+    expect(row?.itemCharge).toEqual(created.itemCharge);
+  });
+
+  it('carries every state, including the ones the requests panel excludes', async () => {
+    // `findPendingRequests` answers what an owner must decide and drops anything
+    // answered or past its deadline. A dashboard that inherited those filters
+    // would hide exactly the bookings this slice exists to show.
+    const listingId = await newListing();
+    const owner = await ownerOf(listingId);
+    const ada = await newUser();
+    await store.create(
+      await booking(listingId, ada, {
+        state: 'ACCEPTED',
+        startAt: MONDAY,
+        endAt: WEDNESDAY,
+      }),
+    );
+    await store.create(
+      await booking(listingId, ada, {
+        state: 'EXPIRED',
+        startAt: FRIDAY,
+        endAt: SUNDAY,
+      }),
+    );
+
+    const listed = await store.findForOwner(owner, 10);
+
+    expect(listed.map((row) => row.state).sort()).toEqual(['ACCEPTED', 'EXPIRED']);
+  });
+});
+
 describe('one quote, one booking (slice 4.7a)', () => {
   it('refuses a second booking made from the same quote', async () => {
     /*

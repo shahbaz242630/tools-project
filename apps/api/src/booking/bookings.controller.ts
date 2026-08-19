@@ -18,9 +18,15 @@ import {
   BOOKING_ROUTE,
   ContractViolationError,
   LISTING_REQUESTS_ROUTE,
+  OWNER_BOOKINGS_ROUTE,
   parseBookingRequest,
 } from '@platform/contracts';
-import type { Booking, ListingRequests } from '@platform/contracts';
+import type {
+  Booking,
+  BookingSummaries,
+  ListingRequests,
+  OwnerBookings,
+} from '@platform/contracts';
 import { AllowsSuspended, AuthGuard } from '../identity/auth.guard.js';
 import { CurrentUser } from '../identity/current-user.decorator.js';
 import type { MirroredUser } from '../identity/user-directory.js';
@@ -38,9 +44,11 @@ import type { BookingsService } from './bookings.service.js';
  * scope to keep consistent where the renter scope is the one that protects
  * anything.
  *
- * **There is no route here that lists a person's bookings.** 4.8's dashboards are
- * what need one, and building it now would be a broad read of a table holding two
- * people's terms with no caller. Both routes here answer about one booking.
+ * **4.8a added the two that list them**, one per party. They are two routes
+ * rather than one with a `?role=` because a role parameter is a scope the caller
+ * chooses, and every scoped read in this system takes its scope from the session
+ * and puts it in the query — see `bookings.ts` in the contracts, where the
+ * decision is argued in full.
  */
 @Controller()
 @UseGuards(AuthGuard)
@@ -96,6 +104,44 @@ export class BookingsController {
       }
       throw error;
     }
+  }
+
+  /**
+   * The bookings this person requested (slice 4.8a).
+   *
+   * **The bare collection means *mine*, as `GET /listings` already does here.**
+   * The scope is the session's and is applied in the store's query; there is no
+   * parameter a caller could supply to widen it.
+   *
+   * **`@AllowsSuspended()`, for `find`'s reason.** ADR 0024 suspends the ability
+   * to transact, not the ability to see what you are already party to — and a
+   * suspended renter with a hire next week needs to be able to look at it more
+   * than most people do.
+   *
+   * **No 404 and no 403.** A collection scoped to the session always exists;
+   * somebody with no bookings reads an empty list, which is the truth.
+   */
+  @Get(BOOKINGS_ROUTE)
+  @AllowsSuspended()
+  mine(@CurrentUser() renter: MirroredUser): Promise<BookingSummaries> {
+    return this.bookings.listForRenter(renter.id);
+  }
+
+  /**
+   * The bookings on this owner's listings (slice 4.8a).
+   *
+   * **`/owner/` names the audience**, as `/public/`, `/admin/` and `/internal/`
+   * do — ADR 0048's argument for a prefix a log line and an eventual edge rule can
+   * both read at a glance. It is also the reason this is not `/bookings/received`,
+   * which would depend on the router preferring a static segment to `:bookingId`.
+   *
+   * **Owner-scoped through the listing, in the query.** An owner with no listings
+   * reads an empty list, exactly as a stranger would.
+   */
+  @Get(OWNER_BOOKINGS_ROUTE)
+  @AllowsSuspended()
+  owned(@CurrentUser() owner: MirroredUser): Promise<OwnerBookings> {
+    return this.bookings.listForOwner(owner.id);
   }
 
   /**

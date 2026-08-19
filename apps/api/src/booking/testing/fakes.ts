@@ -335,6 +335,40 @@ export class InMemoryBookingStore implements BookingStore {
     });
   }
 
+  findForRenter(renterId: string, limit: number): Promise<readonly BookingRecord[]> {
+    return Promise.resolve(this.newestFirst((row) => row.renterId === renterId, limit));
+  }
+
+  findForOwner(ownerId: string, limit: number): Promise<readonly BookingRecord[]> {
+    return Promise.resolve(
+      this.newestFirst((row) => this.owners.get(row.listingId) === ownerId, limit),
+    );
+  }
+
+  /**
+   * The shared half of the two list reads (slice 4.8a).
+   *
+   * **The `id` tiebreak is reproduced rather than left to the array order**, and
+   * it is the whole reason this helper exists: the real query orders by
+   * `createdAt desc, id desc`, and a fake that returned insertion order would let
+   * a test pass while the database returned something else. This store stamps
+   * every row from one injected clock, so same-millisecond ties are the *normal*
+   * case here rather than the rare one — the opposite of production, which is
+   * exactly when a fake is most likely to disagree.
+   */
+  private newestFirst(
+    matches: (row: BookingRecord) => boolean,
+    limit: number,
+  ): readonly BookingRecord[] {
+    return this.bookings
+      .filter(matches)
+      .sort(
+        (a, b) =>
+          b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+      )
+      .slice(0, limit);
+  }
+
   findForParty(id: string, userId: string): Promise<BookingWithEvents | null> {
     const booking = this.bookings.find(
       (candidate) =>

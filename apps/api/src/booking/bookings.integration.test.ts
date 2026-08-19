@@ -25,14 +25,17 @@ import {
   BOOKINGS_ROUTE,
   EXPIRE_REQUESTS_ROUTE,
   ME_PATH,
+  OWNER_BOOKINGS_ROUTE,
   bookingAcceptPath,
   bookingDeclinePath,
   bookingPath,
   listingQuotesPath,
   listingRequestsPath,
   parseBooking,
+  parseBookingSummaries,
   parseExpirySweep,
   parseListingRequests,
+  parseOwnerBookings,
   parseRentalQuote,
 } from '@platform/contracts';
 import { AppModule } from '../app.module.js';
@@ -498,6 +501,156 @@ describe('suspension', () => {
     });
 
     expect(response.statusCode).toBe(200);
+  });
+});
+
+describe('the dashboards (slice 4.8a)', () => {
+  /*
+   * **What only this file can show.** The service is handed a user id; everything
+   * deciding *whose* id that is lives in the guard and the decorator. What is
+   * pinned here and nowhere else: that an anonymous caller gets nothing, that the
+   * two projections match the contract exactly, that a suspended party may still
+   * read their own list, and that the two routes really are two — a caller cannot
+   * reach the owner's view by asking the renter's route for it.
+   */
+  const listMine = (token: string | null) =>
+    app.inject({
+      method: 'GET',
+      url: BOOKINGS_ROUTE,
+      ...(token === null ? {} : { headers: auth(token) }),
+    });
+
+  const listOwned = (token: string | null) =>
+    app.inject({
+      method: 'GET',
+      url: OWNER_BOOKINGS_ROUTE,
+      ...(token === null ? {} : { headers: auth(token) }),
+    });
+
+  it('refuses an anonymous caller both lists', async () => {
+    expect((await listMine(null)).statusCode).toBe(401);
+    expect((await listOwned(null)).statusCode).toBe(401);
+  });
+
+  it("sends the renter's list in the shape the contract states", async () => {
+    const bookingId = await aRequest();
+
+    const response = await listMine('ada-token');
+
+    expect(response.statusCode).toBe(200);
+    const listed = parseBookingSummaries(response.json());
+    expect(listed.bookings.map((row) => row.id)).toEqual([bookingId]);
+    expect(listed.truncated).toBe(false);
+  });
+
+  it("sends the owner's list in the shape the contract states", async () => {
+    const bookingId = await aRequest();
+
+    const response = await listOwned('bob-token');
+
+    expect(response.statusCode).toBe(200);
+    const listed = parseOwnerBookings(response.json());
+    expect(listed.bookings.map((row) => row.id)).toEqual([bookingId]);
+  });
+
+  it('gives each party their own view of the same booking, and only that', async () => {
+    /*
+     * The two routes are two projections, not one shape behind a parameter. Ada
+     * asked, so she reads an inclusive total; Bob owns the item, so he reads what
+     * the hire earns him and nothing that could be mistaken for a payout.
+     */
+    await aRequest();
+
+    const renter = parseBookingSummaries((await listMine('ada-token')).json());
+    const owner = parseOwnerBookings((await listOwned('bob-token')).json());
+
+    expect(renter.bookings[0]).toHaveProperty('total');
+    expect(owner.bookings[0]).toHaveProperty('itemCharge');
+    expect(owner.bookings[0]).not.toHaveProperty('total');
+  });
+
+  it('does not let the owner reach their view through the renter route', async () => {
+    // Bob owns the mower and asked for nothing. The bare collection means *what
+    // I requested*, and there is no parameter that widens it.
+    await aRequest();
+
+    const listed = parseBookingSummaries((await listMine('bob-token')).json());
+
+    expect(listed.bookings).toEqual([]);
+  });
+
+  it('does not let the renter reach the owner view through the owner route', async () => {
+    // Ada requested the booking and owns no listings. The route is scoped in the
+    // query by who the session says she is.
+    await aRequest();
+
+    const listed = parseOwnerBookings((await listOwned('ada-token')).json());
+
+    expect(listed.bookings).toEqual([]);
+  });
+
+  it('gives a third party nothing on either route', async () => {
+    await aRequest();
+
+    expect(
+      parseBookingSummaries((await listMine('cat-token')).json()).bookings,
+    ).toEqual([]);
+    expect(parseOwnerBookings((await listOwned('cat-token')).json()).bookings).toEqual(
+      [],
+    );
+  });
+
+  it('answers 200 and an empty list, never a 404', async () => {
+    // A collection scoped to the session always exists. A 404 here would be
+    // saying "you have no bookings" in the vocabulary of "no such thing".
+    expect((await listMine('cat-token')).statusCode).toBe(200);
+    expect((await listOwned('cat-token')).statusCode).toBe(200);
+  });
+
+  it('still lets a suspended party read their own list', async () => {
+    // ADR 0024: suspension takes away transacting, not seeing. A suspended
+    // renter with a hire next week needs to look at it more than most people do.
+    await aRequest();
+    identity.users.suspend(adaId, 'admin', 'under review');
+
+    const response = await listMine('ada-token');
+
+    expect(response.statusCode).toBe(200);
+    expect(parseBookingSummaries(response.json()).bookings).toHaveLength(1);
+  });
+
+  it('keeps a booking visible to both parties once it is answered', async () => {
+    /*
+     * The hole this slice exists to close. Before 4.8a an accepted booking left
+     * the owner's requests panel the moment it was answered, the calendar drew
+     * nothing, and the renter's only sight of it was a confirmation a reload lost.
+     */
+    const bookingId = await aRequest();
+    await decide(bookingAcceptPath(bookingId), 'bob-token');
+
+    const renter = parseBookingSummaries((await listMine('ada-token')).json());
+    const owner = parseOwnerBookings((await listOwned('bob-token')).json());
+
+    expect(renter.bookings[0]?.state).toBe('ACCEPTED');
+    expect(owner.bookings[0]?.state).toBe('ACCEPTED');
+  });
+
+  it('shows a renter that their request expired', async () => {
+    // 4.7a made a lapsed request say so in the database; until now nothing told
+    // the person who made it. This is the first place they can see it.
+    const bookingId = await aRequest();
+    advanceHours(49);
+    await app.inject({
+      method: 'POST',
+      url: EXPIRE_REQUESTS_ROUTE,
+      headers: { [INTERNAL_TRIGGER_HEADER]: TEST_INTERNAL_TRIGGER_SECRET },
+    });
+
+    const listed = parseBookingSummaries((await listMine('ada-token')).json());
+
+    expect(listed.bookings.map((row) => [row.id, row.state])).toEqual([
+      [bookingId, 'EXPIRED'],
+    ]);
   });
 });
 
