@@ -4,11 +4,13 @@ import {
   monthOf,
   type AvailabilityBlock,
   type AvailabilityBlockRequest,
+  type BookedPeriod,
   type ListingAvailability,
 } from '@platform/contracts';
 import type {
   AvailabilityBlockRecord,
   AvailabilityStore,
+  BookedPeriodRecord,
 } from './availability-store.js';
 import type { ListingOwnership } from './listing-ownership.js';
 import { MAX_BLOCK_DAYS, MAX_BLOCK_HORIZON_DAYS } from './limits.js';
@@ -87,12 +89,29 @@ export class AvailabilityService {
     // one month's window rather than to two or to neither.
     const to = Time.startOfLocalDay(firstDayOf(nextMonth(resolved)));
 
-    const blocks = await this.store.listBlocks(listingId, from, to);
+    /*
+     * **Both layers, in one round trip each, fetched together** (slice 4.8c).
+     * §8.5 names three concepts and this answers all three: what the owner
+     * declared, what a booking holds, and — by their absence — what is free.
+     *
+     * They are two queries rather than one because they are two tables with
+     * different rules about which rows count, and a `UNION` would have to encode
+     * §8.5.1's nine states into a shape the caller could not tell apart
+     * afterwards. Awaited together because neither depends on the other.
+     */
+    const [blocks, bookings] = await Promise.all([
+      this.store.listBlocks(listingId, from, to),
+      this.store.listBookedPeriods(listingId, from, to),
+    ]);
 
     // The month is echoed back because the caller may not have chosen it. A page
     // that had to work out which month it was looking at would be the second
     // place this is decided.
-    return { month: resolved, blocks: blocks.map(toWireBlock) };
+    return {
+      month: resolved,
+      blocks: blocks.map(toWireBlock),
+      bookings: bookings.map(toWirePeriod),
+    };
   }
 
   /**
@@ -243,6 +262,28 @@ function toWireBlock(record: AvailabilityBlockRecord): AvailabilityBlock {
     startDate: Time.toLocalDateString(record.startAt),
     endDate: Time.toLocalDateString(Time.fromEpochMs(record.endAt.getTime() - 1)),
     reason: record.reason,
+  };
+}
+
+/**
+ * A booked period as the wire describes it — dates, never instants (slice 4.8c).
+ *
+ * **The same inclusive-end conversion `toWireBlock` performs**, and read from the
+ * instant *before* the exclusive bound rather than by subtracting a day. The two
+ * agree for every booking this system writes, because a hire starts and ends at
+ * midnight; they stop agreeing the moment anything stores a period ending
+ * part-way through a day, and this form answers *"the last day any of this period
+ * falls on"* in both cases.
+ *
+ * **Nothing else off the record crosses.** The store hands back three fields and
+ * this hands on three: a calendar asks about time, and the money, the terms and
+ * the renter are all somewhere a sentence can qualify them.
+ */
+function toWirePeriod(record: BookedPeriodRecord): BookedPeriod {
+  return {
+    id: record.id,
+    startDate: Time.toLocalDateString(record.startAt),
+    endDate: Time.toLocalDateString(Time.fromEpochMs(record.endAt.getTime() - 1)),
   };
 }
 

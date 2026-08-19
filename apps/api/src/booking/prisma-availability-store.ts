@@ -2,6 +2,7 @@ import type { PrismaClient } from '@platform/database';
 import { CALENDAR_OCCUPYING_STATES } from './booking-state-machine.js';
 import type {
   AvailabilityBlockRecord,
+  BookedPeriodRecord,
   AvailabilityStore,
   NewAvailabilityBlock,
   UnavailableReason,
@@ -101,6 +102,31 @@ export class PrismaAvailabilityStore implements AvailabilityStore {
     });
 
     return rows.map(toRecord);
+  }
+
+  async listBookedPeriods(
+    listingId: string,
+    from: Date,
+    to: Date,
+  ): Promise<readonly BookedPeriodRecord[]> {
+    const rows = await this.prisma.booking.findMany({
+      where: {
+        listingId,
+        /*
+         * **The same nine states `reasonUnavailable` counts, from the same
+         * constant.** Two lists of calendar-occupying states is how a calendar
+         * comes to disagree with the request path about a single day — and
+         * `REQUESTED` being absent from it is §7.1's design rather than an
+         * oversight.
+         */
+        state: { in: [...CALENDAR_OCCUPYING_STATES] },
+        ...overlaps(from, to),
+      },
+      select: { id: true, startAt: true, endAt: true },
+      orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
+    });
+
+    return rows;
   }
 
   async reasonUnavailable(
