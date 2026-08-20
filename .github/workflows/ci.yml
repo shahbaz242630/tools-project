@@ -4,6 +4,24 @@ on:
   pull_request:
   push:
     branches: [main]
+  # **A manual lever for when GitHub does not fire the automatic one.** On
+  # 20 August 2026 the push of `1a80a92` to `main` produced *no workflow run at
+  # all* — not queued, not cancelled, absent — while the same commit's pull
+  # request runs had gone green minutes earlier. Staging then sat on the previous
+  # release, healthy, serving stale code: the failure shape that went unnoticed
+  # for 31 hours on 18 August.
+  #
+  # There was no way out of that. `Release` already has `workflow_dispatch`, but
+  # its `ci-passed` job polls for a completed successful CI run **on that exact
+  # SHA** and fails closed when there is none — correctly, and that is the point:
+  # the gate must not be weakened to recover from a dropped event. The missing
+  # piece was the ability to produce the evidence it asks for.
+  #
+  # Dispatching this against `main` runs the full suite on whatever `main` points
+  # at, which is what `Release` then finds. It grants nothing: the required-check
+  # list is still evaluated per commit, and a dispatched run that fails leaves the
+  # commit exactly as unreleasable as it was.
+  workflow_dispatch:
 
 # A newer push to the same pull request supersedes an in-flight run — nobody
 # wants a verdict on a commit that has already been replaced.
