@@ -64,6 +64,9 @@ const TABLE_OWNERS = {
   availabilityBlock: 'booking',
   quote: 'booking',
   featureFlagOverride: 'feature-flags',
+  ledgerAccount: 'payments',
+  ledgerTransaction: 'payments',
+  ledgerEntry: 'payments',
   sellerTaxProfile: null,
 };
 

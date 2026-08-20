@@ -200,6 +200,13 @@ model User {
   /// and never through a user.
   changedFeatureFlags FeatureFlagOverride[]
 
+  /// This person's ledger accounts (slice 5.1). Declared because Prisma requires
+  /// both ends; the payments module reaches an account through its own port and
+  /// never through a user. **The relation is `RESTRICT` at the other end on
+  /// purpose** — ADR 0015 soft-deletes an account so the ledger can never lose a
+  /// counterparty, and this is the reference that was being anticipated.
+  ledgerAccounts LedgerAccount[]
+
   @@map("users")
 }
 
@@ -1563,6 +1570,12 @@ model Booking {
   /// This booking's state history (BRD §6.2). Append-only — see `BookingEvent`.
   events BookingEvent[]
 
+  /// Money posted against this hire (slice 5.1). Declared because Prisma requires
+  /// both ends; Booking never reads it — BRD §5.1 gives Payments & Ledger the
+  /// money and forbids Booking *"provider-specific payment code"*, so the traffic
+  /// runs the other way.
+  ledgerTransactions LedgerTransaction[]
+
   /// Both dashboards in slice 4.8 read one side's bookings, newest first.
   @@index([renterId, createdAt(sort: Desc)])
   @@index([listingId, createdAt(sort: Desc)])
@@ -2052,4 +2065,157 @@ model FeatureFlagOverride {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@map("feature_flag_overrides")
+}
+
+/// One account in the platform's own chart of accounts (BRD §8.7, slice 5.1).
+///
+/// **The ledger is the accounting record and the provider is only the channel
+/// that executed it** — BRD §4: *"The platform database must never treat a
+/// payment-provider webhook alone as the accounting record."* Nothing on this
+/// table names a provider, and that is deliberate: it is what makes changing
+/// provider a change of adapter rather than a rewrite of the books.
+model LedgerAccount {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// One of `LEDGER_ACCOUNT_KINDS`, as text with the vocabulary in code — the
+  /// same call `bookings.state` makes, and for the same reason: a chart of
+  /// accounts gains rows as flows arrive, and a Postgres enum needs a migration
+  /// to gain one.
+  kind String @db.Text
+
+  /// Whose money this is, for the per-person kinds. Null for the platform's own.
+  ///
+  /// `ON DELETE RESTRICT`, and here that is load-bearing rather than defensive:
+  /// ADR 0015 soft-deletes accounts precisely so *"the ledger will reference
+  /// these rows and can never lose a counterparty"*. A ledger that cannot say
+  /// who it owes is not a ledger.
+  ownerId String? @db.Uuid
+  owner   User?   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  /// ISO 4217, beside the amounts it denominates (ADR 0002).
+  currency String @db.Text
+
+  /// The account's natural identity — `provider_clearing:GBP`, or
+  /// `owner_payable:<userId>:GBP` — derived once by `accountIdentityOf`.
+  ///
+  /// **A single unique column rather than `@@unique([kind, ownerId, currency])`,
+  /// and the reason is NULL.** Postgres treats NULLs as distinct in a unique
+  /// index, so the composite would let the platform hold *two*
+  /// `provider_clearing` accounts in GBP and silently split a balance across
+  /// them. `NULLS NOT DISTINCT` would fix it and Prisma cannot express it, which
+  /// would put the real guarantee in raw SQL the schema does not know about.
+  ///
+  /// It also buys the operation the store actually needs: "the account for this
+  /// kind and this person, creating it if absent" is a single `upsert` on one
+  /// unique column, which is race-safe. The composite form is not upsertable in
+  /// Prisma at all when part of it is null.
+  identity String @unique @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  entries LedgerEntry[]
+
+  /// The target of `ledger_entries`' composite foreign key. See `LedgerEntry`.
+  @@unique([id, currency])
+  @@index([ownerId])
+  @@map("ledger_accounts")
+}
+
+/// A balanced set of movements, posted as one act (BRD §8.7, slice 5.1).
+///
+/// **Immutable, and the database enforces it** — a trigger refuses both UPDATE
+/// and DELETE. §8.7: *"Ledger entries are immutable; corrections are made only
+/// by posting reversing entries, never by editing or deleting."* That is
+/// stricter than `booking_events`, which refuses UPDATE and permits DELETE for
+/// retention, and the difference is deliberate: §8.7 names deleting.
+model LedgerTransaction {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What makes posting this twice a no-op rather than a duplicate.
+  ///
+  /// §11.2's gate is *"duplicate and out-of-order provider webhooks produce
+  /// exactly one ledger effect"*. Unique here, so the guarantee is the
+  /// database's — a check-then-write loses the race that this exists to stop.
+  idempotencyKey String @unique @db.Text
+
+  /// One of `LEDGER_TRANSACTION_KINDS`. A correction is **not** a kind — it
+  /// keeps the kind of what it reverses and is identified by `reversesId`.
+  kind String @db.Text
+
+  currency String @db.Text
+
+  /// The hire this concerns, where there is one (§6.2 lists `booking` on the
+  /// entry). `ON DELETE RESTRICT`: a booking with money against it cannot go.
+  bookingId String?  @db.Uuid
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  /// When the money moved, by the provider's clock.
+  ///
+  /// **Separate from `recordedAt` because reconciliation is daily** (§8.7) and
+  /// the provider's day is the one that decides which day a movement belongs to.
+  /// One timestamp would put a capture just before midnight on our side of the
+  /// boundary and their other side, and break reconciliation every night for no
+  /// reason anybody could find.
+  occurredAt DateTime @db.Timestamptz(3)
+
+  /// When we wrote it down.
+  recordedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// Set only on a correction, naming what it reverses.
+  ///
+  /// **Unique, so a transaction can be reversed at most once.** Without it a
+  /// double-click posts two corrections and the original is undone twice, which
+  /// nets to reversing a transaction that never happened. Reversing a *reversal*
+  /// is still legal and is how a mistaken correction is undone — it points at
+  /// the correction, not at the original.
+  reversesId String?            @unique @db.Uuid
+  reverses   LedgerTransaction? @relation("LedgerReversal", fields: [reversesId], references: [id], onDelete: Restrict)
+  reversedBy LedgerTransaction? @relation("LedgerReversal")
+
+  entries LedgerEntry[]
+
+  /// The target of `ledger_entries`' composite foreign key. See `LedgerEntry`.
+  @@unique([id, currency])
+  @@index([bookingId])
+  @@index([occurredAt])
+  @@map("ledger_transactions")
+}
+
+/// One side of one movement (BRD §6.2 *Ledger entry*, slice 5.1).
+///
+/// **The currency is stored here as well as on the transaction and the account,
+/// and the duplication is enforced rather than trusted.** CLAUDE.md's money
+/// invariant requires *"integer minor units plus an ISO 4217 currency code on
+/// the same record"*, so an entry that had to join to learn its own currency
+/// would break it. Three copies could disagree — so both foreign keys are
+/// **composite on `(id, currency)`**, which makes an entry whose currency
+/// differs from its transaction's or its account's unrepresentable rather than
+/// merely wrong. A `CHECK` cannot span tables; a foreign key can.
+model LedgerEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  currency String @db.Text
+
+  transactionId String            @db.Uuid
+  transaction   LedgerTransaction @relation(fields: [transactionId, currency], references: [id, currency], onDelete: Restrict)
+
+  accountId String        @db.Uuid
+  account   LedgerAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict)
+
+  /// `debit` or `credit`, and a `CHECK` holds it to those two.
+  ///
+  /// **Unlike `bookings.state`, this vocabulary can never grow**, which is what
+  /// makes a database constraint the right tool here and the wrong one there.
+  direction String @db.Text
+
+  /// Integer minor units, **strictly positive** — a `CHECK` refuses zero and
+  /// negative. ADR 0002 permits negative `Money` for refunds, and a ledger entry
+  /// is where that permission stops: the direction already carries the sign, and
+  /// admitting both conventions makes every later sum ambiguous.
+  amountMinor Int
+
+  /// Balances are read per account, and a correction is read per transaction.
+  @@index([accountId])
+  @@index([transactionId])
+  @@map("ledger_entries")
 }

@@ -232,6 +232,26 @@ export default defineConfig({
         // two simultaneous approvals resolve to one. A double asserting any of
         // those would be asserting itself. Keep this exclusion narrow.
         '**/api/src/identity/prisma-admin-approval-store.ts',
+        // And for the ledger, from slice 5.1. prisma-ledger-store.db.test.ts
+        // proves what only Postgres can: that a deferred constraint trigger
+        // refuses an unbalanced transaction at COMMIT, that UPDATE and DELETE are
+        // refused outright, that composite foreign keys on `(id, currency)` stop
+        // an entry disagreeing with its account about currency, that four
+        // concurrent callers get one account, and that a unique index — not a
+        // check-then-write — is what makes a re-presented idempotency key produce
+        // one effect. A double asserting any of those would be asserting itself.
+        //
+        // **Its error handling is the reason to keep this exclusion narrow.** The
+        // `catch` in `post` exists because Prisma discards the database's message
+        // on a commit-time failure inside a nested write, so it asks the database
+        // what is true rather than reading the error code. That behaviour cannot
+        // be reproduced without a real commit, and it is tested where it can be.
+        // The rules themselves live in `ledger.ts`, which is counted in full.
+        '**/api/src/payments/prisma-ledger-store.ts',
+        // Declaration-only: one interface and two type aliases, so it emits no
+        // executable JavaScript and v8 reports its source lines as uncovered
+        // because there is nothing to run. Same case as webhook-ledger.ts above.
+        '**/api/src/payments/ledger-store.ts',
         // Declaration-only: two interfaces and nothing else, so it emits no
         // executable JavaScript at all and v8 reports its source lines as
         // uncovered because there is nothing to run. If any code appears in
