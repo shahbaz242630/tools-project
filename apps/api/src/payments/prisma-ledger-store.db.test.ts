@@ -173,15 +173,18 @@ describe('accountFor', () => {
   it('gives the platform exactly one account when callers race for it', async () => {
     // The case a composite unique on (kind, ownerId, currency) would miss, because
     // Postgres treats NULLs as distinct: two rows and a balance split between them.
+    // **Eight rather than four, because four passed locally and failed on CI.**
+    // Prisma's upsert is a find followed by a create rather than an atomic
+    // `ON CONFLICT`, so this genuinely races — the unique index makes the
+    // outcome safe and the adapter's catch makes the loser succeed.
     const spec = { kind: 'provider_clearing', currency: GBP } as const;
-    await Promise.all([
-      store.accountFor(spec),
-      store.accountFor(spec),
-      store.accountFor(spec),
-      store.accountFor(spec),
-    ]);
+    const raced = await Promise.all(
+      Array.from({ length: 8 }, () => store.accountFor(spec)),
+    );
 
     expect(await client.ledgerAccount.count()).toBe(1);
+    // And every caller got the same row, not just "a row exists".
+    expect(new Set(raced.map((account) => account.id)).size).toBe(1);
   });
 
   it('records the owner on a per-person account', async () => {

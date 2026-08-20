@@ -50,23 +50,40 @@ export class PrismaLedgerStore implements LedgerStore {
   async accountFor(spec: LedgerAccountSpec): Promise<LedgerAccountRecord> {
     const identity = accountIdentityOf(spec);
 
-    // Upsert rather than find-then-create: two callers needing the same account
-    // at once is ordinary, and the loser of that race must get the winner's row
-    // rather than a unique violation. This is what the derived `identity` column
-    // exists to make possible — the composite (kind, ownerId, currency) form is
-    // not upsertable in Prisma at all when part of it is null.
-    const row = await this.prisma.ledgerAccount.upsert({
-      where: { identity },
-      create: {
-        identity,
-        kind: spec.kind,
-        currency: spec.currency,
-        ...(spec.ownerId === undefined ? {} : { ownerId: spec.ownerId }),
-      },
-      update: {},
-    });
+    // Upsert on the derived `identity` column, which is what that column exists
+    // for — the composite (kind, ownerId, currency) form is not upsertable in
+    // Prisma at all when part of it is null.
+    //
+    // **`upsert` alone is not enough, and believing it was is a defect this file
+    // shipped with.** Prisma's upsert is a find followed by a create, not an
+    // atomic `ON CONFLICT`, so two callers can both find nothing and both
+    // insert — and one of them gets `P2002`. It passed locally and failed on CI
+    // with four concurrent callers, which is the honest shape of a race: it
+    // usually wins.
+    //
+    // The unique index is what makes the outcome *safe* — one row exists either
+    // way. This catch is what makes it *succeed*: the loser reads the winner's
+    // row instead of raising, which is what "get or create" has to mean.
+    try {
+      const row = await this.prisma.ledgerAccount.upsert({
+        where: { identity },
+        create: {
+          identity,
+          kind: spec.kind,
+          currency: spec.currency,
+          ...(spec.ownerId === undefined ? {} : { ownerId: spec.ownerId }),
+        },
+        update: {},
+      });
 
-    return toAccount(row);
+      return toAccount(row);
+    } catch (cause) {
+      const raced = await this.prisma.ledgerAccount.findUnique({
+        where: { identity },
+      });
+      if (raced !== null) return toAccount(raced);
+      throw cause;
+    }
   }
 
   async post(draft: LedgerTransactionDraft): Promise<PostedLedgerTransaction> {
