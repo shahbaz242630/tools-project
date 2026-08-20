@@ -167,9 +167,25 @@ floor for this design, and removing it means either filtering after pagination �
 which this ADR exists to refuse — or precomputing availability, which the
 alternatives section below rejects for staleness.
 
-**So the remaining gap is a target question, not an engineering one, and it is
-the product owner's.** Recorded here rather than resolved, and deliberately not
-resolved by widening the number quietly.
+**Settled by the product owner on 20 August 2026: the target stays 200 ms, and
+the widest dated radius is allowed to miss it for now.** The reasoning given was
+that the filter is _wired and correct_, and latency is worked out later. That is
+a deliberate deferral rather than a silent one, so it is written down with its
+date and its owner.
+
+**What that means concretely.** `measure-search.mjs` still exits non-zero on the
+dated 100-mile search, and **that is intended** — the gate number was not widened
+to make a red run green. A red line there is the reminder, not a regression.
+Nothing else is over: nine of the ten radius-and-origin combinations pass, and
+the undated statement is untouched at 134 ms.
+
+**Two conditions worth checking before this stops being deferrable**, because
+neither is true today and both change the answer: the platform is not public
+(there is no edge, no domain and no rate limiting, so nobody can call this at
+volume), and the catalogue is fixture-sized. The cost is
+_candidates × two index probes_, so it grows with supply density inside a radius
+— **the number gets worse as the marketplace succeeds**, which is the wrong
+direction to leave unattended indefinitely.
 
 **The alternative remains available if the coupling ever hurts.** A materialised
 view owned by Booking, joined by Search, would restore the boundary at the cost

@@ -1,3 +1,4 @@
+import { RateLimit, RateLimitGuard } from '../rate-limiting/rate-limit.guard.js';
 import {
   BadRequestException,
   Body,
@@ -46,7 +47,7 @@ import type { AvailabilityService } from './availability.service.js';
  * house being empty.
  */
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RateLimitGuard)
 export class OwnerAvailabilityController {
   constructor(
     @Inject(AVAILABILITY_SERVICE) private readonly availability: AvailabilityService,
@@ -65,6 +66,7 @@ export class OwnerAvailabilityController {
    * thing here holding a clock; this route only checks the shape of a month
    * somebody did supply.
    */
+  @RateLimit('read')
   @Get(LISTING_AVAILABILITY_ROUTE)
   @AllowsSuspended()
   async month(
@@ -92,6 +94,7 @@ export class OwnerAvailabilityController {
    * leaves open. Refusing it would force a suspended owner to keep offering
    * dates they cannot honour.
    */
+  @RateLimit('write')
   @Post(LISTING_AVAILABILITY_ROUTE)
   @AllowsSuspended()
   async block(
@@ -136,6 +139,7 @@ export class OwnerAvailabilityController {
    * **204, with no body.** There is nothing left to return, and answering with
    * the deleted period would invite a page to render what it just removed.
    */
+  @RateLimit('write')
   @Delete(LISTING_AVAILABILITY_BLOCK_ROUTE)
   @HttpCode(204)
   async unblock(

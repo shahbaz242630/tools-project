@@ -1,3 +1,4 @@
+import { RateLimit, RateLimitGuard } from '../rate-limiting/rate-limit.guard.js';
 import {
   BadRequestException,
   Body,
@@ -47,7 +48,7 @@ import type { QuotesService } from './quotes.service.js';
  * built for no caller.
  */
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RateLimitGuard)
 export class QuotesController {
   constructor(@Inject(QUOTES_SERVICE) private readonly quotes: QuotesService) {}
 
@@ -69,6 +70,7 @@ export class QuotesController {
    * of which a correction to the *shape* of the request would fix. It is the same
    * line `owner-availability.controller.ts` draws.
    */
+  @RateLimit('write')
   @Post(LISTING_QUOTES_ROUTE)
   async create(
     @Param('id') listingId: string,
@@ -115,6 +117,7 @@ export class QuotesController {
    * *"this price has expired"* rather than *"no such thing"*. Deciding what may be
    * *done* with an expired quote is 4.5's, where a booking is made.
    */
+  @RateLimit('read')
   @Get(QUOTE_ROUTE)
   async find(
     @Param('quoteId') quoteId: string,

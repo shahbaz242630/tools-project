@@ -1,3 +1,4 @@
+import { allowAllRateLimiter } from '../rate-limiting/testing/fakes.js';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
@@ -82,6 +83,7 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        rateLimiter: allowAllRateLimiter,
         // A real registry is not wanted here: these tests are about routing and
         // authorisation, and a metrics backend that collected would make two
         // suites in one process share series.
