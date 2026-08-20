@@ -1271,6 +1271,71 @@ describe('the fee policy', () => {
     );
   });
 
+  it('answers the pinned version’s rates after the category is repriced', async () => {
+    /*
+     * **The §8.2 guarantee, and the reason `findFeePolicyByVersionId` exists.**
+     * A booking keeps the terms it was made under; settlement reads the version
+     * the booking pinned, never the current one. Re-reading today's commission
+     * would pay an owner a rate nobody agreed to — silently, because the number
+     * would still look plausible.
+     *
+     * Only a real database can be evidence for this: what makes the old rate
+     * survive is that `category_versions` is immutable, and a fake that stored
+     * the latest configuration would pass while proving the opposite.
+     */
+    const author = await newUser();
+    const identity = slug();
+
+    await store.create(
+      {
+        slug: identity,
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: { ...FEE_POLICY, ownerCommissionBasisPoints: 1_500 },
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+        transportOptions: [],
+      },
+      author,
+    );
+
+    const [pinned] = await client.categoryVersion.findMany({
+      where: { category: { slug: identity } },
+    });
+
+    await store.addVersion(
+      identity,
+      {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        attributes: [],
+        feePolicy: { ...FEE_POLICY, ownerCommissionBasisPoints: 2_000 },
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+        transportOptions: [],
+      },
+      author,
+    );
+
+    // The current read moved. The pinned one did not — which is the whole point.
+    expect(
+      (await store.findBySlug(identity))?.feePolicy.ownerCommissionBasisPoints,
+    ).toBe(2_000);
+    expect(
+      (await store.findFeePolicyByVersionId(pinned?.id ?? ''))
+        ?.ownerCommissionBasisPoints,
+    ).toBe(1_500);
+  });
+
+  it('resolves to null for a version that does not exist', async () => {
+    // Null must never become "use the current one" — `PaymentsService` refuses
+    // rather than falling back, and this is the value it refuses on.
+    expect(await store.findFeePolicyByVersionId(randomUUID())).toBeNull();
+  });
+
   it('defaults an unpriced category to charging nothing', async () => {
     const author = await newUser();
     const identity = slug();

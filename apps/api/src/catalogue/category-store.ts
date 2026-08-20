@@ -161,4 +161,23 @@ export interface CategoryStore {
 
   /** One category with its current configuration, or null. */
   findBySlug(slug: string): Promise<CategoryRecord | null>;
+
+  /**
+   * The fee policy on one exact version, or null if there is no such version
+   * (slice 5.2b).
+   *
+   * **The only read here that is not about "now", and that is why it exists.**
+   * Everything else on this port answers how a category is configured today,
+   * which is the right answer for pricing a new hire (ADR 0042). §8.2 makes
+   * *settling* a hire the opposite question — a booking keeps the terms it was
+   * made under — and re-reading today's commission would pay an owner a rate
+   * nobody agreed to.
+   *
+   * It answers Payments' `CategoryFeePolicySource`, wired at the composition
+   * root. Catalogue owns `category_versions`, so the read lives here and BRD
+   * §5.1 keeps Payments out of the table.
+   */
+  findFeePolicyByVersionId(
+    categoryVersionId: string,
+  ): Promise<CategoryFeePolicy | null>;
 }

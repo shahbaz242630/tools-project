@@ -207,6 +207,10 @@ model User {
   /// counterparty, and this is the reference that was being anticipated.
   ledgerAccounts LedgerAccount[]
 
+  /// Attempts to pay this person for a hire (slice 5.2b). Declared for the same
+  /// reason and read the same way: never through a user.
+  paymentIntents PaymentIntent[]
+
   @@map("users")
 }
 
@@ -926,6 +930,11 @@ model CategoryVersion {
   /// records for six years.
   bookings Booking[]
 
+  /// Payment attempts divided by this configuration's fee policy (slice 5.2b).
+  /// `ON DELETE RESTRICT` for the reason above and the plainest one there is: a
+  /// payment whose rate cannot be looked up is a payout nobody can explain.
+  paymentIntents PaymentIntent[]
+
   /// Both the "no two versions share a number" rule and the index that answers
   /// "what is current". One constraint, two jobs, no second index to maintain.
   @@unique([categoryId, versionNumber])
@@ -1576,6 +1585,10 @@ model Booking {
   /// runs the other way.
   ledgerTransactions LedgerTransaction[]
 
+  /// Attempts at taking money for this hire (slice 5.2b). Declared for the same
+  /// reason as the relation above and read by nobody on this side.
+  paymentIntents PaymentIntent[]
+
   /// Both dashboards in slice 4.8 read one side's bookings, newest first.
   @@index([renterId, createdAt(sort: Desc)])
   @@index([listingId, createdAt(sort: Desc)])
@@ -2218,4 +2231,133 @@ model LedgerEntry {
   @@index([accountId])
   @@index([transactionId])
   @@map("ledger_entries")
+}
+
+/// One attempt at moving money through a payment provider (BRD §6.2, §8.7,
+/// slice 5.2b).
+///
+/// **Mutable, where the ledger beside it is not**, and the difference is the
+/// reason this table exists. The ledger records what *happened* and §8.7 makes
+/// it permanent; this records what is *happening* at somebody else's system,
+/// which changes — under SCA an attempt begins as a challenge in a browser and
+/// becomes an outcome minutes later, by webhook.
+///
+/// **No provider identifier is a key** (ADR 0051). `provider` and
+/// `providerReference` together are the mapping row that ADR requires, so a row
+/// written under Stripe stays readable after a move and nothing joins on it.
+///
+/// **No card data, ever** (§8.7). There is no column here that could hold one.
+model PaymentIntent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The hire this pays for. `ON DELETE RESTRICT` — the reason
+  /// `LedgerTransaction.booking` gives: a record of money moved cannot lose its
+  /// subject.
+  bookingId String  @db.Uuid
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  /// Who is owed the proceeds, and the category version whose fee policy divides
+  /// them (§8.2, slice 5.2b).
+  ///
+  /// **Copied onto this row rather than joined to, and the reason is the webhook.**
+  /// An attempt's outcome usually arrives out of band — a 3-D Secure challenge
+  /// finishes minutes later and the confirmation carries a provider reference and
+  /// nothing else. Whatever handles that has no booking in hand, and Payments may
+  /// not read `bookings` (BRD §5.1). So the row carries what it takes to settle.
+  ///
+  /// Both `ON DELETE RESTRICT`: a payee we cannot name is a payment we cannot
+  /// make, and `category_versions` is immutable so the rate is provable years
+  /// later.
+  ownerId String @db.Uuid
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  categoryVersionId String          @db.Uuid
+  categoryVersion   CategoryVersion @relation(fields: [categoryVersionId], references: [id], onDelete: Restrict)
+
+  /// What this attempt is for — one of `PAYMENT_INTENT_PURPOSES`.
+  ///
+  /// **One value today, `hire_charge`.** §8.7.2's damage-security hold is the
+  /// second, and it arrives with the flow that writes it rather than in
+  /// anticipation of one — the rule slice 5.1 set for ledger account kinds.
+  purpose String @db.Text
+
+  /// What makes a double-pressed pay button one charge.
+  ///
+  /// **Per attempt, not per booking.** A renter whose card was declined is
+  /// entitled to try again, and that retry is a new attempt with a new key —
+  /// reusing the first would return the first failure forever. **The ledger's
+  /// idempotency key is the per-booking one**, and conflating the two is how a
+  /// retry becomes unpayable.
+  attemptKey String @unique @db.Text
+
+  /// Where the attempt has got to — one of `PAYMENT_INTENT_STATUSES`.
+  ///
+  /// **Text with the vocabulary in code and no `CHECK`**, unlike
+  /// `ledger_entries.direction`. That constraint was justified by a vocabulary
+  /// that can never grow; this one can. §8.7 already names expired
+  /// authorisations and chargebacks, which are values a later slice adds.
+  status String @db.Text
+
+  /// Who executed it — `PaymentProvider.name`.
+  ///
+  /// Stored rather than inferred, so a row written under one provider is still
+  /// readable after we have moved to another. `webhook_events.provider` makes
+  /// the same call.
+  provider String @db.Text
+
+  /// The provider's identifier for this attempt, once there is one.
+  ///
+  /// **Null until the provider has been called**, because the row is written
+  /// first — a crash between the write and the call must leave a record rather
+  /// than an untraceable charge. A `CHECK` requires it once `status` is
+  /// `succeeded`, which is when reconciliation needs something to match.
+  providerReference String? @db.Text
+
+  /// The charge and its two parts, in integer minor units with the ISO 4217 code
+  /// on the same record (ADR 0002).
+  ///
+  /// **A `CHECK` requires the total to be its parts**, so a row that disagrees
+  /// with itself is unrepresentable — `settleHire` refuses one for the same
+  /// reason, and this is that rule one layer down. The item charge is positive;
+  /// the renter fee may be zero, because fees are versioned configuration and a
+  /// category may be run at cost.
+  ///
+  /// **`NOT NULL`, and §8.7.2's damage-security hold will need them relaxed** —
+  /// a hold has an owner and a version but does not divide. That is a reviewed
+  /// migration, which is the right cost for a table holding money.
+  itemChargeMinor Int
+  renterFeeMinor  Int
+  amountMinor     Int
+  currency        String @db.Text
+
+  /// When the provider's authorisation expires — its **real timestamp**
+  /// (`capture_before`), never a duration we assume (§8.7.2, normative).
+  ///
+  /// **Null for a hire charge**, which is captured outright and holds nothing.
+  /// It exists now because §6.2 names it as part of what this entity is; it is
+  /// first written by §8.7.2's damage-security flow.
+  authorisationExpiresAt DateTime? @db.Timestamptz(3)
+
+  /// Why it failed, in **our** vocabulary rather than the provider's, and a
+  /// sentence for the payer. A `CHECK` requires the reason once `status` is
+  /// `failed`, because §8.7 requires clear failure and retry states and
+  /// "something went wrong" is not one.
+  ///
+  /// **`failureMessage` reaches a page**, so it carries no provider name, no
+  /// code and nothing about a card — `PaymentFailure` says so at the port.
+  failureReason  String? @db.Text
+  failureMessage String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// A booking's attempts, and the sweep that will look for stale ones.
+  ///
+  /// **The rule that matters is not expressible here**: at most one *succeeded*
+  /// intent per booking and purpose, as a partial unique index in the migration.
+  /// §8.7.1 permits only one capture per authorisation, and that index is where
+  /// a double capture becomes unrepresentable.
+  @@index([bookingId])
+  @@index([status])
+  @@map("payment_intents")
 }

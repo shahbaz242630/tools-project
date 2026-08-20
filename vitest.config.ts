@@ -287,6 +287,32 @@ export default defineConfig({
         // can. Keep this exclusion narrow — the state machine beside it is pure
         // and is counted.
         '**/api/src/booking/prisma-booking-store.ts',
+        // And the payment intent store (slice 5.2b) — the same argument as the
+        // ledger adapter above, which it deliberately copies.
+        // `prisma-payment-intent-store.db.test.ts` proves what only Postgres
+        // can: that a **partial** unique index permits at most one *succeeded*
+        // attempt per booking while letting failed retries accumulate (§8.7.1's
+        // single-capture rule), that four CHECKs fire, that a `RESTRICT`
+        // foreign key stops the payee, the booking and the version that priced
+        // it being deleted, and that eight concurrent callers on one attempt key
+        // produce one row with the losers *reading* it rather than raising. A
+        // double asserting any of those would be asserting itself.
+        //
+        // **Kept narrow by moving the one rule out.** Refusing a key reused for
+        // different money was in this file and is now `assertSameAttempt` in
+        // `payment-intent.ts`, which is counted in full and swept field by
+        // field — the same place `LedgerService` keeps its equivalent. What
+        // remains here is two writes, two reads and the reassembly of minor
+        // units into `Money`. Logic that appears in here stops being counted.
+        '**/api/src/payments/prisma-payment-intent-store.ts',
+        // Declaration-only: one interface, so it emits no executable JavaScript
+        // and v8 reports its source lines as uncovered because there is nothing
+        // to run. Same case as `ledger-store.ts` above. If any code appears in
+        // here, delete this line rather than keeping it honest by accident.
+        '**/api/src/payments/payment-intent-store.ts',
+        // And the same for the port Catalogue answers (slice 5.2b): one
+        // interface and nothing else.
+        '**/api/src/payments/category-fee-policy-source.ts',
       ],
       thresholds: {
         lines: 90,

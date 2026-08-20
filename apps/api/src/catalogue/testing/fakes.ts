@@ -69,6 +69,14 @@ import { createBookingFakes } from '../../booking/testing/fakes.js';
 import type { AuditFakes } from '../../audit/testing/fakes.js';
 
 interface StoredVersion {
+  /**
+   * The version's own identity, which is what a listing and a booking pin.
+   *
+   * **Added in 5.2b, because settlement asks by it.** Everything before read
+   * configuration through a slug and the *current* version; §8.2 makes
+   * settlement ask about one exact row, so the double has to have one.
+   */
+  readonly id: string;
   readonly versionNumber: number;
   readonly name: string;
   readonly riskLevel: CategoryRiskLevel;
@@ -123,6 +131,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       createdAt: Time.nowUtc(),
       versions: [
         {
+          id: versionIdFor(this.nextId - 1, 1),
           versionNumber: 1,
           name: input.name,
           riskLevel: input.riskLevel,
@@ -164,6 +173,7 @@ export class InMemoryCategoryStore implements CategoryStore {
     }
 
     category.versions.push({
+      id: versionIdFor(this.categories.indexOf(category) + 1, next),
       versionNumber: next,
       name: configuration.name,
       riskLevel: configuration.riskLevel,
@@ -196,11 +206,38 @@ export class InMemoryCategoryStore implements CategoryStore {
     return Promise.resolve(category === undefined ? null : toRecord(category));
   }
 
+  findFeePolicyByVersionId(
+    categoryVersionId: string,
+  ): Promise<CategoryFeePolicy | null> {
+    for (const category of this.categories) {
+      const version = category.versions.find(
+        (candidate) => candidate.id === categoryVersionId,
+      );
+      // The pinned row, **not** the current one — which is the whole rule this
+      // port exists for. A double that returned `current(category).feePolicy`
+      // would make every §8.2 test pass while proving the opposite.
+      if (version !== undefined) return Promise.resolve(version.feePolicy);
+    }
+    return Promise.resolve(null);
+  }
+
   /** Every version of one category, oldest first — for asserting history. */
   versionsOf(slug: string): readonly StoredVersion[] {
     const category = this.categories.find((candidate) => candidate.slug === slug);
     return category === undefined ? [] : [...category.versions];
   }
+}
+
+/**
+ * A stable, uuid-shaped id per (category, version).
+ *
+ * Shaped like a uuid rather than `version-1-2` because these ids reach code that
+ * hands them to Postgres in the integration tests, and a `uuid` column refuses
+ * anything else.
+ */
+function versionIdFor(categoryIndex: number, versionNumber: number): string {
+  const tail = `${String(categoryIndex).padStart(6, '0')}${String(versionNumber).padStart(6, '0')}`;
+  return `00000000-0000-4000-9000-${tail}`;
 }
 
 function current(category: StoredCategory): StoredVersion {
