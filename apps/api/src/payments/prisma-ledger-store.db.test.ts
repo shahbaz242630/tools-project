@@ -74,9 +74,13 @@ async function clearLedger(): Promise<void> {
  */
 async function clearEverything(): Promise<void> {
   await clearLedger();
-  await client.quote.deleteMany();
-  await client.availabilityBlock.deleteMany();
+  // **Bookings before quotes.** `bookings.quoteId` is RESTRICT — a booking keeps
+  // the terms it was made under — so deleting quotes first fails the moment any
+  // booking references one. That passed when this file ran alone and failed in a
+  // full sequential run, against rows another suite had left behind.
   await client.booking.deleteMany();
+  await client.availabilityBlock.deleteMany();
+  await client.quote.deleteMany();
   await client.listingLocation.deleteMany();
   await client.listing.deleteMany();
   await client.categoryVersion.deleteMany();
