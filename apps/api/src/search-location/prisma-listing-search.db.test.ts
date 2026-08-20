@@ -1282,6 +1282,43 @@ describe('the date filter (§8.4 as amended, slice 4.9)', () => {
     expect(page?.matches.map((match) => match.listingId)).toContain(listingId);
   });
 
+  /*
+   * **The constraints slice 4.9a's rewrite rests on, asserted rather than
+   * assumed.** The predicate is `"period" && tstzrange(…)`, and `period` is
+   * nullable in the datamodel because Prisma cannot express `tstzrange`. A NULL
+   * is invisible to `&&` — so a blocked listing with a NULL period would search
+   * as *free*, which is a privacy-shaped failure rather than a slow one: the
+   * dates would be given away as available.
+   *
+   * What makes that unreachable is a CHECK on each table. Before this, **neither
+   * was asserted anywhere** — not in a test, not in `db:verify` — so the whole
+   * safety argument for the rewrite rested on two constraints nothing verified
+   * still existed. They are cheap to assert and expensive to be wrong about.
+   */
+  it('refuses to leave a block with no period, which && could not see', async () => {
+    const listingId = await givenAListing(northOf(500));
+    await client.availabilityBlock.create({
+      data: {
+        listingId,
+        startAt: Time.fromIsoUtc('2026-09-20T00:00:00.000Z'),
+        endAt: Time.fromIsoUtc('2026-09-22T00:00:00.000Z'),
+      },
+    });
+
+    await expect(
+      client.$executeRaw`UPDATE "availability_blocks" SET "period" = NULL WHERE "listingId" = ${listingId}::uuid`,
+    ).rejects.toThrow(/block_period_is_present/);
+  });
+
+  it('refuses to leave a booking with no period, for the same reason', async () => {
+    const listingId = await givenAListing(northOf(500));
+    await bookingIn(listingId, 'ACCEPTED', '2026-09-20', '2026-09-22');
+
+    await expect(
+      client.$executeRaw`UPDATE "bookings" SET "period" = NULL WHERE "listingId" = ${listingId}::uuid`,
+    ).rejects.toThrow(/booking_period_is_present/);
+  });
+
   it('leaves an undated search entirely alone', async () => {
     // The absent filter contributes no SQL at all (ADR 0046), so a listing that
     // is fully booked is still found by somebody who named no dates.

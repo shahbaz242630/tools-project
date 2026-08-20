@@ -116,20 +116,60 @@ other. A smaller `availability_blocks` makes the seq scan cheaper but does not
 stop the planner choosing it; a larger one eventually makes the index attractive
 again. The band in between is where we are.
 
-**Fixing it is its own slice and deliberately not folded into the measurement.**
-It touches `prisma-listing-search.ts`, needs its own tests, and may need a
-migration — and the candidates (a period-aware index the planner will take, a
-restructured anti-join, or a `LATERAL` form) are choices a measurement should
-inform rather than a measurer should make in passing.
+**Fixed the same day, in slice 4.9a, and the fix is two changes that are useless
+apart.** `availability_blocks` gained the composite GiST index on
+`("listingId", "period")` that `bookings` has had all along — it comes free with
+§8.5.1's `EXCLUDE` constraint, which this table deliberately has no equivalent of
+because an `EXCLUDE` cannot span two tables. And the predicate moved from
+`"startAt" < to AND "endAt" > from` to `"period" && tstzrange(from, to, '[)')`,
+because **a GiST index cannot answer a pair of btree comparisons**.
 
-**Two indexes were expected to matter, and the measurement changed which.** This
-section previously predicted that both subqueries would need one. In fact
-`bookings` already resolves through the `EXCLUDE` constraint's own GiST index and
-is fine; `availability_blocks` has `(listingId, startAt)`, which is the right
-index and is simply **not chosen**. So the open question is not _which index to
-add_ but _how to make the planner take the one that exists_ — a materially
-different problem, and one that an index added on a guess would have hidden
-rather than solved.
+| Form                                            | p95, London 100 mi |
+| ----------------------------------------------- | ------------------ |
+| Bounds comparison, no index (as shipped in 4.9) | 1945 ms            |
+| Composite index, bounds comparison              | 1429 ms            |
+| Overlap operator, no composite index            | 1490 ms            |
+| **Overlap operator + composite index**          | **~250 ms**        |
+
+Both anti-joins are now index-only scans with zero heap fetches. **Nine of the
+ten radius-and-origin combinations pass**; London at 100 miles sits at roughly
+215–280 ms across runs, against a 200 ms target — see _the target_ below.
+
+**Four faster-looking rewrites were measured and rejected**, which is the part
+worth keeping because each looks like an improvement:
+
+| Rewrite                                | p95     | Why it was rejected                                                                                                                                                                                                                                                      |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NOT IN` over a `UNION ALL`            | 157 ms  | **Abandons the spatial index.** The plan flips to a parallel sequential scan of the whole `listings` table, so cost scales with the catalogue rather than the radius, and buffer traffic rises from 105k to 140k. Faster at 50,000 rows and worse at every size above it |
+| `NOT EXISTS` over a subquery           | 4601 ms | The correlation cannot be pushed into the union branches, so it re-evaluates per row                                                                                                                                                                                     |
+| `NOT EXISTS` over a `MATERIALIZED` CTE | 5361 ms | Computes the set once, then sequentially scans it per candidate — the CTE has no index                                                                                                                                                                                   |
+| `LEFT JOIN … IS NULL`                  | 4375 ms | The canonical safe anti-join, and the `rows=5` estimate makes the planner nest-loop it                                                                                                                                                                                   |
+
+The `NOT IN` row is the one to remember: **it is the fastest measurement in the
+table and the worst design in it.** A benchmark at one size cannot distinguish
+"faster" from "scales differently", and reading the plan is what did.
+
+**The prediction about indexes was wrong, and measuring is what corrected it.**
+This section originally said both subqueries would eventually want an index.
+`bookings` never needed one. `availability_blocks` needed a _different_ index
+from the `(listingId, startAt)` btree it already had — and, critically, needed
+the query rewritten before any index could be used at all. An index added on the
+original guess would have changed nothing and looked like the question was
+settled.
+
+### The target
+
+**The 200 ms figure was agreed on 13 August 2026 for the _undated_ radius query**
+at 50,000 listings, and applying it unchanged to a strictly more expensive query
+is a decision nobody has taken. At the widest radius the dated search examines
+13,203 candidates and performs two index probes on each; that ~130 ms is the
+floor for this design, and removing it means either filtering after pagination —
+which this ADR exists to refuse — or precomputing availability, which the
+alternatives section below rejects for staleness.
+
+**So the remaining gap is a target question, not an engineering one, and it is
+the product owner's.** Recorded here rather than resolved, and deliberately not
+resolved by widening the number quietly.
 
 **The alternative remains available if the coupling ever hurts.** A materialised
 view owned by Booking, joined by Search, would restore the boundary at the cost

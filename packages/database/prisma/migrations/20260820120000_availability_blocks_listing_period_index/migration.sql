@@ -1,0 +1,80 @@
+-- The index the dated search needs, and could not use — slice 4.9a
+--
+-- Why
+-- ---
+-- ADR 0049's date filter is two `NOT EXISTS` subqueries, one over
+-- `availability_blocks` and one over `bookings`. Measured against 50,002
+-- listings on 20 August 2026, the widest dated search came back at **p95 1945 ms
+-- against a 200 ms target** — 14.5× the undated statement's 134 ms.
+--
+-- The `bookings` half was fine at ~88 ms. The `availability_blocks` half was the
+-- whole cost: Postgres sequentially scanned the table, materialised the rows in
+-- the window, and walked that list once per candidate listing — **19,241,290
+-- join-filter comparisons** for 13,016 candidates.
+--
+-- **The two halves differ by one index, and nothing else.** `bookings` carries
+-- §8.5.1's `EXCLUDE USING gist ("listingId" WITH =, "period" WITH &&)`, and an
+-- `EXCLUDE` constraint builds a composite GiST index to enforce itself. That
+-- index is what the `bookings` subquery has been resolving through all along.
+-- `availability_blocks` has no such constraint — deliberately, and the
+-- `20260816170000` migration explains why: an `EXCLUDE` cannot span two tables,
+-- so overlapping a block with a booking is checked in application code. **The
+-- consequence nobody had noticed is that it therefore never got the index
+-- either.** This adds it directly.
+--
+-- Why the planner chose so badly
+-- ------------------------------
+-- `ST_DWithin` on a geography column estimated `rows=5` where the truth was
+-- 13,016 — a 2,600× underestimate. At five candidate rows, scanning a
+-- five-thousand-row table once and materialising it genuinely is cheaper than
+-- five index probes. The plan was a good answer to a false question, which is
+-- why nothing about the SQL looked wrong.
+--
+-- **The index alone does not fix it**, and that is worth stating because it is
+-- the half somebody would try first. Measured: index alone 1429 ms, the `&&`
+-- rewrite alone 1490 ms, **both together 207 ms**. A GiST index cannot serve
+-- `"startAt" < x AND "endAt" > y`; it serves the range operators. So the
+-- adapter's predicate changes to `"period" && tstzrange(…)` in the same slice,
+-- and neither change is useful without the other.
+--
+-- **That rewrite is safe because `block_period_is_present` already exists.**
+-- `period` is nullable in the datamodel because Prisma cannot express the type,
+-- and a NULL would be invisible to `&&` — a blocked listing that searched as
+-- free. The CHECK is what makes that unreachable, and it is the same guarantee
+-- `bookings` relies on for the identical rewrite. Checked against the live
+-- constraint list rather than inferred from the migration header, which says
+-- "one CHECK" and means one *new* one.
+--
+-- Data impact
+-- -----------
+-- **None.** One index, no column changes, no backfill, no rewrite of existing
+-- rows. Nothing about the data changes; only what can be found quickly.
+--
+-- Lock and duration
+-- -----------------
+-- Built **non-concurrently**, which holds a lock that blocks writes for the
+-- duration. Correct here, and the reason is checked rather than assumed:
+-- `availability_blocks` holds **0 rows in staging** (verified against Neon on
+-- 20 August 2026, along with `bookings` and `listings`, all 0), there is no
+-- production environment, and `prisma migrate deploy` runs before the stack
+-- comes up (ADR 0014) so nothing is serving traffic while it runs. Expected
+-- duration on an empty table: milliseconds.
+--
+-- **The day either stops being true, this needs `CREATE INDEX CONCURRENTLY`** —
+-- which cannot run inside a transaction, and Prisma wraps a migration in one.
+-- The same note is on `20260801062022_audit_index_on_target` for the same
+-- reason. A populated table would need the index built by hand, outside Prisma,
+-- and the migration marked applied.
+--
+-- Rollback
+-- --------
+-- `DROP INDEX "availability_blocks_listingId_period_idx";` — safe at any time
+-- and loses no data. The query would return to its previous plan and its
+-- previous 1945 ms, so roll back the adapter with it or the search gets slower
+-- rather than broken.
+--
+-- Requires `btree_gist`, for the `"listingId"` equality inside a GiST index.
+-- It is installed in every environment and `pnpm db:verify` asserts it.
+
+CREATE INDEX "availability_blocks_listingId_period_idx"
+  ON "availability_blocks" USING gist ("listingId", "period");

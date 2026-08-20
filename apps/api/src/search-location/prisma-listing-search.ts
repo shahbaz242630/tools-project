@@ -207,6 +207,45 @@ export class PrismaListingSearch implements ListingSearchRepository {
         ? null
         : periodFromLocalDates(search.dates.from, search.dates.to);
 
+    /*
+     * **`period && tstzrange(…)`, not two comparisons on the bounds** — slice
+     * 4.9a, and the reason is a measurement rather than taste.
+     *
+     * The two forms are equivalent: `period` is `tstzrange(startAt, endAt,
+     * '[)')`, maintained by trigger on both tables, so `startAt < to AND endAt >
+     * from` and `period && [from, to)` select exactly the same rows. What
+     * differs is what an index can serve. **A GiST index cannot answer a pair of
+     * btree comparisons**, so the bounds form could not reach
+     * `availability_blocks_listingId_period_idx` — and without it Postgres
+     * seq-scanned the table once per candidate listing, turning the widest dated
+     * search into **p95 1945 ms against a 200 ms target**.
+     *
+     * Measured, because neither half works alone: the index without this rewrite
+     * is 1429 ms, this rewrite without the index is 1490 ms, **both together are
+     * 207 ms**. Do not "simplify" either back.
+     *
+     * **Safe because both tables assert `period IS NOT NULL`** —
+     * `block_period_is_present` and `booking_period_is_present`. The column is
+     * nullable in the datamodel only because Prisma cannot express `tstzrange`,
+     * and a NULL would be invisible to `&&`: a blocked listing that searched as
+     * free. The CHECK is what makes that unreachable, and it is load-bearing for
+     * this predicate rather than incidental.
+     *
+     * **`'[)'` is the same half-open bound `local-period.ts` and both triggers
+     * use**, so a hire may start the instant a block ends with no gap and no
+     * overlap. A `'[]'` here would make touching periods collide.
+     *
+     * **Not called `window`**, which is the obvious name and is already taken at
+     * the top of this method by the *pagination* window. It was written that way
+     * first and the integration suite refused to compile — worth a line, because
+     * the two meanings of "window" are both natural here and the shadowing one
+     * would have broken `LIMIT`/`OFFSET` rather than the dates.
+     */
+    const wantedRange =
+      period === null
+        ? Prisma.empty
+        : Prisma.sql`tstzrange(${period.startAt}, ${period.endAt}, '[)')`;
+
     const freeForDates =
       period === null
         ? Prisma.empty
@@ -214,15 +253,13 @@ export class PrismaListingSearch implements ListingSearchRepository {
         AND NOT EXISTS (
           SELECT 1 FROM "availability_blocks" b
           WHERE b."listingId" = l."id"
-            AND b."startAt" < ${period.endAt}
-            AND b."endAt" > ${period.startAt}
+            AND b."period" && ${wantedRange}
         )
         AND NOT EXISTS (
           SELECT 1 FROM "bookings" bk
           WHERE bk."listingId" = l."id"
             AND bk."state" = ANY(${[...CALENDAR_OCCUPYING_STATES]}::text[])
-            AND bk."startAt" < ${period.endAt}
-            AND bk."endAt" > ${period.startAt}
+            AND bk."period" && ${wantedRange}
         )`;
 
     /*
