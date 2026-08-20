@@ -62,7 +62,30 @@ import { PrismaListingSearch } from './search-location/prisma-listing-search.js'
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
 import { PrismaFeatureFlagStore } from './feature-flags/prisma-flag-store.js';
+import { LedgerService } from './payments/ledger.service.js';
+import { NoPaymentProvider } from './payments/no-payment-provider.js';
+import { PaymentsService } from './payments/payments.service.js';
+import { PrismaLedgerStore } from './payments/prisma-ledger-store.js';
+import { PrismaPaymentIntentStore } from './payments/prisma-payment-intent-store.js';
+import { Money } from '@platform/core';
+import type { MoneyValue } from '@platform/core';
 import { createShutdown } from '@platform/runtime';
+
+/**
+ * Two scalars back into a `Money` at the Booking to Payments seam (slice 5.2c).
+ *
+ * **The seam is where the two modules' own types meet**, and Booking states its
+ * charge as plain numbers so it need not import `@platform/core`'s branded type
+ * through a port. `Money.money` refuses a non-integer and an unsupported currency,
+ * which is the check worth having on the one path where these figures become a
+ * charge on somebody's card.
+ */
+function asMoney(value: {
+  readonly amount: number;
+  readonly currency: string;
+}): MoneyValue {
+  return Money.money(value.amount, value.currency as MoneyValue['currency']);
+}
 
 /**
  * Composition root.
@@ -312,8 +335,16 @@ async function bootstrap(): Promise<void> {
   // Categories depend on nothing but the audit trail. Configuration has no
   // subject, so this half of Catalogue still needs neither the encryptor nor a
   // lookup into identity (BRD §5.1).
+  /*
+   * **One store, two consumers** (slice 5.2c). `CatalogueService` administers
+   * categories; `findFeePolicyByVersionId` answers Payments' `CategoryFeePolicySource`
+   * with the fee policy of one *pinned* version. The store is hoisted into a
+   * variable so both reach the same instance rather than opening two.
+   */
+  const categoryStore = new PrismaCategoryStore(database);
+
   const catalogue = new CatalogueService(
-    new PrismaCategoryStore(database),
+    categoryStore,
     audit,
     logger.child({ module: 'catalogue' }),
   );
@@ -466,9 +497,20 @@ async function bootstrap(): Promise<void> {
    */
   const availabilityStore = new PrismaAvailabilityStore(database);
 
-  const availability = new AvailabilityService(availabilityStore, {
-    isOwnedBy: (listingId, ownerId) => listings.isOwnedBy(listingId, ownerId),
-  });
+  /*
+   * **Both methods of the port, handed over together** (slice 5.2c). `ownerOf`
+   * joined `isOwnedBy` because paying a hire needs a payee and `bookings` keeps
+   * no owner column — and it is answered by the *ownership* port rather than the
+   * quotable one on purpose: an owner who pauses their listing after accepting a
+   * booking must not thereby make the hire unpayable.
+   */
+  const listingOwnership = {
+    isOwnedBy: (listingId: string, ownerId: string) =>
+      listings.isOwnedBy(listingId, ownerId),
+    ownerOf: (listingId: string) => listings.ownerOf(listingId),
+  };
+
+  const availability = new AvailabilityService(availabilityStore, listingOwnership);
 
   /*
    * The quote engine (slice 4.4b). Built after listings for the same reason the
@@ -501,11 +543,80 @@ async function bootstrap(): Promise<void> {
    * second instance would be two views of the same rows. It shares the
    * availability store with the calendar for the reason 4.4b gives.
    */
+  /*
+   * Payments & Ledger is wired for the first time (slice 5.2c). 5.1 and 5.2b built
+   * it deliberately unwired — a Nest token with no consumer is dead wiring — and
+   * this is the slice that gives it one.
+   *
+   * **The ledger is constructed here and nothing else may write those tables.**
+   * `PaymentsService` reaches them through `LedgerService`, which is what keeps a
+   * future provider adapter from posting rows itself (ADR 0051).
+   */
+  const payments = new PaymentsService(
+    new PrismaPaymentIntentStore(database),
+    /*
+     * **No production adapter exists yet — 5.2e builds it against Stripe**, and it
+     * is the one piece of Phase 5 blocked on an external account.
+     *
+     * **The absence is named here rather than papered over.** `NoPaymentProvider`
+     * throws on every call; what keeps it unreachable is the `booking.payment`
+     * feature flag, which defaults off and which `BookingsService` checks before
+     * it touches a booking's state. A provider that returned `failed` instead
+     * would put a claim about somebody's card into the ledger and the booking's
+     * history, and `PAYMENT_FAILED` is a state a renter cannot leave by fixing
+     * anything.
+     */
+    new NoPaymentProvider(),
+    new LedgerService(new PrismaLedgerStore(database)),
+    /*
+     * The **pinned** fee policy, answered by Catalogue (§8.2, slice 5.2b). Not the
+     * current one: a booking keeps the terms it was made under, and today's
+     * commission would pay an owner a rate nobody agreed to.
+     */
+    { findFeePolicy: (versionId) => categoryStore.findFeePolicyByVersionId(versionId) },
+  );
+
   const bookings = new BookingsService(
     bookingStore,
     quoteStore,
     quotableListings,
     availabilityStore,
+    /*
+     * Taking the money, answered by Payments (slice 5.2c) — narrowed to one method
+     * at the seam like every other port across a module boundary. Booking states
+     * its own request and result shapes, so a field added on one side and
+     * forgotten on the other fails to compile *here*.
+     */
+    {
+      chargeForHire: async (request) => {
+        const outcome = await payments.payForHire({
+          bookingId: request.bookingId,
+          ownerId: request.ownerId,
+          categoryVersionId: request.categoryVersionId,
+          itemTitle: request.itemTitle,
+          charge: {
+            itemCharge: asMoney(request.itemCharge),
+            renterFee: asMoney(request.renterFee),
+            total: asMoney(request.total),
+          },
+        });
+
+        return {
+          status:
+            outcome.intent.status === 'initiated'
+              ? 'processing'
+              : outcome.intent.status,
+          ...(outcome.payerAction === undefined
+            ? {}
+            : { payerAction: outcome.payerAction }),
+          ...(outcome.intent.failure === undefined
+            ? {}
+            : { failureMessage: outcome.intent.failure.message }),
+        };
+      },
+    },
+    listingOwnership,
+    { isPaymentEnabled: () => featureFlags.isEnabled('booking.payment') },
   );
 
   /*

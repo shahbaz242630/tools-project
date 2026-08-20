@@ -8,6 +8,7 @@ import {
   PaymentIntentError,
   assertSameAttempt,
   dispositionOf,
+  hireAttemptKey,
   hireCaptureKey,
   isTerminal,
 } from './payment-intent.js';
@@ -98,10 +99,13 @@ export class PaymentsService {
    * state table already knew — `ACCEPTED → AWAITING_PAYMENT → RESERVED |
    * PAYMENT_FAILED`.
    *
-   * **Re-presenting an attempt key makes no second charge.** The row is found
-   * rather than created and the provider is not called again — which is what
-   * makes a double-pressed pay button safe, and why the caller must mint one key
-   * per attempt rather than one per press.
+   * **Calling it twice makes no second charge, and the caller supplies nothing
+   * to make that true.** The attempt key is derived here from the booking and how
+   * many attempts have already failed (see `hireAttemptKey`), so a double press
+   * and a resume after a crash both present the key that is already open, while a
+   * retry after a decline mints a new one. **A key the caller passed in would be
+   * a key the caller could reuse, vary or lose** — and from 5.2c the caller is
+   * two hops from a browser.
    *
    * Throws {@link PaymentIntentError} when the hire cannot be attempted at all.
    */
@@ -113,7 +117,7 @@ export class PaymentsService {
     const proposed: NewPaymentIntent = {
       bookingId: instruction.bookingId,
       purpose: 'hire_charge',
-      attemptKey: instruction.attemptKey,
+      attemptKey: await this.attemptKeyFor(instruction.bookingId),
       ownerId: instruction.ownerId,
       categoryVersionId: instruction.categoryVersionId,
       itemCharge: instruction.charge.itemCharge,
@@ -150,7 +154,7 @@ export class PaymentsService {
     }
 
     const attempt = await this.provider.begin({
-      idempotencyKey: instruction.attemptKey,
+      idempotencyKey: intent.attemptKey,
       amount: instruction.charge.total,
       /*
        * **The item's name and nothing else** (§8.4.1). This reaches a card
@@ -214,6 +218,23 @@ export class PaymentsService {
   /** Every attempt against a booking, newest first. */
   async attemptsFor(bookingId: string): Promise<readonly PaymentIntentRecord[]> {
     return this.intents.findForBooking(bookingId);
+  }
+
+  /**
+   * The key for the attempt this booking is entitled to make now.
+   *
+   * **Read-then-derive, and the read losing a race is harmless**, which is the
+   * property worth checking rather than assuming: two callers reading the same
+   * failure count derive the *same* key, so the unique index makes one of them a
+   * reader of the other's attempt. A counter incremented here would have the
+   * opposite property.
+   */
+  private async attemptKeyFor(bookingId: string): Promise<string> {
+    const attempts = await this.intents.findForBooking(bookingId);
+    const failed = attempts.filter(
+      (attempt) => attempt.purpose === 'hire_charge' && attempt.status === 'failed',
+    );
+    return hireAttemptKey(bookingId, failed.length);
   }
 
   /**
@@ -372,13 +393,6 @@ export interface HirePaymentInstruction {
    * booking. 5.2c is where that call is made.
    */
   readonly ownerId: string;
-  /**
-   * What makes one press of pay one charge.
-   *
-   * **Per attempt.** A retry after a decline mints a new one; a second press of
-   * the same button presents the same one.
-   */
-  readonly attemptKey: string;
   /**
    * The booking's **stored** money, copied onto its row at the moment it was
    * made (§8.2) — never re-derived from the listing, which may have been

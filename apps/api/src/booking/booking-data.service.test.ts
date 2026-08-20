@@ -74,6 +74,14 @@ describe('BookingDataService', () => {
       quoteStore,
       listings,
       availability,
+      /*
+       * This file is about the §10.1 export, so paying is scaffolding: a charge
+       * that succeeds and a switch that is on, so nothing refuses for a reason
+       * the test did not ask for.
+       */
+      { chargeForHire: () => Promise.resolve({ status: 'succeeded' as const }) },
+      { isOwnedBy: () => Promise.resolve(true), ownerOf: () => Promise.resolve(OWNER) },
+      { isPaymentEnabled: () => Promise.resolve(true) },
       () => NOW,
     );
     exporter = new BookingDataService(bookingStore, quoteStore);

@@ -16,6 +16,7 @@ import {
   BOOKINGS_ROUTE,
   BOOKING_ACCEPT_ROUTE,
   BOOKING_DECLINE_ROUTE,
+  BOOKING_PAY_ROUTE,
   BOOKING_ROUTE,
   ContractViolationError,
   LISTING_REQUESTS_ROUTE,
@@ -24,6 +25,7 @@ import {
 } from '@platform/contracts';
 import type {
   Booking,
+  BookingPayment,
   BookingSummaries,
   ListingRequests,
   OwnerBookings,
@@ -250,6 +252,55 @@ export class BookingsController {
     @CurrentUser() owner: MirroredUser,
   ): Promise<Booking> {
     return this.decide(() => this.bookings.decline(bookingId, owner.id));
+  }
+
+  /**
+   * Pay for a booking the owner accepted (§8.7, slice 5.2c).
+   *
+   * **The renter's route, and the owner gets 404 from it.** §8.6 gives the owner
+   * the decision and the renter the bill; answering 403 to an owner would confirm
+   * the booking id is real to somebody who is not paying it. The service returns
+   * null for both "not yours" and "no such booking", which is what makes them
+   * indistinguishable here.
+   *
+   * **No body**, deliberately. What is owed was fixed when the booking was made
+   * (§8.2) and is on its row — §8.7 requires charges to be calculated server-side
+   * only, and a client that could send an amount could send the wrong one.
+   *
+   * **Not `@AllowsSuspended()`.** Paying binds a suspended account to a
+   * completed transaction, which is exactly the transacting ADR 0024 suspends.
+   * The read routes above are marked and these are not, which is the same line
+   * accepting and declining already draw.
+   *
+   * **Three failures, three codes**, the vocabulary this controller already uses:
+   *
+   * - **404** — not this renter's booking, or no such booking.
+   * - **422** — it cannot be paid for and the renter can read why: the state is
+   *   wrong, it is already paid, or **payment is not switched on yet**. That last
+   *   one is the ordinary answer today, because there is no payment provider
+   *   until slice 5.2e — and it arrives *before* anything is written, so a
+   *   booking is never left stranded mid-payment.
+   * - **409** — never, from here. Nothing here races for an exclusive resource;
+   *   a booking that moved under the renter is a 422 with a sentence, because
+   *   reloading is what fixes it.
+   */
+  @RateLimit('write')
+  @Post(BOOKING_PAY_ROUTE)
+  async pay(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser() renter: MirroredUser,
+  ): Promise<BookingPayment> {
+    try {
+      const paid = await this.bookings.pay(bookingId, renter.id);
+      if (paid === null) throw new NotFoundException();
+
+      return paid;
+    } catch (error) {
+      if (error instanceof RequestRefusedError) {
+        throw new UnprocessableEntityException({ message: error.refusal });
+      }
+      throw error;
+    }
   }
 
   /**

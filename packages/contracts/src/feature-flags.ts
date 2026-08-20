@@ -71,6 +71,26 @@ export const FEATURE_FLAGS = [
     // which is a worse failure than the one the switch exists to prevent.
     defaultEnabled: true,
   },
+  {
+    key: 'booking.payment',
+    label: 'Paying for bookings',
+    gates:
+      'Renters paying for an accepted booking. It is OFF because there is no ' +
+      'payment provider yet — slice 5.2e builds the Stripe adapter and needs a ' +
+      'Stripe account. Turning it on before that adapter exists makes every ' +
+      'payment attempt fail loudly rather than charging anybody. Nothing else in ' +
+      'the product depends on it: a booking can still be requested, accepted, ' +
+      'declined and expired with this off.',
+    /*
+     * **Off, and it is the other kind of flag from the one above.** That one is a
+     * kill switch over functionality that works, so it defaults on. This one
+     * covers a capability that is *incomplete* — the route, the transitions and
+     * the ledger posting are all built and the provider is not — and the
+     * declaration above says exactly what to do with those: default off, because
+     * the failure is exposing something half-built.
+     */
+    defaultEnabled: false,
+  },
 ] as const satisfies readonly FeatureFlagDeclarationShape[];
 
 /** The shape `FEATURE_FLAGS` entries satisfy, before the key union exists. */

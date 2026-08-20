@@ -58,7 +58,6 @@ const FREE_POLICY: CategoryFeePolicy = {
 const INSTRUCTION: HirePaymentInstruction = {
   bookingId: 'booking-1',
   ownerId: 'user-dale',
-  attemptKey: 'attempt-1',
   charge: {
     itemCharge: pence(5_400),
     renterFee: pence(432),
@@ -137,7 +136,12 @@ describe('paying for a hire that succeeds at once', () => {
     expect(provider.requests).toHaveLength(1);
     expect(provider.requests[0]?.description).toBe('Petrol hedge trimmer');
     expect(provider.requests[0]?.amount).toEqual(pence(5_832));
-    expect(provider.requests[0]?.idempotencyKey).toBe('attempt-1');
+    /*
+     * **Derived here rather than supplied**, from the booking and how many
+     * attempts have already failed. Nothing has, so it is the zeroth — which is
+     * what makes a double press and a resume land on the same attempt.
+     */
+    expect(provider.requests[0]?.idempotencyKey).toBe('hire:booking-1:0');
   });
 
   it('settles a category configured to take nothing', async () => {
@@ -276,7 +280,6 @@ describe('paying for a hire that fails', () => {
     provider.willReport({ status: 'succeeded' });
     const { intent } = await payments.payForHire({
       ...INSTRUCTION,
-      attemptKey: 'attempt-2',
     });
 
     expect(intent.status).toBe('succeeded');
@@ -420,12 +423,14 @@ describe('reading a booking’s attempts', () => {
     await payments.payForHire(INSTRUCTION);
 
     provider.willReport({ status: 'succeeded' });
-    await payments.payForHire({ ...INSTRUCTION, attemptKey: 'attempt-2' });
+    await payments.payForHire(INSTRUCTION);
 
     const attempts = await payments.attemptsFor('booking-1');
+    // The second key differs *because the first failed*, which is the whole rule:
+    // a retry must be a new attempt, and a repeat must not be.
     expect(attempts.map((attempt) => attempt.attemptKey)).toEqual([
-      'attempt-2',
-      'attempt-1',
+      'hire:booking-1:1',
+      'hire:booking-1:0',
     ]);
   });
 });

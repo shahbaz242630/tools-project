@@ -488,6 +488,10 @@ describe('the service, from local dates to stored instants', () => {
       {
         isOwnedBy: (id, ownerId) =>
           Promise.resolve(id === listingId && ownerId === ADA),
+        // The calendar never asks this; it is on the port because paying a hire
+        // needs a payee (slice 5.2c). Stubbed to keep the stub honest about
+        // *this* listing rather than answering for any id.
+        ownerOf: (id) => Promise.resolve(id === listingId ? ADA : null),
       },
       // A fixed clock, so the "already finished" refusal cannot overtake these
       // fixtures the way a real one would.

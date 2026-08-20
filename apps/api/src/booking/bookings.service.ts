@@ -1,7 +1,9 @@
 import { Paging, Time } from '@platform/core';
 import type {
   Booking,
+  BookingPayment,
   BookingRequest,
+  BookingState,
   BookingSummaries,
   BookingSummary,
   ListingRequest,
@@ -22,6 +24,9 @@ import type {
   BookingWithEvents,
   PendingRequest,
 } from './booking-store.js';
+import type { HireChargeResult, HirePayments } from './hire-payments.js';
+import type { PaymentSwitch } from './payment-switch.js';
+import type { ListingOwnership } from './listing-ownership.js';
 import type { ListingQuoteSource } from './listing-quote-source.js';
 import type { QuoteStore } from './quote-store.js';
 
@@ -81,6 +86,32 @@ export class BookingsService {
      * renter making a request owns nothing.
      */
     private readonly availability: AvailabilityStore,
+    /**
+     * Taking the money, answered by Payments (slice 5.2c).
+     *
+     * **A port rather than a service**, so nothing about a card, a provider or an
+     * idempotency key reaches the booking machine — BRD §5.1 gives Payments the
+     * money and forbids provider-specific code here.
+     */
+    private readonly payments: HirePayments,
+    /**
+     * Who is owed the money, answered by Catalogue (slice 5.2c).
+     *
+     * **The ownership port, not the quotable one.** `bookings` keeps no owner
+     * column on purpose, so a payee has to be asked for — and asking the port that
+     * answers only about *bookable* listings would make a hire unpayable the
+     * moment its owner paused the listing, which is a reasonable thing to do
+     * after accepting.
+     */
+    private readonly ownership: ListingOwnership,
+    /**
+     * Whether paying is switched on at all (slice 5.2c).
+     *
+     * **Off by default, because there is no payment provider yet.** See
+     * `payment-switch.ts` for why this is a flag rather than a missing route or a
+     * provider that always fails.
+     */
+    private readonly paymentSwitch: PaymentSwitch,
     /** Injected so the expiry refusals are provable without waiting (ADR 0003). */
     private readonly now: () => Date = Time.nowUtc,
   ) {}
@@ -364,6 +395,211 @@ export class BookingsService {
   }
 
   /**
+   * Pay for a booking the owner accepted (§7, §8.7, slice 5.2c).
+   *
+   * **This is the first thing in the project that moves money**, and the shape it
+   * takes is decided by Strong Customer Authentication rather than by preference:
+   * a UK card payment usually cannot finish in one request. §7 knew — `ACCEPTED →
+   * AWAITING_PAYMENT → RESERVED | PAYMENT_FAILED` — and the middle state is where
+   * a booking sits while the renter answers their bank.
+   *
+   * ## Three states may be paid from, and each for its own reason
+   *
+   * - **`ACCEPTED`** — the ordinary case. The owner said yes and nothing has been
+   *   attempted.
+   * - **`PAYMENT_FAILED`** — §7's `AWAITING_PAYMENT (retry)` edge. A declined card
+   *   is not the end of a booking, and the attempt key Payments derives makes the
+   *   retry a genuinely new attempt rather than a replay of the first failure.
+   * - **`AWAITING_PAYMENT`** — a resume, and the case worth reading twice. A renter
+   *   who closed the tab mid-challenge, or a process that died between the charge
+   *   and the state change, leaves a booking here. Calling this again is what
+   *   repairs it: Payments returns the attempt already open rather than charging
+   *   again, and if that attempt has since succeeded the booking moves on. **The
+   *   repair is a retry, which is why both sides had to be idempotent.**
+   *
+   * Anything else refuses with a sentence. A `RESERVED` booking is already paid;
+   * a `DECLINED` or `EXPIRED` one never will be.
+   *
+   * ## The order, which is the same argument Payments makes one layer down
+   *
+   * **The booking moves to `AWAITING_PAYMENT` before the provider is called.** The
+   * other order takes money against a booking still reading `ACCEPTED`, with
+   * nothing on this side recording that an attempt was ever made. This way a crash
+   * anywhere after that leaves a booking that says *payment in progress* — which
+   * is true, and which the resume above then finishes.
+   *
+   * Resolves to null when the booking is not this renter's or does not exist.
+   * **The owner gets null too**: §8.6 gives them the decision and the renter the
+   * bill, and a 403 would confirm the id is real.
+   *
+   * Throws {@link RequestRefusedError} when the state cannot be paid from.
+   */
+  async pay(bookingId: string, renterId: string): Promise<BookingPayment | null> {
+    /*
+     * **First, and before the booking is even read.** There is no payment provider
+     * until 5.2e, so this is the honest state of the platform rather than a
+     * temporary guard — and refusing here means nothing is written, nothing moves
+     * and no booking is stranded in `AWAITING_PAYMENT` waiting for something that
+     * cannot happen. Turning the flag on is the whole of what 5.2e has to do.
+     */
+    if (!(await this.paymentSwitch.isPaymentEnabled())) {
+      throw new RequestRefusedError(
+        'Paying for bookings is not switched on yet, so nothing has been charged. ' +
+          'Your booking is still held.',
+      );
+    }
+
+    const existing = await this.bookings.findForParty(bookingId, renterId);
+    if (existing === null) return null;
+
+    const { booking } = existing;
+    /*
+     * **`findForParty` answers for either party, and only one of them pays.** The
+     * owner reading their own booking here would otherwise be able to pay for it,
+     * which is both wrong and a way for an owner to move their own booking to
+     * `RESERVED`. Null rather than a refusal, so it is indistinguishable from a
+     * booking that does not exist.
+     */
+    if (booking.renterId !== renterId) return null;
+
+    if (!PAYABLE_STATES.includes(booking.state)) {
+      throw new RequestRefusedError(describeUnpayable(booking.state));
+    }
+
+    /*
+     * **Asked before the state moves**, so a listing that has somehow lost its
+     * owner refuses rather than stranding a booking in `AWAITING_PAYMENT`. It
+     * cannot happen — the foreign key is `RESTRICT` and accounts are soft-deleted
+     * — which is exactly why the failure would be baffling if it did.
+     */
+    const ownerId = await this.ownership.ownerOf(booking.listingId);
+    if (ownerId === null) {
+      throw new RequestRefusedError(
+        'That item is no longer available to pay for. Nothing has been charged.',
+      );
+    }
+
+    const awaiting = await this.movePayable(booking.state, bookingId, renterId);
+    if (awaiting === null) {
+      /*
+       * Somebody else moved it between the read and the write — the renter's own
+       * second tab, most likely. Not an error and not a charge: they are told to
+       * look again, exactly as a stale accept is.
+       */
+      throw new RequestRefusedError(
+        'That booking changed while you were paying. Reload the page to see where ' +
+          'it stands. Nothing has been charged twice.',
+      );
+    }
+
+    const result = await this.payments.chargeForHire({
+      bookingId,
+      ownerId,
+      categoryVersionId: booking.categoryVersionId,
+      itemTitle: booking.itemTitle,
+      itemCharge: booking.itemCharge,
+      renterFee: booking.renterFee,
+      total: booking.total,
+    });
+
+    await this.settle(bookingId, renterId, result.status);
+
+    return {
+      booking: await this.readBackForRenter(bookingId, renterId),
+      payment: {
+        status: result.status,
+        ...(result.payerAction === undefined
+          ? {}
+          : { payerAction: result.payerAction }),
+        ...(result.failureMessage === undefined
+          ? {}
+          : { failureMessage: result.failureMessage }),
+      },
+    };
+  }
+
+  /**
+   * Get the booking to `AWAITING_PAYMENT`, from wherever it is.
+   *
+   * **Three sources, one destination**, and `AWAITING_PAYMENT → AWAITING_PAYMENT`
+   * is not one of them: §7 has no such edge and asserting it would fail. A resume
+   * is already there, so there is nothing to move and nothing to write down — a
+   * `state-changed` event from a state to itself would be a history entry
+   * recording that nothing happened.
+   */
+  private async movePayable(
+    from: BookingState,
+    bookingId: string,
+    renterId: string,
+  ): Promise<'moved' | null> {
+    if (from === 'AWAITING_PAYMENT') return 'moved';
+
+    assertTransition(from, 'AWAITING_PAYMENT');
+
+    const moved = await this.bookings.advance({
+      bookingId,
+      from,
+      to: 'AWAITING_PAYMENT',
+      actorId: renterId,
+      now: this.now(),
+    });
+
+    return moved === null ? null : 'moved';
+  }
+
+  /**
+   * Move the booking to wherever the charge left it.
+   *
+   * **`processing` and `pending_payer_action` move nothing**, deliberately: the
+   * booking is already in `AWAITING_PAYMENT` and that is exactly what those two
+   * mean. §7 gives it no other home until an outcome arrives.
+   *
+   * **A losing race is silently fine here**, unlike above. `advance` returns null
+   * when the booking has already left `AWAITING_PAYMENT` — which is what 5.2e's
+   * webhook confirming the same payment a moment earlier looks like. The money is
+   * recorded either way, because the *ledger* posting is Payments' and is keyed
+   * per booking; this is the mirror catching up, and it must not turn a duplicate
+   * into an error the renter sees.
+   */
+  private async settle(
+    bookingId: string,
+    renterId: string,
+    status: HireChargeResult['status'],
+  ): Promise<void> {
+    if (status === 'processing' || status === 'pending_payer_action') return;
+
+    const to: BookingState = status === 'succeeded' ? 'RESERVED' : 'PAYMENT_FAILED';
+    assertTransition('AWAITING_PAYMENT', to);
+
+    await this.bookings.advance({
+      bookingId,
+      from: 'AWAITING_PAYMENT',
+      to,
+      /*
+       * **The renter, because the renter pressed pay.** From 5.2e a webhook will
+       * write the same transition with `actorId: null`, which is the honest answer
+       * when the platform acted on a provider's word rather than a person's click.
+       */
+      actorId: renterId,
+      now: this.now(),
+    });
+  }
+
+  /**
+   * The booking as its history now stands, for the renter.
+   *
+   * `readBack` beside this takes an owner id; the scope check is the same one and
+   * the parameter name is the only difference, so this exists to keep the call
+   * sites honest about who is asking rather than to do anything else.
+   */
+  private async readBackForRenter(
+    bookingId: string,
+    renterId: string,
+  ): Promise<Booking> {
+    return this.readBack(bookingId, renterId);
+  }
+
+  /**
    * The booking as its history now stands.
    *
    * **A second read rather than assembling a projection from the write's return
@@ -459,6 +695,44 @@ export class BookingsService {
  * Carries the words rather than a code, matching `QuoteRefusedError` and
  * `BlockRefusedError` beside it: the refusal is decided where the rule is.
  */
+/**
+ * The states a renter may pay from (§7, slice 5.2c).
+ *
+ * **Three, and each is a different situation rather than a variation.** `ACCEPTED`
+ * is the ordinary one; `PAYMENT_FAILED` is §7's retry edge; `AWAITING_PAYMENT` is
+ * a resume, which is what makes a closed tab or a crashed process recoverable.
+ *
+ * Derived from nothing — listed, like `CALENDAR_OCCUPYING_STATES` — because it is
+ * a rule about what a *renter* may do rather than a property of the state graph:
+ * §7 also lets `ACCEPTED → RESERVED` directly, and that edge is for a configured
+ * collection model nobody has built.
+ */
+const PAYABLE_STATES: readonly BookingState[] = Object.freeze([
+  'ACCEPTED',
+  'AWAITING_PAYMENT',
+  'PAYMENT_FAILED',
+]);
+
+/**
+ * Why this booking cannot be paid for, as the renter is told.
+ *
+ * **Switched exhaustively over the states it can actually reach**, so a state
+ * added to §7 later cannot silently inherit a sentence written for a different
+ * situation — the rule `describeUnavailableToOwner` already follows below.
+ */
+function describeUnpayable(state: BookingState): string {
+  if (state === 'RESERVED') {
+    return 'That booking is already paid for. Nothing has been charged again.';
+  }
+  if (state === 'REQUESTED') {
+    return 'That request has not been accepted yet, so there is nothing to pay for.';
+  }
+  if (state === 'DECLINED' || state === 'EXPIRED' || state === 'CANCELLED') {
+    return 'That booking is no longer live, so it cannot be paid for.';
+  }
+  return 'That booking is past the point of paying for it. Reload the page to see where it stands.';
+}
+
 export class RequestRefusedError extends Error {
   constructor(readonly refusal: string) {
     super(refusal);

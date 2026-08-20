@@ -572,6 +572,23 @@ export interface ListingStore {
   existsOwnedBy(id: string, ownerId: string): Promise<boolean>;
 
   /**
+   * Who owns this listing, or null if there is no such listing (slice 5.2c).
+   *
+   * **The same one-column read as `existsOwnedBy` asked from the other end**, and
+   * it exists because paying a hire needs a payee: `bookings` deliberately keeps
+   * no owner column, so somebody has to answer *who is owed this*.
+   *
+   * **In any state, exactly as above.** An owner who pauses their listing after
+   * accepting a booking must not thereby make the hire unpayable — ownership is
+   * not visibility.
+   *
+   * **One id and nothing else.** The temptation is to answer this from
+   * `findOwnedBy`, which would decrypt a collection address to read one column
+   * off it and hand the rest to a module with no business holding it.
+   */
+  ownerOf(id: string): Promise<string | null>;
+
+  /**
    * Rewrite what this owner wrote about their item (slice 2.9b-i, ADR 0042).
    *
    * **Re-pins to the category's current version as it writes**, which is the

@@ -487,6 +487,13 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     return listing === undefined ? null : this.hydrate(listing);
   }
 
+  ownerOf(id: string): Promise<string | null> {
+    // Off the raw array, like `existsOwnedBy` below and for its reason: the real
+    // adapter reads one column and never hydrates a record.
+    const listing = this.listings.find((candidate) => candidate.id === id);
+    return Promise.resolve(listing?.ownerId ?? null);
+  }
+
   existsOwnedBy(id: string, ownerId: string): Promise<boolean> {
     // Answered off the raw array rather than through `findOwnedBy`, mirroring
     // the adapter's `select: { id: true }` — a double that hydrated the record
