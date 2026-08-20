@@ -433,4 +433,39 @@ export interface BookingStore {
    * Returns the requests it expired, oldest deadline first.
    */
   expireRequests(now: Date, limit: number): Promise<ExpirySweepResult>;
+
+  /**
+   * Move one booking from exactly one state to another, writing its event
+   * (slice 5.2c).
+   *
+   * **A compare-and-swap, and the `from` belongs in the `UPDATE` rather than in a
+   * query before it.** That is what `expireRequests` already does and for the same
+   * reason: a booking that changed state a millisecond ago is simply not matched,
+   * so two requests racing — the renter pressing pay twice, a webhook arriving
+   * while the browser is still finishing — cannot both apply. Reading the state
+   * and then writing would let both.
+   *
+   * **General where `accept` and `decline` are specific**, and that is a
+   * deliberate departure. Payment needs four of §7's edges rather than one, and
+   * four near-identical methods would be four places for the event write to drift.
+   * **The vocabulary stays central**: `assertTransition` runs in the service
+   * before this is called, so §7 is still enforced in one place and this cannot
+   * invent an edge — it can only fail to find a row.
+   *
+   * **Not scoped to a party.** Scope is the caller's business here, because the
+   * callers differ: a renter pays, and from 5.2e a webhook with no user at all
+   * confirms. The service checks who is asking before it gets this far.
+   *
+   * Resolves to null when no booking with that id is in that state — which covers
+   * "no such booking", "not in that state any more" and "somebody else got there
+   * first", three facts the caller must be able to treat alike.
+   */
+  advance(transition: {
+    readonly bookingId: string;
+    readonly from: BookingState;
+    readonly to: BookingState;
+    /** Null when the platform acted rather than a person — a webhook, a sweep. */
+    readonly actorId: string | null;
+    readonly now: Date;
+  }): Promise<BookingRecord | null>;
 }

@@ -257,6 +257,35 @@ export function assertSameAttempt(
 }
 
 /**
+ * The provider idempotency key for one attempt at a hire's charge (slice 5.2c).
+ *
+ * **Derived from how many attempts have already failed, not from a counter and
+ * not from the caller.** That is what makes it race-safe without a lock, and the
+ * three cases it has to get right are worth spelling out:
+ *
+ * - **Two presses of pay, milliseconds apart.** Both see the same failure count,
+ *   both mint the same key, and the unique index turns the second into a read of
+ *   the first. One charge.
+ * - **A press while a 3-D Secure challenge is still in flight.** Nothing has
+ *   failed, so the count is unchanged and the key is the same one — the attempt is
+ *   found, `payForHire` short-circuits, and the payer is not charged twice for a
+ *   payment they are halfway through.
+ * - **A press after a decline.** The count moved, so the key is new — which it
+ *   must be, because the provider's own idempotency would otherwise hand back the
+ *   first failure forever.
+ *
+ * **A succeeded attempt needs no case**, because the booking leaves the payable
+ * states the moment one lands.
+ *
+ * **The caller does not supply this**, and a browser least of all: a key minted
+ * client-side is a key a client can reuse, vary or lose, and every one of those
+ * is a double charge or an unpayable booking.
+ */
+export function hireAttemptKey(bookingId: string, failedAttempts: number): string {
+  return `hire:${bookingId}:${String(failedAttempts)}`;
+}
+
+/**
  * The ledger idempotency key for a hire's capture.
  *
  * **Per booking, deliberately — where the provider's key is per attempt.** A

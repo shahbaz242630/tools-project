@@ -778,6 +778,22 @@ export class ListingsService {
   }
 
   /**
+   * Who owns a listing (slice 5.2c).
+   *
+   * **The second half of the same port, and it is here for one caller.** Paying a
+   * hire needs a payee and `bookings` keeps no owner column; Booking asks through
+   * `ListingOwnership.ownerOf` and this fills it.
+   *
+   * **Deliberately not `findPublished(…)?.ownerId`.** That would answer null for a
+   * listing whose owner paused it — and an owner pausing a listing after accepting
+   * a booking is an entirely reasonable thing to do that must not make the hire
+   * unpayable. Ownership is not visibility; the port says so and so does the store.
+   */
+  ownerOf(id: string): Promise<string | null> {
+    return this.store.ownerOf(id);
+  }
+
+  /**
    * One listing, as anybody may see it, or null (slice 2.10).
    *
    * **Two lines long and it is still the right place for this to exist.** The

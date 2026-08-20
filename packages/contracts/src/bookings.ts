@@ -39,6 +39,25 @@ export function bookingDeclinePath(id: string): string {
 export const BOOKING_DECLINE_ROUTE = '/bookings/:bookingId/decline';
 
 /**
+ * Where a renter pays for a booking their owner accepted (§8.7, slice 5.2c).
+ *
+ * **A verb under the booking, like accepting and declining**, and for the same
+ * reason: it is something one party does to one booking, not a resource anybody
+ * lists. It is deliberately not `/payments/…` — a payment is Payments' concept,
+ * and what a renter is doing is paying for *this hire*.
+ *
+ * **No body.** What is owed was fixed when the booking was made (§8.2) and is on
+ * its row; a client that could send an amount could send the wrong one, and every
+ * page that displayed a total would become a place the price could be argued
+ * with. §8.7 is explicit that charges are calculated server-side only.
+ */
+export function bookingPayPath(id: string): string {
+  return `/bookings/${id}/pay`;
+}
+
+export const BOOKING_PAY_ROUTE = '/bookings/:bookingId/pay';
+
+/**
  * The requests against one listing, as its owner reads them (slice 4.6).
  *
  * **Nested under the listing, unlike every other booking route.** The two above
@@ -219,6 +238,79 @@ export type Booking = z.infer<typeof bookingSchema>;
 
 export function parseBooking(raw: unknown): Booking {
   return parseWith(bookingSchema, 'The booking', raw);
+}
+
+/**
+ * What the payer must do next, when a card payment cannot finish in one step
+ * (slice 5.2c).
+ *
+ * **This is the one field in the whole API that crosses to the browser to be
+ * consumed by somebody else's code.** Strong Customer Authentication means a UK
+ * card payment usually needs a 3-D Secure challenge, and the provider's own
+ * browser library is what runs it — so the token has to reach the page.
+ *
+ * **It is a short-lived bearer value and nothing may treat it as more.** Nothing
+ * stores it, nothing logs it, nothing puts it in a metric label, and no page
+ * parses it: the moment something reads its contents we have a provider's format
+ * in our code, which ADR 0051 exists to prevent.
+ *
+ * **`kind` is named rather than implied**, so adding a redirect-based flow later
+ * is a compile error at every reader instead of a surprise on somebody's phone.
+ */
+export const payerActionSchema = z.strictObject({
+  kind: z.literal('confirm_in_browser'),
+  token: z.string().min(1),
+});
+
+export type PayerAction = z.infer<typeof payerActionSchema>;
+
+/**
+ * Where a payment attempt got to, as the renter who made it is told.
+ *
+ * **Four statuses, and the first two differ in exactly one way that matters**:
+ * `pending_payer_action` comes with a token and something for the payer to do,
+ * `processing` means wait. Both leave the booking in `AWAITING_PAYMENT`.
+ */
+export const PAYMENT_STATUSES = [
+  'pending_payer_action',
+  'processing',
+  'succeeded',
+  'failed',
+] as const;
+
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export const paymentStatusSchema = z.enum(PAYMENT_STATUSES);
+
+/**
+ * What happened when the renter pressed pay (slice 5.2c).
+ *
+ * **A sentence on failure and never a reason code.** Payments categorises a
+ * failure for its own reconciliation — declined, authentication failed, provider
+ * error — and a renter can act on none of the differences: all three mean *try
+ * again, or use another card*. Projecting the category would put a vocabulary on
+ * the wire that nothing needs and everything would afterwards have to keep.
+ *
+ * **The booking comes back with it**, rather than the client inferring a state
+ * from the payment: §7 is the authority on what a booking is, and a page that
+ * derived `RESERVED` from `succeeded` would be a second implementation of the
+ * state machine living in a browser.
+ */
+export const bookingPaymentSchema = z.strictObject({
+  booking: bookingSchema,
+  payment: z.strictObject({
+    status: paymentStatusSchema,
+    /** Present only when the status is `pending_payer_action`. */
+    payerAction: payerActionSchema.optional(),
+    /** Present only when the status is `failed`. */
+    failureMessage: z.string().min(1).optional(),
+  }),
+});
+
+export type BookingPayment = z.infer<typeof bookingPaymentSchema>;
+
+export function parseBookingPayment(raw: unknown): BookingPayment {
+  return parseWith(bookingPaymentSchema, 'The payment', raw);
 }
 
 /**

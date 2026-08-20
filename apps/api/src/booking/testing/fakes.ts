@@ -25,6 +25,11 @@ import type {
   UnavailableReason,
 } from '../availability-store.js';
 import type { ListingOwnership } from '../listing-ownership.js';
+import type {
+  HireChargeRequest,
+  HireChargeResult,
+  HirePayments,
+} from '../hire-payments.js';
 import type { ListingQuoteSource, QuotableListing } from '../listing-quote-source.js';
 import type {
   ExportableQuote,
@@ -281,6 +286,33 @@ export class InMemoryBookingStore implements BookingStore {
     this.record(booking.id, 'state-changed', 'REQUESTED', 'DECLINED', ownerId, {});
 
     return Promise.resolve({ ...booking, state: 'DECLINED' });
+  }
+
+  /**
+   * One booking, one edge (slice 5.2c).
+   *
+   * **The `from` state is part of the match, not checked after it.** The real
+   * store puts it in the `UPDATE`'s `where`, so a booking that has already moved
+   * is simply not matched — and a double that read the row, compared, then wrote
+   * would let two racing callers both apply. Modelling the predicate is what makes
+   * a service test evidence of anything.
+   */
+  advance(transition: {
+    readonly bookingId: string;
+    readonly from: BookingState;
+    readonly to: BookingState;
+    readonly actorId: string | null;
+    readonly now: Date;
+  }): Promise<BookingRecord | null> {
+    const { bookingId, from, to, actorId } = transition;
+
+    const booking = this.bookings.find((candidate) => candidate.id === bookingId);
+    if (booking === undefined || booking.state !== from) return Promise.resolve(null);
+
+    this.replace(booking, to);
+    this.record(bookingId, 'state-changed', from, to, actorId, {});
+
+    return Promise.resolve({ ...booking, state: to });
   }
 
   /**
@@ -764,6 +796,14 @@ export class InMemoryListingOwnership implements ListingOwnership {
   isOwnedBy(listingId: string, ownerId: string): Promise<boolean> {
     return Promise.resolve(this.owned.has(`${ownerId}\0${listingId}`));
   }
+
+  ownerOf(listingId: string): Promise<string | null> {
+    for (const entry of this.owned) {
+      const [ownerId, owned] = entry.split('\0');
+      if (owned === listingId) return Promise.resolve(ownerId ?? null);
+    }
+    return Promise.resolve(null);
+  }
 }
 
 /**
@@ -771,6 +811,34 @@ export class InMemoryListingOwnership implements ListingOwnership {
  * `testing/fakes.ts` offers, so a composition root in a test reads the same way
  * whichever module it is wiring.
  */
+/**
+ * The charge, as Booking asks for it (slice 5.2c).
+ *
+ * **A fake of Booking's own port, not of `PaymentsService`.** What Booking's
+ * tests are about is where a booking ends up given an answer; whether that answer
+ * is right is proved in `payments.service.test.ts` against the real ledger fake.
+ * Faking the port keeps the two suites from testing each other.
+ *
+ * **It records what it was asked**, because several rules here are about *not*
+ * charging — a booking in the wrong state, a payment switched off, an owner
+ * pressing pay — and the only way to assert that is to count.
+ */
+export class RecordingHirePayments implements HirePayments {
+  readonly requests: HireChargeRequest[] = [];
+
+  private next: HireChargeResult = { status: 'succeeded' };
+
+  /** Change what the next charge reports — a challenge, a wait, a decline. */
+  willReport(result: HireChargeResult): void {
+    this.next = result;
+  }
+
+  chargeForHire(request: HireChargeRequest): Promise<HireChargeResult> {
+    this.requests.push(request);
+    return Promise.resolve(this.next);
+  }
+}
+
 export function createBookingFakes(
   /**
    * The clock the calendar service reads, for the two refusals that need to
@@ -789,6 +857,10 @@ export function createBookingFakes(
   readonly quotes: QuotesService;
   readonly bookings: BookingsService;
   readonly requestExpiry: RequestExpiryService;
+  /** What the charge reports next, and what it was asked (slice 5.2c). */
+  readonly payments: RecordingHirePayments;
+  /** Flip to prove the refusal when payment is switched off (slice 5.2c). */
+  readonly paymentsEnabled: { value: boolean };
 } {
   const store = new InMemoryBookingStore(now);
   // Built over the same booking store, because "booked" is not a second fact
@@ -800,8 +872,16 @@ export function createBookingFakes(
   const ownership = new InMemoryListingOwnership();
   const quoteStore = new InMemoryQuoteStore();
   const quotableListings = new InMemoryListingQuoteSource();
+  const payments = new RecordingHirePayments();
+  /*
+   * A box rather than a boolean, so a test can flip it *after* the service has
+   * been constructed — the service holds the port, not the value.
+   */
+  const paymentsEnabled = { value: true };
 
   return {
+    payments,
+    paymentsEnabled,
     store,
     ownership,
     availability,
@@ -824,6 +904,21 @@ export function createBookingFakes(
       quoteStore,
       quotableListings,
       availability,
+      /*
+       * **Paying, answered by a fake provider that succeeds** (slice 5.2c). An
+       * integration test asserting the route, the codes and the permissions has
+       * to get past the charge, and what happens *inside* Payments is proved
+       * against real fakes in `payments.service.test.ts`.
+       */
+      payments,
+      ownership,
+      /*
+       * **On, unlike production.** `booking.payment` defaults off because there is
+       * no provider adapter yet; a test of the paying route would otherwise only
+       * ever prove the refusal. The refusal has its own test that switches this
+       * off, so both paths are covered rather than one.
+       */
+      { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
       now,
     ),
     /*

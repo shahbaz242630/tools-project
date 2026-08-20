@@ -7,8 +7,10 @@ import { QuotesService } from './quotes.service.js';
 import {
   InMemoryAvailabilityStore,
   InMemoryBookingStore,
+  InMemoryListingOwnership,
   InMemoryListingQuoteSource,
   InMemoryQuoteStore,
+  RecordingHirePayments,
 } from './testing/fakes.js';
 
 /**
@@ -64,6 +66,9 @@ describe('BookingsService', () => {
   let quoteStore: InMemoryQuoteStore;
   let listings: InMemoryListingQuoteSource;
   let availability: InMemoryAvailabilityStore;
+  let payments: RecordingHirePayments;
+  let ownership: InMemoryListingOwnership;
+  let paymentsEnabled: { value: boolean };
   let quotes: QuotesService;
   let service: BookingsService;
 
@@ -80,13 +85,260 @@ describe('BookingsService', () => {
     listings = new InMemoryListingQuoteSource().give(mower());
     availability = new InMemoryAvailabilityStore(bookingStore);
     quotes = new QuotesService(quoteStore, listings, availability, () => NOW);
+    payments = new RecordingHirePayments();
+    ownership = new InMemoryListingOwnership().give(MOWER, OWNER);
+    paymentsEnabled = { value: true };
     service = new BookingsService(
       bookingStore,
       quoteStore,
       listings,
       availability,
+      payments,
+      ownership,
+      { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
       () => NOW,
     );
+  });
+
+  describe('paying for a booking (§7, §8.7, slice 5.2c)', () => {
+    /** An accepted booking, the way one is actually made. */
+    async function givenAnAcceptedBooking(): Promise<string> {
+      const quoteId = await givenAQuote();
+      const booking = await service.request(ADA, { quoteId });
+      if (booking === null) throw new Error('expected a booking');
+      await service.accept(booking.id, OWNER);
+      return booking.id;
+    }
+
+    it('reserves the booking when the charge succeeds', async () => {
+      const bookingId = await givenAnAcceptedBooking();
+
+      const paid = await service.pay(bookingId, ADA);
+
+      expect(paid?.booking.state).toBe('RESERVED');
+      expect(paid?.payment.status).toBe('succeeded');
+      expect(paid?.payment.payerAction).toBeUndefined();
+    });
+
+    it('writes both transitions into the history', async () => {
+      // §6.2 makes the event log part of what a booking *is*, and a payment that
+      // jumped straight from ACCEPTED to RESERVED would be a history that cannot
+      // explain how the money moved.
+      const bookingId = await givenAnAcceptedBooking();
+
+      const paid = await service.pay(bookingId, ADA);
+
+      expect(paid?.booking.events.map((event) => event.toState)).toEqual([
+        'REQUESTED',
+        'ACCEPTED',
+        'AWAITING_PAYMENT',
+        'RESERVED',
+      ]);
+      // The first event has nothing to come from, and only the first — writing
+      // `DRAFT` there would assert a state the booking was never in.
+      expect(paid?.booking.events.map((event) => event.fromState)).toEqual([
+        null,
+        'REQUESTED',
+        'ACCEPTED',
+        'AWAITING_PAYMENT',
+      ]);
+    });
+
+    it('hands the charge the booking’s own stored money, not the listing’s', async () => {
+      // §8.2. A charge re-derived from the listing would bill today's price for
+      // last month's hire.
+      const bookingId = await givenAnAcceptedBooking();
+
+      await service.pay(bookingId, ADA);
+
+      const [request] = payments.requests;
+      expect(request?.bookingId).toBe(bookingId);
+      expect(request?.ownerId).toBe(OWNER);
+      expect(request?.itemTitle).toBe('Petrol hedge trimmer');
+      expect(request?.total.amount).toBeGreaterThan(0);
+      // The parts add to the total, which is what `settleHire` refuses a charge
+      // for failing — checked here so a wrong copy is caught at the seam too.
+      expect((request?.itemCharge.amount ?? 0) + (request?.renterFee.amount ?? 0)).toBe(
+        request?.total.amount,
+      );
+    });
+
+    it('waits in AWAITING_PAYMENT while the payer answers their bank', async () => {
+      /*
+       * The ordinary UK card journey. §7 has this state precisely because a
+       * payment under SCA does not finish in the request that started it.
+       */
+      const bookingId = await givenAnAcceptedBooking();
+      payments.willReport({
+        status: 'pending_payer_action',
+        payerAction: { kind: 'confirm_in_browser', token: 'challenge-token' },
+      });
+
+      const paid = await service.pay(bookingId, ADA);
+
+      expect(paid?.booking.state).toBe('AWAITING_PAYMENT');
+      expect(paid?.payment.payerAction).toEqual({
+        kind: 'confirm_in_browser',
+        token: 'challenge-token',
+      });
+    });
+
+    it('waits in AWAITING_PAYMENT while the provider is still deciding', async () => {
+      // `processing` is not `pending_payer_action`: there is nothing for the payer
+      // to do, and no token. Both leave the booking in the same place.
+      const bookingId = await givenAnAcceptedBooking();
+      payments.willReport({ status: 'processing' });
+
+      const paid = await service.pay(bookingId, ADA);
+
+      expect(paid?.booking.state).toBe('AWAITING_PAYMENT');
+      expect(paid?.payment.payerAction).toBeUndefined();
+    });
+
+    it('moves to PAYMENT_FAILED with a sentence when the card is declined', async () => {
+      const bookingId = await givenAnAcceptedBooking();
+      payments.willReport({
+        status: 'failed',
+        failureMessage: 'Your card was declined.',
+      });
+
+      const paid = await service.pay(bookingId, ADA);
+
+      expect(paid?.booking.state).toBe('PAYMENT_FAILED');
+      expect(paid?.payment.failureMessage).toBe('Your card was declined.');
+    });
+
+    it('lets a declined renter try again — §7’s retry edge', async () => {
+      const bookingId = await givenAnAcceptedBooking();
+      payments.willReport({ status: 'failed', failureMessage: 'Declined.' });
+      await service.pay(bookingId, ADA);
+
+      payments.willReport({ status: 'succeeded' });
+      const paid = await service.pay(bookingId, ADA);
+
+      expect(paid?.booking.state).toBe('RESERVED');
+      expect(payments.requests).toHaveLength(2);
+    });
+
+    it('resumes a payment left in flight rather than starting a new one', async () => {
+      /*
+       * **The crash case, and the reason both sides had to be idempotent.** A
+       * renter who closed the tab mid-challenge, or a process that died between
+       * the charge and the state change, leaves a booking in `AWAITING_PAYMENT`.
+       * Calling this again is what repairs it — and Payments returns the attempt
+       * already open rather than charging a second time, which is proved in
+       * `payments.service.test.ts` against the real intent store.
+       */
+      const bookingId = await givenAnAcceptedBooking();
+      payments.willReport({
+        status: 'pending_payer_action',
+        payerAction: { kind: 'confirm_in_browser', token: 'challenge-token' },
+      });
+      await service.pay(bookingId, ADA);
+
+      payments.willReport({ status: 'succeeded' });
+      const resumed = await service.pay(bookingId, ADA);
+
+      expect(resumed?.booking.state).toBe('RESERVED');
+      // No second `AWAITING_PAYMENT` event: §7 has no edge from that state to
+      // itself, and one would be a history entry recording that nothing happened.
+      expect(
+        resumed?.booking.events.filter((event) => event.toState === 'AWAITING_PAYMENT'),
+      ).toHaveLength(1);
+    });
+
+    it('refuses when payment is not switched on, before anything moves', async () => {
+      /*
+       * **The ordinary answer today.** There is no payment provider until 5.2e, so
+       * the flag defaults off — and refusing here rather than at the provider is
+       * what keeps a booking from being stranded in `AWAITING_PAYMENT` waiting for
+       * something that cannot happen.
+       */
+      const bookingId = await givenAnAcceptedBooking();
+      paymentsEnabled.value = false;
+
+      await expect(service.pay(bookingId, ADA)).rejects.toThrow(/not switched on/);
+
+      expect(payments.requests).toHaveLength(0);
+      const booking = await service.find(bookingId, ADA);
+      expect(booking?.state).toBe('ACCEPTED');
+    });
+
+    it('refuses the owner, indistinguishably from a booking that does not exist', async () => {
+      // §8.6 gives the owner the decision and the renter the bill. A 403 here
+      // would confirm the id is real to somebody who is not paying it.
+      const bookingId = await givenAnAcceptedBooking();
+
+      expect(await service.pay(bookingId, OWNER)).toBeNull();
+      expect(payments.requests).toHaveLength(0);
+    });
+
+    it('refuses a booking that is not this renter’s', async () => {
+      const bookingId = await givenAnAcceptedBooking();
+
+      expect(await service.pay(bookingId, 'renter-someone-else')).toBeNull();
+    });
+
+    it('refuses a booking that does not exist', async () => {
+      expect(await service.pay('booking-nonexistent', ADA)).toBeNull();
+    });
+
+    it('refuses a request the owner has not answered yet', async () => {
+      const quoteId = await givenAQuote();
+      const booking = await service.request(ADA, { quoteId });
+
+      await expect(service.pay(booking?.id ?? '', ADA)).rejects.toThrow(
+        /has not been accepted yet/,
+      );
+      expect(payments.requests).toHaveLength(0);
+    });
+
+    it('refuses a booking that is already paid for, and charges nothing', async () => {
+      const bookingId = await givenAnAcceptedBooking();
+      await service.pay(bookingId, ADA);
+      const chargesSoFar = payments.requests.length;
+
+      await expect(service.pay(bookingId, ADA)).rejects.toThrow(/already paid for/);
+      expect(payments.requests).toHaveLength(chargesSoFar);
+    });
+
+    it('refuses a declined booking', async () => {
+      const quoteId = await givenAQuote();
+      const booking = await service.request(ADA, { quoteId });
+      await service.decline(booking?.id ?? '', OWNER);
+
+      await expect(service.pay(booking?.id ?? '', ADA)).rejects.toThrow(
+        /no longer live/,
+      );
+    });
+
+    it('refuses when the listing has somehow lost its owner', async () => {
+      /*
+       * Unreachable in production — the foreign key is `RESTRICT` and accounts are
+       * soft-deleted — and it is asked *before* the state moves precisely so the
+       * impossible case cannot strand a booking mid-payment.
+       */
+      const bookingId = await givenAnAcceptedBooking();
+      const orphaned = new BookingsService(
+        bookingStore,
+        quoteStore,
+        listings,
+        availability,
+        payments,
+        {
+          isOwnedBy: () => Promise.resolve(false),
+          ownerOf: () => Promise.resolve(null),
+        },
+        { isPaymentEnabled: () => Promise.resolve(true) },
+        () => NOW,
+      );
+
+      await expect(orphaned.pay(bookingId, ADA)).rejects.toThrow(/no longer available/);
+
+      expect(payments.requests).toHaveLength(0);
+      const booking = await service.find(bookingId, ADA);
+      expect(booking?.state).toBe('ACCEPTED');
+    });
   });
 
   describe('answering a request (§8.6, §7.1, slice 4.6)', () => {
@@ -164,6 +416,9 @@ describe('BookingsService', () => {
         quoteStore,
         listings,
         availability,
+        payments,
+        ownership,
+        { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
         () => Time.addHours(NOW, 49),
       );
 
@@ -183,6 +438,9 @@ describe('BookingsService', () => {
         quoteStore,
         listings,
         availability,
+        payments,
+        ownership,
+        { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
         () => Time.addHours(NOW, 49),
       );
 
@@ -357,6 +615,9 @@ describe('BookingsService', () => {
         quoteStore,
         listings,
         availability,
+        payments,
+        ownership,
+        { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
         () => Time.fromIsoUtc('2026-08-20T09:31:00.000Z'),
       );
 
@@ -375,6 +636,9 @@ describe('BookingsService', () => {
         quoteStore,
         listings,
         availability,
+        payments,
+        ownership,
+        { isPaymentEnabled: () => Promise.resolve(true) },
         () => NOW,
       );
 
@@ -480,6 +744,9 @@ describe('BookingsService', () => {
         quoteStore,
         listings,
         availability,
+        payments,
+        ownership,
+        { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
         () => NOW,
       );
 

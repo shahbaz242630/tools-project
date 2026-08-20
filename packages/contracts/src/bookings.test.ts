@@ -3,10 +3,12 @@ import {
   BOOKINGS_ROUTE,
   BOOKING_ACCEPT_ROUTE,
   BOOKING_DECLINE_ROUTE,
+  BOOKING_PAY_ROUTE,
   BOOKING_EVENT_TYPES,
   BOOKING_ROUTE,
   LISTING_REQUESTS_ROUTE,
   bookingAcceptPath,
+  bookingPayPath,
   bookingDeclinePath,
   bookingPath,
   OWNER_BOOKINGS_ROUTE,
@@ -52,6 +54,8 @@ describe('the booking routes', () => {
     expect(BOOKING_ACCEPT_ROUTE).toBe('/bookings/:bookingId/accept');
     expect(bookingDeclinePath('booking-1')).toBe('/bookings/booking-1/decline');
     expect(BOOKING_DECLINE_ROUTE).toBe('/bookings/:bookingId/decline');
+    expect(bookingPayPath('booking-1')).toBe('/bookings/booking-1/pay');
+    expect(BOOKING_PAY_ROUTE).toBe('/bookings/:bookingId/pay');
     expect(listingRequestsPath('listing-1')).toBe('/listings/listing-1/requests');
     expect(LISTING_REQUESTS_ROUTE).toBe('/listings/:id/requests');
   });

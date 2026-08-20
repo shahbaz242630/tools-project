@@ -313,6 +313,15 @@ export default defineConfig({
         // And the same for the port Catalogue answers (slice 5.2b): one
         // interface and nothing else.
         '**/api/src/payments/category-fee-policy-source.ts',
+        // Declaration-only, both from slice 5.2c: `hire-payments.ts` is the port
+        // Booking states and Payments answers, `payment-switch.ts` is the one
+        // question Booking asks the flags module. Interfaces and a type union, so
+        // they emit no executable JavaScript and v8 reports every source line as
+        // uncovered. Same case as `listing-quote-source.ts` beside them. If any
+        // code appears in either, delete the line rather than keeping it honest
+        // by accident.
+        '**/api/src/booking/hire-payments.ts',
+        '**/api/src/booking/payment-switch.ts',
       ],
       thresholds: {
         lines: 90,

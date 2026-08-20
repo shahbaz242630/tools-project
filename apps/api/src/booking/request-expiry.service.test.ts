@@ -111,6 +111,15 @@ describe('RequestExpiryService', () => {
       quoteStore,
       listings,
       availability,
+      /*
+       * Paying is not what this file is about. The port is satisfied with a
+       * charge that succeeds and a switch that is on, so nothing here refuses for
+       * a reason the test did not ask for — `bookings.service.test.ts` covers the
+       * paying path itself.
+       */
+      { chargeForHire: () => Promise.resolve({ status: 'succeeded' as const }) },
+      { isOwnedBy: () => Promise.resolve(true), ownerOf: () => Promise.resolve(null) },
+      { isPaymentEnabled: () => Promise.resolve(true) },
       () => clock,
     );
     expiry = new RequestExpiryService(bookingStore, logger.logger, () => clock);

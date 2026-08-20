@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { FEATURE_FLAGS } from '@platform/contracts';
 import { FLAG_CACHE_TTL_MS } from './feature-flags.service.js';
 import { createFeatureFlagFakes } from './testing/fakes.js';
 import type { FeatureFlagFakes } from './testing/fakes.js';
@@ -41,7 +42,16 @@ describe('reading a flag', () => {
     fakes.store.seed('listing.something_deleted', false);
 
     expect(await fakes.service.isEnabled(FLAG)).toBe(true);
-    expect(await fakes.service.list()).toHaveLength(1);
+    /*
+     * **Against the declaration rather than a literal count** (slice 5.2c, when a
+     * second flag was declared and three tests in this file failed on the number
+     * one). The claim was never about there being one flag — it is that a row for
+     * a key this build no longer declares contributes nothing to the list.
+     */
+    expect(await fakes.service.list()).toHaveLength(FEATURE_FLAGS.length);
+    expect((await fakes.service.list()).map((flag) => flag.key)).not.toContain(
+      'listing.something_deleted',
+    );
   });
 });
 
@@ -146,7 +156,10 @@ describe('the admin list', () => {
     // every switch that exists, not only the ones somebody has already used.
     const listed = await fakes.service.list();
 
-    expect(listed).toHaveLength(1);
+    expect(listed).toHaveLength(FEATURE_FLAGS.length);
+    expect(listed.map((flag) => flag.key)).toEqual(
+      FEATURE_FLAGS.map((declaration) => declaration.key),
+    );
     expect(listed[0]).toMatchObject({
       key: FLAG,
       enabled: true,
@@ -179,9 +192,14 @@ describe('the admin list', () => {
     // a human looked at it — which is why the store has no delete.
     await fakes.service.set(ADMIN, FLAG, true, 'Publishing is safe again');
 
-    expect(await fakes.service.list()).toMatchObject([
-      { enabled: true, defaultEnabled: true, source: 'override' },
-    ]);
+    // The flag under test, found by key rather than by position — a second
+    // declared flag must not make this about ordering.
+    const listed = await fakes.service.list();
+    expect(listed.find((flag) => flag.key === FLAG)).toMatchObject({
+      enabled: true,
+      defaultEnabled: true,
+      source: 'override',
+    });
   });
 
   it('carries the prose an administrator needs mid-incident', async () => {

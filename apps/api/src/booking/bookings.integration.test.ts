@@ -28,11 +28,13 @@ import {
   ME_PATH,
   OWNER_BOOKINGS_ROUTE,
   bookingAcceptPath,
+  bookingPayPath,
   bookingDeclinePath,
   bookingPath,
   listingQuotesPath,
   listingRequestsPath,
   parseBooking,
+  parseBookingPayment,
   parseBookingSummaries,
   parseExpirySweep,
   parseListingRequests,
@@ -165,6 +167,13 @@ beforeEach(async () => {
     currentCategoryVersionId: 'category-version-2',
   });
   booking.store.givenOwner(MOWER, bobId);
+  /*
+   * The same fact through the port Catalogue answers in production (slice 5.2c).
+   * Paying needs a payee, and the store's own owner map is its internal business
+   * — a test that let the two disagree would be exercising a arrangement that
+   * cannot exist.
+   */
+  booking.ownership.give(MOWER, bobId);
 });
 
 afterEach(async () => {
@@ -347,6 +356,122 @@ describe('answering a request (slice 4.6)', () => {
     expect((await decide(bookingAcceptPath(bookingId), 'bob-token')).statusCode).toBe(
       403,
     );
+  });
+});
+
+describe('paying for a booking (slice 5.2c)', () => {
+  /*
+   * **What only this file can show.** The service is handed a renter id;
+   * everything deciding *whose* it is lives in the guard and the decorator. What
+   * is pinned here and nowhere else: that the **owner** gets 404 from the paying
+   * route although they are a party to the booking, that a **suspended** renter
+   * cannot pay although they can read, that anonymous is 401 before any of it,
+   * and that the response matches the contract exactly.
+   */
+
+  /** An accepted booking, made through the routes the way both parties would. */
+  async function anAcceptedBooking(): Promise<string> {
+    const bookingId = await aRequest();
+    await decide(bookingAcceptPath(bookingId), 'bob-token');
+    return bookingId;
+  }
+
+  it('pays, and returns the shape the contract describes', async () => {
+    const bookingId = await anAcceptedBooking();
+
+    const response = await decide(bookingPayPath(bookingId), 'ada-token');
+
+    expect(response.statusCode).toBe(201);
+    // Parsed rather than eyeballed: `strictObject`, so a stray field — a
+    // provider reference, an internal failure code — fails here.
+    const paid = parseBookingPayment(response.json());
+    expect(paid.booking.state).toBe('RESERVED');
+    expect(paid.payment.status).toBe('succeeded');
+  });
+
+  it('carries the challenge token through to the payer', async () => {
+    // The one field in this API that crosses to a browser for somebody else's
+    // code to consume. It has to survive the projection intact.
+    const bookingId = await anAcceptedBooking();
+    booking.payments.willReport({
+      status: 'pending_payer_action',
+      payerAction: { kind: 'confirm_in_browser', token: 'challenge-token' },
+    });
+
+    const paid = parseBookingPayment(
+      (await decide(bookingPayPath(bookingId), 'ada-token')).json(),
+    );
+
+    expect(paid.booking.state).toBe('AWAITING_PAYMENT');
+    expect(paid.payment.payerAction?.token).toBe('challenge-token');
+  });
+
+  it('refuses anonymous payment', async () => {
+    const bookingId = await anAcceptedBooking();
+
+    expect((await decide(bookingPayPath(bookingId), null)).statusCode).toBe(401);
+  });
+
+  it('answers 404 to the owner, who is a party but not the payer', async () => {
+    /*
+     * **The mirror of the accept route's own most important test.** Bob can read
+     * this booking — §8.6 gives him the record — and must not be able to pay for
+     * it, which would let an owner move their own booking to `RESERVED`. A 403
+     * would confirm the id is real to somebody who is not paying it.
+     */
+    const bookingId = await anAcceptedBooking();
+
+    expect((await decide(bookingPayPath(bookingId), 'bob-token')).statusCode).toBe(404);
+    expect(booking.payments.requests).toHaveLength(0);
+  });
+
+  it('answers 404 to a stranger', async () => {
+    const bookingId = await anAcceptedBooking();
+
+    expect((await decide(bookingPayPath(bookingId), 'cat-token')).statusCode).toBe(404);
+  });
+
+  it('answers 422 with a sentence when payment is switched off', async () => {
+    /*
+     * **The ordinary answer in production today**, because `booking.payment`
+     * defaults off until 5.2e brings a provider. A sentence and no `issues`
+     * array: nothing about the shape of the request was wrong.
+     */
+    const bookingId = await anAcceptedBooking();
+    booking.paymentsEnabled.value = false;
+
+    const response = await decide(bookingPayPath(bookingId), 'ada-token');
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toMatchObject({ message: expect.any(String) });
+    expect(response.json()).not.toHaveProperty('issues');
+    expect(booking.payments.requests).toHaveLength(0);
+  });
+
+  it('answers 422 for a request nobody has accepted', async () => {
+    const bookingId = await aRequest();
+
+    expect((await decide(bookingPayPath(bookingId), 'ada-token')).statusCode).toBe(422);
+  });
+
+  it('refuses a suspended renter, who may still read the booking', async () => {
+    /*
+     * ADR 0024: suspension takes away the ability to transact, not the ability to
+     * see what you are already party to. Paying is transacting; reading is not.
+     */
+    const bookingId = await anAcceptedBooking();
+    identity.users.suspend(adaId, 'admin', 'under review');
+
+    expect((await decide(bookingPayPath(bookingId), 'ada-token')).statusCode).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: bookingPath(bookingId),
+          headers: auth('ada-token'),
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 });
 

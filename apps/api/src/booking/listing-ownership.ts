@@ -29,4 +29,26 @@ export interface ListingOwnership {
    * confirms the existence of a listing the check was there to protect.
    */
   isOwnedBy(listingId: string, ownerId: string): Promise<boolean>;
+
+  /**
+   * Who owns this listing, or null if there is no such listing (slice 5.2c).
+   *
+   * **It exists for one reason: somebody has to be paid.** `bookings` keeps no
+   * `ownerId` column, deliberately — the schema says a copy *"would create a row
+   * that can disagree with itself about who is owed the money"* — so when a hire
+   * is charged the payee has to be asked for.
+   *
+   * **This port rather than `ListingQuoteSource`, and the difference is the whole
+   * point.** That one answers only about listings a stranger could book, and
+   * returns null for a paused or hidden one. An owner who accepts a booking and
+   * then pauses their listing to stop new enquiries must not thereby make the
+   * hire unpayable — and this port's own promise, above, is that it says nothing
+   * about status or moderation. Using the wrong one would be a bug nobody meets
+   * until an owner does something entirely reasonable.
+   *
+   * **An id and nothing else**, which keeps the argument this port opens with:
+   * returning the listing would put a collection address inside a module whose
+   * subject is time and money.
+   */
+  ownerOf(listingId: string): Promise<string | null>;
 }

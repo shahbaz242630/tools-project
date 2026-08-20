@@ -444,6 +444,55 @@ export class PrismaBookingStore implements BookingStore {
     });
   }
 
+  async advance(transition: {
+    readonly bookingId: string;
+    readonly from: BookingState;
+    readonly to: BookingState;
+    readonly actorId: string | null;
+    readonly now: Date;
+  }): Promise<BookingRecord | null> {
+    const { bookingId, from, to, actorId } = transition;
+
+    return this.prisma.$transaction(async (tx) => {
+      /*
+       * **The state predicate is in the `UPDATE`, which is the whole design.**
+       * `updateMany` with `{ id, state: from }` matches nothing when the booking
+       * has already moved, so two racing callers cannot both apply — the second
+       * writes no row and no event. Reading the state and then updating would let
+       * both through, and the second event would describe a transition that never
+       * happened.
+       *
+       * `updateMany` rather than `update`, because `update` throws when its
+       * `where` matches nothing and "somebody got there first" is not an error
+       * here — it is the answer.
+       */
+      const moved = await tx.booking.updateMany({
+        where: { id: bookingId, state: from },
+        data: { state: to },
+      });
+      if (moved.count === 0) return null;
+
+      await tx.bookingEvent.create({
+        data: {
+          bookingId,
+          type: 'state-changed',
+          fromState: from,
+          toState: to,
+          /*
+           * Null where the platform acted rather than a person — the rule
+           * `NewBookingEvent` states: recording an actor would be a lie about who
+           * decided. From 5.2e a webhook confirming a payment is exactly that.
+           */
+          actorId,
+          metadata: {},
+        },
+      });
+
+      const row = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+      return toRecord(row);
+    });
+  }
+
   async expireRequests(now: Date, limit: number): Promise<ExpirySweepResult> {
     return this.prisma.$transaction(async (tx) => {
       /*

@@ -159,6 +159,17 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
     return this.toRecord(listing);
   }
 
+  async ownerOf(id: string): Promise<string | null> {
+    // One indexed read and one column, for `existsOwnedBy`'s reason: the
+    // convenient version of this decrypts a street address to discard it.
+    const listing = await this.prisma.listing.findUnique({
+      where: { id },
+      select: { ownerId: true },
+    });
+
+    return listing?.ownerId ?? null;
+  }
+
   async findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null> {
     // The owner is part of the *query*, not a check applied to the result. A
     // read that fetches first and compares afterwards is one somebody later

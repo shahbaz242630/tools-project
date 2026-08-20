@@ -4,6 +4,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
   ADMIN_FEATURE_FLAGS_ROUTE,
+  FEATURE_FLAGS,
   ME_PATH,
   adminFeatureFlagPath,
   parseAdminFeatureFlag,
@@ -214,9 +215,21 @@ describe('reading the flags', () => {
 
     expect(response.statusCode).toBe(200);
     const { flags: listed } = parseAdminFeatureFlags(response.json());
-    expect(listed).toMatchObject([
-      { key: FLAG, enabled: true, defaultEnabled: true, source: 'default' },
-    ]);
+    /*
+     * **Every declared flag, in declaration order** — the page has to offer every
+     * switch that exists. Asserted against `FEATURE_FLAGS` rather than a literal
+     * list, so declaring a second one is not a test to edit (slice 5.2c, when
+     * declaring one *was*).
+     */
+    expect(listed.map((flag) => flag.key)).toEqual(
+      FEATURE_FLAGS.map((declaration) => declaration.key),
+    );
+    expect(listed.find((flag) => flag.key === FLAG)).toMatchObject({
+      key: FLAG,
+      enabled: true,
+      defaultEnabled: true,
+      source: 'default',
+    });
   });
 
   it('does not audit a read', async () => {
