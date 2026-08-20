@@ -32,13 +32,60 @@
  * `applyFuzzOffset` implements — on the spheroid here and on a sphere there, a
  * difference of a few metres inside a deliberate 500–1000 m blur.
  *
+ * **From slice 4.9 it also writes a calendar** — quotes, bookings and availability
+ * blocks over the seeded listings — because ADR 0049's date filter is two
+ * `NOT EXISTS` subqueries and measuring them against empty tables times the
+ * cheapest path there is and reports it as a gate number. What gets written and
+ * why each choice is load-bearing is in `lib/booking-load.mjs`.
+ *
+ * **`--clean` takes minutes at fifty thousand**, where the seed takes ten
+ * seconds. Bookings restrict on three tables and must go first, then listings
+ * cascade to quotes, blocks and locations. It is slow, not stuck.
+ *
  * Usage:
  *   node scripts/seed-search-load.mjs --count 50000
+ *   node scripts/seed-search-load.mjs --count 50000 --booked-percent 20 --blocked-percent 10
  *   node scripts/seed-search-load.mjs --clean
  */
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { parseArguments } from './lib/search-load-options.mjs';
+import { readCalendarOccupyingStates } from './lib/search-query.mjs';
+import {
+  MAXIMUM_BOOKINGS_PER_LISTING,
+  MAXIMUM_HIRE_DAYS,
+  parseCalendarShares,
+  readBookingStates,
+  SEASON_ANCHOR,
+  SLOT_COUNT,
+  SLOT_DAYS,
+  SLOT_STRIDE,
+  statePools,
+} from './lib/booking-load.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The two files the state vocabulary is read out of.
+ *
+ * Read rather than restated, for the reason `search-query.mjs` gives about the
+ * SQL itself: a copied list is the one thing here that can silently disagree
+ * with the application, and it disagrees in the direction that makes the
+ * measured query cheaper than the one that ships.
+ */
+const MACHINE = join(
+  HERE,
+  '..',
+  'apps',
+  'api',
+  'src',
+  'booking',
+  'booking-state-machine.ts',
+);
+const CONTRACT = join(HERE, '..', 'packages', 'contracts', 'src', 'booking.ts');
 
 const PG_CONTAINER = 'rental-postgres';
 const PG_USER = process.env.POSTGRES_USER ?? 'rental';
@@ -85,6 +132,9 @@ function usage(message) {
   console.error('Usage:');
   console.error(
     '  node scripts/seed-search-load.mjs --count 50000 [--database rental_dev]',
+  );
+  console.error(
+    '      [--booked-percent 20] [--blocked-percent 10]   the calendar the dated search is measured against',
   );
   console.error('  node scripts/seed-search-load.mjs --clean [--database rental_dev]');
   process.exit(1);
@@ -152,11 +202,22 @@ function cityValues() {
  * references the author, so deleting users first violates it. That is the same
  * ordering rule every integration test's `beforeEach` keeps, arriving here for
  * the same reason.
+ *
+ * **`bookings` goes first and it is not optional** (slice 4.9). It is the one
+ * table here whose foreign keys are all `ON DELETE RESTRICT` — to `listings`, to
+ * `quotes` and to `users` — so a booking left behind does not cascade away
+ * quietly, it makes every later statement fail and leaves the database holding
+ * a partly-removed load set. `booking_events` cascades from it; the append-only
+ * trigger refuses UPDATE and deliberately permits DELETE, which is what makes
+ * that possible at all. `quotes` and `availability_blocks` cascade from
+ * `listings`, so they need no line of their own — but they must not be reached
+ * before the bookings that restrict them are gone.
  */
 function clean(database) {
   psql(
     database,
-    `DELETE FROM "listings" WHERE title LIKE '${TAG}%';
+    `DELETE FROM "bookings" WHERE "listingId" IN (SELECT id FROM "listings" WHERE title LIKE '${TAG}%');
+     DELETE FROM "listings" WHERE title LIKE '${TAG}%';
      DELETE FROM "profiles" WHERE "displayName" LIKE '${TAG}%';
      DELETE FROM "category_versions" WHERE "categoryId" IN (SELECT id FROM "categories" WHERE slug = '${CATEGORY_SLUG}');
      DELETE FROM "categories" WHERE slug = '${CATEGORY_SLUG}';
@@ -292,6 +353,145 @@ function seed(database, count) {
   );
 }
 
+/**
+ * The calendar the dated search is measured against — slice 4.9.
+ *
+ * **Written as one statement per table for the reason the listings above are**:
+ * fifty thousand round trips is minutes, one `INSERT … SELECT` is seconds.
+ *
+ * **The renter is another load-test owner, never the listing's own.** §8.5.2
+ * refuses to quote an owner their own listing, so a fixture that made one the
+ * renter would describe a booking the product cannot produce. `(i % max) + 1`
+ * cannot land on `i`, so no row needs checking afterwards.
+ *
+ * **A quote per booking, because `bookings.quoteId` is `NOT NULL` and `@unique`**
+ * (4.7a) — a booking without one is not a row this schema can hold, and reusing
+ * a quote across two bookings is the exact double-request that constraint exists
+ * to refuse.
+ *
+ * The two `NOT EXISTS` subqueries this feeds read `availability_blocks` and
+ * `bookings` only, so nothing here needs a `booking_events` history to be
+ * measured — and writing one would be inventing a state trail no transition
+ * produced.
+ */
+function seedCalendar(database, { bookedPercent, blockedPercent, pools }) {
+  const occupying = pools.occupying.map((state) => `'${state}'`).join(',');
+  const other = pools.other.map((state) => `'${state}'`).join(',');
+
+  const slotStart = (indexExpression) =>
+    `'${SEASON_ANCHOR}'::timestamptz + (((${indexExpression}) % ${SLOT_COUNT}) * interval '${SLOT_DAYS} days')`;
+
+  psql(
+    database,
+    `WITH targets AS (
+       SELECT l.id AS listing_id,
+              l."categoryVersionId" AS version_id,
+              l.title AS title,
+              l."dailyRateAmount" AS rate,
+              -- A regex rather than a bare cast: the author row is
+              -- \`user_${TAG}_author\` and \`::int\` on it raises. Postgres does not
+              -- promise to evaluate a WHERE before a SELECT expression, so the
+              -- guard has to exclude the row rather than merely follow it.
+              substring(u."clerkUserId" from '^user_${TAG}_([0-9]+)$')::int AS i
+       FROM "listings" l
+       JOIN "users" u ON u.id = l."ownerId"
+       WHERE l.title LIKE '${TAG}%'
+         AND u."clerkUserId" ~ '^user_${TAG}_[0-9]+$'
+     ),
+     bounds AS (SELECT max(i) AS max_i FROM targets),
+     booked AS (
+       SELECT t.*, k
+       FROM targets t
+       CROSS JOIN LATERAL generate_series(0, t.i % ${MAXIMUM_BOOKINGS_PER_LISTING}) AS k
+       WHERE t.i % 100 < ${bookedPercent}
+     ),
+     dated AS (
+       SELECT b.*,
+              r.id AS renter_id,
+              ${slotStart(`b.i + ${SLOT_STRIDE} * b.k`)} AS start_at,
+              ${slotStart(`b.i + ${SLOT_STRIDE} * b.k`)}
+                + ((1 + ((b.i + b.k) % ${MAXIMUM_HIRE_DAYS})) * interval '1 day') AS end_at,
+              (b.rate * (1 + ((b.i + b.k) % ${MAXIMUM_HIRE_DAYS})))::int AS item_charge
+       FROM booked b
+       CROSS JOIN bounds
+       JOIN "users" r ON r."clerkUserId" = 'user_${TAG}_' || ((b.i % bounds.max_i) + 1)
+     ),
+     priced AS (
+       -- The renter fee at the fixture category's 800 basis points, in integer
+       -- arithmetic so \`total = item + fee\` holds exactly. The CHECK on both
+       -- tables asserts that relationship rather than trusting it.
+       SELECT d.*, (d.item_charge * 800 / 10000)::int AS renter_fee FROM dated d
+     ),
+     new_quotes AS (
+       INSERT INTO "quotes" (
+         "id", "listingId", "renterId", "startAt", "endAt", "timeZone",
+         "renterPostcode", "itemChargeAmount", "renterFeeAmount", "totalAmount",
+         "currency", "minimumFeeApplied", "lineItems", "categoryVersionId", "expiresAt"
+       )
+       SELECT gen_random_uuid(), p.listing_id, p.renter_id, p.start_at, p.end_at,
+              'Europe/London', 'ZZ1 1ZZ',
+              p.item_charge, p.renter_fee, p.item_charge + p.renter_fee,
+              -- A real line item, because \`quote_has_line_items\` refuses an
+              -- empty array: §8.5.2 says the line items are what explain the
+              -- price, and a quote that cannot be explained is not one. Caught
+              -- by the constraint on the first trial run rather than by review.
+              'GBP', false,
+              jsonb_build_array(jsonb_build_object(
+                'kind', 'daily',
+                'units', 1 + ((p.i + p.k) % ${MAXIMUM_HIRE_DAYS}),
+                'amount', p.item_charge,
+                'currency', 'GBP'
+              )),
+              p.version_id, p.start_at
+       FROM priced p
+       RETURNING id, "listingId", "startAt", "renterId"
+     )
+     INSERT INTO "bookings" (
+       "id", "listingId", "renterId", "state", "startAt", "endAt", "timeZone",
+       "quoteId", "categoryVersionId", "itemChargeAmount", "renterFeeAmount",
+       "totalAmount", "currency", "itemTitle", "categoryName", "requestExpiresAt",
+       "updatedAt"
+     )
+     SELECT gen_random_uuid(), p.listing_id, p.renter_id,
+            -- Three fifths calendar-occupying, two fifths not. An all-occupying
+            -- calendar would make \`state = ANY(...)\` filter nothing, which is a
+            -- predicate with no work to do reported as a measurement.
+            CASE WHEN ((p.i + p.k) % 5) < 3
+                 THEN (ARRAY[${occupying}])[1 + ((p.i + p.k) % ${pools.occupying.length})]
+                 ELSE (ARRAY[${other}])[1 + ((p.i + p.k) % ${pools.other.length})]
+            END,
+            p.start_at, p.end_at, 'Europe/London',
+            q.id, p.version_id,
+            p.item_charge, p.renter_fee, p.item_charge + p.renter_fee, 'GBP',
+            p.title, '${TAG} (load-test fixture — not a real category)',
+            p.start_at, now()
+     FROM priced p
+     -- Unique because one listing's slots are distinct, which is exactly what
+     -- \`slotOf\` guarantees and \`booking-load.test.mjs\` pins.
+     JOIN new_quotes q ON q."listingId" = p.listing_id AND q."startAt" = p.start_at;`,
+  );
+
+  psql(
+    database,
+    `WITH targets AS (
+       SELECT l.id AS listing_id,
+              substring(u."clerkUserId" from '^user_${TAG}_([0-9]+)$')::int AS i
+       FROM "listings" l
+       JOIN "users" u ON u.id = l."ownerId"
+       WHERE l.title LIKE '${TAG}%'
+         AND u."clerkUserId" ~ '^user_${TAG}_[0-9]+$'
+     )
+     INSERT INTO "availability_blocks" ("id", "listingId", "startAt", "endAt", "reason", "updatedAt")
+     SELECT gen_random_uuid(), t.listing_id,
+            ${slotStart('t.i + 3')},
+            ${slotStart('t.i + 3')} + ((1 + (t.i % 5)) * interval '1 day'),
+            '${TAG} owner is away',
+            now()
+     FROM targets t
+     WHERE t.i % 100 >= ${100 - blockedPercent};`,
+  );
+}
+
 function main() {
   let options;
   try {
@@ -307,14 +507,31 @@ function main() {
     return;
   }
 
+  let shares;
+  try {
+    shares = parseCalendarShares(options.raw);
+  } catch (error) {
+    usage(error.message);
+    return;
+  }
+
+  const pools = statePools(
+    readBookingStates(readFileSync(CONTRACT, 'utf8')),
+    readCalendarOccupyingStates(readFileSync(MACHINE, 'utf8')),
+  );
+
   console.log(
     `Seeding ${options.count} publicly visible listings into ${options.database}…`,
+  );
+  console.log(
+    `  calendar: ${shares.bookedPercent}% booked, ${shares.blockedPercent}% blocked, season from ${SEASON_ANCHOR}`,
   );
   // `performance.now()` rather than `Date.now()`: this is a stopwatch, and a
   // monotonic clock cannot be moved by an NTP correction mid-seed. The lint rule
   // that bans `Date` here is about domain time, and it is right about this too.
   const started = performance.now();
   seed(options.database, options.count);
+  seedCalendar(options.database, { ...shares, pools });
   /* The rule guards money (ADR 0002); this is a stopwatch reading in seconds. */
   // invariant-ok: no-tofixed — elapsed seconds, formatted for one log line
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
@@ -328,9 +545,31 @@ function main() {
     `SELECT count(*) FROM "listing_locations" WHERE "fuzzedPoint" IS NOT NULL;`,
   );
 
+  /*
+   * **Reported split by whether the state occupies a calendar**, not as one
+   * total, because the two numbers answer different questions: the occupying
+   * count is what the dated query has to exclude, and the other count is the
+   * rows its state predicate has to examine and reject. A single figure would
+   * hide an all-occupying calendar, which measures a predicate doing no work.
+   */
+  const occupyingList = pools.occupying.map((state) => `'${state}'`).join(',');
+  const bookings = psql(
+    options.database,
+    `SELECT count(*) FILTER (WHERE b.state IN (${occupyingList})) || ' / ' || count(*)
+     FROM "bookings" b JOIN "listings" l ON l.id = b."listingId"
+     WHERE l.title LIKE '${TAG}%';`,
+  );
+  const blocks = psql(
+    options.database,
+    `SELECT count(*) FROM "availability_blocks" a JOIN "listings" l ON l.id = a."listingId"
+     WHERE l.title LIKE '${TAG}%';`,
+  );
+
   console.log(`Done in ${seconds}s.`);
   console.log(`  publicly visible listings: ${total}`);
   console.log(`  rows with a published point: ${located}`);
+  console.log(`  bookings, calendar-occupying / all: ${bookings}`);
+  console.log(`  availability blocks: ${blocks}`);
   console.log(`\nRemove them with: node scripts/seed-search-load.mjs --clean`);
 }
 

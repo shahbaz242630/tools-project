@@ -229,11 +229,11 @@ Search performance, from slice 3.1c. Neither is part of any suite — they write
 measure against a local database on purpose, and **the generator refuses any
 database but `rental_dev` and `rental_test`**:
 
-| Command                                           | Does                                                               |
-| ------------------------------------------------- | ------------------------------------------------------------------ |
-| `node scripts/seed-search-load.mjs --count 50000` | Fill the local database with tagged, obviously fake listings       |
-| `node scripts/seed-search-load.mjs --clean`       | Remove every row it wrote, and nothing else                        |
-| `node scripts/measure-search.mjs`                 | p50/p95 per radius plus the query plan; exits non-zero over target |
+| Command                                           | Does                                                                                                                                                           |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node scripts/seed-search-load.mjs --count 50000` | Fill the local database with tagged, obviously fake listings — and, from 4.9, a booked and blocked calendar for them (`--booked-percent`, `--blocked-percent`) |
+| `node scripts/seed-search-load.mjs --clean`       | Remove every row it wrote, and nothing else. **Takes minutes at 50k** — bookings cascade through quotes, blocks and locations. Do not interrupt it             |
+| `node scripts/measure-search.mjs`                 | p50/p95 per radius plus the query plan, undated and dated; exits non-zero over target                                                                          |
 
 `measure-search` **reads the SQL out of `prisma-listing-search.ts` rather than
 restating it**, so what it measures is what ships — and it refuses to run if the

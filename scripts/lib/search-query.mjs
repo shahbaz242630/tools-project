@@ -104,10 +104,31 @@ export function readCalendarOccupyingStates(machineSource) {
  *
  * The instants are interpolated rather than left as placeholders, because the
  * substitution pass does not re-scan what it produced.
+ *
+ * **They arrive as full ISO-8601 UTC strings rather than `Date`s** (slice 4.9,
+ * amended). `measure-search.mjs` runs under a bare `node` at the repository
+ * root, where `@platform/core` does not resolve, and `no-restricted-globals`
+ * bans the `Date` constructor everywhere outside `*.test.ts` — so there was no
+ * way for the executable to build one. The string is the stricter contract
+ * anyway: `INSTANT` below refuses `'2026-09-01'`, where `new Date` on the same
+ * input silently yields midnight UTC, which is the failure the ban exists for.
  */
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 function freeForDates({ startAt, endAt }, states) {
-  const from = `'${startAt.toISOString()}'::timestamptz`;
-  const to = `'${endAt.toISOString()}'::timestamptz`;
+  for (const [name, value] of [
+    ['startAt', startAt],
+    ['endAt', endAt],
+  ]) {
+    if (typeof value !== 'string' || !INSTANT.test(value)) {
+      throw new Error(
+        `dates.${name} must be a full ISO-8601 UTC instant like 2026-10-19T00:00:00.000Z, got ${JSON.stringify(value)}. A bare date is ambiguous and would be read as midnight UTC.`,
+      );
+    }
+  }
+
+  const from = `'${startAt}'::timestamptz`;
+  const to = `'${endAt}'::timestamptz`;
   const list = states.map((state) => `'${state}'`).join(',');
 
   return `

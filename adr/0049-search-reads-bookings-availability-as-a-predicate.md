@@ -79,21 +79,57 @@ tables in SQL. A change to either table's shape has a reader that grepping
 Booking will not find — the same debt ADR 0044 took on for Catalogue's columns,
 now doubled.
 
-**The performance number is not yet remeasured.** Slice 3.1c's worst p95 was
-111.8 ms at 50,001 listings for the undated query, and that number still stands
-for the undated query — it is byte-identical. The dated query adds two
-`NOT EXISTS` subqueries against tables with no rows to speak of. `measure-search`
-can now build the dated statement (`buildQuery` takes `dates` and reads the nine
-states out of the state machine rather than copying them), so the measurement is
-available; **it has not been run against a loaded database, and the phase handoff
-says so.** This is the first search predicate to ship without its own number.
+**The performance number was measured on 20 August 2026, and the dated query
+misses the target by an order of magnitude.** This section previously said the
+measurement was available but unrun. It has now been run, against 50,002 listings
+with a seeded calendar — 20,002 bookings (12,002 of them calendar-occupying) and
+5,000 availability blocks — and the result is a defect rather than a number:
 
-**Two indexes will eventually matter and neither exists.** The subqueries filter
-`availability_blocks` and `bookings` by `listingId` and a period. `bookings`
-already carries `@@index([listingId, createdAt(sort: Desc)])`, which helps the id
-half and not the period half. Deliberately not added now: an index chosen without
-a measurement is a guess, and both tables are small enough that the guess would
-be unfalsifiable.
+| Search, London, 100 mi               | p50       | p95           |
+| ------------------------------------ | --------- | ------------- |
+| Undated (the Phase 3 gate statement) | 112.3 ms  | **134.1 ms**  |
+| Dated, three days                    | 1638.3 ms | **1945.1 ms** |
+| Dated, deepest page                  | 1509.7 ms | 1744.3 ms     |
+
+Against a 200 ms target, the dated widest search is **14.5× the undated one**.
+Every narrower radius passes comfortably — 5 to 50 miles run 17–90 ms — so the
+cost is not the predicate itself but how it scales with the candidate set.
+
+**The cause is a plan choice, not the query, and it was proved rather than
+inferred.** `EXPLAIN ANALYZE` shows Postgres sequentially scanning
+`availability_blocks`, materialising the 1,478 rows that fall in the window, and
+then walking that list once per candidate listing — **19,241,290 join-filter
+comparisons** for 13,016 candidates. The `bookings` half of the same statement
+uses an index and costs about 88 ms. Re-running with `enable_seqscan = off`
+takes the identical statement from **1945 ms to 212 ms**, which is what makes the
+diagnosis a measurement rather than a theory.
+
+**Why the planner chooses it: `ST_DWithin` estimates `rows=5` where the truth is
+13,016**, a 2,600× underestimate. At five candidate rows, "scan the small table
+once and materialise" genuinely is cheaper than 5 index probes. The estimate is
+what is wrong, and the plan is a reasonable answer to a false question.
+
+**The pathology is worst for a young marketplace, which is the uncomfortable
+part.** Cost is roughly _candidates × blocks-in-window_, so it grows with the
+catalogue on one axis and with adoption of the availability calendar on the
+other. A smaller `availability_blocks` makes the seq scan cheaper but does not
+stop the planner choosing it; a larger one eventually makes the index attractive
+again. The band in between is where we are.
+
+**Fixing it is its own slice and deliberately not folded into the measurement.**
+It touches `prisma-listing-search.ts`, needs its own tests, and may need a
+migration — and the candidates (a period-aware index the planner will take, a
+restructured anti-join, or a `LATERAL` form) are choices a measurement should
+inform rather than a measurer should make in passing.
+
+**Two indexes were expected to matter, and the measurement changed which.** This
+section previously predicted that both subqueries would need one. In fact
+`bookings` already resolves through the `EXCLUDE` constraint's own GiST index and
+is fine; `availability_blocks` has `(listingId, startAt)`, which is the right
+index and is simply **not chosen**. So the open question is not _which index to
+add_ but _how to make the planner take the one that exists_ — a materially
+different problem, and one that an index added on a guess would have hidden
+rather than solved.
 
 **The alternative remains available if the coupling ever hurts.** A materialised
 view owned by Booking, joined by Search, would restore the boundary at the cost
