@@ -40,10 +40,12 @@ import { dirname, join } from 'node:path';
 import {
   buildQuery,
   percentile,
+  readCalendarOccupyingStates,
   DEEPEST_OFFSET,
   PAGE_SIZE,
   TARGET_P95_MS,
 } from './lib/search-query.mjs';
+import { MEASURED_WINDOW } from './lib/booking-load.mjs';
 
 const PG_CONTAINER = 'rental-postgres';
 const PG_USER = process.env.POSTGRES_USER ?? 'rental';
@@ -57,6 +59,23 @@ const ADAPTER = join(
   'src',
   'search-location',
   'prisma-listing-search.ts',
+);
+
+/**
+ * The state machine, read rather than restated — slice 4.9.
+ *
+ * The same reason the SQL is lifted out of the adapter: a hand-copied list of
+ * calendar-occupying states would disagree with the application in the direction
+ * that makes the measured query cheaper than the one that ships.
+ */
+const MACHINE = join(
+  HERE,
+  '..',
+  'apps',
+  'api',
+  'src',
+  'booking',
+  'booking-state-machine.ts',
 );
 
 /** BRD §8.4's radii. Repeated here because a script cannot import the contract. */
@@ -282,6 +301,107 @@ function main() {
     const keywordRow = `${'London'.padEnd(9)} 100 mi   p50 ${percentile(keywordTimings, 0.5).toFixed(1).padStart(7)} ms   p95 ${keywordP95.toFixed(1).padStart(7)} ms   ${keywordP95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (keyword ${label})`;
     console.log(keywordRow);
   }
+
+  /*
+   * **What the date filter costs** — slice 4.9, and the gap ADR 0049 recorded
+   * rather than hid: the dated statement had never been run against a loaded
+   * database at all.
+   *
+   * **It is measured across every radius from both origins**, unlike the
+   * category and keyword filters above, which take the widest search only. The
+   * reason is that this filter is two correlated subqueries rather than one
+   * predicate on a row already being fetched, so its cost can scale with the
+   * candidate set in a way theirs cannot — and a single widest-case number would
+   * not show that.
+   *
+   * **The states come from the state machine**, so a query that measured fewer
+   * than the nine — a cheaper query than the one that ships — cannot be built.
+   */
+  const occupyingStates = readCalendarOccupyingStates(readFileSync(MACHINE, 'utf8'));
+
+  const datedAt = (latitude, longitude, miles, offset = 0) =>
+    buildQuery(source, {
+      longitude,
+      latitude,
+      radiusMetres: miles * METRES_PER_MILE,
+      limit: PAGE_SIZE,
+      offset,
+      dates: MEASURED_WINDOW,
+      occupyingStates,
+    });
+
+  /*
+   * **Does the filter bite?** Asked before anything is timed, and it is the
+   * same question the Plymouth bug answered wrongly: a predicate that excludes
+   * nothing is fast, and its number means nothing. Counted through the shipped
+   * statement rather than a hand-written `SELECT count(*)`, so this cannot drift
+   * away from what the adapter runs — the whole discipline of this file.
+   */
+  const countThrough = (sql) =>
+    Number(psql(database, `SELECT count(*) FROM (${sql}) AS t`));
+  const wideUndated = buildQuery(source, {
+    longitude: ORIGINS[0][2],
+    latitude: ORIGINS[0][1],
+    radiusMetres: 100 * METRES_PER_MILE,
+    limit: 1_000_000,
+    offset: 0,
+  });
+  const wideDated = datedAt(ORIGINS[0][1], ORIGINS[0][2], 100);
+  const availableAll = countThrough(wideUndated);
+  const availableDated = countThrough(
+    wideDated.replace(`LIMIT ${PAGE_SIZE + 1}`, 'LIMIT 1000001'),
+  );
+
+  console.log(
+    `\nDate filter ${MEASURED_WINDOW.startAt.slice(0, 10)} to ${MEASURED_WINDOW.endAt.slice(0, 10)}, London / 100 mi:`,
+  );
+  console.log(`  listings free in the window: ${availableDated} of ${availableAll}`);
+
+  if (availableDated === availableAll) {
+    console.log(
+      '  WARNING: the filter excluded nothing, so the timings below measure a predicate with no work to do.',
+    );
+    console.log(
+      '  Seed a calendar first: node scripts/seed-search-load.mjs --count <n>',
+    );
+  }
+  console.log('');
+
+  for (const [where, latitude, longitude] of ORIGINS) {
+    for (const miles of RADII_MILES) {
+      const sql = datedAt(latitude, longitude, miles);
+      timeOnce(database, sql);
+
+      const timings = [];
+      for (let run = 0; run < runs; run += 1) timings.push(timeOnce(database, sql));
+
+      const p95 = percentile(timings, 0.95);
+      worst = Math.max(worst, p95);
+
+      // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
+      const row = `${where.padEnd(9)} ${String(miles).padStart(3)} mi   p50 ${percentile(timings, 0.5).toFixed(1).padStart(7)} ms   p95 ${p95.toFixed(1).padStart(7)} ms   ${p95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (dated)`;
+      console.log(row);
+    }
+  }
+
+  /*
+   * The deep page again, dated. ADR 0045's offset pagination and ADR 0049's
+   * subqueries are independent claims, and the honest question is what they cost
+   * *together* — the deepest page a caller may ask for, of the narrowest result
+   * set the filter produces.
+   */
+  const deepDated = datedAt(ORIGINS[0][1], ORIGINS[0][2], 100, DEEPEST_OFFSET);
+  timeOnce(database, deepDated);
+  const deepDatedTimings = [];
+  for (let run = 0; run < runs; run += 1) {
+    deepDatedTimings.push(timeOnce(database, deepDated));
+  }
+  const deepDatedP95 = percentile(deepDatedTimings, 0.95);
+  worst = Math.max(worst, deepDatedP95);
+
+  // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
+  const deepDatedRow = `${'London'.padEnd(9)} 100 mi   p50 ${percentile(deepDatedTimings, 0.5).toFixed(1).padStart(7)} ms   p95 ${deepDatedP95.toFixed(1).padStart(7)} ms   ${deepDatedP95 < TARGET_P95_MS ? 'ok' : 'OVER'}   (dated, offset ${String(DEEPEST_OFFSET)})`;
+  console.log(deepDatedRow);
 
   // invariant-ok: no-tofixed — a duration in milliseconds, formatted for a log
   const summary = `\nWorst p95: ${worst.toFixed(1)} ms (target ${TARGET_P95_MS} ms)`;

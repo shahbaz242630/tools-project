@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Time } from '@platform/core';
 import {
   buildQuery,
   percentile,
@@ -209,15 +208,20 @@ describe('the target', () => {
 
 describe('the date filter (slice 4.9)', () => {
   /*
-   * **`Time.fromIsoUtc`, not `new Date`.** `no-restricted-globals` refuses the
-   * constructor across this repository (ADR 0003) — and it is right to here as
-   * well as in application code: the two instants below are the bounds the
-   * predicate is measured against, and a constructor that parses a bare date as
-   * midnight UTC is the exact class of bug the rule exists for.
+   * **Full ISO-8601 UTC strings, not `Date`s.** This took a `Date` until 4.9's
+   * measurement needed to build one from `measure-search.mjs`, which runs under
+   * a bare `node` where `@platform/core` does not resolve — and
+   * `no-restricted-globals` refuses the constructor everywhere outside
+   * `*.test.ts` (ADR 0003), so the executable had no way to produce one.
+   *
+   * The string is the stricter contract rather than the concession it looks
+   * like: `buildQuery` refuses anything that is not a full instant, where
+   * `new Date('2026-09-01')` would have accepted a bare date and silently meant
+   * midnight UTC — the exact class of bug the ban exists for.
    */
   const DATES = {
-    startAt: Time.fromIsoUtc('2026-09-01T00:00:00.000Z'),
-    endAt: Time.fromIsoUtc('2026-09-04T00:00:00.000Z'),
+    startAt: '2026-09-01T00:00:00.000Z',
+    endAt: '2026-09-04T00:00:00.000Z',
   };
 
   it('leaves no availability predicate at all when no dates were asked for', () => {
@@ -250,6 +254,19 @@ describe('the date filter (slice 4.9)', () => {
     expect(() =>
       buildQuery(readFileSync(ADAPTER, 'utf8'), { ...PARAMETERS, dates: DATES }),
     ).toThrow(/occupyingStates/);
+  });
+
+  it('refuses a bare date, which would silently mean midnight UTC', () => {
+    // The protection the `Date` parameter used to imply and never actually gave:
+    // `new Date('2026-09-01')` is a valid Date, so the old signature would have
+    // measured a window nobody chose.
+    expect(() =>
+      buildQuery(readFileSync(ADAPTER, 'utf8'), {
+        ...PARAMETERS,
+        dates: { startAt: '2026-09-01', endAt: '2026-09-04' },
+        occupyingStates: ['ACCEPTED'],
+      }),
+    ).toThrow(/full ISO-8601 UTC instant/);
   });
 
   it('leaves no placeholder behind with the filter on', () => {

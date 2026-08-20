@@ -66,5 +66,11 @@ export function parseArguments(argv) {
     }
   }
 
-  return { database, count, clean };
+  /**
+   * `raw` is handed back so the calendar shares can be parsed beside these
+   * without a second pass over `argv` — see `parseCalendarShares` in
+   * `booking-load.mjs`. Two tokenisers over one command line is how a flag comes
+   * to mean different things to different halves of the same script.
+   */
+  return { database, count, clean, raw: args };
 }
