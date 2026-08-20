@@ -150,6 +150,42 @@ export class PrismaCategoryStore implements CategoryStore {
 
     return category === null ? null : toRecord(category);
   }
+
+  /**
+   * The fee policy on one exact version — Payments' `CategoryFeePolicySource`
+   * (slice 5.2b).
+   *
+   * **By version id rather than by slug, and that is the whole difference from
+   * every other read here.** The rest of this store answers *"how is this
+   * category configured now"*; §8.2 makes settlement ask *"how was it configured
+   * when this booking was made"*, and only the pinned row can answer that.
+   * `category_versions` is immutable — a trigger refuses UPDATE — so the answer
+   * is the same in eighteen months.
+   *
+   * **It selects the six fee columns and nothing else.** The port is narrow on
+   * purpose (Payments settles money and has no business rendering a category),
+   * and a `select` here is what makes that narrowness real rather than a
+   * promise about what the caller will do with the rest.
+   */
+  async findFeePolicyByVersionId(
+    categoryVersionId: string,
+  ): Promise<CategoryFeePolicy | null> {
+    const version = await this.prisma.categoryVersion.findUnique({
+      where: { id: categoryVersionId },
+      select: {
+        ownerCommissionBasisPoints: true,
+        renterFeeBasisPoints: true,
+        minimumBookingTotalAmount: true,
+        minimumBookingTotalCurrency: true,
+        minimumPlatformFeeAmount: true,
+        minimumPlatformFeeCurrency: true,
+      },
+    });
+
+    return version === null
+      ? null
+      : asFeePolicy(version, `category version ${categoryVersionId}`);
+  }
 }
 
 const FIRST_VERSION = 1;

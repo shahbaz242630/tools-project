@@ -79,6 +79,26 @@ export interface PaymentAttempt {
   readonly payerAction?: PayerAction;
   /** Present only when `status` is `failed`. */
   readonly failure?: PaymentFailure;
+  /**
+   * When the provider says the money moved, if it says (slice 5.2b).
+   *
+   * **The ledger asks for this by name.** `LedgerTransactionDraft.occurredAt` is
+   * *"when the money actually moved, which is not when we wrote it down"*,
+   * because reconciliation is daily (§8.7) and **the provider's clock decides
+   * which day a movement belongs to**. One clock puts a capture at 23:59 on our
+   * side of midnight and their other side, and breaks reconciliation nightly for
+   * no reason anybody can find.
+   *
+   * **Optional, because not every provider reports one on every status** and an
+   * adapter must not invent a timestamp to fill a required field — a fabricated
+   * clock reading is worse than a missing one, since it reconciles wrongly
+   * rather than visibly. Where it is absent the caller uses ours and the
+   * difference is at most the round trip.
+   *
+   * **The expiry of a hold is a different thing and is not this** — that is
+   * §8.7.2's `capture_before`, which arrives with the damage-security flow.
+   */
+  readonly occurredAt?: Date;
 }
 
 /** What we are asking to be paid. */

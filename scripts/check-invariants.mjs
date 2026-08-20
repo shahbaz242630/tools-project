@@ -61,12 +61,14 @@ const TABLE_OWNERS = {
   listing: 'catalogue',
   listingLocation: 'catalogue',
   booking: 'booking',
+  bookingEvent: 'booking',
   availabilityBlock: 'booking',
   quote: 'booking',
   featureFlagOverride: 'feature-flags',
   ledgerAccount: 'payments',
   ledgerTransaction: 'payments',
   ledgerEntry: 'payments',
+  paymentIntent: 'payments',
   sellerTaxProfile: null,
 };
 
