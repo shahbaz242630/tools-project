@@ -245,6 +245,36 @@ describe('the date filter (slice 4.9)', () => {
     expect(sql).toContain('"bookings"');
     expect(sql).toContain("ARRAY['ACCEPTED','RESERVED']::text[]");
     expect(sql).toContain("'2026-09-04T00:00:00.000Z'::timestamptz");
+    // The overlap form, which is what reaches the GiST indexes (slice 4.9a).
+    expect(sql).toContain('"period" && tstzrange(');
+  });
+
+  /**
+   * The availability fragment is the one part measured from a copy rather than
+   * lifted, so it is the one part that can silently disagree with what ships.
+   * Before 4.9a nothing noticed; measuring the old bounds form against the new
+   * index would have reported 1429 ms for a statement that runs in 207 ms.
+   */
+  it('refuses to measure when the adapter has moved off the overlap form', () => {
+    const moved = readFileSync(ADAPTER, 'utf8').replace(
+      /"period" && /g,
+      '"startAt" < ',
+    );
+
+    expect(() =>
+      buildQuery(moved, { ...PARAMETERS, dates: DATES, occupyingStates: ['ACCEPTED'] }),
+    ).toThrow(/no longer composes its availability predicate/);
+  });
+
+  it('does not impose that on an undated search', () => {
+    // The guard is about the fragment, and an undated search has no fragment —
+    // so it must not refuse a hypothetical adapter that dropped dates entirely.
+    const moved = readFileSync(ADAPTER, 'utf8').replace(
+      /"period" && /g,
+      '"startAt" < ',
+    );
+
+    expect(() => buildQuery(moved, PARAMETERS)).not.toThrow();
   });
 
   it('refuses to guess the states', () => {

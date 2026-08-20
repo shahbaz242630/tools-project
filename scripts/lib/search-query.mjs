@@ -97,10 +97,11 @@ export function readCalendarOccupyingStates(machineSource) {
  * **Written out here rather than lifted**, unlike every other substitution in
  * this file, and the asymmetry is worth stating: the rest of the statement is
  * read out of `prisma-listing-search.ts`, but this fragment lives inside a
- * ternary that the crude template-literal lift cannot reach. What keeps the two
- * honest is the guard below — an adapter that grows a placeholder this file does
- * not know refuses to be measured at all — plus the states being read rather
- * than copied.
+ * ternary that the crude template-literal lift cannot reach. Three things keep
+ * the two honest: an adapter that grows a placeholder this file does not know
+ * refuses to be measured at all; the states are read rather than copied; and
+ * from 4.9a `buildQuery` asserts the adapter still composes this predicate with
+ * `"period" && ` before it measures anything.
  *
  * The instants are interpolated rather than left as placeholders, because the
  * substitution pass does not re-scan what it produced.
@@ -127,23 +128,30 @@ function freeForDates({ startAt, endAt }, states) {
     }
   }
 
-  const from = `'${startAt}'::timestamptz`;
-  const to = `'${endAt}'::timestamptz`;
+  /*
+   * **`period && tstzrange(…)`, mirroring the adapter** — slice 4.9a. This is
+   * the one fragment measured from a copy rather than lifted, so it is also the
+   * one that can silently disagree with what ships. `buildQuery` asserts the
+   * adapter still composes with `"period" && ` before measuring anything, and
+   * that assertion is what makes this copy safe: measuring the *bounds* form
+   * after the adapter moved to the overlap form would have reported 1429 ms for
+   * a query that runs in 207 ms — a number for a statement nobody serves, which
+   * is exactly what this whole file exists to prevent.
+   */
+  const window = `tstzrange('${startAt}'::timestamptz, '${endAt}'::timestamptz, '[)')`;
   const list = states.map((state) => `'${state}'`).join(',');
 
   return `
         AND NOT EXISTS (
           SELECT 1 FROM "availability_blocks" b
           WHERE b."listingId" = l."id"
-            AND b."startAt" < ${to}
-            AND b."endAt" > ${from}
+            AND b."period" && ${window}
         )
         AND NOT EXISTS (
           SELECT 1 FROM "bookings" bk
           WHERE bk."listingId" = l."id"
             AND bk."state" = ANY(ARRAY[${list}]::text[])
-            AND bk."startAt" < ${to}
-            AND bk."endAt" > ${from}
+            AND bk."period" && ${window}
         )`;
 }
 
@@ -169,6 +177,29 @@ export function buildQuery(
 ) {
   if (dates !== null && occupyingStates === null) {
     throw new Error('buildQuery needs occupyingStates when dates are given.');
+  }
+
+  /*
+   * **The availability fragment is the one thing here measured from a copy, so
+   * it gets the one check that catches a copy going stale** (slice 4.9a).
+   *
+   * Everything else is lifted out of the adapter, and an unrecognised
+   * placeholder already refuses to be measured. This fragment cannot be lifted —
+   * it lives inside a ternary the crude template-literal extraction cannot reach
+   * — so nothing structural notices if the adapter's form and this one diverge.
+   * That is not hypothetical: 4.9a moved the adapter from `"startAt" < x AND
+   * "endAt" > y` to `"period" && …` for an 7× speedup, and measuring the old
+   * form against the new index would have reported **1429 ms for a statement
+   * that runs in 207 ms**.
+   *
+   * Asserting the operator rather than the whole fragment is deliberate: it is
+   * the part whose change alters which index can be used, and a byte-exact
+   * comparison would fail on whitespace and teach everyone to delete the check.
+   */
+  if (dates !== null && !source.includes('"period" && ')) {
+    throw new Error(
+      'The adapter no longer composes its availability predicate with `"period" && `, so this file would measure a different statement than the one that ships. Update freeForDates to match it.',
+    );
   }
 
   const start = source.indexOf('$queryRaw');

@@ -1635,6 +1635,25 @@ model AvailabilityBlock {
   /// Declared so the datamodel and the database agree — the note on
   /// `bookings.period` and `listings.searchDocument` applies here too.
   @@index([period], type: Gist)
+  /// What ADR 0049's dated search resolves through (slice 4.9a).
+  ///
+  /// The composite `bookings` gets for free from §8.5.1's `EXCLUDE` constraint,
+  /// which this table has no equivalent of — an `EXCLUDE` cannot span two
+  /// tables, so the overlap with a booking is checked in application code and
+  /// the index never arrived with it. Without this the search's anti-join
+  /// seq-scanned the table once per candidate listing: p95 1945 ms against a
+  /// 200 ms target, 207 ms with it.
+  ///
+  /// `[period]` above is **not** redundant with this one and both are kept: a
+  /// GiST index cannot be scanned on a trailing column alone, so a lookup by
+  /// period without a listing id would not reach this.
+  ///
+  /// **`gist_uuid_ops` is required and comes from `btree_gist`.** GiST has no
+  /// default operator class for `Uuid`, so without the `ops` the schema does not
+  /// parse at all — `P1012`, not drift. The extension is installed everywhere
+  /// and `pnpm db:verify` asserts it; it is the same one §8.5.1's `EXCLUDE`
+  /// constraint on `bookings` depends on.
+  @@index([listingId(ops: raw("gist_uuid_ops")), period], type: Gist)
   @@map("availability_blocks")
 }
 
