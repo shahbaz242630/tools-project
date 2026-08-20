@@ -1,3 +1,4 @@
+import { RateLimit, RateLimitGuard } from '../rate-limiting/rate-limit.guard.js';
 import { Controller, Get, Inject, Req, UseGuards } from '@nestjs/common';
 import { ME_ACTIVITY_PATH } from '@platform/contracts';
 import type { ActivityResponse } from '@platform/contracts';
@@ -26,12 +27,13 @@ import { AUDIT_SERVICE } from './audit.tokens.js';
  * administrator, so before this it appeared in no page the subject could open.
  */
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RateLimitGuard)
 export class MeActivityController {
   constructor(@Inject(AUDIT_SERVICE) private readonly audit: AuditService) {}
 
   // Survives suspension, and it matters most then: this is where somebody sees
   // that an administrator suspended their account and the reason they gave.
+  @RateLimit('read')
   @Get(ME_ACTIVITY_PATH)
   @AllowsSuspended()
   async list(

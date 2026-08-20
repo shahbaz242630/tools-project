@@ -191,6 +191,26 @@ export interface GeocodeSample {
  */
 export const PROMETHEUS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
+/**
+ * What the rate limiter decided (slice H7a).
+ *
+ * **Both labels are closed unions, and the missing one is the point.** There is
+ * no account id here and there must never be: a series is created per label
+ * combination, held in process memory and exported to a scraper that has none of
+ * §10.1's retention or erasure rules — so an account id would be personal data
+ * we cannot delete, minted one series at a time by whoever is being throttled.
+ * The id belongs in the log line, which §10.1 does cover. Two tiers by three
+ * outcomes is six series, and the compiler is what holds it there.
+ */
+export type RateLimitTierLabel = 'read' | 'write';
+
+export type RateLimitOutcome = 'allowed' | 'refused' | 'unavailable';
+
+export interface RateLimitSample {
+  readonly tier: RateLimitTierLabel;
+  readonly outcome: RateLimitOutcome;
+}
+
 export interface Metrics {
   recordHttpRequest(sample: HttpRequestSample): void;
   recordDatabaseQuery(sample: DatabaseQuerySample): void;
@@ -204,6 +224,22 @@ export interface Metrics {
    * search took — it was what it did.
    */
   recordListingSearch(sample: ListingSearchSample): void;
+  /**
+   * One decision by the per-account rate limiter (slice H7a).
+   *
+   * **This is how the limits get tuned, and it is the whole reason it exists.**
+   * `policy.ts` sets its numbers by judgement rather than by measurement,
+   * because there is no traffic to characterise yet — so **a tier that never
+   * refuses anybody is either correctly sized or useless, and only this counter
+   * can say which.** `refused` climbing steadily is a limit set too low; a flat
+   * zero forever is one set too high to matter.
+   *
+   * **`unavailable` is its own outcome and is the one worth an alert.** Every
+   * tier currently fails open, so a Redis outage means the platform is silently
+   * unlimited — which looks identical to a healthy platform from every other
+   * signal, exactly like the seven failed deploys nobody noticed.
+   */
+  recordRateLimit(sample: RateLimitSample): void;
   /**
    * One call to the postcode geocoder (slice 3.1f).
    *
@@ -365,6 +401,13 @@ export function createPrometheusMetrics(options: {
     registers: [registry],
   });
 
+  const rateLimitDecisions = new Counter({
+    name: 'rate_limit_decisions_total',
+    help: 'Per-account rate-limit decisions, by tier and outcome.',
+    labelNames: ['tier', 'outcome'],
+    registers: [registry],
+  });
+
   const geocodeDuration = new Histogram({
     name: 'geocode_duration_seconds',
     help: 'How long postcode geocoding took, and how it ended.',
@@ -420,6 +463,12 @@ export function createPrometheusMetrics(options: {
       });
     },
 
+    recordRateLimit(sample) {
+      // Both already closed unions at the call site, so there is nothing to
+      // narrow here and no value a caller can invent. Nine series, total.
+      rateLimitDecisions.inc({ tier: sample.tier, outcome: sample.outcome });
+    },
+
     recordGeocode(sample) {
       geocodeDuration.observe({ outcome: sample.outcome }, sample.durationMs / 1000);
     },
@@ -455,6 +504,9 @@ export function createNoopMetrics(logger?: Logger): Metrics {
       /* deliberately nothing */
     },
     recordListingSearch() {
+      /* deliberately nothing */
+    },
+    recordRateLimit() {
       /* deliberately nothing */
     },
     recordGeocode() {

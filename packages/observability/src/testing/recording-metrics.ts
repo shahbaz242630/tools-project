@@ -5,6 +5,7 @@ import type {
   ListingSearchSample,
   Metrics,
   QueueJobSample,
+  RateLimitSample,
 } from '../metrics.js';
 import { PROMETHEUS_CONTENT_TYPE } from '../metrics.js';
 
@@ -21,6 +22,7 @@ export interface RecordingMetrics {
   readonly databaseQueries: DatabaseQuerySample[];
   readonly queueJobs: QueueJobSample[];
   readonly listingSearches: ListingSearchSample[];
+  readonly rateLimits: RateLimitSample[];
   readonly geocodes: GeocodeSample[];
 }
 
@@ -50,6 +52,7 @@ export function createRecordingMetrics(): RecordingMetrics {
   const databaseQueries: DatabaseQuerySample[] = [];
   const queueJobs: QueueJobSample[] = [];
   const listingSearches: ListingSearchSample[] = [];
+  const rateLimits: RateLimitSample[] = [];
   const geocodes: GeocodeSample[] = [];
 
   return {
@@ -58,6 +61,7 @@ export function createRecordingMetrics(): RecordingMetrics {
       recordDatabaseQuery: (sample) => databaseQueries.push(sample),
       recordQueueJob: (sample) => queueJobs.push(sample),
       recordListingSearch: (sample) => listingSearches.push(sample),
+      recordRateLimit: (sample) => rateLimits.push(sample),
       recordGeocode: (sample) => geocodes.push(sample),
       render: () => Promise.resolve(''),
       contentType: PROMETHEUS_CONTENT_TYPE,
@@ -66,6 +70,7 @@ export function createRecordingMetrics(): RecordingMetrics {
     databaseQueries,
     queueJobs,
     listingSearches,
+    rateLimits,
     geocodes,
   };
 }

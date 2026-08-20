@@ -1,3 +1,4 @@
+import { RateLimit, RateLimitGuard } from '../rate-limiting/rate-limit.guard.js';
 import {
   BadRequestException,
   Body,
@@ -51,7 +52,7 @@ import type { BookingsService } from './bookings.service.js';
  * decision is argued in full.
  */
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RateLimitGuard)
 export class BookingsController {
   constructor(@Inject(BOOKINGS_SERVICE) private readonly bookings: BookingsService) {}
 
@@ -72,6 +73,7 @@ export class BookingsController {
    *   4.6's acceptance is where that happens.
    * - **400** — the body is not a request at all.
    */
+  @RateLimit('write')
   @Post(BOOKINGS_ROUTE)
   async request(
     @Body() body: unknown,
@@ -121,6 +123,7 @@ export class BookingsController {
    * **No 404 and no 403.** A collection scoped to the session always exists;
    * somebody with no bookings reads an empty list, which is the truth.
    */
+  @RateLimit('read')
   @Get(BOOKINGS_ROUTE)
   @AllowsSuspended()
   mine(@CurrentUser() renter: MirroredUser): Promise<BookingSummaries> {
@@ -138,6 +141,7 @@ export class BookingsController {
    * **Owner-scoped through the listing, in the query.** An owner with no listings
    * reads an empty list, exactly as a stranger would.
    */
+  @RateLimit('read')
   @Get(OWNER_BOOKINGS_ROUTE)
   @AllowsSuspended()
   owned(@CurrentUser() owner: MirroredUser): Promise<OwnerBookings> {
@@ -168,6 +172,7 @@ export class BookingsController {
    * thing this project's own principle refuses, and "we might need it" is how
    * surface accumulates. Same for `GET /quotes/:quoteId`.
    */
+  @RateLimit('read')
   @Get(BOOKING_ROUTE)
   @AllowsSuspended()
   async find(
@@ -196,6 +201,7 @@ export class BookingsController {
    * scopes by owner in the query, so a stranger learns nothing about whether the
    * id is real.
    */
+  @RateLimit('read')
   @Get(LISTING_REQUESTS_ROUTE)
   @AllowsSuspended()
   requests(
@@ -220,6 +226,7 @@ export class BookingsController {
    * **Not `@AllowsSuspended()`.** Accepting binds a suspended account to a hire,
    * which is precisely the transacting ADR 0024 suspends.
    */
+  @RateLimit('write')
   @Post(BOOKING_ACCEPT_ROUTE)
   async accept(
     @Param('bookingId') bookingId: string,
@@ -236,6 +243,7 @@ export class BookingsController {
    * because a shared helper that handles a case one caller cannot reach is
    * cheaper than two helpers that drift.
    */
+  @RateLimit('write')
   @Post(BOOKING_DECLINE_ROUTE)
   async decline(
     @Param('bookingId') bookingId: string,

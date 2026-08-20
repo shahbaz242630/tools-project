@@ -12,6 +12,15 @@ import {
 } from './health/readiness.service.js';
 import { CorrelationMiddleware } from './observability/correlation.middleware.js';
 import {
+  RATE_LIMITER,
+  RATE_LIMIT_LOGGER,
+  RATE_LIMIT_METRICS,
+  RATE_LIMIT_POLICIES,
+  RateLimitGuard,
+} from './rate-limiting/rate-limit.guard.js';
+import { resolvePolicies } from './rate-limiting/policy.js';
+import type { RateLimitTier, RateLimiter } from './rate-limiting/rate-limiter.js';
+import {
   ADMIN_MFA_BYPASS,
   AUTH_LOGGER,
   AuthGuard,
@@ -93,6 +102,26 @@ export interface AppModuleOptions {
    * `createNoopMetrics()` and has said so.
    */
   readonly metrics: Metrics;
+
+  /**
+   * BRD §10's per-account rate limit (slice H7a).
+   *
+   * **Required, not optional**, for the reason `metrics` gives one field up: an
+   * optional security control is one a boot site forgets, and a forgotten
+   * limiter looks exactly like a working one until somebody floods us. A caller
+   * that genuinely wants none passes a limiter that always allows and has said
+   * so out loud.
+   */
+  readonly rateLimiter: RateLimiter;
+
+  /**
+   * Per-tier overrides for the limits in `policy.ts`, from the environment.
+   *
+   * Optional because every tier has a default and an absent override is the
+   * normal case — unlike the limiter itself, where absence would mean no limit
+   * at all.
+   */
+  readonly rateLimits?: Partial<Record<RateLimitTier, number | undefined>>;
 
   /**
    * Identity, assembled outside for the same reason the checks are: it keeps
@@ -307,6 +336,17 @@ export class AppModule implements NestModule {
         // readiness probe that needs a session token is a readiness probe that
         // reports the service down whenever authentication is broken.
         AuthGuard,
+
+        // Registered beside `AuthGuard` and applied per controller for the same
+        // reason: a global guard would also cover /health and /ready, and a
+        // readiness probe that can be rate limited is one that reports the
+        // service down under exactly the load it exists to report on.
+        RateLimitGuard,
+        { provide: RATE_LIMITER, useValue: options.rateLimiter },
+        { provide: RATE_LIMIT_POLICIES, useValue: resolvePolicies(options.rateLimits) },
+        { provide: RATE_LIMIT_LOGGER, useValue: options.logger },
+        { provide: RATE_LIMIT_METRICS, useValue: options.metrics },
+
         { provide: SESSION_VERIFIER, useValue: options.identity.sessionVerifier },
         { provide: IDENTITY_SERVICE, useValue: options.identity.service },
         { provide: ACCOUNT_DATA_SERVICE, useValue: options.identity.accountData },

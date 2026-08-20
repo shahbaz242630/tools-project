@@ -142,6 +142,24 @@ const schema = z.object({
   REDIS_PORT: port.default(6379),
 
   /**
+   * Per-account rate limits, in requests per minute (slice H7a).
+   *
+   * **Optional, because `policy.ts` holds the defaults and the argument for
+   * them.** A limit that turns out to be wrong is discovered under traffic, at
+   * the worst possible moment, and needing a release to raise it is how an
+   * incident gets longer — so the numbers are overridable without a deploy while
+   * the tiers themselves stay in code, where a closed union keeps a metric label
+   * from being minted by an environment variable.
+   *
+   * `.int().positive()` rather than a plain number: `0` reads like "no limit"
+   * and would mean "refuse everybody", which is the one value nobody types on
+   * purpose. `resolvePolicies` refuses it a second time, because an operator
+   * raising a limit mid-incident should be told rather than silently defaulted.
+   */
+  RATE_LIMIT_READ_PER_MINUTE: z.coerce.number().int().positive().optional(),
+  RATE_LIMIT_WRITE_PER_MINUTE: z.coerce.number().int().positive().optional(),
+
+  /**
    * The shared secret the worker presents to trigger scheduled work, and the API
    * checks (slice 4.7a, ADR 0048).
    *

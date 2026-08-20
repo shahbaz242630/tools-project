@@ -1,3 +1,4 @@
+import { allowAllRateLimiter } from '../rate-limiting/testing/fakes.js';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
@@ -46,6 +47,7 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        rateLimiter: allowAllRateLimiter,
         checks: [],
         logger: createRecordingLogger().logger,
         // A real registry here, unlike every other integration test: this suite

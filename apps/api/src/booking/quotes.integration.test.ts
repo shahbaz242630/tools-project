@@ -12,6 +12,7 @@
  * 500 or a field error.
  */
 
+import { allowAllRateLimiter } from '../rate-limiting/testing/fakes.js';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -74,6 +75,7 @@ beforeEach(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [
       AppModule.register({
+        rateLimiter: allowAllRateLimiter,
         metrics: createNoopMetrics(),
         checks: [],
         logger: createRecordingLogger().logger,

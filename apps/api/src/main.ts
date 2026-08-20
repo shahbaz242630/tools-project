@@ -25,6 +25,7 @@ import Redis from 'ioredis';
 import { AppModule } from './app.module.js';
 import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
+import { RedisRateLimiter } from './rate-limiting/redis-rate-limiter.js';
 import { ClerkSessionVerifier } from './identity/clerk-session-verifier.js';
 import { IdentityService } from './identity/identity.service.js';
 import { AccountErasure } from './identity/account-erasure.js';
@@ -538,6 +539,26 @@ async function bootstrap(): Promise<void> {
       // registry, or the HTTP hook and the search counter end up in different
       // expositions and only one of them is scraped.
       metrics,
+
+      /*
+       * **The one Redis connection, reused rather than a second one opened**
+       * (slice H7a). `RedisRateLimiter` takes a narrow interface for the reason
+       * every adapter here does — `no-provider-sdk-outside-adapter` names this
+       * file as the only one in the API allowed to import `ioredis`, so the
+       * composition root constructs the client and hands out capabilities.
+       *
+       * **Sharing the connection with BullMQ's broker is deliberate and worth
+       * one line of thought.** The limiter issues `INCR`, `EXPIRE` and `TTL` —
+       * none blocking — so it cannot occupy the connection the way a blocking
+       * queue read would. It is the queue that needs its own client, and the
+       * worker has one.
+       */
+      rateLimiter: new RedisRateLimiter(redis),
+      rateLimits: {
+        read: env.RATE_LIMIT_READ_PER_MINUTE,
+        write: env.RATE_LIMIT_WRITE_PER_MINUTE,
+      },
+
       checks: [
         // `ping` is bound to the client here rather than the check holding a
         // Prisma instance, so the check stays testable without one.
