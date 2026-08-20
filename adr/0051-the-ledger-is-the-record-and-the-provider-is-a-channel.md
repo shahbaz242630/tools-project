@@ -87,10 +87,25 @@ Reconciliation compares the provider's record against ours (§8.7, daily) rather
 than importing theirs as truth. That is more work than trusting a webhook and it
 is the work that makes the books ours.
 
-The provider choice — Stripe Connect or Mangopay — stays open, and deferring it
-costs nothing **provided** the port is written in our verbs from the start. Both
-need the UK limited company first, so the company is the urgent item, not the
-decision.
+**The provider is Stripe Connect, decided by the product owner on 20 August 2026
+— in their words, _"for now we will start with Stripe"_.** Mangopay was the other
+candidate and remains the obvious one to reconsider: it is FCA-authorised as an
+EMI in the UK, was built for rental and peer-to-peer platforms, and its e-wallet
+model is structurally what §8.7.2's hold and the payout hold actually are. Stripe
+wins on developer experience and on bundling the KYC that BRD §4.3 would
+otherwise cost us roughly $1.50 a head.
+
+**"For now" is the operative phrase, and this ADR is what gives it meaning.**
+Everything above still binds: the ledger is the record, no Stripe identifier
+becomes a key, and the port speaks our verbs. Choosing a provider does not license
+`createPaymentIntent` to appear in a service signature.
+
+**A Stripe account in test mode costs nothing and needs no company**, so BRD §14's
+first Phase 5 line item — the payment-provider sandbox adapter — is not blocked.
+What _is_ blocked is anything real: live keys and Connect onboarding need the UK
+limited company and then a business bank account, and **Connect approval is not
+instant**. So the company is the urgent item, and it was urgent before this
+decision too.
 
 An orchestration layer (Gr4vy, Primer, Payrails, Basis Theory, or the open-source
 Hyperswitch) is the industrial answer to this problem and is **rejected for now**:
