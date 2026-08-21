@@ -17,6 +17,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaCategoryStore } from './prisma-category-store.js';
 import { CategorySlugTakenError } from './category-store.js';
 import { CATEGORY_LIST_LIMIT } from './limits.js';
+import type { DamageSecurityPolicy } from '@platform/contracts';
 import {
   DEFAULT_MAXIMUM_RENTAL_DAYS,
   DEFAULT_REQUEST_EXPIRY_HOURS,
@@ -35,6 +36,18 @@ const FEE_POLICY = {
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
   minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
 };
+/**
+ * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
+ * `null` is what a category carries when nobody has configured damage security,
+ * so a suite where every fixture is null would never notice a path that silently
+ * dropped the band on the way to the store. Tests that mean "no security" say so
+ * locally.
+ */
+const DAMAGE_SECURITY = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+} as const;
 
 const env = loadEnv();
 
@@ -106,6 +119,7 @@ describe('create', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -133,6 +147,7 @@ describe('create', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -151,6 +166,7 @@ describe('create', () => {
           reportableActivity: 'none',
           attributes: [],
           feePolicy: FEE_POLICY,
+          damageSecurity: DAMAGE_SECURITY,
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
           transportOptions: [],
@@ -171,6 +187,7 @@ describe('create', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -186,6 +203,7 @@ describe('create', () => {
           reportableActivity: 'none',
           attributes: [],
           feePolicy: FEE_POLICY,
+          damageSecurity: DAMAGE_SECURITY,
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
           transportOptions: [],
@@ -209,6 +227,7 @@ describe('the immutability trigger', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -238,6 +257,7 @@ describe('the immutability trigger', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -271,6 +291,7 @@ describe('the immutability trigger', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -297,6 +318,7 @@ describe('addVersion', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -312,6 +334,7 @@ describe('addVersion', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -344,6 +367,7 @@ describe('addVersion', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -375,6 +399,7 @@ describe('addVersion', () => {
           reportableActivity: 'none',
           attributes: [],
           feePolicy: FEE_POLICY,
+          damageSecurity: DAMAGE_SECURITY,
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
           transportOptions: [],
@@ -396,6 +421,7 @@ describe('the author foreign key', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -422,6 +448,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -436,6 +463,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -450,6 +478,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -475,6 +504,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -489,6 +519,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -518,6 +549,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -532,6 +564,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -566,6 +599,7 @@ describe('reads', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -623,6 +657,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -654,6 +689,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -692,6 +728,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -706,6 +743,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -737,6 +775,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -767,6 +806,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -802,6 +842,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -839,6 +880,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -867,6 +909,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -899,6 +942,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -914,6 +958,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'means_of_transport',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -946,6 +991,7 @@ describe('the reportable-activity flag', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -986,6 +1032,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,
@@ -1009,6 +1056,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [{ requirement: 'trailer_required' }],
@@ -1035,6 +1083,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,
@@ -1073,6 +1122,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,
@@ -1087,6 +1137,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1117,6 +1168,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1155,6 +1207,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1202,6 +1255,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1236,6 +1290,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1251,6 +1306,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_200 },
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1294,6 +1350,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: { ...FEE_POLICY, ownerCommissionBasisPoints: 1_500 },
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1313,6 +1370,7 @@ describe('the fee policy', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: { ...FEE_POLICY, ownerCommissionBasisPoints: 2_000 },
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1466,6 +1524,7 @@ describe('the maximum rental duration', () => {
     attributes: [],
     transportOptions: [],
     feePolicy: FEE_POLICY,
+    damageSecurity: DAMAGE_SECURITY,
     maximumRentalDays,
     requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   });
@@ -1550,6 +1609,7 @@ describe('the maximum rental duration', () => {
         attributes: [],
         transportOptions: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: 88,
         requestExpiryHours: 48,
       },
@@ -1577,5 +1637,243 @@ describe('the maximum rental duration', () => {
         data: { maximumRentalDays: 30 },
       }),
     ).rejects.toThrow(/immutable/i);
+  });
+});
+
+/**
+ * BRD §8.7.2's excess band, and the two CHECKs that make it a guarantee rather
+ * than a validation (slice 5.5a, ADR 0052).
+ *
+ * **What only this file can prove** is that the rules hold against the
+ * *database*. The contract, the form and `readDamageSecurity` can each be
+ * bypassed by anything that writes a row another way; a CHECK cannot. Every case
+ * below was fired by hand in `psql`, inside a rolled-back transaction, before
+ * these tests were written.
+ */
+describe('the damage security band', () => {
+  const config = (damageSecurity: DamageSecurityPolicy | null) => ({
+    slug: slug(),
+    name: 'Outdoor and gardening',
+    riskLevel: 'medium' as const,
+    reportableActivity: 'none' as const,
+    attributes: [],
+    transportOptions: [],
+    feePolicy: FEE_POLICY,
+    damageSecurity,
+    maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+    requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+  });
+
+  it('round-trips a configured band', async () => {
+    const created = await store.create(config(DAMAGE_SECURITY), await newUser());
+
+    expect(created.damageSecurity).toEqual(DAMAGE_SECURITY);
+    expect((await store.findBySlug(created.slug))?.damageSecurity).toEqual(
+      DAMAGE_SECURITY,
+    );
+  });
+
+  it('round-trips no band at all, which is a configuration and not an absence', async () => {
+    const created = await store.create(config(null), await newUser());
+
+    expect(created.damageSecurity).toBeNull();
+    expect((await store.findBySlug(created.slug))?.damageSecurity).toBeNull();
+  });
+
+  it('reads a row written before this migration as requiring no security', async () => {
+    /*
+     * The backfill, asserted from the database rather than from the migration
+     * file — written by dropping to SQL that omits the columns entirely, which
+     * is what every row created before this migration effectively did.
+     *
+     * ADR 0052 accepts the cost this demonstrates: the row below is
+     * indistinguishable from one where somebody chose to require no security.
+     */
+    const author = await newUser();
+    const categorySlug = slug();
+    const category = await client.category.create({ data: { slug: categorySlug } });
+
+    await client.$executeRaw`
+      INSERT INTO "category_versions"
+        ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById")
+      VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Legacy', 'medium', ${author}::uuid)
+    `;
+
+    expect((await store.findBySlug(categorySlug))?.damageSecurity).toBeNull();
+  });
+
+  it('removes the band when a later version says no security', async () => {
+    /*
+     * The replace direction that matters, and why `damageSecurityColumns` writes
+     * five explicit nulls rather than omitting the keys: a reconfiguration that
+     * drops the band must actually drop it, not inherit the previous version's
+     * values.
+     */
+    const author = await newUser();
+    const created = await store.create(config(DAMAGE_SECURITY), author);
+
+    await store.addVersion(
+      created.slug,
+      {
+        name: created.name,
+        riskLevel: created.riskLevel,
+        reportableActivity: created.reportableActivity,
+        attributes: [],
+        transportOptions: [],
+        feePolicy: FEE_POLICY,
+        damageSecurity: null,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+      },
+      author,
+    );
+
+    expect((await store.findBySlug(created.slug))?.damageSecurity).toBeNull();
+  });
+
+  it('leaves the earlier version band intact, which is what §8.7.2 needs', async () => {
+    /*
+     * "Bookings retain the values current at creation." A booking made under
+     * version 1 must still read version 1's band after version 2 removed it, so
+     * this asserts the stored rows rather than the current projection.
+     */
+    const author = await newUser();
+    const created = await store.create(config(DAMAGE_SECURITY), author);
+
+    await store.addVersion(
+      created.slug,
+      {
+        name: created.name,
+        riskLevel: created.riskLevel,
+        reportableActivity: created.reportableActivity,
+        attributes: [],
+        transportOptions: [],
+        feePolicy: FEE_POLICY,
+        damageSecurity: null,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+      },
+      author,
+    );
+
+    const versions = await client.categoryVersion.findMany({
+      where: { categoryId: created.id },
+      orderBy: { versionNumber: 'asc' },
+    });
+
+    expect(versions[0]?.recoveryCeilingAmount).toBe(50_000);
+    expect(versions[1]?.recoveryCeilingAmount).toBeNull();
+  });
+
+  it('refuses a partial band, even in raw SQL', async () => {
+    // The invalid middle. A ceiling with no floor is a band nothing can be
+    // computed from, and `asDamageSecurity` would have to invent the rest.
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById",
+           "recoveryCeilingAmount")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Partial', 'medium', ${author}::uuid, 50000)
+      `,
+    ).rejects.toThrow(/damage_security_is_complete/);
+  });
+
+  it('refuses a floor above the recovery ceiling, even in raw SQL', async () => {
+    /*
+     * The pair that would make ADR 0052's cap bind on every listing, turning the
+     * percentage into dead configuration — and the one a transposition reaches.
+     */
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById",
+           "excessFloorAmount", "excessFloorCurrency", "excessPercentageBasisPoints",
+           "recoveryCeilingAmount", "recoveryCeilingCurrency")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Inverted', 'medium', ${author}::uuid,
+                50001, 'GBP', 1500, 50000, 'GBP')
+      `,
+    ).rejects.toThrow(/damage_security_is_complete/);
+  });
+
+  it('refuses a zero recovery ceiling, the no-security case spelled twice', async () => {
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById",
+           "excessFloorAmount", "excessFloorCurrency", "excessPercentageBasisPoints",
+           "recoveryCeilingAmount", "recoveryCeilingCurrency")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Empty', 'medium', ${author}::uuid,
+                0, 'GBP', 1500, 0, 'GBP')
+      `,
+    ).rejects.toThrow(/damage_security_is_complete/);
+  });
+
+  it('refuses a percentage above 100 per cent, even in raw SQL', async () => {
+    // A renter cannot owe more than the item is worth.
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById",
+           "excessFloorAmount", "excessFloorCurrency", "excessPercentageBasisPoints",
+           "recoveryCeilingAmount", "recoveryCeilingCurrency")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Excessive', 'medium', ${author}::uuid,
+                7500, 'GBP', 10001, 50000, 'GBP')
+      `,
+    ).rejects.toThrow(/damage_security_is_complete/);
+  });
+
+  it('refuses a band whose two amounts disagree about currency', async () => {
+    // ADR 0002 at the table level: two amounts, one band, one currency.
+    const author = await newUser();
+    const category = await client.category.create({ data: { slug: slug() } });
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "category_versions"
+          ("id", "categoryId", "versionNumber", "name", "riskLevel", "createdById",
+           "excessFloorAmount", "excessFloorCurrency", "excessPercentageBasisPoints",
+           "recoveryCeilingAmount", "recoveryCeilingCurrency")
+        VALUES (gen_random_uuid(), ${category.id}::uuid, 1, 'Mixed', 'medium', ${author}::uuid,
+                7500, 'GBP', 1500, 50000, 'EUR')
+      `,
+    ).rejects.toThrow(/excess_band_currencies_agree/);
+  });
+
+  it('accepts a zero floor, so a band may be sized entirely from the percentage', async () => {
+    const created = await store.create(
+      config({ ...DAMAGE_SECURITY, excessFloor: { amount: 0, currency: 'GBP' } }),
+      await newUser(),
+    );
+
+    expect(created.damageSecurity?.excessFloor.amount).toBe(0);
+  });
+
+  it('still refuses an UPDATE, so a band cannot be rewritten in place', async () => {
+    /*
+     * The immutability trigger, re-proved on the new columns rather than assumed
+     * from the migration's reasoning about DDL not firing row-level triggers.
+     * §8.2 needs a stored band to be the one a booking was made under, and a
+     * column that could be updated could not show that.
+     */
+    const created = await store.create(config(DAMAGE_SECURITY), await newUser());
+
+    await expect(
+      client.$executeRaw`
+        UPDATE "category_versions" SET "recoveryCeilingAmount" = 1
+        WHERE "categoryId" = ${created.id}::uuid
+      `,
+    ).rejects.toThrow();
   });
 });

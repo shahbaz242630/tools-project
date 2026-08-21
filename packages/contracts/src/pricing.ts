@@ -25,7 +25,7 @@
  */
 
 import { z } from 'zod';
-import { moneySchema } from './money.js';
+import { boundedMoneySchema, moneySchema } from './money.js';
 import type { MoneyInput } from './money.js';
 import { parseWith } from './parse.js';
 
@@ -307,6 +307,208 @@ export const UNCONFIGURED_FEE_POLICY: CategoryFeePolicy = {
 export function isFeePolicyConfigured(policy: CategoryFeePolicy): boolean {
   return policy.ownerCommissionBasisPoints > 0 || policy.renterFeeBasisPoints > 0;
 }
+
+/**
+ * The ceiling on a configurable excess percentage: 100%.
+ *
+ * **A hard bound, not a policy**, exactly as `MAX_FEE_BASIS_POINTS` is. A
+ * percentage above 100% describes a renter liable for more than the item is
+ * worth, which no hire agreement means and a misplaced digit reaches easily.
+ * Where §3.4's recommended fee band is guidance the form shows, this is a limit
+ * the validator keeps — because unlike a fee, the number it multiplies is
+ * somebody else's property value.
+ */
+export const MAX_EXCESS_PERCENTAGE_BASIS_POINTS = 10_000;
+
+/**
+ * The excess percentage an administrator may configure.
+ *
+ * **Zero is allowed**, for `feeBasisPointsSchema`'s reason and one of its own: a
+ * category may size its excess entirely from the floor, which is the right shape
+ * where every item in it is worth about the same. What it may not be is absent —
+ * a category with no percentage at all is one with no band at all, expressed by
+ * `damageSecurityPolicyOrNoneSchema` below rather than by a missing field.
+ */
+export const excessPercentageBasisPointsSchema = z
+  .number()
+  .int('must be a whole number of basis points — 15% is 1500')
+  .min(0, 'cannot be negative')
+  .max(
+    MAX_EXCESS_PERCENTAGE_BASIS_POINTS,
+    `cannot exceed ${MAX_EXCESS_PERCENTAGE_BASIS_POINTS / 100}% — a renter cannot owe more than the item is worth`,
+  );
+
+/**
+ * Platform-wide sanity bounds on the two damage-security amounts: up to
+ * £10,000.
+ *
+ * **Its own constant rather than `MAX_PRICING_FLOOR_MINOR_UNITS`**, though the
+ * number is the same today. A pricing floor bounds what a booking may cost; this
+ * bounds what may be held against a card. They are unrelated concerns that would
+ * drift apart the first time either moved, and sharing a constant is how moving
+ * one silently moves the other.
+ *
+ * Note what this bound is *not* claiming: that a £10,000 hold would succeed.
+ * Issuers decline large authorisations routinely, and §8.7.2's answer to that is
+ * `SECURITY_FAILED` at the collection window — not a validator refusing the
+ * configuration months earlier.
+ */
+export const MAX_DAMAGE_SECURITY_MINOR_UNITS = 1_000_000;
+
+/**
+ * **Zero is permitted for the floor and refused for the ceiling**, and the
+ * asymmetry is deliberate. A category may legitimately have no fixed minimum
+ * liability and size the excess entirely from the percentage; a ceiling of
+ * nothing describes a band from which nothing is ever recoverable, which is the
+ * no-security case wearing a band's clothes and belongs in `null` instead.
+ */
+const excessFloorSchema = boundedMoneySchema({
+  minimum: 0,
+  maximum: MAX_DAMAGE_SECURITY_MINOR_UNITS,
+  minimumLabel: '£0',
+  maximumLabel: `£${MAX_DAMAGE_SECURITY_MINOR_UNITS / 100}`,
+});
+
+const recoveryCeilingSchema = boundedMoneySchema({
+  minimum: 1,
+  maximum: MAX_DAMAGE_SECURITY_MINOR_UNITS,
+  minimumLabel: '1p',
+  maximumLabel: `£${MAX_DAMAGE_SECURITY_MINOR_UNITS / 100}`,
+});
+
+/**
+ * How much of a loss a renter bears, and the most that can ever be taken from
+ * them — BRD §8.7.2's three-part excess model, as versioned category
+ * configuration.
+ *
+ * **On the version, never on the category**, for the reason `CategoryFeePolicy`
+ * gives above and §8.7.2 states outright: *"Bookings retain the values current at
+ * creation."* A hold disputed eighteen months later needs the band that was
+ * disclosed then, and only the immutable version row can answer that.
+ *
+ * **The band is all-or-nothing, and a category may have none.** §8.7.2 permits a
+ * category *"configured to require no security"*, and that is expressed by this
+ * policy being `null` rather than by a boolean beside optional fields
+ * (ADR 0052). The invalid middle — a ceiling with no floor, a floor with no
+ * percentage — is unrepresentable in this type and unstorable in the columns
+ * beneath it.
+ */
+export interface DamageSecurityPolicy {
+  /**
+   * The fixed minimum a renter always bears, whatever the item is worth.
+   *
+   * §8.7.2's stated purpose for it: *"suppresses low-value nuisance claims whose
+   * handling cost exceeds the claim"*. A £6 scratch costs more to adjudicate
+   * than to absorb.
+   */
+  readonly excessFloor: MoneyInput;
+
+  /**
+   * A share of the listing's replacement value, in basis points.
+   *
+   * This is what lets one band serve a category holding both a £40 sander and a
+   * £900 breaker without per-item configuration — §8.7.2's stated reason for
+   * rejecting flat deposit bands outright.
+   */
+  readonly excessPercentageBasisPoints: number;
+
+  /**
+   * The most that may be recovered from a renter on one booking.
+   *
+   * **It binds the applied excess** (ADR 0052), so it is also the effective
+   * ceiling on what may be held against a card. Loss above it is not the
+   * renter's: §8.7.2 puts the band between the hold and this figure in the
+   * Phase 10 protection product's scope, and everything above it with the owner,
+   * who must be told so before listing.
+   */
+  readonly recoveryCeiling: MoneyInput;
+}
+
+/**
+ * The floor must not exceed the ceiling, and the two must agree on currency.
+ *
+ * A floor above the ceiling describes a category where the amount a renter
+ * *always* bears exceeds the amount that can *ever* be recovered from them — the
+ * two rules contradicting each other on every booking rather than on an unusual
+ * one. It is unreachable by any pair of numbers somebody meant and one
+ * transposition away from a pair they did not.
+ *
+ * It is also the pair that would make ADR 0052's cap bind universally instead of
+ * exceptionally, quietly turning the percentage into dead configuration.
+ */
+function checkExcessBandAgrees(
+  policy: {
+    readonly excessFloor: MoneyInput;
+    readonly recoveryCeiling: MoneyInput;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  /*
+   * **Unreachable while the platform supports one currency, and kept anyway** —
+   * `checkFloorsAgree` above carries the full reasoning. `currencyCodeSchema` is
+   * an enum over `SUPPORTED_CURRENCIES`, today `['GBP']`, so no test can reach
+   * this branch honestly; deleting it would mean that the day a second currency
+   * arrives, the comparison below silently weighs pence against cents.
+   */
+  /* c8 ignore next 9 */
+  if (policy.excessFloor.currency !== policy.recoveryCeiling.currency) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'The excess floor and the recovery ceiling must be in the same currency',
+      path: ['recoveryCeiling', 'currency'],
+    });
+    return;
+  }
+
+  if (policy.excessFloor.amount > policy.recoveryCeiling.amount) {
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        'The excess floor cannot be more than the recovery ceiling — the renter would ' +
+        'always bear more than could ever be recovered from them',
+      path: ['excessFloor', 'amount'],
+    });
+  }
+}
+
+export const damageSecurityPolicySchema = z
+  .object({
+    excessFloor: excessFloorSchema,
+    excessPercentageBasisPoints: excessPercentageBasisPointsSchema,
+    recoveryCeiling: recoveryCeilingSchema,
+  })
+  .superRefine(checkExcessBandAgrees);
+
+/**
+ * The band, or an explicit declaration that the category requires none.
+ *
+ * **`null` is a decision, not an omission.** §8.7.2 makes "requires no security"
+ * a real configuration, so the write path must be able to say it — and the
+ * administrative form makes it a choice with no default, so a version cannot be
+ * saved having simply not answered (ADR 0052).
+ */
+export const damageSecurityPolicyOrNoneSchema = damageSecurityPolicySchema.nullable();
+
+export function parseDamageSecurityPolicy(raw: unknown): DamageSecurityPolicy | null {
+  return parseWith(damageSecurityPolicyOrNoneSchema, 'The damage security band', raw);
+}
+
+/**
+ * What a category version written before this slice carries: no band, and
+ * therefore no security.
+ *
+ * **Not a guessed floor and percentage**, for `UNCONFIGURED_FEE_POLICY`'s reason
+ * carried one step further: a backfilled £75 excess would be a liability an
+ * administrator never agreed to, sitting on an immutable row, indistinguishable
+ * from one they did — and unlike a fee, it is a claim about holding somebody's
+ * money rather than about what we charge.
+ *
+ * **The cost of that choice is stated in ADR 0052 rather than hidden here.** On a
+ * row written before this migration, "nobody configured it" and "we chose to
+ * require none" read identically. Two such rows exist, both in local
+ * development, and the form prevents a third.
+ */
+export const NO_DAMAGE_SECURITY: DamageSecurityPolicy | null = null;
 
 /**
  * What a listing costs to rent, before any platform fee (BRD §8.5.2, §8.3).

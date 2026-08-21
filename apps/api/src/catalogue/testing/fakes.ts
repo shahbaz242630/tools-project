@@ -38,6 +38,7 @@ import type {
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
+  DamageSecurityPolicy,
   PublicCategory,
 } from '@platform/contracts';
 import { CategorySlugTakenError } from '../category-store.js';
@@ -84,6 +85,8 @@ interface StoredVersion {
   readonly attributes: readonly CategoryAttribute[];
   readonly transportOptions: readonly CategoryTransportOption[];
   readonly feePolicy: CategoryFeePolicy;
+  /** §8.7.2's excess band, or `null` for no security (slice 5.5a). */
+  readonly damageSecurity: DamageSecurityPolicy | null;
   /** §8.5.3's cap, stored on the version like everything else (slice 4.4a). */
   readonly maximumRentalDays: number;
   readonly requestExpiryHours: number;
@@ -143,6 +146,10 @@ export class InMemoryCategoryStore implements CategoryStore {
           attributes: [...input.attributes],
           transportOptions: [...input.transportOptions],
           feePolicy: input.feePolicy,
+          // What was configured, `null` included. A double that quietly dropped
+          // a null band would make "a category may require no security" pass by
+          // never being stored — the same failure the cap comment below names.
+          damageSecurity: input.damageSecurity,
           // What was configured, not the default. A double that stored 88
           // whatever it was handed would make a category configured to 30 read
           // back as 88 — and every test of "the cap comes from configuration"
@@ -181,6 +188,7 @@ export class InMemoryCategoryStore implements CategoryStore {
       attributes: [...configuration.attributes],
       transportOptions: [...configuration.transportOptions],
       feePolicy: configuration.feePolicy,
+      damageSecurity: configuration.damageSecurity,
       maximumRentalDays: configuration.maximumRentalDays,
       requestExpiryHours: configuration.requestExpiryHours,
       createdById: authorId,
@@ -259,6 +267,7 @@ function toRecord(category: StoredCategory): CategoryRecord {
     attributes: latest.attributes,
     transportOptions: latest.transportOptions,
     feePolicy: latest.feePolicy,
+    damageSecurity: latest.damageSecurity,
     maximumRentalDays: latest.maximumRentalDays,
     requestExpiryHours: latest.requestExpiryHours,
     versionNumber: latest.versionNumber,

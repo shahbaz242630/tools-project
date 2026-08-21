@@ -19,6 +19,7 @@ import {
 import { INITIAL_CATEGORY_STATE } from '../app/admin/categories/state';
 import { AttributeSchemaEditor } from './attribute-schema-editor';
 import { FeePolicyEditor } from './fee-policy-editor';
+import { DamageSecurityEditor } from './damage-security-editor';
 import { MaximumRentalDaysField } from './maximum-rental-days-field';
 import { RequestExpiryField } from './request-expiry-field';
 import { TransportOptionsEditor } from './transport-options-editor';
@@ -282,6 +283,8 @@ export function CreateCategoryForm() {
 
       <FeePolicyEditor idPrefix="create" />
 
+      <DamageSecurityEditor idPrefix="create" />
+
       <MaximumRentalDaysField idPrefix="create" />
 
       <RequestExpiryField idPrefix="create" />
@@ -383,6 +386,11 @@ export function ReconfigureCategoryForm({
           category seeds blank rates, which is what it has — not a zero it
           never chose. */}
       <FeePolicyEditor idPrefix={category.slug} initial={category.feePolicy} />
+
+      <DamageSecurityEditor
+        idPrefix={category.slug}
+        initial={category.damageSecurity}
+      />
 
       {/* Seeded with what this category currently permits, so reconfiguring
           something else does not silently reset the cap to the default. */}

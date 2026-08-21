@@ -5,6 +5,7 @@ import type {
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
+  DamageSecurityPolicy,
 } from '@platform/contracts';
 import {
   CATEGORY_REPORTABLE_ACTIVITIES,
@@ -58,6 +59,7 @@ export class PrismaCategoryStore implements CategoryStore {
               attributes: [...input.attributes],
               transportOptions: [...input.transportOptions],
               ...feePolicyColumns(input.feePolicy),
+              ...damageSecurityColumns(input.damageSecurity),
               maximumRentalDays: input.maximumRentalDays,
               requestExpiryHours: input.requestExpiryHours,
               createdById: authorId,
@@ -109,6 +111,7 @@ export class PrismaCategoryStore implements CategoryStore {
         attributes: [...configuration.attributes],
         transportOptions: [...configuration.transportOptions],
         ...feePolicyColumns(configuration.feePolicy),
+        ...damageSecurityColumns(configuration.damageSecurity),
         maximumRentalDays: configuration.maximumRentalDays,
         requestExpiryHours: configuration.requestExpiryHours,
         createdById: authorId,
@@ -124,6 +127,7 @@ export class PrismaCategoryStore implements CategoryStore {
       attributes: asAttributes(version.attributes, existing.slug),
       transportOptions: asTransportOptions(version.transportOptions, existing.slug),
       feePolicy: asFeePolicy(version, existing.slug),
+      damageSecurity: asDamageSecurity(version, existing.slug),
       maximumRentalDays: version.maximumRentalDays,
       requestExpiryHours: version.requestExpiryHours,
       versionNumber: version.versionNumber,
@@ -209,6 +213,11 @@ interface CategoryRow {
     minimumBookingTotalCurrency: string;
     minimumPlatformFeeAmount: number;
     minimumPlatformFeeCurrency: string;
+    excessFloorAmount: number | null;
+    excessFloorCurrency: string | null;
+    excessPercentageBasisPoints: number | null;
+    recoveryCeilingAmount: number | null;
+    recoveryCeilingCurrency: string | null;
     maximumRentalDays: number;
     requestExpiryHours: number;
     versionNumber: number;
@@ -234,6 +243,7 @@ function toRecord(category: CategoryRow): CategoryRecord {
     attributes: asAttributes(current.attributes, category.slug),
     transportOptions: asTransportOptions(current.transportOptions, category.slug),
     feePolicy: asFeePolicy(current, category.slug),
+    damageSecurity: asDamageSecurity(current, category.slug),
     maximumRentalDays: current.maximumRentalDays,
     requestExpiryHours: current.requestExpiryHours,
     versionNumber: current.versionNumber,
@@ -299,6 +309,100 @@ function asFeePolicy(
     minimumPlatformFee: {
       amount: version.minimumPlatformFeeAmount,
       currency: asCurrency(version.minimumPlatformFeeCurrency, slug),
+    },
+  };
+}
+
+/**
+ * The damage-security band, flattened into the five columns that hold it — or
+ * five nulls where the category requires none (§8.7.2, ADR 0052).
+ *
+ * `feePolicyColumns`' reason for existing, with a sharper edge: `create` and
+ * `addVersion` must write a band identically, and here a disagreement would not
+ * merely misprice a booking — it would decide whether an item is handed over
+ * secured.
+ *
+ * **The null case writes five explicit nulls rather than omitting the keys.**
+ * Omission and null are the same thing to Prisma on a create and emphatically
+ * not on an update, and this object is spread into both. Writing them out means
+ * a reconfiguration that removes a band actually removes it, rather than
+ * silently keeping the previous version's values.
+ */
+function damageSecurityColumns(policy: DamageSecurityPolicy | null) {
+  if (policy === null) {
+    return {
+      excessFloorAmount: null,
+      excessFloorCurrency: null,
+      excessPercentageBasisPoints: null,
+      recoveryCeilingAmount: null,
+      recoveryCeilingCurrency: null,
+    };
+  }
+
+  return {
+    excessFloorAmount: policy.excessFloor.amount,
+    excessFloorCurrency: policy.excessFloor.currency,
+    excessPercentageBasisPoints: policy.excessPercentageBasisPoints,
+    recoveryCeilingAmount: policy.recoveryCeiling.amount,
+    recoveryCeilingCurrency: policy.recoveryCeiling.currency,
+  };
+}
+
+/**
+ * The five columns, on the way back out.
+ *
+ * **It reads one column to decide, not all five.** `damage_security_is_complete`
+ * makes a partial band unstorable, so any one column answers the question and
+ * checking several would be re-implementing the CHECK in a place that cannot
+ * enforce it. The column chosen is the ceiling, because it is the one the
+ * constraint requires to be positive — so a non-null value there cannot be the
+ * zero that `excessFloorAmount` may legitimately hold.
+ *
+ * The currency gets `asFeePolicy`'s treatment and for the same reason: a band in
+ * a currency this build cannot do arithmetic in is an amount nothing can hold
+ * against a card, and the useful question names the category.
+ */
+function asDamageSecurity(
+  version: {
+    excessFloorAmount: number | null;
+    excessFloorCurrency: string | null;
+    excessPercentageBasisPoints: number | null;
+    recoveryCeilingAmount: number | null;
+    recoveryCeilingCurrency: string | null;
+  },
+  slug: string,
+): DamageSecurityPolicy | null {
+  if (version.recoveryCeilingAmount === null) {
+    return null;
+  }
+
+  /*
+   * The CHECK guarantees the rest are present, and TypeScript cannot see a
+   * CHECK. These assertions state what the database is enforcing rather than
+   * re-deriving it — the alternative is four `?? 0` defaults, each of which
+   * would turn a constraint violation that cannot happen into a silently wrong
+   * band if it ever did.
+   */
+  if (
+    version.excessFloorAmount === null ||
+    version.excessFloorCurrency === null ||
+    version.excessPercentageBasisPoints === null ||
+    version.recoveryCeilingCurrency === null
+  ) {
+    throw new Error(
+      `Category ${slug} has a partial damage security band, which damage_security_is_complete should make unstorable`,
+    );
+  }
+
+  return {
+    excessFloor: {
+      amount: version.excessFloorAmount,
+      currency: asCurrency(version.excessFloorCurrency, slug),
+    },
+    excessPercentageBasisPoints: version.excessPercentageBasisPoints,
+    recoveryCeiling: {
+      amount: version.recoveryCeilingAmount,
+      currency: asCurrency(version.recoveryCeilingCurrency, slug),
     },
   };
 }

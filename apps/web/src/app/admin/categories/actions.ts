@@ -22,6 +22,7 @@ import { INITIAL_CATEGORY_STATE } from './state';
 import type { CategoryActionState } from './state';
 import { asSentence } from '../../../lib/contract-issues';
 import { readFeePolicy } from '../../../lib/fee-policy';
+import { readDamageSecurity } from '../../../lib/damage-security';
 
 /**
  * A checkbox is present or absent, never `false`.
@@ -148,6 +149,25 @@ function readFeePolicyFrom(form: FormData) {
   });
 }
 
+/**
+ * The damage-security choice and, where one is required, the three values.
+ *
+ * **The choice is read as `undefined` when absent rather than coerced to `''`**,
+ * unlike every other field on this form. `readDamageSecurity` has to tell an
+ * unanswered question from a deliberate "no security", and `?? ''` would have
+ * flattened the two into one string before it got the chance (ADR 0052).
+ */
+function readDamageSecurityFrom(form: FormData) {
+  const choice = form.get('damageSecurityChoice');
+
+  return readDamageSecurity({
+    choice: typeof choice === 'string' ? choice : undefined,
+    excessFloor: String(form.get('excessFloor') ?? ''),
+    excessPercentage: String(form.get('excessPercentage') ?? ''),
+    recoveryCeiling: String(form.get('recoveryCeiling') ?? ''),
+  });
+}
+
 export async function createCategoryAction(
   _previous: CategoryActionState,
   form: FormData,
@@ -198,6 +218,16 @@ export async function createCategoryAction(
     };
   }
 
+  const damageSecurity = readDamageSecurityFrom(form);
+  if (!damageSecurity.ok) {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: damageSecurity.message,
+    };
+  }
+
   // The contract's own schema, not a second opinion about what a slug is. A
   // separate rule here would drift from the one the API enforces, and the
   // divergence would surface as a form that accepts what the API rejects.
@@ -213,6 +243,7 @@ export async function createCategoryAction(
     attributes: schema.attributes,
     transportOptions: transport.options,
     feePolicy: fees.value,
+    damageSecurity: damageSecurity.value,
     maximumRentalDays: readMaximumRentalDays(form),
     requestExpiryHours: readRequestExpiryHours(form),
   });
@@ -295,6 +326,16 @@ export async function reconfigureCategoryAction(
     };
   }
 
+  const damageSecurity = readDamageSecurityFrom(form);
+  if (!damageSecurity.ok) {
+    return {
+      ...INITIAL_CATEGORY_STATE,
+      ...typed,
+      status: 'error',
+      message: damageSecurity.message,
+    };
+  }
+
   // Parsed here as well as on create, which it was not before this slice. The
   // reason is §8.14.2's confirmation: a switch from `none` to a reportable head
   // is the change §17 names as the undetected-breach risk, and the round trip
@@ -307,6 +348,7 @@ export async function reconfigureCategoryAction(
     attributes: schema.attributes,
     transportOptions: transport.options,
     feePolicy: fees.value,
+    damageSecurity: damageSecurity.value,
     maximumRentalDays: readMaximumRentalDays(form),
     requestExpiryHours: readRequestExpiryHours(form),
   });

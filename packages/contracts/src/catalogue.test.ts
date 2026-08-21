@@ -25,6 +25,18 @@ const FEE_POLICY = {
 };
 
 /**
+ * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
+ * `null` is the value a category carries when nobody configured damage security,
+ * so a fixture that was null everywhere would never notice a schema that had
+ * stopped carrying the band at all. The tests that mean "no security" say so.
+ */
+const DAMAGE_SECURITY = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+};
+
+/**
  * The five shapes the category research actually found, in one schema.
  *
  * Kept as the fixture rather than something invented, so a change that breaks
@@ -363,6 +375,7 @@ const validDraft = {
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
   feePolicy: FEE_POLICY,
+  damageSecurity: DAMAGE_SECURITY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: realisticTransportOptions,
@@ -375,6 +388,7 @@ const validConfiguration = {
   reportingDutiesAcknowledged: false,
   attributes: realisticSchema,
   feePolicy: FEE_POLICY,
+  damageSecurity: DAMAGE_SECURITY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: realisticTransportOptions,
@@ -606,5 +620,67 @@ describe('the maximum rental duration', () => {
     expect(
       parseCategoryConfiguration({ ...validConfiguration }).maximumRentalDays,
     ).toBe(88);
+  });
+});
+
+/**
+ * BRD §8.7.2's excess band on the category bodies (slice 5.5a, ADR 0052).
+ *
+ * The band's own rules are tested in `pricing.test.ts`, where the schema lives.
+ * What this file is for is the part only these bodies decide: that the field is
+ * **required and nullable**, which are different things and are the whole reason
+ * a category cannot be created having quietly said nothing about it.
+ */
+describe('the damage security band', () => {
+  it('accepts a configured band on both bodies', () => {
+    expect(parseCategoryDraft(validDraft).damageSecurity).toEqual(DAMAGE_SECURITY);
+    expect(parseCategoryConfiguration(validConfiguration).damageSecurity).toEqual(
+      DAMAGE_SECURITY,
+    );
+  });
+
+  it('accepts an explicit null — a category may require no security', () => {
+    // §8.7.2: "unless the category is configured to require no security".
+    expect(
+      parseCategoryDraft({ ...validDraft, damageSecurity: null }).damageSecurity,
+    ).toBeNull();
+  });
+
+  /**
+   * The distinction the whole design rests on. An omitted field would default
+   * silently to "no security", so a caller that forgot it would configure items
+   * being handed to strangers with nothing held — which is exactly what §8.7.2
+   * prohibits happening silently.
+   */
+  it('refuses an omitted band, which is not the same as an explicit null', () => {
+    expect(() => parseCategoryDraft(without(validDraft, 'damageSecurity'))).toThrow(
+      ContractViolationError,
+    );
+  });
+
+  it('is required when reconfiguring too, not only when creating', () => {
+    // Reconfiguring mints a new version, and a version that dropped the band
+    // would stop securing every booking made from then on.
+    expect(() =>
+      parseCategoryConfiguration(without(validConfiguration, 'damageSecurity')),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('lets a reconfiguration remove a band deliberately', () => {
+    // The replace direction that matters: `null` on a PUT is how a category
+    // stops requiring security, and it must be reachable.
+    expect(
+      parseCategoryConfiguration({ ...validConfiguration, damageSecurity: null })
+        .damageSecurity,
+    ).toBeNull();
+  });
+
+  it('refuses a partial band on the body, not only on the band schema', () => {
+    expect(() =>
+      parseCategoryDraft({
+        ...validDraft,
+        damageSecurity: { recoveryCeiling: { amount: 50_000, currency: 'GBP' } },
+      }),
+    ).toThrow(ContractViolationError);
   });
 });
