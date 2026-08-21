@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { fetchBookingsOnMyListings, fetchMyBookings, requestBooking } from './bookings';
+import {
+  fetchBooking,
+  fetchBookingsOnMyListings,
+  fetchMyBookings,
+  payForBooking,
+  requestBooking,
+} from './bookings';
 import type { FetchLike } from './listings';
 
 const API = 'http://api.internal:3001';
@@ -246,5 +252,119 @@ describe('the two dashboard reads (slice 4.8b)', () => {
     // not ask" must never look the same.
     expect((await fetchMyBookings(API, null)).kind).toBe('signed-out');
     expect((await fetchBookingsOnMyListings(API, null)).kind).toBe('signed-out');
+  });
+});
+
+/**
+ * Reading one booking, and paying for it (slice 5.2d).
+ *
+ * **`fetchBooking` is the first caller `GET /bookings/:bookingId` has ever had**,
+ * which is why the route survived the deletion deadline its docblock carried.
+ */
+const A_DETAIL = { ...A_BOOKING, state: 'ACCEPTED', payability: { payable: true } };
+
+describe('fetchBooking', () => {
+  it('addresses the one booking, and parses the detail projection', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(A_DETAIL));
+
+    const outcome = await fetchBooking(API, TOKEN, A_BOOKING.id, fetchImpl);
+
+    expect(calls[0]?.url).toBe(`${API}/bookings/${A_BOOKING.id}`);
+    expect(outcome).toEqual({ kind: 'loaded', value: A_DETAIL });
+  });
+
+  /**
+   * **The field this slice added, and the reason the detail projection exists.**
+   * A payload without it is the collection projection arriving on this route, and
+   * a page that fell back to "no button" on it would silently stop anybody paying.
+   */
+  it('refuses a booking with no payability on it', async () => {
+    const outcome = await fetchBooking(
+      API,
+      TOKEN,
+      A_BOOKING.id,
+      responds(200, JSON.stringify(A_BOOKING)),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  /**
+   * **`payable: false` must carry a reason**, which the discriminated union makes
+   * unrepresentable rather than merely discouraged — an unavailable control with
+   * no explanation beside it is the exact defect this slice removes.
+   */
+  it('refuses an unavailable payment with no reason given', async () => {
+    const outcome = await fetchBooking(
+      API,
+      TOKEN,
+      A_BOOKING.id,
+      responds(200, JSON.stringify({ ...A_BOOKING, payability: { payable: false } })),
+    );
+
+    expect(outcome.kind).toBe('malformed');
+  });
+
+  it('reports "not yours or no such booking" as one answer', async () => {
+    // The API refuses to tell them apart; nothing here may undo that.
+    expect((await fetchBooking(API, TOKEN, A_BOOKING.id, responds(404))).kind).toBe(
+      'not-found',
+    );
+  });
+});
+
+describe('payForBooking', () => {
+  const PAID = {
+    booking: { ...A_BOOKING, state: 'RESERVED' },
+    payment: { status: 'succeeded' },
+  };
+
+  it('posts to the booking with no body at all', async () => {
+    /*
+     * **§8.7 calculates charges server-side only.** What is owed was fixed when
+     * the booking was made and is on its row; a client that could send an amount
+     * could send the wrong one. The assertion is what would fail if somebody
+     * later "helpfully" started sending the total.
+     */
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(PAID));
+
+    const outcome = await payForBooking(API, TOKEN, A_BOOKING.id, fetchImpl);
+
+    expect(calls[0]?.url).toBe(`${API}/bookings/${A_BOOKING.id}/pay`);
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(calls[0]?.init?.body).toBeUndefined();
+    expect(outcome).toEqual({ kind: 'loaded', value: PAID });
+  });
+
+  /**
+   * **No idempotency key crosses this wire.** Payments derives its own from the
+   * booking and the count of failed attempts (5.2c), so a double press charges
+   * once without a browser having to be trusted with it.
+   */
+  it('sends nothing that could be mistaken for an idempotency key', async () => {
+    const { calls, fetchImpl } = capturing(200, JSON.stringify(PAID));
+
+    await payForBooking(API, TOKEN, A_BOOKING.id, fetchImpl);
+
+    expect(JSON.stringify(calls[0])).not.toMatch(/idempotenc|attemptKey/i);
+  });
+
+  it('carries a refusal through verbatim', async () => {
+    // 5.2c writes these for the renter reading them, and every one says whether
+    // anything was charged.
+    const refusal = 'That booking is already paid for. Nothing has been charged again.';
+
+    expect(
+      await payForBooking(
+        API,
+        TOKEN,
+        A_BOOKING.id,
+        responds(422, JSON.stringify({ message: refusal })),
+      ),
+    ).toEqual({ kind: 'refused', reason: refusal });
+  });
+
+  it('reports a signed-out caller rather than attempting a payment', async () => {
+    expect((await payForBooking(API, null, A_BOOKING.id)).kind).toBe('signed-out');
   });
 });

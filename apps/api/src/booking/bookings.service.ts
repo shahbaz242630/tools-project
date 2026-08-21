@@ -1,6 +1,7 @@
 import { Paging, Time } from '@platform/core';
 import type {
   Booking,
+  BookingDetail,
   BookingPayment,
   BookingRequest,
   BookingState,
@@ -25,6 +26,12 @@ import type {
   PendingRequest,
 } from './booking-store.js';
 import type { HireChargeResult, HirePayments } from './hire-payments.js';
+import {
+  PAYABLE_STATES,
+  PAYMENT_NOT_ENABLED,
+  describeUnpayable,
+  payabilityOf,
+} from './payability.js';
 import type { PaymentSwitch } from './payment-switch.js';
 import type { ListingOwnership } from './listing-ownership.js';
 import type { ListingQuoteSource } from './listing-quote-source.js';
@@ -72,6 +79,20 @@ import type { QuoteStore } from './quote-store.js';
  *    deliberately not pre-empted — §8.5.1 names check-then-insert as the
  *    anti-pattern by name.
  */
+/**
+ * Who is reading a booking, for the parts of the answer that depend on them
+ * (slice 5.2d).
+ *
+ * **An object with one field rather than a bare boolean parameter**, so a call
+ * site says `{ isSuspended: false }` and cannot be read as the id beside it. It
+ * has no default, deliberately: a caller that forgot it would silently claim the
+ * reader is in good standing, and the failure would be a live pay button that
+ * answers 403.
+ */
+export interface BookingReader {
+  readonly isSuspended: boolean;
+}
+
 export class BookingsService {
   constructor(
     private readonly bookings: BookingStore,
@@ -443,10 +464,7 @@ export class BookingsService {
      * cannot happen. Turning the flag on is the whole of what 5.2e has to do.
      */
     if (!(await this.paymentSwitch.isPaymentEnabled())) {
-      throw new RequestRefusedError(
-        'Paying for bookings is not switched on yet, so nothing has been charged. ' +
-          'Your booking is still held.',
-      );
+      throw new RequestRefusedError(PAYMENT_NOT_ENABLED);
     }
 
     const existing = await this.bookings.findForParty(bookingId, renterId);
@@ -665,15 +683,44 @@ export class BookingsService {
   }
 
   /**
-   * One booking, as either party reads it.
+   * One booking, as either party reads it, with whether they may pay for it
+   * (slice 5.2d).
    *
    * Null for "no such booking" and for "not yours", which the route answers 404
    * to — the rule every scoped read in this project follows.
+   *
+   * **The flag is read on this route and on no other read.** It is one store
+   * lookup that cannot throw (`PaymentSwitch` answers with the declared default
+   * on an outage, which for this flag is *off*), and it buys the renter's page
+   * the ability to draw a control that works or a sentence that is true. The
+   * collection routes deliberately do not carry payability: a list has no pay
+   * button, and putting a flag read behind every row would be a cost paid for
+   * nothing.
+   *
+   * **Suspension comes from the caller rather than being looked up**, because the
+   * guard has already resolved it — `MirroredUser.suspendedAt` is on the request.
+   * Asking identity again would be a second answer to a question already
+   * answered, and the two could disagree within one request.
    */
-  async find(id: string, userId: string): Promise<Booking | null> {
+  async find(
+    id: string,
+    userId: string,
+    reader: BookingReader,
+  ): Promise<BookingDetail | null> {
     const found = await this.bookings.findForParty(id, userId);
+    if (found === null) return null;
 
-    return found === null ? null : toWireBooking(found);
+    const booking = toWireBooking(found);
+
+    return {
+      ...booking,
+      payability: payabilityOf({
+        state: found.booking.state,
+        isRenter: found.booking.renterId === userId,
+        isSuspended: reader.isSuspended,
+        paymentEnabled: await this.paymentSwitch.isPaymentEnabled(),
+      }),
+    };
   }
 
   /**
@@ -695,43 +742,6 @@ export class BookingsService {
  * Carries the words rather than a code, matching `QuoteRefusedError` and
  * `BlockRefusedError` beside it: the refusal is decided where the rule is.
  */
-/**
- * The states a renter may pay from (§7, slice 5.2c).
- *
- * **Three, and each is a different situation rather than a variation.** `ACCEPTED`
- * is the ordinary one; `PAYMENT_FAILED` is §7's retry edge; `AWAITING_PAYMENT` is
- * a resume, which is what makes a closed tab or a crashed process recoverable.
- *
- * Derived from nothing — listed, like `CALENDAR_OCCUPYING_STATES` — because it is
- * a rule about what a *renter* may do rather than a property of the state graph:
- * §7 also lets `ACCEPTED → RESERVED` directly, and that edge is for a configured
- * collection model nobody has built.
- */
-const PAYABLE_STATES: readonly BookingState[] = Object.freeze([
-  'ACCEPTED',
-  'AWAITING_PAYMENT',
-  'PAYMENT_FAILED',
-]);
-
-/**
- * Why this booking cannot be paid for, as the renter is told.
- *
- * **Switched exhaustively over the states it can actually reach**, so a state
- * added to §7 later cannot silently inherit a sentence written for a different
- * situation — the rule `describeUnavailableToOwner` already follows below.
- */
-function describeUnpayable(state: BookingState): string {
-  if (state === 'RESERVED') {
-    return 'That booking is already paid for. Nothing has been charged again.';
-  }
-  if (state === 'REQUESTED') {
-    return 'That request has not been accepted yet, so there is nothing to pay for.';
-  }
-  if (state === 'DECLINED' || state === 'EXPIRED' || state === 'CANCELLED') {
-    return 'That booking is no longer live, so it cannot be paid for.';
-  }
-  return 'That booking is past the point of paying for it. Reload the page to see where it stands.';
-}
 
 export class RequestRefusedError extends Error {
   constructor(readonly refusal: string) {

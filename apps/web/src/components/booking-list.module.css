@@ -155,3 +155,13 @@
   font-size: var(--text-helper);
   line-height: 1.55;
 }
+
+/*
+ * The way in to one booking (slice 5.2d) — the breakdown, the history, and for a
+ * renter the pay control. On every row: see `RenterRow` for why it is not
+ * conditional the way the expiry deadline above it is.
+ */
+.open {
+  margin: 12px 0 0;
+  font-size: var(--text-helper);
+}

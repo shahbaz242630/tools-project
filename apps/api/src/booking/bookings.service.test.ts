@@ -23,6 +23,14 @@ import {
  */
 
 const MOWER = 'listing-mower';
+/**
+ * The ordinary reader: signed in and not suspended (slice 5.2d).
+ *
+ * Named rather than inlined so the suspended case reads as the deliberate
+ * departure it is, and so `find`'s third argument never looks like noise.
+ */
+const IN_GOOD_STANDING = { isSuspended: false } as const;
+
 const ADA = 'user-ada';
 const OWNER = 'user-owner';
 
@@ -260,7 +268,7 @@ describe('BookingsService', () => {
       await expect(service.pay(bookingId, ADA)).rejects.toThrow(/not switched on/);
 
       expect(payments.requests).toHaveLength(0);
-      const booking = await service.find(bookingId, ADA);
+      const booking = await service.find(bookingId, ADA, IN_GOOD_STANDING);
       expect(booking?.state).toBe('ACCEPTED');
     });
 
@@ -336,7 +344,7 @@ describe('BookingsService', () => {
       await expect(orphaned.pay(bookingId, ADA)).rejects.toThrow(/no longer available/);
 
       expect(payments.requests).toHaveLength(0);
-      const booking = await service.find(bookingId, ADA);
+      const booking = await service.find(bookingId, ADA, IN_GOOD_STANDING);
       expect(booking?.state).toBe('ACCEPTED');
     });
   });
@@ -754,7 +762,7 @@ describe('BookingsService', () => {
         RequestRefusedError,
       );
 
-      expect(await service.find('booking-1', ADA)).toBe(null);
+      expect(await service.find('booking-1', ADA, IN_GOOD_STANDING)).toBe(null);
     });
   });
 
@@ -763,9 +771,16 @@ describe('BookingsService', () => {
       const quoteId = await givenAQuote();
       const created = await service.request(ADA, { quoteId });
 
-      const read = await service.find(created?.id ?? '', ADA);
+      const read = await service.find(created?.id ?? '', ADA, IN_GOOD_STANDING);
 
-      expect(read).toEqual(created);
+      /*
+       * **A superset now, not an equal.** `request` returns a `Booking` and this
+       * read returns a `BookingDetail` — the same booking plus whether the reader
+       * may pay for it (5.2d). Matching on the object rather than on equality is
+       * what keeps this test about *the booking comes back as it was made*.
+       */
+      expect(read).toMatchObject({ ...created });
+      expect(read?.payability).toBeDefined();
     });
 
     it('gives it to the owner, who never made it', async () => {
@@ -773,7 +788,7 @@ describe('BookingsService', () => {
       const quoteId = await givenAQuote();
       const created = await service.request(ADA, { quoteId });
 
-      const read = await service.find(created?.id ?? '', OWNER);
+      const read = await service.find(created?.id ?? '', OWNER, IN_GOOD_STANDING);
 
       expect(read?.id).toBe(created?.id);
     });
@@ -782,11 +797,122 @@ describe('BookingsService', () => {
       const quoteId = await givenAQuote();
       const created = await service.request(ADA, { quoteId });
 
-      expect(await service.find(created?.id ?? '', 'user-stranger')).toBe(null);
+      expect(
+        await service.find(created?.id ?? '', 'user-stranger', IN_GOOD_STANDING),
+      ).toBe(null);
     });
 
     it('answers null for a booking that does not exist', async () => {
-      expect(await service.find('booking-nonexistent', ADA)).toBe(null);
+      expect(await service.find('booking-nonexistent', ADA, IN_GOOD_STANDING)).toBe(
+        null,
+      );
+    });
+
+    /**
+     * **Whether the reader may pay, so the page never has to guess (slice 5.2d).**
+     *
+     * The matrix itself is swept in `payability.test.ts` against the pure
+     * function. What these prove is the *wiring*: that this read asks the flag at
+     * all, that it asks about the right person, and that suspension arrives from
+     * the caller rather than being assumed away.
+     */
+    describe('and saying whether they may pay for it', () => {
+      /** An accepted booking is the ordinary thing a renter pays for. */
+      async function givenAnAccepted(): Promise<string> {
+        const quoteId = await givenAQuote();
+        const booking = await service.request(ADA, { quoteId });
+        if (booking === null) throw new Error('expected a booking');
+        await service.accept(booking.id, OWNER);
+        return booking.id;
+      }
+
+      it('lets the renter pay when it is accepted and payment is on', async () => {
+        const id = await givenAnAccepted();
+
+        const read = await service.find(id, ADA, IN_GOOD_STANDING);
+
+        expect(read?.payability).toEqual({ payable: true });
+      });
+
+      /**
+       * **The ordinary answer in production today.** `booking.payment` is off in
+       * every environment until 5.2e, so this is what a real renter's page
+       * actually renders — which is why it is asserted rather than assumed.
+       */
+      it('refuses when payment is switched off, and says nothing was charged', async () => {
+        const id = await givenAnAccepted();
+        paymentsEnabled.value = false;
+
+        const read = await service.find(id, ADA, IN_GOOD_STANDING);
+
+        expect(read?.payability.payable).toBe(false);
+        expect(read?.payability.payable === false && read.payability.reason).toMatch(
+          /not switched on yet/,
+        );
+      });
+
+      it('tells the owner the renter pays, on the same booking', async () => {
+        const id = await givenAnAccepted();
+
+        const read = await service.find(id, OWNER, IN_GOOD_STANDING);
+
+        expect(read?.payability.payable).toBe(false);
+        expect(read?.payability.payable === false && read.payability.reason).toMatch(
+          /renter pays/,
+        );
+      });
+
+      /**
+       * **The dead control this slice exists to remove.** `pay` is not
+       * `@AllowsSuspended()` while this read is, so without the suspension check a
+       * suspended renter would be shown a live button that the guard answers 403
+       * to.
+       */
+      it('refuses a suspended renter rather than showing a button that 403s', async () => {
+        const id = await givenAnAccepted();
+
+        const read = await service.find(id, ADA, { isSuspended: true });
+
+        expect(read?.payability.payable).toBe(false);
+        expect(read?.payability.payable === false && read.payability.reason).toMatch(
+          /suspended/,
+        );
+      });
+
+      it('says there is nothing to pay for on a request nobody has answered', async () => {
+        const quoteId = await givenAQuote();
+        const created = await service.request(ADA, { quoteId });
+
+        const read = await service.find(created?.id ?? '', ADA, IN_GOOD_STANDING);
+
+        expect(read?.payability.payable).toBe(false);
+        expect(read?.payability.payable === false && read.payability.reason).toMatch(
+          /not been accepted yet/,
+        );
+      });
+
+      /**
+       * **The projection and the route must not tell two stories.** This is the
+       * whole reason the rules were extracted to `payability.ts` — a renter who
+       * reads one sentence on the page and a different one from the 422 has been
+       * told the platform is confused about their booking.
+       */
+      it('gives the same sentence the pay route refuses with', async () => {
+        const id = await givenAnAccepted();
+        paymentsEnabled.value = false;
+
+        const read = await service.find(id, ADA, IN_GOOD_STANDING);
+        const refusal = await service
+          .pay(id, ADA)
+          .then(() => null)
+          .catch((error: unknown) =>
+            error instanceof RequestRefusedError ? error.refusal : null,
+          );
+
+        expect(read?.payability.payable === false && read.payability.reason).toBe(
+          refusal,
+        );
+      });
     });
   });
 

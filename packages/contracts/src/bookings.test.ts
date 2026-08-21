@@ -13,11 +13,15 @@ import {
   bookingPath,
   OWNER_BOOKINGS_ROUTE,
   listingRequestsPath,
+  bookingDetailSchema,
+  bookingSchema,
   parseBooking,
+  parseBookingDetail,
   parseBookingRequest,
   parseBookingSummaries,
   parseOwnerBookings,
 } from './bookings.js';
+import { ContractViolationError } from './parse.js';
 
 const gbp = (amount: number) => ({ amount, currency: 'GBP' as const });
 
@@ -273,5 +277,66 @@ describe('parseOwnerBookings', () => {
 
   it('refuses a list that does not say whether it was cut short', () => {
     expect(() => parseOwnerBookings({ bookings: [AN_OWNER_SUMMARY] })).toThrow();
+  });
+});
+
+/**
+ * The detail projection and its payability (slice 5.2d).
+ *
+ * **What this schema is for is preventing an unexplained dead control.** A page
+ * has no other way to know whether a pay button would work — the flag is behind
+ * an admin-gated route — so the shape has to make *unavailable with no reason*
+ * impossible rather than merely discouraged.
+ */
+describe('bookingDetailSchema', () => {
+  const detail = {
+    ...A_BOOKING,
+    payability: { payable: true },
+  };
+
+  it('is the booking plus whether the reader may pay', () => {
+    expect(parseBookingDetail(detail)).toEqual(detail);
+  });
+
+  /**
+   * **Built from `bookingSchema.shape`, so the two cannot drift.** A field added
+   * to a booking appears here without anybody remembering to add it — the
+   * alternative is two lists that both parse while describing different things.
+   */
+  it('carries every field a booking has', () => {
+    expect(Object.keys(bookingDetailSchema.shape)).toEqual([
+      ...Object.keys(bookingSchema.shape),
+      'payability',
+    ]);
+  });
+
+  it('refuses an unavailable payment with no reason', () => {
+    // The whole point of the union: a control with no explanation beside it is
+    // the defect this field exists to remove.
+    expect(() =>
+      parseBookingDetail({ ...A_BOOKING, payability: { payable: false } }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('refuses an available payment carrying a reason', () => {
+    // Nothing to explain when the button works, and a stray sentence would end
+    // up rendered beside it.
+    expect(() =>
+      parseBookingDetail({
+        ...A_BOOKING,
+        payability: { payable: true, reason: 'why?' },
+      }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('refuses an empty reason', () => {
+    expect(() =>
+      parseBookingDetail({ ...A_BOOKING, payability: { payable: false, reason: '' } }),
+    ).toThrow(ContractViolationError);
+  });
+
+  it('refuses a booking with no payability at all', () => {
+    // That payload is the collection projection arriving on the detail route.
+    expect(() => parseBookingDetail(A_BOOKING)).toThrow(ContractViolationError);
   });
 });

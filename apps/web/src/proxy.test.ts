@@ -153,6 +153,12 @@ const CLASSIFIED: Readonly<Record<string, 'signed-in' | 'public'>> = {
   // mirror, with nothing failing loudly.
   '/api/webhooks/clerk': 'public',
   '/bookings': 'signed-in',
+  /*
+   * Where a renter pays (slice 5.2d). Signed-in by the `/bookings` prefix
+   * rather than by a rule of its own — the matcher works on whole segments, so
+   * the child is covered by the parent and cannot be forgotten.
+   */
+  '/bookings/[bookingId]': 'signed-in',
   '/browse': 'public',
   '/hire/[id]': 'public',
   '/listings': 'signed-in',

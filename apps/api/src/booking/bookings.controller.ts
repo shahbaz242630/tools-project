@@ -25,6 +25,7 @@ import {
 } from '@platform/contracts';
 import type {
   Booking,
+  BookingDetail,
   BookingPayment,
   BookingSummaries,
   ListingRequests,
@@ -162,17 +163,18 @@ export class BookingsController {
    * **Either party, 404 to anybody else.** §8.6 gives the owner the decision and
    * the renter the record; both read the same booking.
    *
-   * **Nothing in the product calls this**, found by the pre-Phase-5 audit on
-   * 19 August 2026: `bookingPath` appears only in tests, and there is no
-   * `/bookings/[id]` page — both dashboards read the collection routes instead.
-   * It is kept rather than deleted because Phase 5 has to put payment state
-   * somewhere and this is the read half of a resource whose write half is
-   * already in use, not a feature built for a user who does not exist.
+   * **It has a caller from slice 5.2d**, and the deadline this docblock carried
+   * is discharged. It read *"nothing in the product calls this; if Phase 5 closes
+   * without a caller, delete it"* — written by the pre-Phase-5 audit on 19 August
+   * 2026, when `bookingPath` appeared only in tests. `/bookings/[bookingId]` is
+   * that page, and payment state is what it needed: the prediction that Phase 5
+   * would have somewhere to put it was right.
    *
-   * **That reasoning has a deadline, deliberately.** If Phase 5 closes without a
-   * caller, delete it — an endpoint kept for a future that did not arrive is the
-   * thing this project's own principle refuses, and "we might need it" is how
-   * surface accumulates. Same for `GET /quotes/:quoteId`.
+   * **`GET /quotes/:quoteId` still has none, and its deadline still stands.**
+   *
+   * **This is the one read that carries payability**, which is why it takes the
+   * reader's suspension. The collection routes do not: a list has no pay control,
+   * and a flag read per row would be a cost paid for nothing.
    */
   @RateLimit('read')
   @Get(BOOKING_ROUTE)
@@ -180,8 +182,15 @@ export class BookingsController {
   async find(
     @Param('bookingId') bookingId: string,
     @CurrentUser() user: MirroredUser,
-  ): Promise<Booking> {
-    const booking = await this.bookings.find(bookingId, user.id);
+  ): Promise<BookingDetail> {
+    const booking = await this.bookings.find(bookingId, user.id, {
+      /*
+       * **Read off the request rather than looked up again.** The guard has
+       * already resolved this account; asking identity a second time inside one
+       * request invites two answers to one question.
+       */
+      isSuspended: user.suspendedAt !== null,
+    });
     if (booking === null) throw new NotFoundException();
 
     return booking;

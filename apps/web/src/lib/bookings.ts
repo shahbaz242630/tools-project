@@ -18,11 +18,21 @@
 import {
   BOOKINGS_ROUTE,
   OWNER_BOOKINGS_ROUTE,
+  bookingPath,
+  bookingPayPath,
   parseBooking,
+  parseBookingDetail,
+  parseBookingPayment,
   parseBookingSummaries,
   parseOwnerBookings,
 } from '@platform/contracts';
-import type { Booking, BookingSummaries, OwnerBookings } from '@platform/contracts';
+import type {
+  Booking,
+  BookingDetail,
+  BookingPayment,
+  BookingSummaries,
+  OwnerBookings,
+} from '@platform/contracts';
 import { call, messageIn } from './listings';
 import type { FetchLike, ListingOutcome } from './listings';
 
@@ -114,5 +124,79 @@ export function fetchBookingsOnMyListings(
     clientIp,
     fetchImpl,
     parseOwnerBookings,
+  );
+}
+
+/**
+ * One booking, as the party looking at it reads it (slice 5.2d).
+ *
+ * **The first caller `GET /bookings/:bookingId` has ever had.** The route
+ * shipped in 4.5a and its docblock carried a deletion deadline — *if Phase 5
+ * closes without a caller, delete it* — because nothing rendered a single
+ * booking; both dashboards read the collection routes. The pay page is what it
+ * was kept for.
+ *
+ * **`not-found` covers "not yours" as well as "no such booking"**, and the API
+ * refuses to say which. Both readings mean the same thing to the page, and
+ * distinguishing them would confirm a booking id to somebody guessing.
+ */
+export function fetchBooking(
+  apiBaseUrl: string,
+  token: string | null,
+  bookingId: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<ListingOutcome<BookingDetail>> {
+  return call(
+    new URL(bookingPath(bookingId), apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseBookingDetail,
+  );
+}
+
+/**
+ * What paying can answer (slice 5.2d).
+ *
+ * **`refused` is the 422 and it carries the API's own words**, exactly as
+ * `BookingRequestOutcome` does: 5.2c writes those sentences for the renter
+ * reading them — *"That booking is already paid for. Nothing has been charged
+ * again."* — and anything this layer added would be talking over the one place
+ * that knows what happened.
+ */
+export type BookingPaymentOutcome =
+  | ListingOutcome<BookingPayment>
+  | { readonly kind: 'refused'; readonly reason: string };
+
+/**
+ * Pay for a booking the owner accepted (§8.7).
+ *
+ * **No body**, which is `bookingPayPath`'s decision restated where the request is
+ * actually sent: what is owed was fixed when the booking was made (§8.2) and is
+ * on its row, and a client that could send an amount could send the wrong one.
+ *
+ * **Nothing here derives an idempotency key.** Payments computes its own from the
+ * booking and the count of failed attempts (5.2c), so a double press charges
+ * once without this layer — or a browser — having to be trusted with it.
+ */
+export function payForBooking(
+  apiBaseUrl: string,
+  token: string | null,
+  bookingId: string,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  clientIp: string | null = null,
+): Promise<BookingPaymentOutcome> {
+  return call(
+    new URL(bookingPayPath(bookingId), apiBaseUrl).toString(),
+    token,
+    clientIp,
+    fetchImpl,
+    parseBookingPayment,
+    { method: 'POST' },
+    (raw) => ({
+      kind: 'refused' as const,
+      reason: messageIn(raw) ?? 'that payment was not accepted',
+    }),
   );
 }
