@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scheduleIsRegistered } from './schedule-health.js';
+import { allSchedulesRegistered, scheduleIsRegistered } from './schedule-health.js';
 
 /**
  * The fourth health question (slice H6).
@@ -47,5 +47,54 @@ describe('scheduleIsRegistered', () => {
     // `expire-requests-every-15-minutes-v2` is a different schedule, and treating it
     // as ours would hide precisely the rename this check is for.
     expect(scheduleIsRegistered([{ key: `${OURS}-v2` }], OURS)).toBe(false);
+  });
+});
+
+describe('allSchedulesRegistered (slice 5.4b)', () => {
+  const held = [
+    { key: 'expire-requests-every-15-minutes' },
+    { key: 'reconcile-payments-every-30-minutes' },
+  ];
+
+  it('is true when every schedule we registered is present', () => {
+    expect(
+      allSchedulesRegistered(held, [
+        'expire-requests-every-15-minutes',
+        'reconcile-payments-every-30-minutes',
+      ]),
+    ).toBe(true);
+  });
+
+  /**
+   * **The failure a second schedule introduced.** A health check that asked about
+   * only the first key would report healthy while the reconciliation sweep silently
+   * never ran — which is the exact failure `scheduleIsRegistered` exists to catch,
+   * one schedule along.
+   */
+  it('is false when one of two is missing', () => {
+    expect(
+      allSchedulesRegistered(
+        [{ key: 'expire-requests-every-15-minutes' }],
+        ['expire-requests-every-15-minutes', 'reconcile-payments-every-30-minutes'],
+      ),
+    ).toBe(false);
+  });
+
+  it('is false when Redis holds none of them', () => {
+    expect(allSchedulesRegistered([], ['expire-requests-every-15-minutes'])).toBe(
+      false,
+    );
+  });
+
+  it('ignores schedules we did not register', () => {
+    // A stale schedule left behind by a renamed id must not satisfy the check —
+    // `queues.ts` warns that a rename creates a second schedule rather than
+    // renaming the first.
+    expect(
+      allSchedulesRegistered(
+        [...held, { key: 'something-else' }],
+        ['expire-requests-every-15-minutes'],
+      ),
+    ).toBe(true);
   });
 });

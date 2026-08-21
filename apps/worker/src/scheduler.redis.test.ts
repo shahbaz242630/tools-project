@@ -2,9 +2,13 @@ import { createRecordingLogger } from '@platform/observability/testing';
 import { Queue } from 'bullmq';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  EXPIRE_REQUESTS_EVERY_MS,
   EXPIRE_REQUESTS_JOB,
   EXPIRE_REQUESTS_SCHEDULER,
   MAINTENANCE_QUEUE,
+  RECONCILE_PAYMENTS_EVERY_MS,
+  RECONCILE_PAYMENTS_JOB,
+  RECONCILE_PAYMENTS_SCHEDULER,
 } from './queues.js';
 import { createScheduler } from './scheduler.js';
 import type { Scheduler } from './scheduler.js';
@@ -48,15 +52,22 @@ function inspector(): Queue {
   return queue;
 }
 
-describe('the expiry schedule', () => {
-  it('registers one scheduler, named the way the constant says', async () => {
+describe('the maintenance schedules', () => {
+  it('registers every scheduler, named the way the constants say', async () => {
+    /*
+     * **Both, in one `register()` call** (slice 5.4b). A worker that came up with
+     * one of two schedules would look healthy and silently never reconcile, which
+     * is why `register` does all of them rather than leaving a caller to remember.
+     */
     const logger = createRecordingLogger();
     scheduler = createScheduler({ connection, logger: logger.logger, prefix });
 
     await scheduler.register();
 
     const registered = await inspector().getJobSchedulers();
-    expect(registered.map((entry) => entry.key)).toEqual([EXPIRE_REQUESTS_SCHEDULER]);
+    expect(registered.map((entry) => entry.key).sort()).toEqual(
+      [EXPIRE_REQUESTS_SCHEDULER, RECONCILE_PAYMENTS_SCHEDULER].sort(),
+    );
   });
 
   it('mints a job under the name the processor routes on', async () => {
@@ -99,8 +110,10 @@ describe('the expiry schedule', () => {
     await scheduler.register();
     await scheduler.register();
 
+    // Two schedules from 5.4b, and still two after three registrations — the
+    // property is "no duplicates", not "one".
     const registered = await inspector().getJobSchedulers();
-    expect(registered).toHaveLength(1);
+    expect(registered).toHaveLength(2);
   });
 
   it('says what it registered, including the interval', async () => {
@@ -112,11 +125,21 @@ describe('the expiry schedule', () => {
     await scheduler.register();
 
     const [line] = logger.at('info');
-    expect(line?.message).toBe('registered the expiry schedule');
+    expect(line?.message).toBe('registered the maintenance schedules');
     expect(line?.fields).toMatchObject({
       queue: MAINTENANCE_QUEUE,
-      scheduler: EXPIRE_REQUESTS_SCHEDULER,
-      job: EXPIRE_REQUESTS_JOB,
+      schedules: [
+        {
+          scheduler: EXPIRE_REQUESTS_SCHEDULER,
+          job: EXPIRE_REQUESTS_JOB,
+          everyMs: EXPIRE_REQUESTS_EVERY_MS,
+        },
+        {
+          scheduler: RECONCILE_PAYMENTS_SCHEDULER,
+          job: RECONCILE_PAYMENTS_JOB,
+          everyMs: RECONCILE_PAYMENTS_EVERY_MS,
+        },
+      ],
     });
   });
 
@@ -132,6 +155,6 @@ describe('the expiry schedule', () => {
     await first.close();
 
     const registered = await inspector().getJobSchedulers();
-    expect(registered).toHaveLength(1);
+    expect(registered).toHaveLength(2);
   });
 });

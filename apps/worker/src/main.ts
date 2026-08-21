@@ -13,14 +13,17 @@ import {
 import { createShutdown } from '@platform/runtime';
 import { hasNothingToDrain } from './drain.js';
 import { createExpireRequestsHandler } from './expire-requests.handler.js';
+import { createReconcilePaymentsHandler } from './reconcile-payments.handler.js';
 import { createHeartbeatHandler } from './heartbeat.handler.js';
 import { createMetricsServer } from './metrics-server.js';
 import {
   EXPIRE_REQUESTS_JOB,
   EXPIRE_REQUESTS_SCHEDULER,
   HEARTBEAT_JOB,
+  RECONCILE_PAYMENTS_JOB,
+  RECONCILE_PAYMENTS_SCHEDULER,
 } from './queues.js';
-import { scheduleIsRegistered } from './schedule-health.js';
+import { allSchedulesRegistered } from './schedule-health.js';
 import { createScheduler } from './scheduler.js';
 import { createMaintenanceWorker } from './worker.js';
 
@@ -161,6 +164,15 @@ function main(): void {
         secret: env.INTERNAL_TRIGGER_SECRET,
         logger,
       }),
+      /*
+       * The reconciliation sweep (slice 5.4b). Same shape, same secret, same
+       * reasons — see `internal-trigger.ts`, which both handlers are built on.
+       */
+      [RECONCILE_PAYMENTS_JOB]: createReconcilePaymentsHandler({
+        apiBaseUrl: workerEnv.API_INTERNAL_URL,
+        secret: env.INTERNAL_TRIGGER_SECRET,
+        logger,
+      }),
     },
     // Every job's duration and outcome, recorded in `processor.ts` — one place, so a
     // job type added later is measured without its author remembering to (slice H6).
@@ -218,7 +230,7 @@ function main(): void {
 
   const register = (): void => {
     void scheduler.register().catch((error: unknown) => {
-      logger.error('could not register the expiry schedule; will retry', {
+      logger.error('could not register the maintenance schedules; will retry', {
         retryInMs: REGISTER_RETRY_MS,
         error,
       });
@@ -306,10 +318,13 @@ function main(): void {
          * reconnection is not an unhealthy worker, and four consecutive ones are.
          */
         if (
-          !scheduleIsRegistered(await scheduler.registered(), EXPIRE_REQUESTS_SCHEDULER)
+          !allSchedulesRegistered(await scheduler.registered(), [
+            EXPIRE_REQUESTS_SCHEDULER,
+            RECONCILE_PAYMENTS_SCHEDULER,
+          ])
         ) {
           logger.warn('health signal not refreshed', {
-            reason: 'the expiry schedule is not registered',
+            reason: 'a maintenance schedule is not registered',
             scheduler: EXPIRE_REQUESTS_SCHEDULER,
           });
           return;
