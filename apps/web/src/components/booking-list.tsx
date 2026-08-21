@@ -35,7 +35,7 @@ import type {
   OwnerBookingSummary,
 } from '@platform/contracts';
 import { BookingStateLabel, bookingStateWording } from './booking-state';
-import { hirePath, ownerListingPath } from '../lib/page-paths';
+import { bookingDetailPath, hirePath, ownerListingPath } from '../lib/page-paths';
 import type { ListingOutcome } from '../lib/listings';
 import styles from './booking-list.module.css';
 
@@ -233,6 +233,24 @@ function RenterRow({ booking }: { readonly booking: BookingSummary }) {
       {wording.meaning === null ? null : (
         <p className={styles.meaning}>{wording.meaning}</p>
       )}
+
+      {/*
+        **Where the hire is opened, and from 5.2d where it is paid for.**
+
+        **On every row rather than only a payable one**, which is the opposite of
+        the deadline above and deliberate for the opposite reason. That line is a
+        clock and is noise once it has stopped; this is the way in to the booking
+        itself — the breakdown, the history — and a link that appears only
+        sometimes teaches somebody the row is not openable the rest of the time.
+
+        **The words do not promise paying**, because for most states it is not
+        what happens next, and this row does not know: `payability` is on the
+        detail projection and not on this one, on purpose. The page says whether
+        there is anything to pay, and it asks the API rather than guessing.
+      */}
+      <p className={styles.open}>
+        <Link href={bookingDetailPath(booking.id)}>See this booking</Link>
+      </p>
     </li>
   );
 }

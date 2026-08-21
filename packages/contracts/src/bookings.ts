@@ -241,6 +241,60 @@ export function parseBooking(raw: unknown): Booking {
 }
 
 /**
+ * Whether this booking can be paid for right now, and if not, why (slice 5.2d).
+ *
+ * **It exists so a page never has to guess.** CLAUDE.md forbids dead controls:
+ * every button either calls real behaviour or is visibly unavailable. The only
+ * way for a renter's page to know which one a pay button is would otherwise be to
+ * read `booking.payment`'s flag state — and the sole route exposing that is
+ * admin-gated behind ADR 0021's second factor. So the booking answers instead,
+ * and the browser never learns that a flag exists.
+ *
+ * **A discriminated union rather than a boolean with an optional sentence**,
+ * which is the deliberate difference from `bookingPaymentSchema` below. That one
+ * has four statuses and documents which fields accompany which; this has two
+ * cases, and the invalid combination — *unavailable, with no explanation* — is
+ * precisely the defect this field was added to prevent. Making it unrepresentable
+ * costs one line and removes the possibility.
+ *
+ * **The sentence is the same one the route refuses with.** Both come from
+ * `payability.ts` in the API, because a page that explained the refusal
+ * differently from the 422 would be telling a renter two stories about one
+ * booking.
+ */
+export const bookingPayabilitySchema = z.discriminatedUnion('payable', [
+  z.strictObject({ payable: z.literal(true) }),
+  z.strictObject({ payable: z.literal(false), reason: z.string().min(1) }),
+]);
+
+export type BookingPayability = z.infer<typeof bookingPayabilitySchema>;
+
+/**
+ * One booking as the party looking at it reads it, with whether they may pay
+ * (slice 5.2d).
+ *
+ * **The detail projection, and the only one carrying payability.** `bookingSchema`
+ * is also what create, accept and decline return; extending *it* would put a
+ * feature-flag read and a suspension check on three routes for an answer none of
+ * them uses. Confining it here is the two-projection rule `audit/` already
+ * follows.
+ *
+ * **Built from `bookingSchema.shape` rather than restating fourteen fields**, so
+ * a field added to a booking cannot be forgotten here — the alternative is two
+ * lists that drift, and the drift is silent because both parse.
+ */
+export const bookingDetailSchema = z.strictObject({
+  ...bookingSchema.shape,
+  payability: bookingPayabilitySchema,
+});
+
+export type BookingDetail = z.infer<typeof bookingDetailSchema>;
+
+export function parseBookingDetail(raw: unknown): BookingDetail {
+  return parseWith(bookingDetailSchema, 'The booking', raw);
+}
+
+/**
  * What the payer must do next, when a card payment cannot finish in one step
  * (slice 5.2c).
  *

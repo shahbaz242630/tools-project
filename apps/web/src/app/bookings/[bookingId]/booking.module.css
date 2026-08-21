@@ -1,0 +1,109 @@
+/*
+ * One booking, and where it is paid for (slice 5.2d).
+ *
+ * **The money block borrows `request-panel.module.css`'s shape deliberately.**
+ * A renter sees that breakdown when they are quoted and this one when they pay,
+ * and the two being laid out the same is how somebody recognises the figure they
+ * already agreed to rather than reading a new one.
+ *
+ * The pay control's own styling is `booking-payment.module.css` — it lives with
+ * the component so it travels if the panel moves.
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`.
+ */
+
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 32px var(--page-gutter) 64px;
+}
+
+.back {
+  margin: 0 0 18px;
+  font-size: var(--text-helper);
+}
+
+/*
+ * The item and its state on one line, as the lists do — *what* and *where it
+ * stands* are read together. They stack narrow rather than shrinking the title.
+ */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+}
+
+.category {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+.meaning {
+  margin: 14px 0 0;
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.period {
+  margin: 20px 0 0;
+  font-size: var(--text-body);
+}
+
+.days {
+  color: var(--ink-muted);
+}
+
+.lines {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-body);
+}
+
+.lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-row);
+}
+
+/* The total is the figure being committed to, so it is the one that is drawn. */
+.totalLine {
+  border-bottom: none;
+  border-top: 1px solid var(--line-hairline);
+  margin-top: 2px;
+  padding-top: 12px;
+}
+
+.totalNote {
+  margin: 10px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}
+
+.problem {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-control);
+  background: var(--danger-tint);
+  color: var(--danger);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+.footnote {
+  margin: 28px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}

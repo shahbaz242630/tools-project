@@ -4,11 +4,12 @@ import Link from 'next/link';
 import { useActionState, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { Money, Time } from '@platform/core';
-import type { QuoteLineItem, RentalQuote } from '@platform/contracts';
+import type { RentalQuote } from '@platform/contracts';
 import { requestPanelAction } from '../app/hire/[id]/actions';
 import { INITIAL_REQUEST_STATE } from '../app/hire/[id]/request-state';
 import type { RequestPanelState } from '../app/hire/[id]/request-state';
 import { hirePath } from '../lib/page-paths';
+import { describeLine } from '../lib/line-items';
 import styles from './request-panel.module.css';
 
 /**
@@ -356,15 +357,6 @@ export function SignInToBook({ listingId }: { readonly listingId: string }) {
       </p>
     </div>
   );
-}
-
-/** "3 days at £18.00", or "1 week" where a count of one needs no rate. */
-function describeLine(item: QuoteLineItem): string {
-  const counted = `${String(item.count)} ${item.unit}${item.count === 1 ? '' : 's'}`;
-
-  return item.count === 1
-    ? counted
-    : `${counted} at ${Money.format(item.unitPrice)} each`;
 }
 
 /**

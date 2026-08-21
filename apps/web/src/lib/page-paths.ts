@@ -40,6 +40,20 @@ export const BROWSE_PATH = '/browse';
 export const BOOKINGS_PAGE_PATH = '/bookings';
 
 /**
+ * One booking, as either party reads it — where a renter pays (slice 5.2d).
+ *
+ * **Not `bookingPath` from the contracts package**, and this is the sharpest
+ * instance of the collision this module exists about: the two functions take the
+ * same argument, return the identical string today, and mean different things.
+ * One addresses `GET /bookings/:bookingId` on the API; this one renders a page.
+ * Importing the wrong one compiles, type-checks, and produces a link to a JSON
+ * document — which is exactly what happened once with `publicListingPath`.
+ */
+export function bookingDetailPath(id: string): string {
+  return `${BOOKINGS_PAGE_PATH}/${encodeURIComponent(id)}`;
+}
+
+/**
  * One listing, as a stranger reads it.
  *
  * **Not `publicListingPath` from the contracts package**, which is the API route

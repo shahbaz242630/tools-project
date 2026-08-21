@@ -34,6 +34,7 @@ import {
   listingQuotesPath,
   listingRequestsPath,
   parseBooking,
+  parseBookingDetail,
   parseBookingPayment,
   parseBookingSummaries,
   parseExpirySweep,
@@ -584,7 +585,7 @@ describe('reading a booking back', () => {
     expect(asRenter.statusCode).toBe(200);
     // §8.6 gives the owner the decision, so they must be able to read it.
     expect(asOwner.statusCode).toBe(200);
-    expect(parseBooking(asOwner.json()).id).toBe(made.id);
+    expect(parseBookingDetail(asOwner.json()).id).toBe(made.id);
   });
 
   it('answers 404 to anybody else', async () => {
@@ -598,6 +599,95 @@ describe('reading a booking back', () => {
     });
 
     expect(response.statusCode).toBe(404);
+  });
+
+  /**
+   * **Whether the reader may pay, through the real stack (slice 5.2d).**
+   *
+   * The matrix is swept against the pure function in `payability.test.ts` and the
+   * wiring is proved in the service test. What only *this* file can show is that
+   * the field survives the projection — `bookingDetailSchema` is a `strictObject`,
+   * so `parseBookingDetail` here is what would fail if the route answered the
+   * collection shape or grew a stray field.
+   */
+  it('tells the renter they may pay, in the shape the contract describes', async () => {
+    const quoteId = await quoteFor('ada-token');
+    const made = parseBooking((await requestBooking('ada-token', quoteId)).json());
+    await decide(bookingAcceptPath(made.id), 'bob-token');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: bookingPath(made.id),
+      headers: auth('ada-token'),
+    });
+
+    expect(parseBookingDetail(response.json()).payability).toEqual({ payable: true });
+  });
+
+  /**
+   * **The ordinary answer in production today**, because `booking.payment` is off
+   * in every environment until 5.2e. A renter's page renders this, so it is
+   * asserted through the stack rather than assumed from the unit tests.
+   */
+  it('refuses when payment is switched off, and says nothing was charged', async () => {
+    const quoteId = await quoteFor('ada-token');
+    const made = parseBooking((await requestBooking('ada-token', quoteId)).json());
+    await decide(bookingAcceptPath(made.id), 'bob-token');
+    booking.paymentsEnabled.value = false;
+
+    const response = await app.inject({
+      method: 'GET',
+      url: bookingPath(made.id),
+      headers: auth('ada-token'),
+    });
+
+    const payability = parseBookingDetail(response.json()).payability;
+    expect(payability.payable).toBe(false);
+    expect(payability.payable === false && payability.reason).toMatch(
+      /not switched on yet/,
+    );
+  });
+
+  it('tells the owner the renter pays, on the booking they can read', async () => {
+    const quoteId = await quoteFor('ada-token');
+    const made = parseBooking((await requestBooking('ada-token', quoteId)).json());
+    await decide(bookingAcceptPath(made.id), 'bob-token');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: bookingPath(made.id),
+      headers: auth('bob-token'),
+    });
+
+    const payability = parseBookingDetail(response.json()).payability;
+    expect(payability.payable).toBe(false);
+    expect(payability.payable === false && payability.reason).toMatch(/renter pays/);
+  });
+
+  /**
+   * **The dead control this slice exists to remove, proved end to end.** The read
+   * is `@AllowsSuspended()` and the pay route is not, so without the suspension
+   * check the page would draw a live button that the guard answers 403 to. Only
+   * this file can show it, because the guard is what resolves suspension.
+   */
+  it('does not offer a suspended renter a payment the guard would refuse', async () => {
+    const quoteId = await quoteFor('ada-token');
+    const made = parseBooking((await requestBooking('ada-token', quoteId)).json());
+    await decide(bookingAcceptPath(made.id), 'bob-token');
+    identity.users.suspend(adaId, 'admin', 'under review');
+
+    const read = await app.inject({
+      method: 'GET',
+      url: bookingPath(made.id),
+      headers: auth('ada-token'),
+    });
+    const paying = await decide(bookingPayPath(made.id), 'ada-token');
+
+    const payability = parseBookingDetail(read.json()).payability;
+    expect(read.statusCode).toBe(200);
+    expect(payability.payable).toBe(false);
+    // The page says no, and the route agrees. Those two must never disagree.
+    expect(paying.statusCode).toBe(403);
   });
 });
 
@@ -849,7 +939,7 @@ describe('the internal expiry trigger (slice 4.7a, ADR 0048)', () => {
       url: bookingPath(made.id),
       headers: auth('ada-token'),
     });
-    expect(parseBooking(after.json()).state).toBe('EXPIRED');
+    expect(parseBookingDetail(after.json()).state).toBe('EXPIRED');
   });
 
   it('returns only ids, never a renter or an item', async () => {
@@ -890,7 +980,7 @@ describe('the internal expiry trigger (slice 4.7a, ADR 0048)', () => {
       url: bookingPath(made.id),
       headers: auth('ada-token'),
     });
-    expect(parseBooking(after.json()).state).toBe('ACCEPTED');
+    expect(parseBookingDetail(after.json()).state).toBe('ACCEPTED');
   });
 });
 

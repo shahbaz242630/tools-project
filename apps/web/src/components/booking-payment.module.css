@@ -1,0 +1,100 @@
+/*
+ * The pay panel (slice 5.2d).
+ *
+ * **Layout only for the button.** `globals.css` styles `<button>` as primary at
+ * zero specificity precisely so the common case needs no class, and `.pay`
+ * deliberately sets no colour — the disabled state, the hover and the pill are
+ * all the global's, including `:where(button:disabled)`, which is what renders
+ * the pressed-and-waiting state without this file knowing about it.
+ *
+ * The sentence variants borrow the vocabulary already established in
+ * `booking-list.module.css` and `owner-requests.module.css` rather than inventing
+ * a third palette for the same three ideas: neutral fact, good news, problem.
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`.
+ */
+
+.panel {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.heading {
+  margin: 0 0 12px;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.form {
+  margin: 0;
+}
+
+/*
+ * Full width on a narrow screen, natural width above it. The moment somebody
+ * commits money is the wrong one for a target they have to aim at.
+ */
+.pay {
+  width: 100%;
+}
+
+@media (width >= 744px) {
+  .pay {
+    width: auto;
+    min-width: 220px;
+  }
+}
+
+.note {
+  margin: 10px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-helper);
+}
+
+/*
+ * Why there is no button. Deliberately quiet: for most of the four reasons this
+ * is an ordinary fact about a booking rather than something going wrong.
+ */
+.unavailable {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+.paid {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--success-tint);
+  border-radius: var(--radius-control);
+  background: var(--success-tint);
+  color: var(--success-ink);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+.pending {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-tint);
+  border-radius: var(--radius-control);
+  background: var(--accent-wash);
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
+
+.problem {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-control);
+  background: var(--danger-tint);
+  color: var(--danger);
+  font-size: var(--text-body);
+  line-height: 1.55;
+}
