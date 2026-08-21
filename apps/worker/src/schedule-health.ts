@@ -51,3 +51,22 @@ export function scheduleIsRegistered(
 ): boolean {
   return schedules.some((schedule) => schedule.key === expectedKey);
 }
+
+/**
+ * Are **all** the schedules we registered present? (slice 5.4b)
+ *
+ * **Added when a second schedule arrived, and the plural is the point.** The health
+ * check previously asked about one key by name. With two schedules, asking about
+ * only the first would leave the worker reporting healthy while the reconciliation
+ * sweep silently never ran — which is the exact failure `scheduleIsRegistered` was
+ * written to catch, one schedule along.
+ *
+ * **Every key, not any key.** A worker holding one of two schedules is not half
+ * healthy; it is a worker that has stopped doing something it is supposed to do.
+ */
+export function allSchedulesRegistered(
+  schedules: readonly RegisteredSchedule[],
+  expectedKeys: readonly string[],
+): boolean {
+  return expectedKeys.every((key) => scheduleIsRegistered(schedules, key));
+}

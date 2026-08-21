@@ -7,6 +7,9 @@ import {
   EXPIRE_REQUESTS_JOB,
   EXPIRE_REQUESTS_SCHEDULER,
   MAINTENANCE_QUEUE,
+  RECONCILE_PAYMENTS_EVERY_MS,
+  RECONCILE_PAYMENTS_JOB,
+  RECONCILE_PAYMENTS_SCHEDULER,
 } from './queues.js';
 
 /**
@@ -50,7 +53,14 @@ export interface SchedulerOptions {
 }
 
 export interface Scheduler {
-  /** Register the repeatable sweep, or update it if the interval changed. */
+  /**
+   * Register every repeatable sweep, or update one whose interval changed.
+   *
+   * **All of them in one call, and it is not a loop over a list by accident.** Each
+   * schedule is its own `upsertJobScheduler` against its own stable id — see
+   * `queues.ts` — and registering them together means a caller cannot bring the
+   * worker up having remembered one and forgotten the other.
+   */
   register(): Promise<void>;
   /**
    * The schedules Redis currently holds (slice H6).
@@ -131,11 +141,39 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         },
       );
 
-      logger.info('registered the expiry schedule', {
+      /*
+       * **The second schedule** (slice 5.4b). A separate `upsertJobScheduler` against
+       * its own id rather than a second entry in some list, because the two are
+       * genuinely different: different interval, different job name, different cost
+       * per tick. The only thing they share is this queue.
+       *
+       * Everything the block above says about `immediately`, about restarts keeping
+       * the next-run time, and about the envelope being minted once applies here
+       * unchanged and is not repeated.
+       */
+      await queue.upsertJobScheduler(
+        RECONCILE_PAYMENTS_SCHEDULER,
+        { every: RECONCILE_PAYMENTS_EVERY_MS },
+        {
+          name: RECONCILE_PAYMENTS_JOB,
+          data: envelope<Record<string, never>>({}),
+        },
+      );
+
+      logger.info('registered the maintenance schedules', {
         queue: MAINTENANCE_QUEUE,
-        scheduler: EXPIRE_REQUESTS_SCHEDULER,
-        job: EXPIRE_REQUESTS_JOB,
-        everyMs: EXPIRE_REQUESTS_EVERY_MS,
+        schedules: [
+          {
+            scheduler: EXPIRE_REQUESTS_SCHEDULER,
+            job: EXPIRE_REQUESTS_JOB,
+            everyMs: EXPIRE_REQUESTS_EVERY_MS,
+          },
+          {
+            scheduler: RECONCILE_PAYMENTS_SCHEDULER,
+            job: RECONCILE_PAYMENTS_JOB,
+            everyMs: RECONCILE_PAYMENTS_EVERY_MS,
+          },
+        ],
       });
     },
 
