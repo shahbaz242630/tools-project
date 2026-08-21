@@ -26,6 +26,7 @@ import {
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { TEST_INTERNAL_TRIGGER_SECRET, createBookingFakes } from './testing/fakes.js';
+import { paymentsModuleFakes } from '../payments/testing/fakes.js';
 
 /**
  * The owner's calendar through the real application: real routing, real guard,
@@ -92,6 +93,11 @@ beforeEach(async () => {
         quotes: booking.quotes,
         bookings: booking.bookings,
         requestExpiry: booking.requestExpiry,
+        // Payments' slice of the options (slice 5.4a). These tests care about
+        // neither payments nor reconciliation; the sweep is here because
+        // `AppModuleOptions` requires every dependency, which is what stops a
+        // boot site quietly forgetting one.
+        ...paymentsModuleFakes(),
         internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
       }),
     ],

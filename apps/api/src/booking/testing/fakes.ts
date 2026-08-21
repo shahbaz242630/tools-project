@@ -38,6 +38,8 @@ import type {
   QuoteStore,
 } from '../quote-store.js';
 import { createRecordingLogger } from '@platform/observability/testing';
+import { paymentsModuleFakes } from '../../payments/testing/fakes.js';
+import type { ReconciliationService } from '../../payments/reconciliation.service.js';
 import { AvailabilityService } from '../availability.service.js';
 import { RequestExpiryService } from '../request-expiry.service.js';
 import { QuotesService } from '../quotes.service.js';
@@ -962,6 +964,7 @@ export function bookingModuleFakes(): {
   readonly quotes: QuotesService;
   readonly bookings: BookingsService;
   readonly requestExpiry: RequestExpiryService;
+  readonly reconciliation: ReconciliationService;
   readonly internalTriggerSecret: string;
 } {
   const fakes = createBookingFakes();
@@ -971,6 +974,18 @@ export function bookingModuleFakes(): {
     quotes: fakes.quotes,
     bookings: fakes.bookings,
     requestExpiry: fakes.requestExpiry,
+    /*
+     * **Payments', not Booking's, and spread in from that module's own helper**
+     * (slice 5.4a). The alternative was constructing it here, which would have put
+     * a ledger and a payment provider inside a file about bookings.
+     *
+     * **This helper has now outgrown its name**, which is worth saying rather than
+     * hiding: it is *the slice of `AppModuleOptions` a test with no interest in any
+     * of it still has to supply*, and it already carried `internalTriggerSecret` on
+     * the same reasoning. If a third module needs one, rename it rather than adding
+     * a third exception.
+     */
+    ...paymentsModuleFakes(),
     /*
      * **Not a Booking service, and it still belongs here** (slice 4.7a). It is
      * part of this module's slice of `AppModuleOptions` — the guard that reads it

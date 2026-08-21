@@ -56,4 +56,35 @@ export interface PaymentIntentStore {
    * picking is the caller's business rather than the store's.
    */
   findForBooking(bookingId: string): Promise<readonly PaymentIntentRecord[]>;
+
+  /**
+   * Attempts that have not settled and have not changed for a while (slice 5.4a).
+   *
+   * **The query the reconciliation sweep is built on, and it is the store's
+   * because only the store can express it.** A service filtering
+   * `findForBooking` would have to know every booking first, which is the
+   * filter-after-paginate bug ADR 0049 names in a different costume.
+   *
+   * **Stale is measured from `updatedAt`, not `createdAt`.** An attempt that was
+   * written an hour ago and answered a minute ago is not stuck; one written a
+   * minute ago has not had time to be. The question is *how long since anything
+   * happened*, and only `updatedAt` answers it.
+   *
+   * **Terminal attempts are excluded by the query rather than by the caller**,
+   * because `succeeded` and `failed` are the overwhelming majority of the table
+   * and pulling them out to discard them would make the sweep's cost grow with
+   * every payment ever taken.
+   *
+   * **Attempts with no provider reference are returned, not filtered out.** They
+   * cannot be reconciled — there is nothing to read — and the sweep reports them
+   * as `unreconcilable` precisely so they are visible. Hiding them in the query
+   * would make the one alarming case the one nobody ever sees.
+   *
+   * Oldest first: the longest-stuck attempt is the one most worth resolving, and
+   * it makes the batch bound deterministic rather than arbitrary.
+   */
+  findUnsettled(
+    notUpdatedSince: Date,
+    limit: number,
+  ): Promise<readonly PaymentIntentRecord[]>;
 }

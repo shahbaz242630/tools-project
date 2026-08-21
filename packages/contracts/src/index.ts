@@ -14,6 +14,7 @@ export * from './item-weight.js';
 export * from './listings.js';
 export * from './money.js';
 export * from './parse.js';
+export * from './payments.js';
 export * from './pricing.js';
 export * from './publication.js';
 export * from './quotes.js';

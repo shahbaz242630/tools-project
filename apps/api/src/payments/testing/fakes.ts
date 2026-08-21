@@ -1,5 +1,9 @@
 import { Time } from '@platform/core';
 import type { MoneyValue } from '@platform/core';
+import { createRecordingLogger } from '@platform/observability/testing';
+import { LedgerService } from '../ledger.service.js';
+import { PaymentsService } from '../payments.service.js';
+import { ReconciliationService } from '../reconciliation.service.js';
 import { LedgerError, accountIdentityOf, balanceOf } from '../ledger.js';
 import type {
   LedgerAccountSpec,
@@ -7,7 +11,7 @@ import type {
   PostedLedgerTransaction,
 } from '../ledger.js';
 import type { LedgerAccountRecord, LedgerStore } from '../ledger-store.js';
-import { PaymentIntentError } from '../payment-intent.js';
+import { PaymentIntentError, TERMINAL_STATUSES } from '../payment-intent.js';
 import type {
   NewPaymentIntent,
   PaymentIntentOutcome,
@@ -138,6 +142,20 @@ export class FakePaymentIntentStore implements PaymentIntentStore {
   private readonly rows: PaymentIntentRecord[] = [];
   private sequence = 0;
 
+  /**
+   * Put a row in as it already is (slice 5.4a).
+   *
+   * **The sweep's tests need attempts that are already stale and already in a
+   * particular status**, which `begin` cannot produce — it stamps `updatedAt` to
+   * now and always starts at `initiated`. The pattern `InMemoryBookingStore`
+   * already uses for `givenOwner`: a seam for arranging a world, not a second way
+   * for production code to write.
+   */
+  given(record: PaymentIntentRecord): this {
+    this.rows.push(record);
+    return this;
+  }
+
   begin(intent: NewPaymentIntent): Promise<PaymentIntentRecord> {
     const existing = this.rows.find((row) => row.attemptKey === intent.attemptKey);
     if (existing !== undefined) return Promise.resolve(existing);
@@ -218,6 +236,28 @@ export class FakePaymentIntentStore implements PaymentIntentStore {
       [...this.rows].reverse().filter((row) => row.bookingId === bookingId),
     );
   }
+
+  /**
+   * Stale, unsettled attempts, oldest first (slice 5.4a).
+   *
+   * **`notIn` the terminal statuses, matching the Prisma adapter clause for
+   * clause.** A fake that filtered by the *live* statuses would keep passing after
+   * §8.7 adds a status the real query would newly return — and the service tests
+   * that believe this fake are the ones asserting the sweep looks at everything it
+   * should.
+   */
+  findUnsettled(
+    notUpdatedSince: Date,
+    limit: number,
+  ): Promise<readonly PaymentIntentRecord[]> {
+    const stale = this.rows
+      .filter((row) => !TERMINAL_STATUSES.includes(row.status))
+      .filter((row) => row.updatedAt.getTime() < notUpdatedSince.getTime())
+      .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+      .slice(0, limit);
+
+    return Promise.resolve(stale);
+  }
 }
 
 /**
@@ -264,4 +304,38 @@ export class FakePaymentProvider implements PaymentProvider {
     this.reads.push(providerReference);
     return Promise.resolve({ ...this.outcome, providerReference });
   }
+}
+
+/**
+ * The Payments module's slice of `AppModuleOptions` (slice 5.4a).
+ *
+ * **The counterpart to `bookingModuleFakes`, and it exists for the same reason**:
+ * `AppModuleOptions` makes every dependency required — deliberately, because an
+ * optional one is what ten boot sites forget — so a service added here must not
+ * mean editing every integration test that has no interest in payments.
+ *
+ * **Real services over in-memory storage**, so the routing, the internal-trigger
+ * guard and the sweep's own logic all still run. The store starts empty, which is
+ * also production's state today: nothing can open an attempt while
+ * `booking.payment` is off, so the sweep correctly finds nothing.
+ */
+export function paymentsModuleFakes(): {
+  readonly reconciliation: ReconciliationService;
+} {
+  const intents = new FakePaymentIntentStore();
+
+  const payments = new PaymentsService(
+    intents,
+    new FakePaymentProvider(),
+    new LedgerService(new FakeLedgerStore()),
+    { findFeePolicy: () => Promise.resolve(null) },
+  );
+
+  return {
+    reconciliation: new ReconciliationService(
+      intents,
+      payments,
+      createRecordingLogger().logger,
+    ),
+  };
 }

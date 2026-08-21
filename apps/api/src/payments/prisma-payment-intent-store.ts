@@ -1,7 +1,7 @@
 import { Money } from '@platform/core';
 import type { CurrencyCode } from '@platform/core';
 import type { PrismaClient } from '@platform/database';
-import { PaymentIntentError } from './payment-intent.js';
+import { PaymentIntentError, TERMINAL_STATUSES } from './payment-intent.js';
 import type {
   NewPaymentIntent,
   PaymentIntentOutcome,
@@ -154,6 +154,38 @@ export class PrismaPaymentIntentStore implements PaymentIntentStore {
     const rows = await this.prisma.paymentIntent.findMany({
       where: { bookingId },
       orderBy: { createdAt: 'desc' },
+    });
+    return rows.map(toRecord);
+  }
+
+  /**
+   * Stale, unsettled attempts, oldest first (slice 5.4a).
+   *
+   * **`notIn` the terminal statuses rather than `in` the live ones.** The two are
+   * equivalent today and stop being so the moment §8.7's expired-authorisation or
+   * chargeback statuses arrive — `payment_intents.status` is deliberately not a
+   * closed CHECK, precisely because it grows. Listing the live statuses here would
+   * make a new one invisible to the sweep, which is the silent half of a mistake
+   * whose loud half is a booking nobody reconciles.
+   *
+   * **`@@index([status])` carries this and no migration was added.** Non-terminal
+   * rows are a small minority of the table — every settled payment ever taken is
+   * excluded — so the index is selective and the `updatedAt` comparison falls on
+   * few rows. Worth re-measuring if the table ever grows large; the composite
+   * would be `(status, updatedAt)`, and 4.9a is the reminder to measure rather
+   * than assume which index is wanted.
+   */
+  async findUnsettled(
+    notUpdatedSince: Date,
+    limit: number,
+  ): Promise<readonly PaymentIntentRecord[]> {
+    const rows = await this.prisma.paymentIntent.findMany({
+      where: {
+        status: { notIn: [...TERMINAL_STATUSES] },
+        updatedAt: { lt: notUpdatedSince },
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: limit,
     });
     return rows.map(toRecord);
   }

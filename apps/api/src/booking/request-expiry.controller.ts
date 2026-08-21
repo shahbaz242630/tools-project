@@ -2,7 +2,7 @@ import { Controller, HttpCode, Inject, Post, UseGuards } from '@nestjs/common';
 import { EXPIRE_REQUESTS_ROUTE } from '@platform/contracts';
 import type { ExpirySweep } from '@platform/contracts';
 import { REQUEST_EXPIRY_SERVICE } from './booking.tokens.js';
-import { InternalTriggerGuard } from './internal-trigger.guard.js';
+import { InternalTriggerGuard } from '../internal-trigger/internal-trigger.guard.js';
 import type { RequestExpiryService } from './request-expiry.service.js';
 
 /**

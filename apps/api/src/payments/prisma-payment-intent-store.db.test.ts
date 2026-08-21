@@ -28,7 +28,7 @@
 import { randomUUID } from 'node:crypto';
 import { buildPostgresUrl, loadEnv } from '@platform/config';
 import { createPrismaClient } from '@platform/database';
-import { Money } from '@platform/core';
+import { Money, Time } from '@platform/core';
 import type { MoneyValue } from '@platform/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -458,5 +458,90 @@ describe('what an attempt holds hostage', () => {
     await store.begin(attempt());
 
     await expect(client.booking.delete({ where: { id: bookingId } })).rejects.toThrow();
+  });
+});
+
+/**
+ * The reconciliation query (slice 5.4a).
+ *
+ * **What only a real database can show here is the predicate itself** — that
+ * `notIn` the terminal statuses does what listing the live ones would appear to,
+ * that the `updatedAt` comparison is applied by Postgres rather than by a filter
+ * the fake happens to share, and that ordering and the batch bound survive the
+ * round trip.
+ */
+describe('finding attempts to reconcile', () => {
+  /** Move a row's `updatedAt` back, which is the one thing `begin` cannot do. */
+  const age = async (id: string, minutes: number): Promise<void> => {
+    await client.paymentIntent.update({
+      where: { id },
+      data: { updatedAt: Time.addMinutes(Time.nowUtc(), -minutes) },
+    });
+  };
+
+  const staleBefore = () => Time.addMinutes(Time.nowUtc(), -15);
+
+  it('finds an unsettled attempt that has not changed for a while', async () => {
+    const intent = await store.begin(attempt({ attemptKey: 'stale' }));
+    await age(intent.id, 60);
+
+    const found = await store.findUnsettled(staleBefore(), 10);
+
+    expect(found.map((row) => row.id)).toEqual([intent.id]);
+  });
+
+  it('ignores one that changed recently', async () => {
+    // Written seconds ago by `begin`, so it is not stale by construction.
+    await store.begin(attempt({ attemptKey: 'fresh' }));
+
+    expect(await store.findUnsettled(staleBefore(), 10)).toHaveLength(0);
+  });
+
+  /**
+   * **The reason the query says `notIn` the terminal statuses rather than `in` the
+   * live ones.** Every payment ever taken is `succeeded`; a query that pulled them
+   * back to discard them would get more expensive with every booking completed.
+   */
+  it('ignores an attempt that has already settled, however old', async () => {
+    const succeeded = await store.begin(attempt({ attemptKey: 'done' }));
+    await store.recordOutcome(succeeded.id, {
+      status: 'succeeded',
+      providerReference: 'pi_done',
+    });
+    await age(succeeded.id, 600);
+
+    expect(await store.findUnsettled(staleBefore(), 10)).toHaveLength(0);
+  });
+
+  it('returns one with no provider reference, because that is the alarming case', async () => {
+    // It cannot be reconciled — there is nothing to read — and hiding it in the
+    // query would make the one case worth alerting on the one nobody ever sees.
+    const orphan = await store.begin(attempt({ attemptKey: 'orphan' }));
+    await age(orphan.id, 120);
+
+    const found = await store.findUnsettled(staleBefore(), 10);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]?.providerReference).toBeUndefined();
+  });
+
+  it('returns the longest-stuck first, so a bounded batch is deterministic', async () => {
+    const older = await store.begin(attempt({ attemptKey: 'older' }));
+    const newer = await store.begin(attempt({ attemptKey: 'newer' }));
+    await age(older.id, 300);
+    await age(newer.id, 60);
+
+    const found = await store.findUnsettled(staleBefore(), 10);
+
+    expect(found.map((row) => row.id)).toEqual([older.id, newer.id]);
+  });
+
+  it('honours the batch bound', async () => {
+    for (const key of ['one', 'two', 'three']) {
+      const intent = await store.begin(attempt({ attemptKey: key }));
+      await age(intent.id, 60);
+    }
+
+    expect(await store.findUnsettled(staleBefore(), 2)).toHaveLength(2);
   });
 });

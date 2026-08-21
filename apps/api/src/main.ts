@@ -65,6 +65,7 @@ import { PrismaFeatureFlagStore } from './feature-flags/prisma-flag-store.js';
 import { LedgerService } from './payments/ledger.service.js';
 import { NoPaymentProvider } from './payments/no-payment-provider.js';
 import { PaymentsService } from './payments/payments.service.js';
+import { ReconciliationService } from './payments/reconciliation.service.js';
 import { PrismaLedgerStore } from './payments/prisma-ledger-store.js';
 import { PrismaPaymentIntentStore } from './payments/prisma-payment-intent-store.js';
 import { Money } from '@platform/core';
@@ -576,6 +577,24 @@ async function bootstrap(): Promise<void> {
     { findFeePolicy: (versionId) => categoryStore.findFeePolicyByVersionId(versionId) },
   );
 
+  /*
+   * **The reconciliation sweep** (slice 5.4a). It shares `PaymentsService` rather
+   * than reaching the provider itself: `refresh` already owns the decision about
+   * what an outcome may do to an attempt, and a second caller re-deciding it would
+   * be two places that can disagree about whether money is recorded.
+   *
+   * **Its own `PrismaPaymentIntentStore`, deliberately.** The one above is held
+   * privately by `PaymentsService`; handing the sweep a second instance costs
+   * nothing — the adapter is stateless over a shared client — and keeps the seam
+   * honest, because the sweep genuinely is a different caller with a different
+   * query.
+   */
+  const reconciliation = new ReconciliationService(
+    new PrismaPaymentIntentStore(database),
+    payments,
+    logger,
+  );
+
   const bookings = new BookingsService(
     bookingStore,
     quoteStore,
@@ -694,6 +713,7 @@ async function bootstrap(): Promise<void> {
       quotes,
       bookings,
       requestExpiry,
+      reconciliation,
       internalTriggerSecret: env.INTERNAL_TRIGGER_SECRET,
     }),
     /*
