@@ -159,3 +159,49 @@ describe('what the editor tells an administrator', () => {
     );
   });
 });
+
+describe('surviving the form reset React 19 does after a server action', () => {
+  /**
+   * **The third occurrence of the defect 2.4c-i and 2.5a each paid for**, found
+   * by looking at the page rather than by any test here.
+   *
+   * React 19 resets the form once a server action settles. A reset restores every
+   * input from its *attribute*, so a radio rendered `checked={…}` with no default
+   * goes back to unchecked — while React's state still says a choice was made and
+   * React writes nothing back, because the prop did not change.
+   *
+   * The result is the worst shape: the three band fields stay on screen, because
+   * they key off React's state, while **no radio is selected and nothing is
+   * posted** — so a save refused for one reason is retried and refused for a
+   * different one, with the form visibly showing an answer it is not sending.
+   */
+  it('keeps the chosen radio selected after the form is reset', async () => {
+    render(
+      <form data-testid="host">
+        <DamageSecurityEditor idPrefix="t" />
+      </form>,
+    );
+
+    await userEvent.click(screen.getByRole('radio', { name: /^Yes/ }));
+    expect(screen.getByRole('radio', { name: /^Yes/ })).toBeChecked();
+
+    (screen.getByTestId('host') as HTMLFormElement).reset();
+
+    expect(screen.getByRole('radio', { name: /^Yes/ })).toBeChecked();
+  });
+
+  it('keeps the band fields and the radio agreeing after a reset', () => {
+    // The half that makes the defect silent: the fields are driven by React
+    // state and the radio by the DOM, so a reset can leave them disagreeing.
+    render(
+      <form data-testid="host">
+        <DamageSecurityEditor idPrefix="t" initial={BAND} />
+      </form>,
+    );
+
+    (screen.getByTestId('host') as HTMLFormElement).reset();
+
+    expect(screen.getByRole('radio', { name: /^Yes/ })).toBeChecked();
+    expect(screen.getByLabelText('Recovery ceiling (£)')).toBeInTheDocument();
+  });
+});

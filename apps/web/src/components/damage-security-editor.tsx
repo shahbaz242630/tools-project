@@ -96,40 +96,58 @@ export function DamageSecurityEditor({
         somebody says rather than something they leave. `required` on both inputs
         makes the browser refuse a submission with neither chosen, which is the
         client-side half of the same rule `readDamageSecurity` enforces server-side.
+
+        **`defaultChecked`, not `checked`, and the label wraps the input** — both
+        are the transport editor's pattern rather than the fee editor's, because a
+        radio is a checkbox for these purposes and not a text box.
+
+        React 19 resets the form once a server action settles, and a reset restores
+        every input from its *attribute*. A radio rendered `checked={…}` with no
+        default goes back to unchecked while React's state still says a choice was
+        made — and React writes nothing back, because the prop did not change. The
+        band fields below key off that state, so the form would sit there showing
+        three filled-in fields with **no radio selected and nothing posted**: a save
+        refused for one reason, retried, and refused for a different one.
+
+        That is the same defect 2.4c-i found on checkboxes and 2.5a on selects, and
+        it was found here the same way — by looking at the page. Keeping the
+        *default* in step with the state means the reset restores what was chosen.
+        Do not "tidy" this back to `checked`; nothing fails until somebody's save is
+        refused.
       */}
       <fieldset>
         <legend>Does this category require damage security?</legend>
 
         <p>
-          <input
-            id={id('damage-security-required')}
-            name="damageSecurityChoice"
-            type="radio"
-            required
-            value={DAMAGE_SECURITY_REQUIRED}
-            checked={choice === DAMAGE_SECURITY_REQUIRED}
-            onChange={() => {
-              setChoice(DAMAGE_SECURITY_REQUIRED);
-            }}
-          />
           <label htmlFor={id('damage-security-required')}>
+            <input
+              id={id('damage-security-required')}
+              name="damageSecurityChoice"
+              type="radio"
+              required
+              value={DAMAGE_SECURITY_REQUIRED}
+              defaultChecked={choice === DAMAGE_SECURITY_REQUIRED}
+              onChange={() => {
+                setChoice(DAMAGE_SECURITY_REQUIRED);
+              }}
+            />{' '}
             Yes — hold an excess against the renter&rsquo;s card at collection
           </label>
         </p>
 
         <p>
-          <input
-            id={id('damage-security-none')}
-            name="damageSecurityChoice"
-            type="radio"
-            required
-            value={DAMAGE_SECURITY_NONE}
-            checked={choice === DAMAGE_SECURITY_NONE}
-            onChange={() => {
-              setChoice(DAMAGE_SECURITY_NONE);
-            }}
-          />
           <label htmlFor={id('damage-security-none')}>
+            <input
+              id={id('damage-security-none')}
+              name="damageSecurityChoice"
+              type="radio"
+              required
+              value={DAMAGE_SECURITY_NONE}
+              defaultChecked={choice === DAMAGE_SECURITY_NONE}
+              onChange={() => {
+                setChoice(DAMAGE_SECURITY_NONE);
+              }}
+            />{' '}
             No — items in this category are handed over with nothing held
           </label>
         </p>
