@@ -250,6 +250,28 @@ adapter grows a parameter it does not recognise, rather than measuring something
 else. Leave the load data out of the database when you are done: the eight
 fixtures the handoff describes are what every other test and walkthrough assumes.
 
+Unit economics, from slice 5.3a. Also not part of any suite, and for the same
+reason — it reads the categories that actually exist and writes a document about
+them:
+
+| Command                                         | Does                                                                                                                                                                                |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm build && node scripts/unit-economics.mjs` | Regenerate `docs/unit-economics.md` — BRD §3.4.3's worked example per category. **Exits non-zero when any category's contribution margin at its minimum booking total is negative** |
+
+**It imports the pricing model rather than restating it**, `measure-search`'s rule,
+so it needs `pnpm build` first and refuses with a sentence saying so if `dist` is
+missing. **The gate is judged at one booking per owner per month**, deliberately
+the pessimistic level, because Stripe Connect's **£2 per active connected account
+per month** is amortised across an owner's bookings — judging at a busier level
+would pass by assuming the traction the gate exists to survive the absence of.
+
+**Both categories fail it today** and that is a real finding, not a broken script:
+`outdoor-gardening` is **−£0.23** at its £10 floor and needs 2 bookings a month to
+break even; `power-tools` has **no minimum booking total or platform fee at all**,
+so a £1 booking loses **£2.38** and never breaks even at any activity level. §3.4.3
+says such a category may not be enabled for public booking, and **nothing yet
+enforces that** — the gate is this script, not the product. That is slice 5.3b.
+
 Deployment commands run on the box, not here, and take no pnpm wrapper — they must work when only Node and Docker are present:
 
 | Command                                             | Does                                         |
