@@ -48,6 +48,18 @@ const FEE_POLICY = {
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
   minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
 };
+/**
+ * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
+ * `null` is what a category carries when nobody has configured damage security,
+ * so a suite where every fixture is null would never notice a path that silently
+ * dropped the band on the way to the store. Tests that mean "no security" say so
+ * locally.
+ */
+const DAMAGE_SECURITY = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+} as const;
 
 const env = loadEnv();
 
@@ -138,6 +150,7 @@ async function newCategory(
       reportableActivity: 'none',
       attributes,
       feePolicy: FEE_POLICY,
+      damageSecurity: DAMAGE_SECURITY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [],
@@ -257,6 +270,7 @@ describe('creating a draft', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -285,6 +299,7 @@ describe('creating a draft', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -324,6 +339,7 @@ describe('creating a draft', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -432,6 +448,7 @@ describe('the attribute values', () => {
           },
         ],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -501,6 +518,7 @@ describe('the categories an owner may choose', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -641,6 +659,7 @@ describe('the category options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -782,6 +801,7 @@ describe('the transport requirement', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [
@@ -811,6 +831,7 @@ describe('the transport requirement', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [{ requirement: 'van_required', suggestedUpToKg: 150 }],
@@ -830,6 +851,7 @@ describe('the transport requirement', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -1491,6 +1513,7 @@ describe('the current fee policy', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
@@ -1531,6 +1554,7 @@ describe('the current fee policy', () => {
           attributes: SCHEMA,
           transportOptions: [],
           feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: rate },
+          damageSecurity: DAMAGE_SECURITY,
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         },
@@ -1561,6 +1585,7 @@ describe('the current fee policy', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
@@ -1975,6 +2000,7 @@ describe('updating a listing', () => {
           attributes: SCHEMA,
           transportOptions: [],
           feePolicy: FEE_POLICY,
+          damageSecurity: DAMAGE_SECURITY,
           maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
           requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         },
@@ -2071,6 +2097,7 @@ describe('updating a listing', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
@@ -2103,6 +2130,7 @@ describe('updating a listing', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },
@@ -2600,6 +2628,7 @@ describe('the public read', () => {
           attributes: SCHEMA,
           transportOptions: [],
           feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+          damageSecurity: DAMAGE_SECURITY,
           maximumRentalDays: 30,
           requestExpiryHours: 48,
         },
@@ -2706,6 +2735,7 @@ describe('the public read', () => {
         attributes: SCHEMA,
         transportOptions: [],
         feePolicy: { ...FEE_POLICY, renterFeeBasisPoints: 1_600 },
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       },

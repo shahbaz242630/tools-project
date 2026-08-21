@@ -872,6 +872,34 @@ model CategoryVersion {
   minimumPlatformFeeAmount    Int    @default(0) @db.Integer
   minimumPlatformFeeCurrency  String @default("GBP") @db.Text
 
+  /// BRD §8.7.2's three-part excess model, as versioned configuration (slice
+  /// 5.5a): how much of a loss a renter bears, and the most recoverable from
+  /// them on one booking.
+  ///
+  /// **All five are nullable together, and all five NULL means the category
+  /// requires no damage security** — which §8.7.2 explicitly permits. ADR 0052
+  /// records why that is expressed by absence rather than by a boolean beside
+  /// optional values.
+  ///
+  /// **Two `CHECK`s enforce it and Prisma can see neither.**
+  /// `damage_security_is_complete` refuses a partial band, a floor above the
+  /// ceiling, a zero ceiling and a percentage outside 0–10000 basis points;
+  /// `excess_band_currencies_agree` keeps the two currencies equal. The contract
+  /// re-applies the same rules in `damageSecurityPolicySchema`, because a row
+  /// this load-bearing is worth asserting on both sides of the boundary — the
+  /// same call `maximumRentalDays` makes below.
+  ///
+  /// Basis points, never a fraction (ADR 0033) — the number is multiplied by
+  /// somebody's replacement value, so a float here lands in a card hold.
+  ///
+  /// On the *version* for §8.2's reason, which §8.7.2 restates in its own words:
+  /// *"Bookings retain the values current at creation."*
+  excessFloorAmount           Int?    @db.Integer
+  excessFloorCurrency         String? @db.Text
+  excessPercentageBasisPoints Int?    @db.Integer
+  recoveryCeilingAmount       Int?    @db.Integer
+  recoveryCeilingCurrency     String? @db.Text
+
   /// The longest hire this category permits, in local calendar days (BRD §8.5.3,
   /// slice 4.4a).
   ///

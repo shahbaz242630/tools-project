@@ -38,6 +38,18 @@ const FEE_POLICY = {
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
   minimumPlatformFee: { amount: 100, currency: 'GBP' },
 } as const;
+/**
+ * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
+ * `null` is what a category carries when nobody has configured damage security,
+ * so a suite where every fixture is null would never notice a path that silently
+ * dropped the band on the way to the store. Tests that mean "no security" say so
+ * locally.
+ */
+const DAMAGE_SECURITY = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+} as const;
 
 const draft = {
   slug: 'outdoor-gardening',
@@ -50,6 +62,7 @@ const draft = {
   attributes: [],
   transportOptions: [],
   feePolicy: FEE_POLICY,
+  damageSecurity: DAMAGE_SECURITY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
 } as const;
@@ -168,6 +181,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -195,6 +209,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -219,6 +234,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -241,6 +257,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -272,6 +289,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -293,6 +311,7 @@ describe('reconfiguring a category', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -318,6 +337,7 @@ describe('reading categories', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -333,6 +353,7 @@ describe('reading categories', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -388,6 +409,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -411,6 +433,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -438,6 +461,7 @@ describe('the attribute schema', () => {
         reportableActivity: draft.reportableActivity,
         attributes: [...SCHEMA].reverse(),
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -460,6 +484,7 @@ describe('the attribute schema', () => {
         reportableActivity: 'none',
         attributes: SCHEMA,
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -501,6 +526,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -524,6 +550,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,
@@ -557,6 +584,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [
@@ -586,6 +614,7 @@ describe('the transport options', () => {
         reportableActivity: 'none',
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: TRANSPORT,

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { activatesSellerReporting, isFeePolicyConfigured } from '@platform/contracts';
 import type { AdminCategory, CategoryFeePolicy } from '@platform/contracts';
 import { percentFromBasisPoints } from '../../../lib/fee-policy';
+import { securitySummary } from '../../../lib/damage-security';
 import {
   CreateCategoryForm,
   ReconfigureCategoryForm,
@@ -149,7 +150,6 @@ function feeSummary(policy: CategoryFeePolicy): string {
   const renter = percentFromBasisPoints(policy.renterFeeBasisPoints);
   return `${owner}% owner · ${renter}% renter`;
 }
-
 /**
  * Every failure gets its own sentence.
  *
@@ -216,6 +216,7 @@ function CategoryList({
             {attributeSummary(category.attributes.length)} ·{' '}
             {transportSummary(category.transportOptions.length)} ·{' '}
             {feeSummary(category.feePolicy)} ·{' '}
+            {securitySummary(category.damageSecurity)} ·{' '}
             <strong>version {category.versionNumber}</strong>
           </p>
           {/*

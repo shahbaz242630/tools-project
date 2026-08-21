@@ -124,6 +124,11 @@ beforeEach(async () => {
         minimumBookingTotal: { amount: 1_000, currency: GBP },
         minimumPlatformFee: { amount: 100, currency: GBP },
       },
+      // No damage-security band, which is §8.7.2's "requires no security" and
+      // is honest here: nothing in this file is about a hold. It also puts the
+      // null case through the real store, where the `damage_security_is_complete`
+      // CHECK is what would refuse a half-written one.
+      damageSecurity: null,
       transportOptions: [],
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,

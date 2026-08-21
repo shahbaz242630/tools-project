@@ -15,8 +15,11 @@
 
 import { z } from 'zod';
 import { parseWith } from './parse.js';
-import { categoryFeePolicySchema } from './pricing.js';
-import type { CategoryFeePolicy } from './pricing.js';
+import {
+  categoryFeePolicySchema,
+  damageSecurityPolicyOrNoneSchema,
+} from './pricing.js';
+import type { CategoryFeePolicy, DamageSecurityPolicy } from './pricing.js';
 import { categoryTransportOptionsSchema } from './transport.js';
 import type { CategoryTransportOption } from './transport.js';
 
@@ -576,6 +579,21 @@ export interface AdminCategory {
    */
   readonly feePolicy: CategoryFeePolicy;
   /**
+   * How much of a loss a renter bears here, and the most recoverable from them
+   * (§8.7.2, slice 5.5a) — or `null` where the category requires no damage
+   * security at all.
+   *
+   * On the version for §8.2's reason, which §8.7.2 restates in its own words:
+   * *"Bookings retain the values current at creation."* A hold disputed a year
+   * later must read under the band that was disclosed then.
+   *
+   * **`null` is a legitimate configuration and is what every category written
+   * before 5.5a carries** — ADR 0052. The cost of that, stated where somebody
+   * will meet it: on those rows "nobody configured it" and "we chose to require
+   * none" are indistinguishable.
+   */
+  readonly damageSecurity: DamageSecurityPolicy | null;
+  /**
    * The longest hire this category permits, in local calendar days (§8.5.3).
    *
    * On the version with everything else, and here that is not only §8.2's rule
@@ -621,6 +639,7 @@ const adminCategorySchema = z.object({
   attributes: categoryAttributesSchema,
   transportOptions: categoryTransportOptionsSchema,
   feePolicy: categoryFeePolicySchema,
+  damageSecurity: damageSecurityPolicyOrNoneSchema,
   maximumRentalDays: maximumRentalDaysSchema,
   requestExpiryHours: requestExpiryHoursSchema,
   versionNumber: z.number().int().positive(),
@@ -683,6 +702,20 @@ export const categoryDraftSchema = z
      * a different fact from having forgotten.
      */
     feePolicy: categoryFeePolicySchema,
+    /**
+     * The damage-security band, or `null` for a category that requires none
+     * (§8.7.2, slice 5.5a).
+     *
+     * **Required, and nullable — which are not the same thing, and the
+     * difference is the whole point.** ADR 0025's rule once more: an optional
+     * field is a silent default, and the silent default here would be "no
+     * security", so a caller that forgot the field would create a category whose
+     * items are handed to strangers with nothing held against them. Requiring it
+     * turns that into a 400 and makes somebody say which they meant.
+     *
+     * A caller that genuinely wants no security sends `null` and means it.
+     */
+    damageSecurity: damageSecurityPolicyOrNoneSchema,
     /**
      * How long a hire here may run (§8.5.3, slice 4.4a).
      *
@@ -761,6 +794,22 @@ export const categoryConfigurationSchema = z
      * category, discoverable only by reconciliation.
      */
     feePolicy: categoryFeePolicySchema,
+    /**
+     * Replace semantics, exactly as the fee policy above has (§8.7.2, slice
+     * 5.5a) — and here the replace direction that matters is **towards** `null`.
+     *
+     * Sending `null` on a reconfiguration is how a category stops requiring
+     * damage security, which is a real decision an administrator may make. It is
+     * also what a caller that dropped the field would produce if this were
+     * optional, and those two must not look alike: required-and-nullable means
+     * the omission is a 400 and only the deliberate `null` gets through.
+     *
+     * Because reconfiguring mints a new version, a change here binds bookings
+     * made from then on and leaves every earlier one reading under the band it
+     * was actually made under — which is exactly what §8.7.2's *"bookings retain
+     * the values current at creation"* requires.
+     */
+    damageSecurity: damageSecurityPolicyOrNoneSchema,
     /**
      * Replace semantics, like everything else here — and **this is the field
      * §8.5.3 says the interface must warn about on change**

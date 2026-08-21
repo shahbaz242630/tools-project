@@ -16,6 +16,17 @@ const FEE_POLICY = {
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' as const },
   minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
 };
+/**
+ * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
+ * `null` is what a category carries when nobody has configured damage security,
+ * so a suite where every fixture is null would never notice a path that silently
+ * dropped the band. Tests that mean "no security" say so locally.
+ */
+const DAMAGE_SECURITY = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+} as const;
 
 /**
  * The reportable-activity control, which is the only part of these forms that
@@ -63,6 +74,7 @@ const CATEGORY: AdminCategory = {
   reportableActivity: 'none',
   attributes: [],
   feePolicy: FEE_POLICY,
+  damageSecurity: DAMAGE_SECURITY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: [],

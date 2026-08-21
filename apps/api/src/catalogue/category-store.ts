@@ -4,6 +4,7 @@ import type {
   CategoryReportableActivity,
   CategoryRiskLevel,
   CategoryTransportOption,
+  DamageSecurityPolicy,
 } from '@platform/contracts';
 
 /**
@@ -36,6 +37,11 @@ export interface CategoryRecord {
   readonly transportOptions: readonly CategoryTransportOption[];
   /** What the platform charges on a booking in this category (§8.2, §3.4). */
   readonly feePolicy: CategoryFeePolicy;
+  /**
+   * How much of a loss a renter bears here (§8.7.2, slice 5.5a), or `null` where
+   * the category requires no damage security at all.
+   */
+  readonly damageSecurity: DamageSecurityPolicy | null;
   /** The longest hire this category permits, in local calendar days (§8.5.3). */
   readonly maximumRentalDays: number;
   /** How long an owner has to answer a request, in hours (§8.6, slice 4.5a). */
@@ -88,6 +94,17 @@ export interface CategoryConfiguration {
    * screen distinguishing it from a category deliberately priced at zero.
    */
   readonly feePolicy: CategoryFeePolicy;
+  /**
+   * BRD §8.7.2's excess model, or `null` for a category that requires no damage
+   * security (slice 5.5a).
+   *
+   * **Required and nullable, which are different things**, and here the
+   * difference is what stops an item being handed to a stranger with nothing
+   * held against it. An optional field would default silently to "no security" —
+   * so a caller that forgot it would configure exactly the outcome §8.7.2
+   * prohibits doing silently. `null` has to be said.
+   */
+  readonly damageSecurity: DamageSecurityPolicy | null;
   /**
    * The longest hire this category permits, in local calendar days (§8.5.3,
    * slice 4.4a).

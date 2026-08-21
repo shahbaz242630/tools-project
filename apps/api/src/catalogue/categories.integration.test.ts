@@ -35,6 +35,17 @@ const FEE_POLICY = {
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
   minimumPlatformFee: { amount: 100, currency: 'GBP' },
 };
+/**
+ * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
+ * `null` is what a category carries when nobody has configured damage security,
+ * so a suite where every fixture is null would never notice a path that silently
+ * dropped the band. Tests that mean "no security" say so locally.
+ */
+const DAMAGE_SECURITY = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+} as const;
 
 /**
  * Categories through the real application: real routing, real guard, real
@@ -75,6 +86,7 @@ const DRAFT = {
   reportingDutiesAcknowledged: false,
   attributes: [],
   feePolicy: FEE_POLICY,
+  damageSecurity: DAMAGE_SECURITY,
   maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
   requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
   transportOptions: [],
@@ -319,6 +331,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -345,6 +358,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -365,6 +379,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -390,6 +405,7 @@ describe('reconfiguring a category', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -522,6 +538,7 @@ describe('the attribute schema, through the routes', () => {
         reportingDutiesAcknowledged: false,
         attributes: [SCHEMA[0]],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -667,6 +684,7 @@ describe('the reportable-activity flag', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -692,6 +710,7 @@ describe('the reportable-activity flag', () => {
         reportingDutiesAcknowledged: true,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -743,6 +762,7 @@ describe('the reportable-activity flag', () => {
         reportingDutiesAcknowledged: true,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [],
@@ -793,6 +813,7 @@ describe('the transport options', () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      damageSecurity: DAMAGE_SECURITY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: TRANSPORT,
@@ -810,6 +831,7 @@ describe('the transport options', () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      damageSecurity: DAMAGE_SECURITY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [
@@ -859,6 +881,7 @@ describe('the transport options', () => {
     const response = await createCategory('admin-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      damageSecurity: DAMAGE_SECURITY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: [
@@ -900,6 +923,7 @@ describe('the transport options', () => {
         reportingDutiesAcknowledged: false,
         attributes: [],
         feePolicy: FEE_POLICY,
+        damageSecurity: DAMAGE_SECURITY,
         maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
         requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
         transportOptions: [{ requirement: 'car_boot', suggestedUpToKg: 25 }],
@@ -917,11 +941,186 @@ describe('the transport options', () => {
     const response = await createCategory('bob-token', {
       ...DRAFT,
       feePolicy: FEE_POLICY,
+      damageSecurity: DAMAGE_SECURITY,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
       transportOptions: TRANSPORT,
     });
 
     expect(response.statusCode).toBe(403);
+  });
+});
+
+/**
+ * BRD §8.7.2's excess band through the real HTTP stack (slice 5.5a, ADR 0052).
+ *
+ * The band's arithmetic is `damage-excess.test.ts`, its rules are
+ * `pricing.test.ts`, and the CHECKs are the db test. What only this file proves
+ * is that the route carries the field at all — in both directions, on both
+ * verbs, and that a caller who says nothing is refused rather than defaulted.
+ */
+describe('the damage security band over HTTP', () => {
+  beforeEach(async () => {
+    await promoteAdmin();
+  });
+
+  it('round-trips a configured band on create', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `${ADMIN_CATEGORIES_ROUTE}?reason=${encodeURIComponent(REASON)}`,
+      headers: auth('admin-token'),
+      payload: DRAFT,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().damageSecurity).toEqual(DAMAGE_SECURITY);
+  });
+
+  it('accepts an explicit null — a category may require no security', () => {
+    // §8.7.2: "unless the category is configured to require no security".
+    return app
+      .inject({
+        method: 'POST',
+        url: `${ADMIN_CATEGORIES_ROUTE}?reason=${encodeURIComponent(REASON)}`,
+        headers: auth('admin-token'),
+        payload: { ...DRAFT, damageSecurity: null },
+      })
+      .then((response) => {
+        expect(response.statusCode).toBe(201);
+        expect(response.json().damageSecurity).toBeNull();
+      });
+  });
+
+  /**
+   * The decision the whole slice rests on. An omitted field must be a 400 and
+   * not a silent "no security", because the silent version configures exactly
+   * what §8.7.2 prohibits doing silently — an item handed over with nothing held.
+   */
+  it('refuses a create that says nothing about damage security', async () => {
+    // The same `Object.fromEntries` idiom the reportable-activity test uses:
+    // a body with the field genuinely absent, which is what a caller that forgot
+    // sends and what an optional field would silently accept.
+    const withoutBand = Object.fromEntries(
+      Object.entries(DRAFT).filter(([key]) => key !== 'damageSecurity'),
+    );
+
+    const response = await createCategory('admin-token', withoutBand);
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.json())).toContain('damageSecurity');
+  });
+
+  it('refuses a reconfiguration that says nothing about damage security', async () => {
+    await createCategory();
+    const withoutBand = Object.fromEntries(
+      Object.entries(DRAFT).filter(
+        ([key]) => key !== 'damageSecurity' && key !== 'slug',
+      ),
+    );
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `${adminCategoryPath('outdoor-gardening')}?reason=${encodeURIComponent(REASON)}`,
+      headers: auth('admin-token'),
+      payload: withoutBand,
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('lets a reconfiguration remove the band deliberately', async () => {
+    await createCategory();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `${adminCategoryPath('outdoor-gardening')}?reason=${encodeURIComponent(
+        'items here are low value; no hold is worth taking',
+      )}`,
+      headers: auth('admin-token'),
+      payload: {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+        feePolicy: FEE_POLICY,
+        damageSecurity: null,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+        transportOptions: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().damageSecurity).toBeNull();
+  });
+
+  it('refuses a floor above the recovery ceiling with a sentence, not a 500', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `${ADMIN_CATEGORIES_ROUTE}?reason=${encodeURIComponent(REASON)}`,
+      headers: auth('admin-token'),
+      payload: {
+        ...DRAFT,
+        damageSecurity: {
+          ...DAMAGE_SECURITY,
+          excessFloor: { amount: 60_000, currency: 'GBP' },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.json())).toContain(
+      'always bear more than could ever be recovered',
+    );
+  });
+
+  it('carries the band on the list read as well as the write', async () => {
+    await createCategory();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: ADMIN_CATEGORIES_ROUTE,
+      headers: auth('admin-token'),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().categories[0].damageSecurity).toEqual(DAMAGE_SECURITY);
+  });
+
+  /**
+   * §8.13 makes administrative actions auditable, and this is the change with
+   * somebody's money on the other side of it — removing a band means items go
+   * out with nothing held. A version with no band looks exactly like a category
+   * that never had one, so the digest is what separates them.
+   */
+  it('records the band in the audit digest, so removing one leaves a trace', async () => {
+    await createCategory();
+    const before = audit.log.entries().at(-1);
+
+    await app.inject({
+      method: 'PUT',
+      url: `${adminCategoryPath('outdoor-gardening')}?reason=${encodeURIComponent(
+        'items here are low value; no hold is worth taking',
+      )}`,
+      headers: auth('admin-token'),
+      payload: {
+        name: 'Outdoor and gardening',
+        riskLevel: 'low',
+        reportableActivity: 'none',
+        reportingDutiesAcknowledged: false,
+        attributes: [],
+        feePolicy: FEE_POLICY,
+        damageSecurity: null,
+        maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+        requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+        transportOptions: [],
+      },
+    });
+
+    const after = audit.log.entries().at(-1);
+
+    expect(after).toBeDefined();
+    expect(after).not.toEqual(before);
   });
 });

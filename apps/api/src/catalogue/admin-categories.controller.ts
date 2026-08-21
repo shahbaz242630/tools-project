@@ -198,6 +198,7 @@ function configurationOf(body: CategoryConfigurationInput): CategoryConfiguratio
     attributes: body.attributes,
     transportOptions: body.transportOptions,
     feePolicy: body.feePolicy,
+    damageSecurity: body.damageSecurity,
     maximumRentalDays: body.maximumRentalDays,
     requestExpiryHours: body.requestExpiryHours,
   };
@@ -225,6 +226,7 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     attributes: category.attributes,
     transportOptions: category.transportOptions,
     feePolicy: category.feePolicy,
+    damageSecurity: category.damageSecurity,
     maximumRentalDays: category.maximumRentalDays,
     requestExpiryHours: category.requestExpiryHours,
     versionNumber: category.versionNumber,

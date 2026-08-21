@@ -173,6 +173,15 @@ export class CatalogueService {
  * actions auditable; a fee change that left the same digest as the version
  * before it would be the platform's own margin moving with nobody accountable —
  * and the person it costs would have no way to establish when it changed.
+ *
+ * **The damage-security band is in, and it has the same argument one degree
+ * stronger.** A fee decides what somebody is charged; this decides how much of
+ * their money is *held* against a card at collection, and §8.7.1 makes the held
+ * amount a hard ceiling on what can ever be recovered — so both raising it and
+ * removing it are decisions with a person's money on the other side. Removing it
+ * is the one that would otherwise leave no trace at all: a version with no band
+ * looks exactly like a category that never had one, and the digest is what
+ * separates them.
  */
 function auditable(record: CategoryRecord): Record<string, unknown> {
   return {
@@ -183,5 +192,6 @@ function auditable(record: CategoryRecord): Record<string, unknown> {
     attributes: record.attributes,
     transportOptions: record.transportOptions,
     feePolicy: record.feePolicy,
+    damageSecurity: record.damageSecurity,
   };
 }

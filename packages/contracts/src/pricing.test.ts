@@ -7,11 +7,15 @@ import {
   RECOMMENDED_OWNER_COMMISSION_BASIS_POINTS,
   RECOMMENDED_RENTER_FEE_BASIS_POINTS,
   MAX_RENTAL_RATE_MINOR_UNITS,
+  MAX_DAMAGE_SECURITY_MINOR_UNITS,
+  MAX_EXCESS_PERCENTAGE_BASIS_POINTS,
+  NO_DAMAGE_SECURITY,
   UNCONFIGURED_FEE_POLICY,
   UNPRICED_RATE_CARD,
   basisPointsToPercent,
   isFeePolicyConfigured,
   parseCategoryFeePolicy,
+  parseDamageSecurityPolicy,
   parseListingRateCard,
 } from './pricing.js';
 
@@ -358,5 +362,166 @@ describe('the listing rate card', () => {
         weekly: { amount: 100_000, currency: 'GBP' },
       }),
     ).not.toThrow();
+  });
+});
+
+const validBand = {
+  excessFloor: { amount: 7_500, currency: 'GBP' },
+  excessPercentageBasisPoints: 1_500,
+  recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+};
+
+describe('parseDamageSecurityPolicy', () => {
+  it('accepts a configured band', () => {
+    const band = parseDamageSecurityPolicy(validBand);
+
+    expect(band).toEqual(validBand);
+  });
+
+  /**
+   * BRD §8.7.2 permits a category "configured to require no security", so the
+   * absence has to be expressible on the write path — ADR 0052.
+   */
+  it('accepts null, which is a category that requires no security', () => {
+    expect(parseDamageSecurityPolicy(null)).toBeNull();
+  });
+
+  /**
+   * The distinction ADR 0025 keeps paying for. `null` is a decision; omitting
+   * the field is a caller that forgot, and the two must not look alike — the
+   * schemas that embed this one make it a required field for exactly that
+   * reason.
+   */
+  it('refuses undefined, which is a caller that forgot rather than one that chose', () => {
+    expect(() => parseDamageSecurityPolicy(undefined)).toThrow();
+  });
+
+  it('refuses a partial band — the invalid middle is unrepresentable', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+      }),
+    ).toThrow();
+  });
+
+  it('accepts a zero floor — a band may be sized entirely from the percentage', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessFloor: { amount: 0, currency: 'GBP' },
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts a zero percentage — a category of same-valued items is real', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({ ...validBand, excessPercentageBasisPoints: 0 }),
+    ).not.toThrow();
+  });
+
+  /**
+   * A ceiling of nothing is a band from which nothing is ever recoverable —
+   * the no-security case spelled a second way, and two spellings of one state
+   * is how they come to be handled differently.
+   */
+  it('refuses a zero recovery ceiling — that is the no-security case, spelled null', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessFloor: { amount: 0, currency: 'GBP' },
+        recoveryCeiling: { amount: 0, currency: 'GBP' },
+      }),
+    ).toThrow(/at least 1p/);
+  });
+
+  it('refuses a negative floor', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessFloor: { amount: -1, currency: 'GBP' },
+      }),
+    ).toThrow(/at least £0/);
+  });
+
+  it('refuses amounts above the platform-wide bound', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        recoveryCeiling: {
+          amount: MAX_DAMAGE_SECURITY_MINOR_UNITS + 1,
+          currency: 'GBP',
+        },
+      }),
+    ).toThrow(/at most £10000/);
+  });
+
+  it('refuses a fractional basis point, which is a percentage sent as a decimal', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({ ...validBand, excessPercentageBasisPoints: 15.5 }),
+    ).toThrow(/whole number of basis points/);
+  });
+
+  it('refuses a negative percentage', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({ ...validBand, excessPercentageBasisPoints: -1 }),
+    ).toThrow(/cannot be negative/);
+  });
+
+  it('refuses a percentage above 100% — a renter cannot owe more than the item is worth', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessPercentageBasisPoints: MAX_EXCESS_PERCENTAGE_BASIS_POINTS + 1,
+      }),
+    ).toThrow(/cannot owe more than the item is worth/);
+  });
+
+  it('accepts a percentage of exactly 100%', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessPercentageBasisPoints: MAX_EXCESS_PERCENTAGE_BASIS_POINTS,
+      }),
+    ).not.toThrow();
+  });
+
+  /**
+   * The pair that would make ADR 0052's cap bind on every listing, turning the
+   * percentage into dead configuration — and the one a transposition reaches.
+   */
+  it('refuses a floor above the recovery ceiling', () => {
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessFloor: { amount: 50_001, currency: 'GBP' },
+        recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+      }),
+    ).toThrow(/always bear more than could ever be recovered/);
+  });
+
+  it('accepts a floor exactly equal to the recovery ceiling', () => {
+    /*
+     * Degenerate but coherent: every listing carries the same excess whatever it
+     * is worth. Refusing it would be a commercial opinion in a validator.
+     */
+    expect(() =>
+      parseDamageSecurityPolicy({
+        ...validBand,
+        excessFloor: { amount: 50_000, currency: 'GBP' },
+        recoveryCeiling: { amount: 50_000, currency: 'GBP' },
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('the damage-security default', () => {
+  /**
+   * What every category version written before slice 5.5a carries. The reason it
+   * is not a guessed floor and percentage is in ADR 0052: a backfilled excess
+   * would be a liability nobody agreed to, on an immutable row, indistinguishable
+   * from one they did.
+   */
+  it('is no band at all, rather than a zero-sized one', () => {
+    expect(NO_DAMAGE_SECURITY).toBeNull();
   });
 });
