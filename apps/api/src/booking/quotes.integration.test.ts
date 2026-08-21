@@ -39,6 +39,7 @@ import {
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { TEST_INTERNAL_TRIGGER_SECRET, createBookingFakes } from './testing/fakes.js';
+import { paymentsModuleFakes } from '../payments/testing/fakes.js';
 
 const ADA = { clerkUserId: 'user_ada', sessionId: 'sess_a', email: 'ada@example.com' };
 const BOB = { clerkUserId: 'user_bob', sessionId: 'sess_b', email: 'bob@example.com' };
@@ -99,6 +100,11 @@ beforeEach(async () => {
         quotes: booking.quotes,
         bookings: booking.bookings,
         requestExpiry: booking.requestExpiry,
+        // Payments' slice of the options (slice 5.4a). These tests care about
+        // neither payments nor reconciliation; the sweep is here because
+        // `AppModuleOptions` requires every dependency, which is what stops a
+        // boot site quietly forgetting one.
+        ...paymentsModuleFakes(),
         internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
       }),
     ],

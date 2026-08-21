@@ -105,6 +105,21 @@ export function addHours(instant: Date, hours: number): Date {
   return toDateTime(instant, 'utc').plus({ hours }).toJSDate();
 }
 
+/**
+ * Elapsed minutes from an instant, forwards or backwards (slice 5.4a).
+ *
+ * **The same elapsed-time rule as `addHours` above**, and it exists for the same
+ * reason a caller cannot simply write `addHours(now, -0.25)`: a threshold of
+ * fifteen minutes is a number a person reasons about in minutes, and expressing
+ * it as a quarter of an hour makes it read like a rate rather than a duration.
+ *
+ * Use it for windows, timeouts and staleness thresholds. Never for a rental
+ * period — see `addRentalDays`.
+ */
+export function addMinutes(instant: Date, minutes: number): Date {
+  return toDateTime(instant, 'utc').plus({ minutes }).toJSDate();
+}
+
 /** ISO 8601 string in UTC, for storage and logging. */
 export function toIsoUtc(instant: Date): string {
   const iso = toDateTime(instant, 'utc').toISO();

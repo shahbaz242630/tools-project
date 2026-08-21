@@ -73,7 +73,16 @@ export type PaymentIntentStatus = (typeof PAYMENT_INTENT_STATUSES)[number];
  * key would return the first failure forever. One intent is one attempt, and the
  * per-attempt key on the row is what makes that true.
  */
-const TERMINAL_STATUSES: readonly PaymentIntentStatus[] = ['succeeded', 'failed'];
+/**
+ * Exported from 5.4a so the reconciliation query and this rule cannot diverge.
+ * A store that listed the *live* statuses instead would go blind to any status
+ * §8.7 adds later — an expired authorisation, a chargeback — and the sweep would
+ * silently stop looking at exactly the rows most worth looking at.
+ */
+export const TERMINAL_STATUSES: readonly PaymentIntentStatus[] = [
+  'succeeded',
+  'failed',
+];
 
 /** Whether an attempt in this status can still change. */
 export function isTerminal(status: PaymentIntentStatus): boolean {

@@ -15,6 +15,7 @@
  */
 
 import { allowAllRateLimiter, FakeRateLimiter } from './testing/fakes.js';
+import { paymentsModuleFakes } from '../payments/testing/fakes.js';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -93,6 +94,11 @@ async function boot(rateLimiter: FakeRateLimiter | typeof allowAllRateLimiter) {
         quotes: booking.quotes,
         bookings: booking.bookings,
         requestExpiry: booking.requestExpiry,
+        // Payments' slice of the options (slice 5.4a). These tests care about
+        // neither payments nor reconciliation; the sweep is here because
+        // `AppModuleOptions` requires every dependency, which is what stops a
+        // boot site quietly forgetting one.
+        ...paymentsModuleFakes(),
         internalTriggerSecret: TEST_INTERNAL_TRIGGER_SECRET,
       }),
     ],

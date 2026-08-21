@@ -357,3 +357,28 @@ describe('fromEpochMs', () => {
     expect(T.toIsoUtc(T.fromEpochMs(1785408799))).toBe('1970-01-21T15:56:48.799Z');
   });
 });
+
+describe('addMinutes', () => {
+  it('moves an instant forwards by elapsed minutes', () => {
+    expect(T.addMinutes(T.fromIsoUtc('2026-08-21T09:00:00.000Z'), 15)).toEqual(
+      T.fromIsoUtc('2026-08-21T09:15:00.000Z'),
+    );
+  });
+
+  it('moves it backwards on a negative, which is what a staleness threshold needs', () => {
+    expect(T.addMinutes(T.fromIsoUtc('2026-08-21T09:00:00.000Z'), -15)).toEqual(
+      T.fromIsoUtc('2026-08-21T08:45:00.000Z'),
+    );
+  });
+
+  /**
+   * **Elapsed time, not calendar time** — the distinction `addHours` documents.
+   * The clocks went back at 02:00 on 25 October 2026; fifteen minutes before
+   * 01:05 UTC is 00:50 UTC whatever the local clock did.
+   */
+  it('is unaffected by a daylight-saving transition', () => {
+    expect(T.addMinutes(T.fromIsoUtc('2026-10-25T01:05:00.000Z'), -15)).toEqual(
+      T.fromIsoUtc('2026-10-25T00:50:00.000Z'),
+    );
+  });
+});

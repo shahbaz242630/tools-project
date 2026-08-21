@@ -71,10 +71,13 @@ import type { AvailabilityService } from './booking/availability.service.js';
 import { QuotesController } from './booking/quotes.controller.js';
 import { BookingsController } from './booking/bookings.controller.js';
 import { RequestExpiryController } from './booking/request-expiry.controller.js';
+import { ReconciliationController } from './payments/reconciliation.controller.js';
+import { RECONCILIATION_SERVICE } from './payments/payments.tokens.js';
+import type { ReconciliationService } from './payments/reconciliation.service.js';
 import {
   INTERNAL_TRIGGER_LOGGER,
   INTERNAL_TRIGGER_SECRET,
-} from './booking/internal-trigger.guard.js';
+} from './internal-trigger/internal-trigger.guard.js';
 import type { RequestExpiryService } from './booking/request-expiry.service.js';
 import type { QuotesService } from './booking/quotes.service.js';
 import type { BookingsService } from './booking/bookings.service.js';
@@ -235,6 +238,16 @@ export interface AppModuleOptions {
   readonly requestExpiry: RequestExpiryService;
 
   /**
+   * Re-reading stale payment attempts (slice 5.4a, BRD §8.7).
+   *
+   * Required rather than optional, for the reason every dependency here is —
+   * including today, when `booking.payment` is off and the sweep can only ever
+   * find nothing. A dependency that is optional because it currently does nothing
+   * is one nobody notices has stopped being wired.
+   */
+  readonly reconciliation: ReconciliationService;
+
+  /**
    * The secret a scheduled trigger must present (slice 4.7a, ADR 0048).
    *
    * **Passed in rather than read from the environment here**, exactly as
@@ -290,6 +303,9 @@ export class AppModule implements NestModule {
         // routes rather than with the unguarded four below, because it *is*
         // guarded; see `internal-trigger.guard.ts`.
         RequestExpiryController,
+        // The second machine-triggered route, and the reason the guard moved out
+        // of `booking/` — see `reconciliation.controller.ts`.
+        ReconciliationController,
         // **Unguarded by design, all four**, and kept together at the end of
         // this list so the set is countable rather than scattered. BRD §2 gives
         // visitors public profiles; §8.17 makes listing pages crawlable, which
@@ -369,6 +385,7 @@ export class AppModule implements NestModule {
         { provide: QUOTES_SERVICE, useValue: options.quotes },
         { provide: BOOKINGS_SERVICE, useValue: options.bookings },
         { provide: REQUEST_EXPIRY_SERVICE, useValue: options.requestExpiry },
+        { provide: RECONCILIATION_SERVICE, useValue: options.reconciliation },
         { provide: INTERNAL_TRIGGER_SECRET, useValue: options.internalTriggerSecret },
         { provide: INTERNAL_TRIGGER_LOGGER, useValue: options.logger },
       ],
