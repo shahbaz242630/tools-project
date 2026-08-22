@@ -190,6 +190,8 @@ async function givenABooking(
     total: { amount: 1_944, currency: 'GBP' },
     itemTitle: 'Petrol hedge trimmer',
     categoryName: 'Outdoor and gardening',
+    // No damage security: these fixtures are about dates and constraints.
+    appliedExcess: null,
     requestExpiresAt: new Date(startAt.getTime() + 48 * 3_600_000),
   });
 }

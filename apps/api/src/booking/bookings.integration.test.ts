@@ -171,6 +171,12 @@ beforeEach(async () => {
     },
     currentMaximumRentalDays: 88,
     currentRequestExpiryHours: 48,
+    currentDamageSecurity: {
+      excessFloor: { amount: 7_500, currency: 'GBP' as const },
+      excessPercentageBasisPoints: 1_500,
+      recoveryCeiling: { amount: 50_000, currency: 'GBP' as const },
+    },
+    replacementValue: { amount: 24_000, currency: 'GBP' as const },
     currentCategoryVersionId: 'category-version-2',
   });
   booking.store.givenOwner(MOWER, bobId);
@@ -542,6 +548,8 @@ describe('requesting a booking', () => {
       total: gbp(5_832),
       itemTitle: 'Petrol hedge trimmer',
       categoryName: 'Outdoor and gardening',
+      // No damage security: these fixtures are about dates and constraints.
+      appliedExcess: null,
       requestExpiresAt: Time.addHours(now(), 48),
     });
 
@@ -573,6 +581,69 @@ describe('requesting a booking', () => {
 });
 
 describe('reading a booking back', () => {
+  /**
+   * §8.7.2's *"shown to both parties before booking. Bookings retain the values
+   * current at creation."* through the real stack (slice 5.5b-ii).
+   *
+   * **Both halves in one place, because the section is one sentence.** The
+   * renter's copy on the booking they made, and the owner's on the request they
+   * are being asked to accept — and both come off the row rather than off the
+   * listing, which is what makes them agree.
+   */
+  it('shows both parties the same hold, from the booking rather than the listing', async () => {
+    const quoteId = await quoteFor('ada-token');
+    const made = parseBooking((await requestBooking('ada-token', quoteId)).json());
+
+    expect(made.appliedExcess).toEqual({ amount: gbp(7_500), boundBy: 'floor' });
+    // §3.4.4 — refundable security is never folded into the price.
+    expect(made.total).toEqual(gbp(5_832));
+
+    const waiting = await app.inject({
+      method: 'GET',
+      url: listingRequestsPath(MOWER),
+      headers: auth('bob-token'),
+    });
+
+    const { requests } = parseListingRequests(waiting.json());
+    expect(requests[0]?.appliedExcess).toEqual(made.appliedExcess);
+  });
+
+  /**
+   * **Both parties read this projection, and every "you" on the page depends on
+   * which** (slice 5.5b-ii). Found by opening the page: an owner reading their
+   * own booking was told the damage hold sat on *their* card, which is false —
+   * §8.7.2 puts it on the renter's. `payability` already knew the difference and
+   * only said it in prose.
+   */
+  it('names which party is reading it', async () => {
+    const quoteId = await quoteFor('ada-token');
+    const made = parseBooking((await requestBooking('ada-token', quoteId)).json());
+
+    const asRenter = parseBookingDetail(
+      (
+        await app.inject({
+          method: 'GET',
+          url: bookingPath(made.id),
+          headers: auth('ada-token'),
+        })
+      ).json(),
+    );
+    const asOwner = parseBookingDetail(
+      (
+        await app.inject({
+          method: 'GET',
+          url: bookingPath(made.id),
+          headers: auth('bob-token'),
+        })
+      ).json(),
+    );
+
+    expect(asRenter.viewer).toBe('renter');
+    expect(asOwner.viewer).toBe('owner');
+    // The hold itself is the same fact for both — only the wording differs.
+    expect(asOwner.appliedExcess).toEqual(asRenter.appliedExcess);
+  });
+
   it('gives it to the renter and to the owner', async () => {
     const quoteId = await quoteFor('ada-token');
     const made = parseBooking((await requestBooking('ada-token', quoteId)).json());

@@ -228,6 +228,15 @@ export class BookingsService {
         total: quote.total,
         itemTitle: listing.title,
         categoryName: listing.categoryName,
+        /*
+         * **Off the quote, with the money, and not recomputed from the listing.**
+         * The excess is the band applied to `listing.replacementValue`, and that
+         * column is mutable — an owner may have edited it in the half hour since
+         * the quote was given. Recomputing here would silently hold a figure the
+         * renter was never shown, which is the exact failure §8.7.2 forbids by
+         * requiring the values be *"shown to both parties before booking"*.
+         */
+        appliedExcess: quote.appliedExcess,
         requestExpiresAt: this.requestDeadline(listing.currentRequestExpiryHours),
       },
       {
@@ -711,12 +720,20 @@ export class BookingsService {
     if (found === null) return null;
 
     const booking = toWireBooking(found);
+    const isRenter = found.booking.renterId === userId;
 
     return {
       ...booking,
+      /*
+       * **Both parties read this projection**, so the page has to know which one
+       * it is addressing — see `bookingDetailSchema`. Decided here, beside the
+       * payability that already depended on it, rather than inferred downstream
+       * from a sentence.
+       */
+      viewer: isRenter ? 'renter' : 'owner',
       payability: payabilityOf({
         state: found.booking.state,
-        isRenter: found.booking.renterId === userId,
+        isRenter,
         isSuspended: reader.isSuspended,
         paymentEnabled: await this.paymentSwitch.isPaymentEnabled(),
       }),
@@ -793,6 +810,14 @@ function toListingRequest({ booking, conflictCount }: PendingRequest): ListingRe
     endDate: inclusiveEndDate(booking.endAt),
     days: rentalPeriodDays(booking.startAt, booking.endAt, booking.timeZone),
     itemCharge: booking.itemCharge,
+    /*
+     * **The owner's half of §8.7.2's *"shown to both parties before booking"*.**
+     * Their commitment is the acceptance, so the figure belongs on the thing they
+     * accept — and unlike everything else here it is about the renter's exposure
+     * rather than the owner's earnings. Somebody handing over a £900 breaker is
+     * entitled to know what stands behind it.
+     */
+    appliedExcess: booking.appliedExcess,
     requestExpiresAt: Time.toIsoUtc(booking.requestExpiresAt),
     conflictCount,
   };
@@ -825,6 +850,13 @@ function toWireBooking({ booking, lineItems, events }: BookingWithEvents): Booki
     itemCharge: booking.itemCharge,
     renterFee: booking.renterFee,
     total: booking.total,
+    /*
+     * **The figure this booking was made under**, read off the row rather than
+     * recomputed from the listing (§8.7.2, §8.2). It renders correctly after the
+     * item has been repriced, revalued, paused or erased — which is the whole
+     * point of a booking copying its terms.
+     */
+    appliedExcess: booking.appliedExcess,
     lineItems: [...lineItems],
     requestExpiresAt: Time.toIsoUtc(booking.requestExpiresAt),
     events: events.map((event) => ({

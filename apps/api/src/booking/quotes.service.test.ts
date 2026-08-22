@@ -48,6 +48,12 @@ function quotableMower(
     currentFeePolicy: policy,
     currentMaximumRentalDays: 88,
     currentRequestExpiryHours: 48,
+    currentDamageSecurity: {
+      excessFloor: { amount: 7_500, currency: 'GBP' as const },
+      excessPercentageBasisPoints: 1_500,
+      recoveryCeiling: { amount: 50_000, currency: 'GBP' as const },
+    },
+    replacementValue: { amount: 24_000, currency: 'GBP' as const },
     currentCategoryVersionId: 'category-version-2',
     ...overrides,
   };
@@ -133,6 +139,102 @@ describe('QuotesService', () => {
       });
 
       expect(quote?.postcode).toBe('BS7 8AA');
+    });
+  });
+
+  /**
+   * The damage security a quote fixes (§8.7.2, slice 5.5b-ii).
+   *
+   * §8.7.2 requires the values *"shown to both parties before booking"* and that
+   * *"bookings retain the values current at creation"*. The quote is where
+   * "creation" begins: the figure it fixes is the one the booking copies, so a
+   * quote that computed it differently from the listing page would make the two
+   * disagree with nobody able to say which was right.
+   */
+  describe('the damage security', () => {
+    it('fixes the applied excess from the band and this listing’s value', async () => {
+      // The floor is £75 and 15% of £240 is £36, so the floor binds — the figure
+      // and the reason, which is what a renter is owed about their own money.
+      const quote = await service.quote(MOWER, ADA, request);
+
+      expect(quote?.appliedExcess).toEqual({
+        amount: { amount: 7_500, currency: 'GBP' },
+        boundBy: 'floor',
+      });
+    });
+
+    it('lets the percentage bind on a valuable enough item', async () => {
+      listings.give(
+        quotableMower({ replacementValue: { amount: 90_000, currency: 'GBP' } }),
+      );
+
+      const quote = await service.quote(MOWER, ADA, request);
+
+      // 15% of £900 is £135, which clears the £75 floor and the £500 ceiling.
+      expect(quote?.appliedExcess).toEqual({
+        amount: { amount: 13_500, currency: 'GBP' },
+        boundBy: 'percentage',
+      });
+    });
+
+    /**
+     * **The ceiling binds the applied excess** (ADR 0052) — §8.7.2 does not say
+     * so outright, but the hold is sized from this figure and §8.7.1 makes the
+     * held amount a hard ceiling on recovery, so a cap arriving any later would
+     * arrive after we had authorised more than we can ever take.
+     */
+    it('never exceeds the recovery ceiling', async () => {
+      listings.give(
+        quotableMower({ replacementValue: { amount: 400_000, currency: 'GBP' } }),
+      );
+
+      const quote = await service.quote(MOWER, ADA, request);
+
+      expect(quote?.appliedExcess).toEqual({
+        amount: { amount: 50_000, currency: 'GBP' },
+        boundBy: 'ceiling',
+      });
+    });
+
+    /**
+     * **Null, not zero** (ADR 0052). §8.7.2 permits a category configured to
+     * require no security, and from 5.5c a deliberately unsecured handover has
+     * to be distinguishable from a hold that failed.
+     */
+    it('carries null where the category requires no security', async () => {
+      listings.give(quotableMower({ currentDamageSecurity: null }));
+
+      const quote = await service.quote(MOWER, ADA, request);
+
+      expect(quote?.appliedExcess).toBeNull();
+    });
+
+    /**
+     * **It is not a fee and never joins the total** (§3.4.4). The rule is easy
+     * to break by adding one line in the wrong place, and the failure would be a
+     * platform that looks a third more expensive than it is.
+     */
+    it('keeps the excess out of the total the renter pays', async () => {
+      const quote = await service.quote(MOWER, ADA, request);
+
+      expect(quote?.total).toEqual({ amount: 5_832, currency: 'GBP' });
+      expect(quote?.appliedExcess?.amount.amount).toBe(7_500);
+    });
+
+    /**
+     * **Stored, so the booking made from it cannot drift.** The band is on an
+     * immutable version; the replacement value is not. This is the assertion
+     * that would fail if somebody "simplified" the excess into a computed
+     * projection field.
+     */
+    it('writes the excess onto the quote row, not only onto the response', async () => {
+      const quote = await service.quote(MOWER, ADA, request);
+
+      const stored = quotes.all().find((row) => row.id === quote?.id);
+      expect(stored?.appliedExcess).toEqual({
+        amount: { amount: 7_500, currency: 'GBP' },
+        boundBy: 'floor',
+      });
     });
   });
 

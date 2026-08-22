@@ -528,6 +528,9 @@ export class InMemoryBookingStore implements BookingStore {
       total: { amount: 1_944, currency: 'GBP' },
       itemTitle: 'Petrol hedge trimmer',
       categoryName: 'Outdoor and gardening',
+      // Null, like the rest of these terms: this fixture exists for erasure
+      // tests, which are about which listings a booking references.
+      appliedExcess: null,
       requestExpiresAt: Time.addHours(now, 48),
       createdAt: now,
       updatedAt: now,

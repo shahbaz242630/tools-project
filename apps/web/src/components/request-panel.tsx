@@ -241,6 +241,14 @@ function Quoted({
         as emphasis. The listing's own price block carries it directly above this
         panel and is visible at the same time, so the rule is kept once. If this
         panel ever moves out of that card, the sentence comes with it.
+
+        **The quote now carries `appliedExcess` and this still does not render
+        it** (slice 5.5b-ii), which is worth stating so it does not look like an
+        oversight. The quote *fixes* the figure — the listing page shows the same
+        band applied to the same item, from the same request, so the two agree —
+        and §8.7.2's *"shown before booking"* is discharged by the block above.
+        What the field is for is the **booking**: the page a renter reads
+        afterwards is not inside this card, and that is where it is rendered.
       */}
       <p className={styles.expiry}>
         This price holds until{' '}

@@ -733,6 +733,11 @@ export interface OwnerListing {
    * Null means "show no price", never "free".
    */
   readonly inclusiveDailyPrice: InclusiveDailyPrice | null;
+  /**
+   * What would be held on this item at collection, or null where its category
+   * requires no damage security (§8.7.2). Never folded into the price above.
+   */
+  readonly appliedExcess: AppliedExcess | null;
   readonly status: ListingStatus;
   /**
    * What the platform permits, beside what the owner set (ADR 0041, slice 2.8c-ii).
@@ -819,6 +824,19 @@ const ownerListingSchema = z.object({
   isLocated: z.boolean(),
   rates: listingRateCardSchema,
   inclusiveDailyPrice: inclusiveDailyPriceSchema.nullable(),
+  /**
+   * What would be held on this item at collection, or null where the category
+   * requires no damage security (§8.7.2, slice 5.5b-ii).
+   *
+   * **Non-null even on a draft with no price**, unlike the price beside it: the
+   * excess is the band applied to a *replacement value*, which §8.3 requires
+   * before a draft can be saved at all. An unpriced listing still has one.
+   *
+   * §8.7.2's sizing note is addressed to the owner — loss above the recovery
+   * ceiling is theirs, and they cannot weigh that against a page saying a hold
+   * "may apply".
+   */
+  appliedExcess: appliedExcessOrNoneSchema,
   status: listingStatusSchema,
   /**
    * What the platform permits, beside what the owner wanted (ADR 0041, 2.8c-ii).

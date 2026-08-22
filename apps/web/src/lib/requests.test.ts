@@ -13,6 +13,7 @@ const A_REQUEST = {
   endDate: '2026-09-17',
   days: 3,
   itemCharge: { amount: 5_400, currency: 'GBP' },
+  appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
   requestExpiresAt: '2026-09-13T09:00:00.000Z',
   conflictCount: 1,
 };
@@ -29,6 +30,7 @@ const A_BOOKING = {
   itemCharge: { amount: 5_400, currency: 'GBP' },
   renterFee: { amount: 432, currency: 'GBP' },
   total: { amount: 5_832, currency: 'GBP' },
+  appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
   lineItems: [
     {
       unit: 'day',

@@ -166,6 +166,9 @@ function quoteFor(fixture: Fixture, overrides: Partial<NewQuote> = {}): NewQuote
     total: gbp(5_832),
     minimumFeeApplied: false,
     lineItems: LINE_ITEMS,
+    // A real band by default, so the round trip is exercised rather than the
+    // null branch — the tests below override it to prove the other one.
+    appliedExcess: { amount: gbp(7_500), boundBy: 'floor' },
     categoryVersionId: fixture.categoryVersionId,
     expiresAt: EXPIRES,
     ...overrides,
@@ -339,5 +342,93 @@ describe('reading a quote back', () => {
     const fixture = await newFixture();
 
     expect(await store.findForRenter(randomUUID(), fixture.renterId)).toBe(null);
+  });
+});
+
+/**
+ * The damage excess through real columns (§8.7.2, slice 5.5b-ii).
+ *
+ * **Only this file can show that the two columns survive Postgres**, and in
+ * particular that the amount comes back denominated in the row's own `currency`
+ * rather than in one it brought with it — because it has no currency column of
+ * its own (ADR 0002).
+ */
+describe('the damage excess a quote fixes', () => {
+  it('round trips the amount and the bound that decided it', async () => {
+    const fixture = await newFixture();
+
+    const created = await store.create(
+      quoteFor(fixture, {
+        appliedExcess: { amount: gbp(13_500), boundBy: 'percentage' },
+      }),
+    );
+    const read = await store.findForRenter(created.id, fixture.renterId);
+
+    expect(read?.appliedExcess).toEqual({ amount: gbp(13_500), boundBy: 'percentage' });
+  });
+
+  /**
+   * **Null survives as null and never as zero** (ADR 0052). §8.7.2 requires a
+   * deliberately unsecured handover to be distinguishable from one whose hold
+   * failed, and a column that read back `0` would erase the difference on the
+   * only record of it.
+   */
+  it('round trips no security at all', async () => {
+    const fixture = await newFixture();
+
+    const created = await store.create(quoteFor(fixture, { appliedExcess: null }));
+    const read = await store.findForRenter(created.id, fixture.renterId);
+
+    expect(read?.appliedExcess).toBeNull();
+  });
+
+  /**
+   * **A zero hold is a figure, not an absence.** A band with a zero floor
+   * against a nearly worthless item rounds to nothing, and `toAppliedExcess`
+   * branches on `null` rather than on falsiness precisely so this does not
+   * silently become "no security required".
+   */
+  it('tells a zero hold apart from no hold', async () => {
+    const fixture = await newFixture();
+
+    const created = await store.create(
+      quoteFor(fixture, { appliedExcess: { amount: gbp(0), boundBy: 'floor' } }),
+    );
+    const read = await store.findForRenter(created.id, fixture.renterId);
+
+    expect(read?.appliedExcess).toEqual({ amount: gbp(0), boundBy: 'floor' });
+  });
+
+  /**
+   * **The CHECK, not the code.** `quote_damage_excess_is_complete` is what stops
+   * a half-filled pair reaching a row, and only a database test can prove it —
+   * every layer above can be bypassed by anything that writes another way.
+   *
+   * Written through Prisma directly rather than through the store, because the
+   * store's types make the half-filled pair unrepresentable, which is the point
+   * of them and the reason this has to go round.
+   */
+  it('refuses an amount with no bound, in the database', async () => {
+    const fixture = await newFixture();
+    const created = await store.create(quoteFor(fixture));
+
+    await expect(
+      client.quote.update({
+        where: { id: created.id },
+        data: { damageExcessAmount: 7_500, damageExcessBoundBy: null },
+      }),
+    ).rejects.toThrow(/quote_damage_excess_is_complete/);
+  });
+
+  it('refuses a bound nobody defined, in the database', async () => {
+    const fixture = await newFixture();
+    const created = await store.create(quoteFor(fixture));
+
+    await expect(
+      client.quote.update({
+        where: { id: created.id },
+        data: { damageExcessAmount: 7_500, damageExcessBoundBy: 'vibes' },
+      }),
+    ).rejects.toThrow(/quote_damage_excess_is_complete/);
   });
 });

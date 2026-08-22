@@ -47,6 +47,9 @@ function booking(payability: BookingDetail['payability']): BookingDetail {
     itemCharge: { amount: 5_400, currency: 'GBP' },
     renterFee: { amount: 432, currency: 'GBP' },
     total: { amount: 5_832, currency: 'GBP' },
+    appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
+    // Both parties read this projection; the page addresses one of them.
+    viewer: 'renter' as const,
     lineItems: [
       {
         unit: 'day',

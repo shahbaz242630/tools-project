@@ -366,6 +366,9 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       // *read*, because a fee policy changes underneath a listing nobody has
       // touched and a value captured here would freeze it.
       currentFeePolicy: category.feePolicy,
+      // Beside the fee policy and from the same version, as the real store
+      // resolves it — `hydrate` below keeps every later read in step.
+      currentDamageSecurity: category.damageSecurity,
       categoryTransportOptions: category.transportOptions,
       title: draft.title,
       description: draft.description,
@@ -486,7 +489,18 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
        adapter, which is unreachable for the same reason. */
     if (category === null) return listing;
 
-    return { ...listing, currentFeePolicy: category.feePolicy };
+    /*
+     * **The damage band is refreshed with the fee policy** (5.5b-ii), for the
+     * reason this method exists at all: the real adapter resolves both from the
+     * latest version on every read, so a double that refreshed one and froze the
+     * other would let a test prove that reconfiguring a category's damage
+     * security leaves an existing listing alone. It does not.
+     */
+    return {
+      ...listing,
+      currentFeePolicy: category.feePolicy,
+      currentDamageSecurity: category.damageSecurity,
+    };
   }
 
   async findOwnedBy(id: string, ownerId: string): Promise<ListingRecord | null> {
@@ -561,6 +575,14 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       categoryName: listing.categoryName,
       rates: listing.rates,
       currentFeePolicy: category.feePolicy,
+      /*
+       * **The category's current band, not one frozen when the listing was
+       * created** — `hydrate`'s argument (ADR 0042). The *quote* is what fixes
+       * the resulting amount, so a double that froze it here would let a test
+       * prove the opposite of production.
+       */
+      currentDamageSecurity: category.damageSecurity,
+      replacementValue: listing.replacementValue,
       currentMaximumRentalDays: category.maximumRentalDays,
       currentRequestExpiryHours: category.requestExpiryHours,
       currentCategoryVersionId: `${category.id}:v${String(category.versionNumber)}`,

@@ -32,6 +32,7 @@ import type {
 } from '@platform/contracts';
 import { Time } from '@platform/core';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
+import { appliedExcessOrNone } from '../pricing/damage-excess.js';
 import {
   ListingNotPublishableError,
   ListingTransitionRefusedError,
@@ -499,6 +500,20 @@ function toOwnerListing(
      * are paid, which is what settled it.
      */
     inclusiveDailyPrice: inclusiveDailyPrice(listing.rates, listing.currentFeePolicy),
+    /*
+     * **What would be held on this item, on the owner's own view of it**
+     * (§8.7.2, slice 5.5b-ii). It is on the single-listing projection and
+     * deliberately not on the index: the summary carries no price breakdown
+     * either, and a hold on every row of a list is noise rather than disclosure.
+     *
+     * §8.7.2's sizing note is addressed to the owner — loss above the recovery
+     * ceiling is theirs, and they cannot weigh that against a sentence saying a
+     * hold "may apply".
+     */
+    appliedExcess: appliedExcessOrNone(
+      listing.currentDamageSecurity,
+      listing.replacementValue,
+    ),
     status: listing.status,
     /*
      * **Both authorities, because visibility takes both** (ADR 0041, 2.8c-ii).

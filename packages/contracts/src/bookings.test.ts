@@ -37,6 +37,7 @@ const A_BOOKING = {
   itemCharge: gbp(5_400),
   renterFee: gbp(432),
   total: gbp(5_832),
+  appliedExcess: { amount: gbp(7_500), boundBy: 'floor' as const },
   lineItems: [{ unit: 'day', count: 3, unitPrice: gbp(1_800), subtotal: gbp(5_400) }],
   requestExpiresAt: '2026-08-22T09:00:00.000Z',
   events: [
@@ -292,6 +293,9 @@ describe('bookingDetailSchema', () => {
   const detail = {
     ...A_BOOKING,
     payability: { payable: true },
+    // Both parties read this projection, and every sentence addressed to "you"
+    // depends on which (slice 5.5b-ii).
+    viewer: 'renter',
   };
 
   it('is the booking plus whether the reader may pay', () => {
@@ -307,6 +311,7 @@ describe('bookingDetailSchema', () => {
     expect(Object.keys(bookingDetailSchema.shape)).toEqual([
       ...Object.keys(bookingSchema.shape),
       'payability',
+      'viewer',
     ]);
   });
 
@@ -314,7 +319,7 @@ describe('bookingDetailSchema', () => {
     // The whole point of the union: a control with no explanation beside it is
     // the defect this field exists to remove.
     expect(() =>
-      parseBookingDetail({ ...A_BOOKING, payability: { payable: false } }),
+      parseBookingDetail({ ...detail, payability: { payable: false } }),
     ).toThrow(ContractViolationError);
   });
 
@@ -323,7 +328,7 @@ describe('bookingDetailSchema', () => {
     // up rendered beside it.
     expect(() =>
       parseBookingDetail({
-        ...A_BOOKING,
+        ...detail,
         payability: { payable: true, reason: 'why?' },
       }),
     ).toThrow(ContractViolationError);
@@ -331,7 +336,7 @@ describe('bookingDetailSchema', () => {
 
   it('refuses an empty reason', () => {
     expect(() =>
-      parseBookingDetail({ ...A_BOOKING, payability: { payable: false, reason: '' } }),
+      parseBookingDetail({ ...detail, payability: { payable: false, reason: '' } }),
     ).toThrow(ContractViolationError);
   });
 

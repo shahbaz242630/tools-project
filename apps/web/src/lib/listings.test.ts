@@ -44,6 +44,9 @@ const LISTING = {
   isLocated: false,
   rates: { daily: null, weekend: null, weekly: null },
   inclusiveDailyPrice: null,
+  // Non-null even on an unpriced draft: the excess comes from the replacement
+  // value, which §8.3 requires before a draft can be saved at all.
+  appliedExcess: { amount: { amount: 7500, currency: 'GBP' }, boundBy: 'floor' },
   status: 'DRAFT',
   // Both authorities, because `OwnerListing` carries both from 2.8c-ii and the
   // parse requires them. A fixture that omitted them would make "approved" and

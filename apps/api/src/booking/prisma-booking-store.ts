@@ -19,6 +19,7 @@ import type {
   NewBookingEvent,
   PendingRequest,
 } from './booking-store.js';
+import { damageExcessColumns, toAppliedExcess } from './damage-excess-columns.js';
 import { overlaps } from './prisma-availability-store.js';
 
 /**
@@ -184,6 +185,9 @@ export class PrismaBookingStore implements BookingStore {
       currency: booking.total.currency,
       itemTitle: booking.itemTitle,
       categoryName: booking.categoryName,
+      // Two columns sharing the `currency` above (ADR 0002). Copied from the
+      // quote by the service, never derived here.
+      ...damageExcessColumns(booking.appliedExcess),
       requestExpiresAt: booking.requestExpiresAt,
     };
 
@@ -700,6 +704,8 @@ function toRecord(row: {
   currency: string;
   itemTitle: string;
   categoryName: string;
+  damageExcessAmount: number | null;
+  damageExcessBoundBy: string | null;
   requestExpiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -718,6 +724,7 @@ function toRecord(row: {
     total: toMoney(row.totalAmount, row.currency),
     itemTitle: row.itemTitle,
     categoryName: row.categoryName,
+    appliedExcess: toAppliedExcess(row, `Booking ${row.id}`),
     requestExpiresAt: row.requestExpiresAt,
     /*
      * **Cast rather than validated, and the reason is where the vocabulary is

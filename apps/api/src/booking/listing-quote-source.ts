@@ -1,4 +1,9 @@
-import type { CategoryFeePolicy, ListingRateCard } from '@platform/contracts';
+import type {
+  CategoryFeePolicy,
+  DamageSecurityPolicy,
+  ListingRateCard,
+} from '@platform/contracts';
+import type { MoneyValue } from '@platform/core';
 
 /**
  * What Booking needs to know about a listing in order to price it (slice 4.4b).
@@ -68,6 +73,33 @@ export interface QuotableListing {
    * payable today. The quote pins this by storing the version id below.
    */
   readonly currentFeePolicy: CategoryFeePolicy;
+  /**
+   * The excess band **as it stands now**, or null where the category requires no
+   * damage security (§8.7.2, ADR 0052, slice 5.5b-ii).
+   *
+   * Current rather than pinned, beside the fee policy above and for its reason:
+   * a quote is a new price under today's terms, and the version id below is what
+   * records which terms those were. The *quote* is where it stops being current
+   * and becomes fixed — §8.7.2's *"bookings retain the values current at
+   * creation"* is discharged by the quote storing the amount, not by anything
+   * re-reading this later.
+   *
+   * **The band, not the amount.** Turning it into money needs the replacement
+   * value below and §6.1 puts that arithmetic in `pricing/`, so a port that
+   * returned a computed figure would be rounding in a second place.
+   */
+  readonly currentDamageSecurity: DamageSecurityPolicy | null;
+  /**
+   * What replacing this item would cost, for the excess arithmetic and nothing
+   * else (§8.7.1).
+   *
+   * **It is an input, and it must not become a stored booking field.** This is
+   * the owner's own valuation of a thing kept at an address §8.4.1 publishes
+   * deliberately wrongly; what a booking keeps is the derived excess. It is also
+   * **mutable**, which is the whole reason the excess is copied rather than
+   * recomputed — see `bookings.service.ts`.
+   */
+  readonly replacementValue: MoneyValue;
   /**
    * The longest hire the category permits **as it stands now** (§8.5.3).
    *

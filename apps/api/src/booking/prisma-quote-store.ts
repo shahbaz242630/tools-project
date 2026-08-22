@@ -3,6 +3,7 @@ import type { MoneyValue } from '@platform/core';
 import type { QuoteLineItem } from '@platform/contracts';
 import { parseQuoteLineItems } from '@platform/contracts';
 import type { PrismaClient } from '@platform/database';
+import { damageExcessColumns, toAppliedExcess } from './damage-excess-columns.js';
 import type {
   ExportableQuote,
   NewQuote,
@@ -47,6 +48,9 @@ export class PrismaQuoteStore implements QuoteStore {
          * `toLineItems` below for the other half of that round trip.
          */
         lineItems: quote.lineItems.map((item) => ({ ...item })),
+        // Two columns, no currency of its own -- `currency` above is the one
+        // this row is denominated in (ADR 0002).
+        ...damageExcessColumns(quote.appliedExcess),
         categoryVersionId: quote.categoryVersionId,
         expiresAt: quote.expiresAt,
       },
@@ -160,6 +164,8 @@ interface QuoteRow {
   readonly currency: string;
   readonly minimumFeeApplied: boolean;
   readonly lineItems: unknown;
+  readonly damageExcessAmount: number | null;
+  readonly damageExcessBoundBy: string | null;
   readonly categoryVersionId: string;
   readonly expiresAt: Date;
   readonly createdAt: Date;
@@ -179,6 +185,7 @@ function toRecord(row: QuoteRow): QuoteRecord {
     total: toMoney(row.totalAmount, row.currency),
     minimumFeeApplied: row.minimumFeeApplied,
     lineItems: toLineItems(row.lineItems, row.id),
+    appliedExcess: toAppliedExcess(row, `Quote ${row.id}`),
     categoryVersionId: row.categoryVersionId,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,

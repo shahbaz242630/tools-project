@@ -136,6 +136,12 @@ beforeEach(async () => {
     },
     currentMaximumRentalDays: 88,
     currentRequestExpiryHours: 48,
+    currentDamageSecurity: {
+      excessFloor: { amount: 7_500, currency: 'GBP' as const },
+      excessPercentageBasisPoints: 1_500,
+      recoveryCeiling: { amount: 50_000, currency: 'GBP' as const },
+    },
+    replacementValue: { amount: 24_000, currency: 'GBP' as const },
     currentCategoryVersionId: 'category-version-2',
   });
 });
@@ -181,6 +187,23 @@ describe('asking for a quote', () => {
     expect(quote.total).toEqual(gbp(5_832));
     expect(quote.days).toBe(3);
     expect(quote.postcode).toBe('BS7 8AA');
+  });
+
+  /**
+   * §8.7.2's applied excess, through the real HTTP stack (slice 5.5b-ii).
+   *
+   * The service tests prove the arithmetic. What only this can show is that the
+   * figure survives the wire — `rentalQuoteSchema` is a `strictObject`, so a
+   * shape the contract does not describe fails here rather than on somebody's
+   * page.
+   */
+  it('discloses what will be held, and keeps it out of the total', async () => {
+    const quote = parseRentalQuote((await askForQuote('ada-token')).json());
+
+    // The floor is £75 and 15% of the £240 replacement value is £36.
+    expect(quote.appliedExcess).toEqual({ amount: gbp(7_500), boundBy: 'floor' });
+    // §3.4.4: refundable security is shown separately and never folded in.
+    expect(quote.total).toEqual(gbp(5_832));
   });
 
   it('refuses an anonymous request', async () => {

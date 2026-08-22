@@ -33,6 +33,7 @@ const A_QUOTE = {
   renterFee: gbp(432),
   minimumFeeApplied: false,
   total: gbp(5_832),
+  appliedExcess: { amount: gbp(7_500), boundBy: 'floor' as const },
   expiresAt: '2026-08-20T09:30:00.000Z',
 };
 

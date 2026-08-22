@@ -24,6 +24,10 @@ const A_BOOKING = {
   itemCharge: { amount: 5400, currency: 'GBP' },
   renterFee: { amount: 432, currency: 'GBP' },
   total: { amount: 5832, currency: 'GBP' },
+  // §8.7.2's hold. Required on the wire, and `null` is the sayable value — so a
+  // response that omits it is `malformed` rather than a page quietly saying
+  // nothing will be held.
+  appliedExcess: { amount: { amount: 7500, currency: 'GBP' }, boundBy: 'floor' },
   lineItems: [
     {
       unit: 'day',
@@ -261,7 +265,13 @@ describe('the two dashboard reads (slice 4.8b)', () => {
  * **`fetchBooking` is the first caller `GET /bookings/:bookingId` has ever had**,
  * which is why the route survived the deletion deadline its docblock carried.
  */
-const A_DETAIL = { ...A_BOOKING, state: 'ACCEPTED', payability: { payable: true } };
+const A_DETAIL = {
+  ...A_BOOKING,
+  state: 'ACCEPTED',
+  payability: { payable: true },
+  // Which party is reading: the page's "you" depends on it (5.5b-ii).
+  viewer: 'renter',
+};
 
 describe('fetchBooking', () => {
   it('addresses the one booking, and parses the detail projection', async () => {
@@ -299,7 +309,7 @@ describe('fetchBooking', () => {
       API,
       TOKEN,
       A_BOOKING.id,
-      responds(200, JSON.stringify({ ...A_BOOKING, payability: { payable: false } })),
+      responds(200, JSON.stringify({ ...A_DETAIL, payability: { payable: false } })),
     );
 
     expect(outcome.kind).toBe('malformed');

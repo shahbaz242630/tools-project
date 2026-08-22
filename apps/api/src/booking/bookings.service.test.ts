@@ -58,6 +58,12 @@ function mower(overrides: Record<string, unknown> = {}) {
     currentFeePolicy: policy,
     currentMaximumRentalDays: 88,
     currentRequestExpiryHours: 48,
+    currentDamageSecurity: {
+      excessFloor: { amount: 7_500, currency: 'GBP' as const },
+      excessPercentageBasisPoints: 1_500,
+      recoveryCeiling: { amount: 50_000, currency: 'GBP' as const },
+    },
+    replacementValue: { amount: 24_000, currency: 'GBP' as const },
     currentCategoryVersionId: 'category-version-2',
     ...overrides,
   };
@@ -503,6 +509,15 @@ describe('BookingsService', () => {
       const { requests } = await service.pendingRequests(MOWER, OWNER);
 
       expect(Object.keys(requests[0] ?? {}).sort()).toEqual([
+        /*
+         * **`appliedExcess` joined this list in 5.5b-ii and it is the exception
+         * that proves the rule.** Everything else here is about the dates and
+         * the owner's own money; this is about the *renter's* exposure, and it
+         * is here because §8.7.2 requires the values *"shown to both parties
+         * before booking"* and the owner's commitment is the acceptance. It
+         * discloses an amount and never a person.
+         */
+        'appliedExcess',
         'conflictCount',
         'days',
         'endDate',
@@ -604,6 +619,77 @@ describe('BookingsService', () => {
     });
   });
 
+  /**
+   * §8.7.2's *"bookings retain the values current at creation"* (slice 5.5b-ii).
+   *
+   * **The tests that matter here are the two that prove it is a *copy*.** Every
+   * other term on a booking could in principle be recomputed from the pinned
+   * category version; the excess could not, because half its inputs is
+   * `listings.replacementValue` — an ordinary mutable column. A booking that
+   * recomputed would show today's valuation against an older hire.
+   */
+  describe('the damage security a booking retains', () => {
+    it('copies the excess the renter was quoted', async () => {
+      const quoteId = await givenAQuote();
+
+      const booking = await service.request(ADA, { quoteId });
+
+      expect(booking?.appliedExcess).toEqual({
+        amount: { amount: 7_500, currency: 'GBP' },
+        boundBy: 'floor',
+      });
+    });
+
+    /**
+     * **The listing is revalued between the quote and the request**, which is a
+     * thing an owner may do at any moment and nothing warns them not to. The
+     * booking must hold the figure the renter was shown, not the one the item
+     * would produce now — this is the assertion that fails if somebody replaces
+     * the copy with a recomputation.
+     */
+    it('holds the quoted figure after the item is revalued', async () => {
+      const quoteId = await givenAQuote();
+      listings.give(mower({ replacementValue: { amount: 400_000, currency: 'GBP' } }));
+
+      const booking = await service.request(ADA, { quoteId });
+
+      // Recomputing now would produce the £500 ceiling. The quote said £75.
+      expect(booking?.appliedExcess?.amount.amount).toBe(7_500);
+    });
+
+    /**
+     * **The same rule the other way round.** A category reconfigured after the
+     * quote must not reach back into it either — the booking pins the version,
+     * and the excess it carries was computed under that one.
+     */
+    it('holds the quoted figure after the category band changes', async () => {
+      const quoteId = await givenAQuote();
+      listings.give(mower({ currentDamageSecurity: null }));
+
+      const booking = await service.request(ADA, { quoteId });
+
+      expect(booking?.appliedExcess?.amount.amount).toBe(7_500);
+    });
+
+    it('carries null through where the category required no security', async () => {
+      listings.give(mower({ currentDamageSecurity: null }));
+      const quoteId = await givenAQuote();
+
+      const booking = await service.request(ADA, { quoteId });
+
+      expect(booking?.appliedExcess).toBeNull();
+    });
+
+    /** It is not a fee, so it never joins the total (§3.4.4). */
+    it('keeps the excess out of the booking total', async () => {
+      const quoteId = await givenAQuote();
+
+      const booking = await service.request(ADA, { quoteId });
+
+      expect(booking?.total).toEqual({ amount: 5_832, currency: 'GBP' });
+    });
+  });
+
   describe('what it refuses', () => {
     it('answers null for a quote that is not this renter’s', async () => {
       const quoteId = await givenAQuote();
@@ -672,6 +758,7 @@ describe('BookingsService', () => {
         lineItems: [
           { unit: 'day', count: 3, unitPrice: gbp(1_800), subtotal: gbp(5_400) },
         ],
+        appliedExcess: null,
         categoryVersionId: 'category-version-2',
         expiresAt: Time.addHours(NOW, 1),
       });
@@ -714,6 +801,7 @@ describe('BookingsService', () => {
         total: gbp(5_832),
         itemTitle: 'Petrol hedge trimmer',
         categoryName: 'Outdoor and gardening',
+        appliedExcess: null,
         requestExpiresAt: Time.addHours(NOW, 48),
       });
 
@@ -739,6 +827,7 @@ describe('BookingsService', () => {
           total: gbp(1_944),
           itemTitle: 'Petrol hedge trimmer',
           categoryName: 'Outdoor and gardening',
+          appliedExcess: null,
           requestExpiresAt: Time.addHours(NOW, 48),
         }),
       ).rejects.toBeInstanceOf(OverlappingBookingError);
