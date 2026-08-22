@@ -578,6 +578,10 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
 
     const hydrated = await this.hydrate(listing);
 
+    const category = await this.categories.findBySlug(listing.categorySlug);
+    /* c8 ignore next -- unreachable: a listing cannot exist without its category. */
+    if (category === null) return null;
+
     return {
       id: hydrated.id,
       ownerId: hydrated.ownerId,
@@ -585,6 +589,15 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
       categoryName: hydrated.categoryName,
       categoryAttributes: hydrated.categoryAttributes,
       currentFeePolicy: hydrated.currentFeePolicy,
+      /*
+       * **The category's *current* band, not one captured when the listing was
+       * created** — `hydrate`'s argument applied to the second shop-window fact
+       * (ADR 0042). A double that froze the band would let a test prove the
+       * opposite of production: that reconfiguring a category's damage security
+       * leaves an existing listing's disclosed hold alone. It does not.
+       */
+      currentDamageSecurity: category.damageSecurity,
+      replacementValue: hydrated.replacementValue,
       title: hydrated.title,
       description: hydrated.description,
       rates: hydrated.rates,

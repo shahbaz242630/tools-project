@@ -9,6 +9,7 @@ import {
   MAX_RENTAL_RATE_MINOR_UNITS,
   MAX_DAMAGE_SECURITY_MINOR_UNITS,
   MAX_EXCESS_PERCENTAGE_BASIS_POINTS,
+  EXCESS_BOUNDS,
   NO_DAMAGE_SECURITY,
   UNCONFIGURED_FEE_POLICY,
   UNPRICED_RATE_CARD,
@@ -17,6 +18,8 @@ import {
   parseCategoryFeePolicy,
   parseDamageSecurityPolicy,
   parseListingRateCard,
+  appliedExcessOrNoneSchema,
+  appliedExcessSchema,
 } from './pricing.js';
 
 const validPolicy = {
@@ -523,5 +526,57 @@ describe('the damage-security default', () => {
    */
   it('is no band at all, rather than a zero-sized one', () => {
     expect(NO_DAMAGE_SECURITY).toBeNull();
+  });
+});
+
+/**
+ * The applied excess as it crosses a wire (slice 5.5b-i).
+ *
+ * `appliedExcessFor` is unit tested in the API against the band; what these pin
+ * is the **shape**, because from this slice a page renders it and a page cannot
+ * validate what it is handed.
+ */
+describe('the applied excess', () => {
+  const excess = { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' };
+
+  it('accepts an amount and the bound that decided it', () => {
+    expect(appliedExcessSchema.parse(excess)).toEqual(excess);
+  });
+
+  /**
+   * **The three bounds are a closed set**, so a fourth cannot arrive on a wire
+   * and reach a page that has no sentence for it — the same argument the metric
+   * label vocabularies make.
+   */
+  it('refuses a bound nobody defined', () => {
+    expect(appliedExcessSchema.safeParse({ ...excess, boundBy: 'vibes' }).success).toBe(
+      false,
+    );
+    expect([...EXCESS_BOUNDS]).toEqual(['floor', 'percentage', 'ceiling']);
+  });
+
+  /**
+   * **Strict, so the band cannot ride along.** The floor, percentage and ceiling
+   * are administrative configuration; a projection that quietly carried them
+   * would publish the platform's liability model on every listing page, and a
+   * permissive object is how that happens without anybody choosing it.
+   */
+  it('refuses to carry the band it was derived from', () => {
+    expect(
+      appliedExcessSchema.safeParse({
+        ...excess,
+        excessPercentageBasisPoints: 1_500,
+      }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * **Null is a value here, not an omission** (ADR 0052) — §8.7.2 permits a
+   * category requiring no security, and from 5.5c that is a different fact from
+   * a hold that failed.
+   */
+  it('lets a category say nothing is held', () => {
+    expect(appliedExcessOrNoneSchema.parse(null)).toBeNull();
+    expect(appliedExcessOrNoneSchema.safeParse(undefined).success).toBe(false);
   });
 });

@@ -16,8 +16,12 @@
  */
 
 import { z } from 'zod';
-import { inclusiveDailyPriceSchema, listingRateCardSchema } from './pricing.js';
-import type { InclusiveDailyPrice, ListingRateCard } from './pricing.js';
+import {
+  appliedExcessOrNoneSchema,
+  inclusiveDailyPriceSchema,
+  listingRateCardSchema,
+} from './pricing.js';
+import type { AppliedExcess, InclusiveDailyPrice, ListingRateCard } from './pricing.js';
 import {
   coarseLocationSchema,
   postalAddressResponseSchema,
@@ -907,6 +911,12 @@ export interface PublicListing {
   readonly inclusiveDailyPrice: InclusiveDailyPrice;
   readonly rates: ListingRateCard;
   /**
+   * What is held at collection, or null where the category requires no damage
+   * security (§8.7.2, slice 5.5b-i). **Refundable, and never part of the price
+   * above** — §3.4.4 requires it shown separately.
+   */
+  readonly appliedExcess: AppliedExcess | null;
+  /**
    * Whether the owner lists as themselves or as a business (BRD §8.3, ADR 0043).
    *
    * **The consumer-law disclosure, and the one field here that exists for the
@@ -977,6 +987,30 @@ export const publicListingSchema = z.object({
   inclusiveDailyPrice: inclusiveDailyPriceSchema,
   /** The full rate card, so a weekly rate can be shown as an alternative. */
   rates: listingRateCardSchema,
+  /**
+   * What is held against a card at collection, or `null` where this item's
+   * category requires no security at all (§8.7.2, slice 5.5b-i).
+   *
+   * **§3.4.4 requires it shown separately and never folded into the headline**,
+   * so it is its own field rather than a component of `inclusiveDailyPrice`. It
+   * is refundable and it is not a fee — a page that added it to a price would be
+   * making the platform look a third more expensive than it is, and one that
+   * hid it would surprise somebody at a handover.
+   *
+   * **Per listing, though the band is per category**, because the amount is the
+   * band applied to *this* item's replacement value. Two listings in one
+   * category legitimately differ.
+   *
+   * **Computed from the category's current version, not the pinned one**
+   * (ADR 0042). A shop window shows today's terms; the version a renter is
+   * actually held to is pinned by their quote, in slice 5.5b-ii.
+   *
+   * **`null` says nothing is held, and does not say nobody decided.** §8.7.2
+   * permits a category requiring no security and ADR 0052 expresses it by
+   * absence — with the cost, on a version written before 5.5a, that the two are
+   * indistinguishable.
+   */
+  appliedExcess: appliedExcessOrNoneSchema,
   ownerStatus: ownerStatusSchema,
 });
 

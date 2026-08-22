@@ -112,17 +112,13 @@ export function PublicListingView({
           </p>
 
           {/*
-            §3.4.4 requires the refundable damage security to be shown
-            **separately** and never folded into the headline. The amount arrives
-            in Phase 5 with the deposit bands; the sentence is here now, saying
-            only what is true today, because a disclosure added later is one
-            somebody forgets — and because a renter deciding on price should know
-            a hold exists before they get to a checkout that mentions it first.
+            §3.4.4 requires the damage security shown **separately** and never
+            folded into the headline. The sentence has been here since 2.10
+            saying only that a hold *may* apply; slice 5.5b-i replaces the hedge
+            with the figure, which is what §8.7.2 means by *"shown to both parties
+            before booking"*.
           */}
-          <p className={styles.hold}>
-            A refundable damage hold may also apply at collection. It is not a fee and
-            is never part of the price above.
-          </p>
+          <DamageHold excess={listing.appliedExcess} />
 
           {/*
             **Where the "booking is not open yet" paragraph used to be** (2.10).
@@ -272,3 +268,62 @@ export function PublicListingView({
     </div>
   );
 }
+
+/**
+ * What is held against a card at collection, and why that number (§8.7.2).
+ *
+ * **A hold, never a deposit, and the distinction is the substance rather than
+ * the wording.** No customer money is ever ours: the hold sits on the renter's
+ * own card and is released when the item comes home. `landing.tsx` says it in
+ * those words and three tests hold that page to them — this is the page a person
+ * books from, so it is the one that must not drift from them.
+ *
+ * **`null` says nothing will be held and does not stay silent about it.** A
+ * category may be configured to require no security (ADR 0052), and a renter
+ * comparing two items is owed that as plainly as they are owed an amount. The
+ * cost, stated where somebody will meet it: on a category version written before
+ * 5.5a nobody actually chose this, and the page cannot tell the difference — the
+ * fix is configuring the band, not hedging the sentence.
+ *
+ * **The explanation comes from `boundBy` and never from the band**, which is why
+ * that field crosses the wire at all. Each of the three says something true
+ * without naming the replacement value it was derived from: the floor is a
+ * property of the category, the ceiling is a promise about the most we will ever
+ * hold, and the percentage is acknowledged as value-based without disclosing the
+ * value. A page that stated the figure and could not account for it would invite
+ * exactly the question it refused to answer.
+ */
+function DamageHold({ excess }: { readonly excess: PublicListing['appliedExcess'] }) {
+  if (excess === null) {
+    return (
+      <p className={styles.hold}>
+        <strong>No hold for this item.</strong> Nothing is held against your card for
+        this hire.
+      </p>
+    );
+  }
+
+  return (
+    <p className={styles.hold}>
+      <strong>{Money.format(excess.amount)} held at collection.</strong> It sits on your
+      own card and is released when the item comes home — it is not a fee and is never
+      part of the price above. {EXCESS_EXPLANATIONS[excess.boundBy]}
+    </p>
+  );
+}
+
+/**
+ * Why the hold is the size it is, one sentence per bound.
+ *
+ * **A closed record rather than a chain of conditionals**, so a fourth bound
+ * added to `EXCESS_BOUNDS` is a compile error here instead of a listing page
+ * that silently explains nothing. It is the same reason the metric label
+ * vocabularies are closed unions.
+ */
+const EXCESS_EXPLANATIONS: Readonly<
+  Record<NonNullable<PublicListing['appliedExcess']>['boundBy'], string>
+> = {
+  floor: 'That is our minimum for this kind of item.',
+  percentage: 'It is based on what this item would cost to replace.',
+  ceiling: 'That is the most we will ever hold for this kind of item.',
+};

@@ -66,6 +66,7 @@ function listing(over: Partial<PublicListing> = {}): PublicListing {
       weekend: null,
       weekly: null,
     },
+    appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
     ownerStatus: 'private_owner',
     ...over,
   };
@@ -135,13 +136,83 @@ describe('the price', () => {
     expect(document.body.textContent).toContain('£1.44');
   });
 
-  it('says a refundable hold may apply, and that it is not part of the price', () => {
-    // §3.4.4 requires the damage security to be shown separately and never
-    // folded into the headline. The amount is Phase 5; the disclosure is not.
-    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
+  /**
+   * The damage security (§8.7.2, §3.4.4, slice 5.5b-i).
+   *
+   * **The disclosure is the product here, not the arithmetic** — `appliedExcessFor`
+   * is unit tested against the band; what these prove is that a person reading the
+   * page learns the figure, learns it is not part of the price, and is never told
+   * we keep their money.
+   */
+  describe('the damage hold', () => {
+    it('states the amount, and that it is not part of the price', () => {
+      render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
 
-    expect(document.body.textContent).toContain('refundable damage hold');
-    expect(document.body.textContent).toContain('never part of the price');
+      expect(document.body.textContent).toContain('£75.00 held at collection');
+      expect(document.body.textContent).toContain('never part of the price');
+    });
+
+    /**
+     * **The distinction the whole workstream turns on** (`DESIGN.md` D3, and the
+     * three tests on `landing.tsx`). BRD §8.7.2 authorises a hold against the
+     * renter's *own* card; no customer money is ever ours, and §8.15 is explicit
+     * that substance beats labels. A page that said "deposit" would be making a
+     * claim about where somebody's money sits.
+     */
+    it('never calls it a deposit, and says whose card it sits on', () => {
+      render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
+
+      expect(document.body.textContent).not.toMatch(/deposit/i);
+      expect(document.body.textContent).toContain('sits on your own card');
+      expect(document.body.textContent).toContain('released when the item comes home');
+    });
+
+    /**
+     * **The hold is never folded into the headline** (§3.4.4). The £75 must not
+     * reach the price element, or the page has invented a £75 rental.
+     */
+    it('keeps the hold out of the headline price', () => {
+      render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
+
+      const headline = screen.getByText(/a day, fees included/);
+      expect(headline.textContent).not.toContain('£75.00');
+    });
+
+    it.each([
+      ['floor', 'our minimum for this kind of item'],
+      ['percentage', 'what this item would cost to replace'],
+      ['ceiling', 'the most we will ever hold'],
+    ] as const)('accounts for a hold bound by the %s', (boundBy, explanation) => {
+      render(
+        <PublicListingView
+          requestPanel={A_PANEL}
+          listing={listing({
+            appliedExcess: { amount: { amount: 13_500, currency: 'GBP' }, boundBy },
+          })}
+        />,
+      );
+
+      expect(document.body.textContent).toContain('£135.00 held at collection');
+      expect(document.body.textContent).toContain(explanation);
+    });
+
+    /**
+     * **A category configured to require no security says so** (§8.7.2 permits
+     * it; ADR 0052 expresses it as absence). Silence would leave a renter to
+     * guess, and the guess a renter makes about an unmentioned hold is that
+     * there is one.
+     */
+    it('says plainly when nothing is held', () => {
+      render(
+        <PublicListingView
+          requestPanel={A_PANEL}
+          listing={listing({ appliedExcess: null })}
+        />,
+      );
+
+      expect(document.body.textContent).toContain('No hold for this item');
+      expect(document.body.textContent).not.toContain('held at collection');
+    });
   });
 
   it('explains a bound minimum fee, so “per day” is not misleading', () => {

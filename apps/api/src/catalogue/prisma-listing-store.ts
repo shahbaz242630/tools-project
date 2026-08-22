@@ -34,6 +34,7 @@ import type {
   PublicListingSummaryRecord,
   QuotableListingRecord,
 } from './listing-store.js';
+import { asDamageSecurity } from './damage-security-columns.js';
 import type { LocatedListingPoint, StoredFuzzOffset } from './listing-locator.js';
 
 /**
@@ -549,6 +550,19 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
 
     if (listing.outwardCode === null || listing.town === null) return null;
 
+    /*
+     * **The current version, with the pinned one as the fallback** — the same
+     * expression `findQuotable` uses above, lifted out of the `asFeePolicy`
+     * argument it was written inside because slice 5.5b-i gave it a second
+     * reader. Both the fee policy and the damage band are shop-window facts and
+     * must come from the *same* row: reading one from the current version and
+     * the other from the pinned one would put a price and a hold from different
+     * configurations on one page, with nothing saying so.
+     */
+    const current =
+      listing.categoryVersion.category.versions[0] ?? listing.categoryVersion;
+    const currentVersion = `the current version of the category listed by ${listing.id}`;
+
     return {
       id: listing.id,
       ownerId: listing.ownerId,
@@ -558,9 +572,12 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         listing.categoryVersion.attributes,
         `the category version pinned by listing ${listing.id}`,
       ),
-      currentFeePolicy: asFeePolicy(
-        listing.categoryVersion.category.versions[0] ?? listing.categoryVersion,
-        `the current version of the category listed by ${listing.id}`,
+      currentFeePolicy: asFeePolicy(current, currentVersion),
+      currentDamageSecurity: asDamageSecurity(current, currentVersion),
+      replacementValue: asMoney(
+        listing.replacementValueAmount,
+        listing.replacementValueCurrency,
+        listing.id,
       ),
       title: listing.title,
       description: listing.description,

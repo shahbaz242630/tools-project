@@ -2746,4 +2746,96 @@ describe('the public read', () => {
 
     expect(listing?.currentFeePolicy.renterFeeBasisPoints).toBe(1_600);
   });
+
+  /**
+   * The damage-security band on the shop-window read (§8.7.2, slice 5.5b-i).
+   *
+   * **Only this file can prove the band comes back through the join that already
+   * existed** rather than through a second query somebody added. The unit tests
+   * above it run against a fake that is *told* the band; this one reads the five
+   * nullable columns out of Postgres.
+   */
+  describe('the damage security band', () => {
+    it('reads the band and the replacement value it applies to', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await givenListing(owner, category.slug);
+      await store.publish(created.id, owner);
+
+      const listing = await store.findPublished(created.id);
+
+      expect(listing?.currentDamageSecurity).toEqual(DAMAGE_SECURITY);
+      expect(listing?.replacementValue).toEqual({ amount: 24_999, currency: 'GBP' });
+    });
+
+    /**
+     * ADR 0042 again, on the second shop-window fact — and it must move with the
+     * *same* version the fee policy does. A band read from the pinned version
+     * while the price came from the current one would put terms from two
+     * configurations on one page, with nothing saying so.
+     */
+    it('follows the current version, not the pinned one', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await givenListing(owner, category.slug);
+      await store.publish(created.id, owner);
+
+      await categories.addVersion(
+        category.slug,
+        {
+          name: 'Outdoor and gardening',
+          riskLevel: 'medium',
+          reportableActivity: 'none',
+          attributes: SCHEMA,
+          transportOptions: [],
+          feePolicy: FEE_POLICY,
+          damageSecurity: {
+            ...DAMAGE_SECURITY,
+            excessFloor: { amount: 9_000, currency: 'GBP' },
+          },
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+          requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+        },
+        owner,
+      );
+
+      const listing = await store.findPublished(created.id);
+
+      expect(listing?.currentDamageSecurity?.excessFloor.amount).toBe(9_000);
+    });
+
+    /**
+     * **A category configured to require no security reads as null, not as
+     * zero** (ADR 0052). Five NULL columns are §8.7.2's "requires no security",
+     * and collapsing them to a £0 band would make a deliberately unsecured
+     * handover indistinguishable from one whose hold is worthless — a difference
+     * 5.5c has to be able to see.
+     */
+    it('reads five nulls as no security at all', async () => {
+      const owner = await newUser();
+      const category = await newCategory(owner);
+      const created = await givenListing(owner, category.slug);
+      await store.publish(created.id, owner);
+
+      await categories.addVersion(
+        category.slug,
+        {
+          name: 'Outdoor and gardening',
+          riskLevel: 'medium',
+          reportableActivity: 'none',
+          attributes: SCHEMA,
+          transportOptions: [],
+          feePolicy: FEE_POLICY,
+          damageSecurity: null,
+          maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+          requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+        },
+        owner,
+      );
+
+      const listing = await store.findPublished(created.id);
+
+      expect(listing?.currentDamageSecurity).toBeNull();
+    });
+  });
 });

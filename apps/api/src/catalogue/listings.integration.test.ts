@@ -21,7 +21,11 @@ import {
   publicListingPath,
   publicListingSearchPath,
 } from '@platform/contracts';
-import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
+import type {
+  CategoryAttribute,
+  CategoryTransportOption,
+  DamageSecurityPolicy,
+} from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
@@ -307,6 +311,35 @@ async function reconfiguredWithFee(renterFeeBasisPoints: number): Promise<void> 
       transportOptions: [],
       feePolicy: { ...FEE_POLICY, renterFeeBasisPoints },
       damageSecurity: DAMAGE_SECURITY,
+      maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
+      requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
+    },
+    author,
+  );
+}
+
+/**
+ * A new version whose damage-security band is whatever the caller says, up to
+ * and including none at all (§8.7.2, ADR 0052).
+ *
+ * Beside `reconfiguredWithFee` and shaped like it: both exist so a test can move
+ * a *shop-window* fact under a listing nobody touched, which is the behaviour
+ * ADR 0042 requires and the one easiest to break by pinning.
+ */
+async function reconfiguredWithDamageSecurity(
+  damageSecurity: DamageSecurityPolicy | null,
+): Promise<void> {
+  const author = await idOf('alice-token');
+  await listings.categories.addVersion(
+    'outdoor-gardening',
+    {
+      name: 'Outdoor and gardening',
+      riskLevel: 'medium',
+      reportableActivity: 'none',
+      attributes: SCHEMA,
+      transportOptions: [],
+      feePolicy: FEE_POLICY,
+      damageSecurity,
       maximumRentalDays: DEFAULT_MAXIMUM_RENTAL_DAYS,
       requestExpiryHours: DEFAULT_REQUEST_EXPIRY_HOURS,
     },
@@ -2854,6 +2887,88 @@ describe('the public listing page', () => {
     // Scaled by the server against the pinned definition (ADR 0029): "5.2" at
     // one decimal place is 52.
     expect(listing.attributes.weight_kg).toBe(52);
+  });
+
+  /**
+   * The damage security a renter is shown before booking (§8.7.2, slice 5.5b-i).
+   *
+   * §8.7.2 requires the values *"shown to both parties before booking"*, and the
+   * page somebody decides on is before booking. This is the wire half of that;
+   * `public-listing.test.tsx` is the sentence half.
+   */
+  describe('the damage security', () => {
+    it('discloses what would be held, computed for this listing', async () => {
+      /*
+       * The band's floor is £75 and 15% of this listing's £249.99 replacement
+       * value is £37.50, so the floor binds — which is the figure *and* the
+       * reason, both of which the page renders.
+       */
+      const created = await givenVisible();
+
+      const listing = parsePublicListing((await read(created.id)).json());
+
+      expect(listing.appliedExcess).toEqual({
+        amount: { amount: 7_500, currency: 'GBP' },
+        boundBy: 'floor',
+      });
+    });
+
+    /**
+     * **What went into the calculation must not come out of it.**
+     * `publicListingSchema` is a `strictObject`, so a stray field would fail to
+     * parse — but the value could still be *inferred* if the band travelled, and
+     * this is the assertion that says neither does. §8.4.1 already publishes the
+     * location half a kilometre from the truth; naming what an item is worth
+     * beside it would undo the point of that.
+     */
+    it('never discloses the replacement value or the band it was derived from', async () => {
+      const created = await givenVisible();
+
+      const body = (await read(created.id)).json<Record<string, unknown>>();
+
+      const serialised = JSON.stringify(body);
+      // £249.99 as the wire would carry it, and as a human would read it.
+      expect(serialised).not.toContain('24999');
+      expect(serialised).not.toContain('249.99');
+      expect(body).not.toHaveProperty('replacementValue');
+      // The band's own three values, which are administrative configuration.
+      expect(serialised).not.toContain('excessPercentageBasisPoints');
+      expect(serialised).not.toContain('recoveryCeiling');
+    });
+
+    /**
+     * ADR 0042 on the second shop-window fact: an administrator who changes the
+     * band changes what every existing listing discloses, without an owner
+     * touching anything.
+     */
+    it('follows the category’s current version', async () => {
+      const created = await givenVisible();
+
+      await reconfiguredWithDamageSecurity({
+        ...DAMAGE_SECURITY,
+        excessFloor: { amount: 9_000, currency: 'GBP' },
+      });
+
+      const listing = parsePublicListing((await read(created.id)).json());
+
+      expect(listing.appliedExcess?.amount.amount).toBe(9_000);
+    });
+
+    /**
+     * **A category requiring no security says so, rather than saying £0**
+     * (§8.7.2, ADR 0052). The page turns this into *"No hold for this item"*;
+     * a zero amount would turn into *"£0.00 held at collection"*, which is a
+     * sentence about a mechanism that is not running.
+     */
+    it('carries null where the category requires no security', async () => {
+      const created = await givenVisible();
+
+      await reconfiguredWithDamageSecurity(null);
+
+      const listing = parsePublicListing((await read(created.id)).json());
+
+      expect(listing.appliedExcess).toBeNull();
+    });
   });
 
   it('serves a suspended owner’s listing, because a suspension is not a takedown', async () => {
