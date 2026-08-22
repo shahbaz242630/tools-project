@@ -1,5 +1,5 @@
 import type { MoneyValue } from '@platform/core';
-import type { QuoteLineItem } from '@platform/contracts';
+import type { AppliedExcess, QuoteLineItem } from '@platform/contracts';
 
 /**
  * How quotes are written and read (BRD §8.5.2, slice 4.4b).
@@ -33,6 +33,20 @@ export interface NewQuote {
   readonly total: MoneyValue;
   readonly minimumFeeApplied: boolean;
   readonly lineItems: readonly QuoteLineItem[];
+  /**
+   * §8.7.2's applied excess as this quote fixed it, or null where the category
+   * requires no damage security (ADR 0052, slice 5.5b-ii).
+   *
+   * **Fixed here rather than recomputed later.** It is the band applied to the
+   * listing's replacement value, and that value is an ordinary mutable column —
+   * so the figure is only reproducible if it is written down at the moment it is
+   * disclosed. The booking made from this quote copies it.
+   *
+   * No currency of its own: it is denominated in the same currency as
+   * `itemCharge`, `renterFee` and `total` (ADR 0002, and the shared column
+   * beneath it).
+   */
+  readonly appliedExcess: AppliedExcess | null;
   /**
    * The category version whose fee policy priced this (§8.5.2's *category
    * version*).

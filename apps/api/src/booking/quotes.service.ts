@@ -6,6 +6,7 @@ import {
   rentalPeriodDays,
   refusePeriod,
 } from '../pricing/rental-period.js';
+import { appliedExcessOrNone } from '../pricing/damage-excess.js';
 import {
   describeBelowMinimumBooking,
   priceRental,
@@ -166,6 +167,27 @@ export class QuotesService {
       total: priced.total,
       minimumFeeApplied: priced.minimumFeeApplied,
       lineItems: priced.lineItems,
+      /*
+       * **§8.7.2's applied excess, fixed here rather than displayed here.**
+       * The section requires the values *"shown to both parties before booking"*
+       * and that *"bookings retain the values current at creation"* — and this
+       * is the moment "creation" means, because the booking is made from this
+       * row.
+       *
+       * **It has to be stored, not recomputed, and the reason is one mutable
+       * column.** The band comes off the category version pinned two lines
+       * below, which nothing can rewrite; the replacement value comes off the
+       * *listing*, which its owner may edit at any moment. A booking that
+       * recomputed would show today's valuation against an older hire, and the
+       * renter would not be held to the figure they were shown.
+       *
+       * **It is not added to the total and must never be.** §3.4.4 puts
+       * refundable security beside the headline rather than inside it.
+       */
+      appliedExcess: appliedExcessOrNone(
+        listing.currentDamageSecurity,
+        listing.replacementValue,
+      ),
       categoryVersionId: listing.currentCategoryVersionId,
       expiresAt: this.expiryFromNow(),
     });
@@ -310,6 +332,7 @@ function toWireQuote(quote: QuoteRecord): RentalQuote {
     renterFee: quote.renterFee,
     total: quote.total,
     minimumFeeApplied: quote.minimumFeeApplied,
+    appliedExcess: quote.appliedExcess,
     expiresAt: Time.toIsoUtc(quote.expiresAt),
   };
 }

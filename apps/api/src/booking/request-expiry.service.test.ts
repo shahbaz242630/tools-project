@@ -58,6 +58,12 @@ function mower(overrides: Record<string, unknown> = {}) {
     currentFeePolicy: policy,
     currentMaximumRentalDays: 88,
     currentRequestExpiryHours: 48,
+    currentDamageSecurity: {
+      excessFloor: { amount: 7_500, currency: 'GBP' as const },
+      excessPercentageBasisPoints: 1_500,
+      recoveryCeiling: { amount: 50_000, currency: 'GBP' as const },
+    },
+    replacementValue: { amount: 24_000, currency: 'GBP' as const },
     currentCategoryVersionId: 'category-version-2',
     ...overrides,
   };

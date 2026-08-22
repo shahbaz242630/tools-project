@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { postcodeSchema } from './address.js';
 import { calendarDateSchema } from './availability.js';
 import { moneySchema } from './money.js';
+import { appliedExcessOrNoneSchema } from './pricing.js';
 import { parseWith } from './parse.js';
 
 export function listingQuotesPath(id: string): string {
@@ -228,6 +229,22 @@ export const rentalQuoteSchema = z.strictObject({
   renterFee: moneySchema,
   /** Whether the category's fee floor bound rather than the percentage. */
   minimumFeeApplied: z.boolean(),
+  /**
+   * What will be held against the renter's card at collection, or null where
+   * this item's category requires no damage security (§8.7.2, slice 5.5b-ii).
+   *
+   * **Fixed by this quote, not merely displayed on it.** §8.7.2 requires the
+   * values *"shown to both parties before booking"* and that *"bookings retain
+   * the values current at creation"* — and the amount depends on the listing's
+   * replacement value, which its owner may edit between the quote and the
+   * request. Storing it here is what makes the figure the renter was shown the
+   * figure their booking carries.
+   *
+   * **Never added to `total`.** §3.4.4 requires refundable security shown
+   * separately from the headline; it is not a fee and no arithmetic on this page
+   * may treat it as one.
+   */
+  appliedExcess: appliedExcessOrNoneSchema,
   /** `itemCharge + renterFee`. The headline. */
   total: moneySchema,
   /**

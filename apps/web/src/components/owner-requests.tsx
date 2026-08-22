@@ -7,6 +7,7 @@ import type { ListingRequest } from '@platform/contracts';
 import { answerRequestAction } from '../app/listings/[id]/request-decisions';
 import { INITIAL_DECISION_STATE } from '../app/listings/[id]/request-state';
 import type { RequestDecisionState } from '../app/listings/[id]/request-state';
+import { DamageHold } from './damage-hold';
 import styles from './owner-requests.module.css';
 
 /**
@@ -128,6 +129,21 @@ function Request({
           — before our commission, which is worked out when payments are built.
         </span>
       </p>
+
+      {/*
+        **The owner's half of §8.7.2's *"shown to both parties before booking"*.**
+        Their commitment is the acceptance, so the figure belongs on the thing
+        they accept — and it is the one number in this row that is about the
+        renter's exposure rather than what the hire earns. Somebody handing over a
+        £900 breaker is entitled to know what stands behind it, and to be told
+        plainly when nothing does.
+      */}
+      <DamageHold
+        excess={request.appliedExcess}
+        audience="owner"
+        className={styles.hold}
+        explainSize={false}
+      />
 
       <p className={styles.deadline}>
         Expires{' '}

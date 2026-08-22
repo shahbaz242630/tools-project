@@ -1584,6 +1584,33 @@ model Booking {
   itemTitle    String @db.Text
   categoryName String @db.Text
 
+  /// BRD §8.7.2's applied excess, as it was disclosed when this was made (slice
+  /// 5.5b-ii) — what the renter bears, and which of the band's three values
+  /// decided it.
+  ///
+  /// **Stored rather than derived, because half the calculation is mutable.**
+  /// The band is on the immutable `category_versions` row this already pins, so
+  /// it can be reconstructed for ever; `listings.replacementValueAmount` cannot,
+  /// because an owner edits it whenever they like. Recomputing would show
+  /// today's valuation against an older hire.
+  ///
+  /// **No currency column of its own** (ADR 0002): the amount shares this row's
+  /// `currency` with the item charge, the fee and the total, so an excess in a
+  /// different currency from the price is unrepresentable rather than merely
+  /// refused. `category_versions` needed `excess_band_currencies_agree` only
+  /// because it has no such shared column.
+  ///
+  /// **NULL means no security is required, never "not calculated"** (ADR 0052).
+  /// §8.7.2 requires a deliberately unsecured handover to be distinguishable
+  /// from one whose hold failed, and a zero would collapse the two.
+  ///
+  /// **A `CHECK` Prisma cannot see** keeps the pair all-or-nothing, the amount
+  /// non-negative, and `damageExcessBoundBy` inside `EXCESS_BOUNDS` — a closed
+  /// vocabulary held in the database because these rows outlive the code that
+  /// wrote them, the argument `event_is_known` makes.
+  damageExcessAmount  Int?    @db.Integer
+  damageExcessBoundBy String? @db.Text
+
   /// When an unanswered request expires (BRD §8.6, §6.2's *expiry*, §7.1).
   ///
   /// Computed at creation from the category version's `requestExpiryHours`, so a
@@ -1934,6 +1961,33 @@ model Quote {
   /// days at the rates in force"* — which is the property the pricing rule was
   /// chosen for (ADR 0047).
   lineItems Json @db.JsonB
+
+  /// BRD §8.7.2's applied excess, as it was disclosed when this was made (slice
+  /// 5.5b-ii) — what the renter bears, and which of the band's three values
+  /// decided it.
+  ///
+  /// **Stored rather than derived, because half the calculation is mutable.**
+  /// The band is on the immutable `category_versions` row this already pins, so
+  /// it can be reconstructed for ever; `listings.replacementValueAmount` cannot,
+  /// because an owner edits it whenever they like. Recomputing would show
+  /// today's valuation against an older hire.
+  ///
+  /// **No currency column of its own** (ADR 0002): the amount shares this row's
+  /// `currency` with the item charge, the fee and the total, so an excess in a
+  /// different currency from the price is unrepresentable rather than merely
+  /// refused. `category_versions` needed `excess_band_currencies_agree` only
+  /// because it has no such shared column.
+  ///
+  /// **NULL means no security is required, never "not calculated"** (ADR 0052).
+  /// §8.7.2 requires a deliberately unsecured handover to be distinguishable
+  /// from one whose hold failed, and a zero would collapse the two.
+  ///
+  /// **A `CHECK` Prisma cannot see** keeps the pair all-or-nothing, the amount
+  /// non-negative, and `damageExcessBoundBy` inside `EXCESS_BOUNDS` — a closed
+  /// vocabulary held in the database because these rows outlive the code that
+  /// wrote them, the argument `event_is_known` makes.
+  damageExcessAmount  Int?    @db.Integer
+  damageExcessBoundBy String? @db.Text
 
   /// The category version whose fee policy priced this (§8.5.2's *category
   /// version*).

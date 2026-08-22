@@ -75,6 +75,17 @@ export interface ListingRecord {
    */
   readonly currentFeePolicy: CategoryFeePolicy;
   /**
+   * The excess band **as it stands now**, or null for no damage security
+   * (§8.7.2, slice 5.5b-ii).
+   *
+   * Current rather than pinned, beside the fee policy above and for its reason —
+   * and it is on the *owner's* record because §8.7.2's sizing note is addressed
+   * to them: loss above the recovery ceiling is theirs, and they must be told so
+   * before listing. It changes underneath a listing nobody has touched, exactly
+   * as the fee policy does.
+   */
+  readonly currentDamageSecurity: DamageSecurityPolicy | null;
+  /**
    * Which transport requirements the **pinned** version offers (ADR 0029,
    * ADR 0031).
    *
@@ -291,6 +302,15 @@ export interface QuotableListingRecord {
    * actually given.
    */
   readonly currentRequestExpiryHours: number;
+  /**
+   * The excess band as it stands now, or null for no damage security (§8.7.2,
+   * slice 5.5b-ii), and the replacement value it applies to.
+   *
+   * Both current rather than pinned, beside the fee policy and for its reason.
+   * The *quote* is what fixes the resulting amount — see `QuotableListing`.
+   */
+  readonly currentDamageSecurity: DamageSecurityPolicy | null;
+  readonly replacementValue: MoneyValue;
   readonly currentCategoryVersionId: string;
 }
 

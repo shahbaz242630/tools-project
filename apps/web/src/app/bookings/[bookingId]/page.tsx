@@ -13,6 +13,7 @@ import { fetchBooking } from '../../../lib/bookings';
 import { describeLine } from '../../../lib/line-items';
 import { webEnv } from '../../../lib/env';
 import { BOOKINGS_PAGE_PATH, hirePath } from '../../../lib/page-paths';
+import { DamageHold } from '../../../components/damage-hold';
 import styles from './booking.module.css';
 
 /**
@@ -164,9 +165,21 @@ export default async function BookingPage({
         </li>
       </ul>
 
-      <p className={styles.totalNote}>
-        Fees included. Damage security is not part of this figure and is not taken yet.
-      </p>
+      <p className={styles.totalNote}>Fees included.</p>
+
+      {/*
+        **The figure this booking was made under, not the listing's today**
+        (§8.7.2's *"bookings retain the values current at creation"*). The line
+        here used to say only that damage security *"is not part of this figure
+        and is not taken yet"* — true, and it left a renter with no idea what the
+        number would be. It is on the booking now, so it is stated.
+      */}
+      <DamageHold
+        excess={booking.appliedExcess}
+        audience={booking.viewer}
+        className={styles.hold}
+        explainSize
+      />
 
       <BookingPayment booking={booking} />
 

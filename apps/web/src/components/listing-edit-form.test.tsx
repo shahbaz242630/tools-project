@@ -57,6 +57,9 @@ function listing(over: Partial<OwnerListing> = {}): OwnerListing {
       weekly: { amount: 9_000, currency: 'GBP' },
     },
     inclusiveDailyPrice: null,
+    // An unpriced draft still has an excess: it comes from the replacement
+    // value, which §8.3 requires before a draft can be saved at all.
+    appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
     status: 'DRAFT',
     moderationState: 'APPROVED',
     moderationReason: null,

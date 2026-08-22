@@ -15,6 +15,7 @@ import { fetchListing } from '../../../lib/listings';
 import { editListingPath, listingCalendarPath } from '../../../lib/page-paths';
 import type { ReactNode } from 'react';
 import { fetchRequests } from '../../../lib/requests';
+import { DamageHold } from '../../../components/damage-hold';
 import { OwnerRequests } from '../../../components/owner-requests';
 import { webEnv } from '../../../lib/env';
 import { PublishListingForm } from '../../../components/publish-listing-form';
@@ -206,20 +207,31 @@ function Listing({
                   </>
                 ) : null}
               </small>
-              {/*
-                The slot for the refundable damage security, which §3.4.4
-                requires to be shown **separately** and never folded into the
-                headline. The amount arrives in Phase 5 with the deposit bands;
-                the slot is here now because one added later is one somebody
-                forgets, and the rule it exists to satisfy is not a preference.
-              */}
-              <br />
-              <small>
-                A refundable damage hold may also apply. It is not a fee, and it is
-                never part of the price above.
-              </small>
             </>
           )}
+        </dd>
+
+        {/*
+          §3.4.4 requires the damage security shown **separately** and never
+          folded into the headline. This said only that a hold *may* apply until
+          slice 5.5b-ii — and by then the requests panel above it was stating a
+          definite figure, so one page said two different things about the same
+          hold. **Found by opening the page, not by the suite.**
+
+          Its own row rather than another `<small>` inside the price, because
+          "separately" is the rule and a fourth line under the rate reads as part
+          of it. §8.7.2's sizing note is addressed to the owner: loss above the
+          recovery ceiling is theirs, and they cannot weigh that against "may
+          apply".
+        */}
+        <dt>Damage hold</dt>
+        <dd>
+          <DamageHold
+            excess={listing.appliedExcess}
+            audience="owner"
+            className={undefined}
+            explainSize
+          />
         </dd>
 
         {listing.rates.weekend !== null || listing.rates.weekly !== null ? (

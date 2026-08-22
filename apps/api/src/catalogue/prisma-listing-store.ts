@@ -535,6 +535,15 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         current,
         `the current version of the category listed by ${listing.id}`,
       ),
+      currentDamageSecurity: asDamageSecurity(
+        current,
+        `the current version of the category listed by ${listing.id}`,
+      ),
+      replacementValue: asMoney(
+        listing.replacementValueAmount,
+        listing.replacementValueCurrency,
+        listing.id,
+      ),
       currentMaximumRentalDays: current.maximumRentalDays,
       currentRequestExpiryHours: current.requestExpiryHours,
       currentCategoryVersionId: current.id,
@@ -905,6 +914,13 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
         latestVersionOf(listing),
         `the current version of the category listed by ${listing.id}`,
       ),
+      // The same row the fee policy came from, for the reason 5.5b-i gives on
+      // the public read: a price and a hold from two configurations on one page
+      // would be worse than either being stale.
+      currentDamageSecurity: asDamageSecurity(
+        latestVersionOf(listing),
+        `the current version of the category listed by ${listing.id}`,
+      ),
       categoryTransportOptions: asTransportOptions(
         listing.categoryVersion.transportOptions,
         `the category version pinned by listing ${listing.id}`,
@@ -1085,6 +1101,13 @@ interface VersionRow {
   minimumBookingTotalCurrency: string;
   minimumPlatformFeeAmount: number;
   minimumPlatformFeeCurrency: string;
+  // §8.7.2's band, all five nullable together (5.5a). `asDamageSecurity` is
+  // what turns them into a policy, and the CHECK is what keeps them coherent.
+  excessFloorAmount: number | null;
+  excessFloorCurrency: string | null;
+  excessPercentageBasisPoints: number | null;
+  recoveryCeilingAmount: number | null;
+  recoveryCeilingCurrency: string | null;
 }
 
 function toOption(slug: string, version: VersionRow): CategoryOptionRecord {

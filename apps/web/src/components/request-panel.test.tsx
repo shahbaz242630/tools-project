@@ -61,6 +61,7 @@ const A_QUOTE: RentalQuote = {
   renterFee: { amount: 432, currency: 'GBP' },
   minimumFeeApplied: false,
   total: { amount: 5_832, currency: 'GBP' },
+  appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
   // 11:30 in Europe/London, because August is BST. That is the point of the
   // assertion below: an expiry rendered in UTC would read 10:30.
   expiresAt: '2026-08-18T10:30:00.000Z',
@@ -78,6 +79,7 @@ const A_BOOKING: Booking = {
   itemCharge: { amount: 5_400, currency: 'GBP' },
   renterFee: { amount: 432, currency: 'GBP' },
   total: { amount: 5_832, currency: 'GBP' },
+  appliedExcess: A_QUOTE.appliedExcess,
   lineItems: A_QUOTE.lineItems,
   requestExpiresAt: '2026-08-20T09:00:00.000Z',
   events: [

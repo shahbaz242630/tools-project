@@ -8,6 +8,7 @@ import {
 } from '@platform/contracts';
 import type { PublicListing } from '@platform/contracts';
 import { AttributeValue } from './attribute-value';
+import { DamageHold } from './damage-hold';
 import styles from './public-listing.module.css';
 
 /**
@@ -118,7 +119,12 @@ export function PublicListingView({
             with the figure, which is what §8.7.2 means by *"shown to both parties
             before booking"*.
           */}
-          <DamageHold excess={listing.appliedExcess} />
+          <DamageHold
+            excess={listing.appliedExcess}
+            audience="renter"
+            className={styles.hold}
+            explainSize
+          />
 
           {/*
             **Where the "booking is not open yet" paragraph used to be** (2.10).
@@ -268,62 +274,3 @@ export function PublicListingView({
     </div>
   );
 }
-
-/**
- * What is held against a card at collection, and why that number (§8.7.2).
- *
- * **A hold, never a deposit, and the distinction is the substance rather than
- * the wording.** No customer money is ever ours: the hold sits on the renter's
- * own card and is released when the item comes home. `landing.tsx` says it in
- * those words and three tests hold that page to them — this is the page a person
- * books from, so it is the one that must not drift from them.
- *
- * **`null` says nothing will be held and does not stay silent about it.** A
- * category may be configured to require no security (ADR 0052), and a renter
- * comparing two items is owed that as plainly as they are owed an amount. The
- * cost, stated where somebody will meet it: on a category version written before
- * 5.5a nobody actually chose this, and the page cannot tell the difference — the
- * fix is configuring the band, not hedging the sentence.
- *
- * **The explanation comes from `boundBy` and never from the band**, which is why
- * that field crosses the wire at all. Each of the three says something true
- * without naming the replacement value it was derived from: the floor is a
- * property of the category, the ceiling is a promise about the most we will ever
- * hold, and the percentage is acknowledged as value-based without disclosing the
- * value. A page that stated the figure and could not account for it would invite
- * exactly the question it refused to answer.
- */
-function DamageHold({ excess }: { readonly excess: PublicListing['appliedExcess'] }) {
-  if (excess === null) {
-    return (
-      <p className={styles.hold}>
-        <strong>No hold for this item.</strong> Nothing is held against your card for
-        this hire.
-      </p>
-    );
-  }
-
-  return (
-    <p className={styles.hold}>
-      <strong>{Money.format(excess.amount)} held at collection.</strong> It sits on your
-      own card and is released when the item comes home — it is not a fee and is never
-      part of the price above. {EXCESS_EXPLANATIONS[excess.boundBy]}
-    </p>
-  );
-}
-
-/**
- * Why the hold is the size it is, one sentence per bound.
- *
- * **A closed record rather than a chain of conditionals**, so a fourth bound
- * added to `EXCESS_BOUNDS` is a compile error here instead of a listing page
- * that silently explains nothing. It is the same reason the metric label
- * vocabularies are closed unions.
- */
-const EXCESS_EXPLANATIONS: Readonly<
-  Record<NonNullable<PublicListing['appliedExcess']>['boundBy'], string>
-> = {
-  floor: 'That is our minimum for this kind of item.',
-  percentage: 'It is based on what this item would cost to replace.',
-  ceiling: 'That is the most we will ever hold for this kind of item.',
-};

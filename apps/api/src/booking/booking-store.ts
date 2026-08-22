@@ -1,5 +1,6 @@
 import type { MoneyValue } from '@platform/core';
 import type {
+  AppliedExcess,
   BookingEventType,
   BookingState,
   QuoteLineItem,
@@ -48,6 +49,17 @@ export interface NewBooking {
   readonly total: MoneyValue;
   readonly itemTitle: string;
   readonly categoryName: string;
+  /**
+   * §8.7.2's applied excess, copied from the quote (slice 5.5b-ii), or null
+   * where the category required no damage security.
+   *
+   * **The one term here that could not be recomputed even in principle.** The
+   * money above is reproducible from the pinned category version; this is the
+   * band applied to the listing's *replacement value*, which its owner may edit
+   * at any time. §8.7.2's *"bookings retain the values current at creation"* is
+   * therefore discharged by this column and by nothing else.
+   */
+  readonly appliedExcess: AppliedExcess | null;
   /** When an unanswered request expires (§8.6), computed from the category. */
   readonly requestExpiresAt: Date;
   /**

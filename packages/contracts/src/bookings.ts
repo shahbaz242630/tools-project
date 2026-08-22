@@ -16,6 +16,7 @@ import { bookingStateSchema } from './booking.js';
 import { calendarDateSchema } from './availability.js';
 import { moneySchema } from './money.js';
 import { parseWith } from './parse.js';
+import { appliedExcessOrNoneSchema } from './pricing.js';
 import { quoteLineItemSchema } from './quotes.js';
 
 export const BOOKINGS_ROUTE = '/bookings';
@@ -221,6 +222,22 @@ export const bookingSchema = z.strictObject({
   itemCharge: moneySchema,
   renterFee: moneySchema,
   total: moneySchema,
+  /**
+   * What is held at collection, as it was disclosed when this booking was made
+   * — or null where its category required no damage security (§8.7.2, slice
+   * 5.5b-ii).
+   *
+   * **Copied from the quote, like every other money field here, and for a reason
+   * that is stronger rather than weaker.** The other figures could in principle
+   * be recomputed from the pinned category version; this one could not. The
+   * amount is the band applied to the listing's *replacement value*, which is an
+   * ordinary mutable column its owner edits — so a booking that recomputed would
+   * show today's valuation against last month's hire, and the two parties could
+   * read different numbers on different days.
+   *
+   * **Never part of `total`.** It is refundable and it is not a fee (§3.4.4).
+   */
+  appliedExcess: appliedExcessOrNoneSchema,
   lineItems: z.array(quoteLineItemSchema).min(1),
   /**
    * When an unanswered request expires, as an ISO instant (§8.6).
@@ -286,6 +303,25 @@ export type BookingPayability = z.infer<typeof bookingPayabilitySchema>;
 export const bookingDetailSchema = z.strictObject({
   ...bookingSchema.shape,
   payability: bookingPayabilitySchema,
+  /**
+   * Which side of this booking is reading it (slice 5.5b-ii).
+   *
+   * **`findForParty` answers for both parties**, so this page has two audiences
+   * and every sentence on it addressed to "you" has to know which. `payability`
+   * already encoded the distinction — an owner is told *"the renter pays for this
+   * booking"* — but only as a sentence, and a page cannot branch on prose without
+   * becoming a second place the rule lives.
+   *
+   * **It exists because the damage-security disclosure got it wrong.** The hold
+   * sits on the *renter's* card (§8.7.2); an owner reading their own booking was
+   * told it sat on theirs, which is false about whose money is at stake. Found by
+   * opening the page.
+   *
+   * **A named side rather than a boolean**, so a third reader — an administrator
+   * under §9's read-only impersonation — is a compile error at every branch
+   * instead of silently inheriting the owner's wording.
+   */
+  viewer: z.enum(['renter', 'owner']),
 });
 
 export type BookingDetail = z.infer<typeof bookingDetailSchema>;
@@ -398,6 +434,22 @@ export const listingRequestSchema = z.strictObject({
   days: z.number().int().positive(),
   /** What the hire earns at the owner's own rates, before the platform's cut. */
   itemCharge: moneySchema,
+  /**
+   * What will be held against the renter's card at collection, or null where the
+   * category requires no damage security (§8.7.2, slice 5.5b-ii).
+   *
+   * **This is the owner's half of *"shown to both parties before booking"*.**
+   * Their commitment is the acceptance, so the figure has to be on the thing
+   * they accept — and it is the one number here that is about the *renter's*
+   * exposure rather than the owner's earnings. An owner deciding whether to hand
+   * over a £900 breaker is entitled to know how much stands behind it, and §8.7.2
+   * makes that entitlement explicit rather than a courtesy.
+   *
+   * **Null is a real answer and must be shown as one.** An owner who is not told
+   * will assume something is held; §8.7.2 requires an unsecured handover to be a
+   * decision rather than a surprise.
+   */
+  appliedExcess: appliedExcessOrNoneSchema,
   /** When this request expires unanswered (§8.6), as an ISO instant. */
   requestExpiresAt: z.string().min(1),
   /**

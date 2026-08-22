@@ -151,3 +151,17 @@
     flex: 1 1 100%;
   }
 }
+
+/*
+ * The damage hold (§8.7.2, slice 5.5b-ii) — a bordered aside for the same
+ * reason `public-listing.module.css` gives it one: §3.4.4 requires refundable
+ * security shown separately and never folded into the money above it.
+ */
+.hold {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line-row);
+  color: var(--ink-secondary);
+  font-size: var(--text-helper);
+  line-height: 1.55;
+}

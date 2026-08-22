@@ -41,6 +41,7 @@ function aRequest(over: Partial<ListingRequest> = {}): ListingRequest {
     endDate: '2026-09-17',
     days: 3,
     itemCharge: { amount: 5_400, currency: 'GBP' },
+    appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
     // 10:00 in Europe/London, because September is BST. An expiry rendered in
     // UTC would read 09:00 — which is the point of the assertion below.
     requestExpiresAt: '2026-09-13T09:00:00.000Z',
@@ -253,5 +254,52 @@ describe('several requests', () => {
     at([aRequest({ id: 'booking-1' }), aRequest({ id: 'booking-2' })]);
 
     expect(screen.getByRole('heading', { name: /Requests/ })).toHaveTextContent('(2)');
+  });
+});
+
+/**
+ * The damage security an owner sees before accepting (§8.7.2, slice 5.5b-ii).
+ *
+ * §8.7.2 requires the values *"shown to both parties before booking"*. The
+ * owner's commitment is the acceptance, so this is the surface that discharges
+ * their half — and `DamageHold` owns the wording, so these prove it is *here*
+ * and about the right person, not what it says.
+ */
+describe('the damage security on a request', () => {
+  it('tells the owner what stands behind the item', () => {
+    render(<OwnerRequests listingId={LISTING} requests={[aRequest()]} />);
+
+    expect(document.body.textContent).toContain('£75.00 held at collection');
+    expect(document.body.textContent).toContain('sits on the renter’s own card');
+  });
+
+  /**
+   * **It is not money the owner receives**, and the row above it is. §3.4 pays
+   * an owner their charge less commission; an owner who read the hold as theirs
+   * would be expecting £75 that is never theirs.
+   */
+  it('does not read as part of what the owner is paid', () => {
+    render(<OwnerRequests listingId={LISTING} requests={[aRequest()]} />);
+
+    expect(document.body.textContent).toContain('not part of what you are paid');
+    // The owner's own figure is still the one labelled as theirs.
+    expect(document.body.textContent).toContain('at your rates');
+  });
+
+  /**
+   * **An unsecured handover is a decision the owner is told about**, not a
+   * silence. §8.7.2 permits a category configured to require no security, and an
+   * owner who is not told will assume something is held.
+   */
+  it('says plainly when nothing will be held', () => {
+    render(
+      <OwnerRequests
+        listingId={LISTING}
+        requests={[aRequest({ appliedExcess: null })]}
+      />,
+    );
+
+    expect(document.body.textContent).toContain('No hold for this item');
+    expect(document.body.textContent).not.toContain('held at collection');
   });
 });

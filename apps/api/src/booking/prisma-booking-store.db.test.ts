@@ -179,6 +179,8 @@ async function booking(
     requestExpiresAt: Date;
     /** Overridable from slice 4.7a, to prove one quote cannot make two bookings. */
     quoteId: string;
+    /** Overridable from slice 5.5b-ii, where the excess is the thing under test. */
+    appliedExcess: NewBooking['appliedExcess'];
   }> = {},
 ): Promise<NewBooking> {
   const startAt = over.startAt ?? MONDAY;
@@ -242,6 +244,8 @@ async function booking(
     total: { amount: 5_832, currency: 'GBP' },
     itemTitle: 'Petrol hedge trimmer',
     categoryName: 'Outdoor and gardening',
+    // No damage security: these fixtures are about dates and constraints.
+    appliedExcess: null,
     requestExpiresAt: new Date(startAt.getTime() + 48 * 3_600_000),
     ...over,
   };
@@ -1629,5 +1633,71 @@ describe('the export mirrors the eraser (§10.1, slice 4.8d)', () => {
     const ada = await newUser();
 
     expect(await quoteStore.postcodesFor([], ada)).toEqual(new Map());
+  });
+});
+
+/**
+ * The damage excess a booking retains (§8.7.2, slice 5.5b-ii).
+ *
+ * The service-level tests prove the *copy*; these prove the two columns survive
+ * Postgres, and that `booking_damage_excess_is_complete` refuses the shapes the
+ * types above it make unrepresentable. A booking outlives the code that wrote
+ * it, which is why the vocabulary is closed in the database as well as in
+ * `EXCESS_BOUNDS`.
+ */
+describe('the damage excess a booking retains', () => {
+  it('round trips the amount and the bound', async () => {
+    const listingId = await newListing();
+
+    const renterId = await newUser();
+    const created = await store.create(
+      await booking(listingId, renterId, {
+        appliedExcess: {
+          amount: { amount: 13_500, currency: 'GBP' },
+          boundBy: 'percentage',
+        },
+      }),
+    );
+    const read = await store.findForParty(created.id, renterId);
+
+    expect(read?.booking.appliedExcess).toEqual({
+      amount: { amount: 13_500, currency: 'GBP' },
+      boundBy: 'percentage',
+    });
+  });
+
+  /** Null is "no security required", never zero (ADR 0052). */
+  it('round trips no security at all', async () => {
+    const listingId = await newListing();
+
+    const renterId = await newUser();
+    const created = await store.create(await booking(listingId, renterId));
+    const read = await store.findForParty(created.id, renterId);
+
+    expect(read?.booking.appliedExcess).toBeNull();
+  });
+
+  it('refuses an amount with no bound, in the database', async () => {
+    const listingId = await newListing();
+    const created = await store.create(await booking(listingId, await newUser()));
+
+    await expect(
+      client.booking.update({
+        where: { id: created.id },
+        data: { damageExcessAmount: 7_500, damageExcessBoundBy: null },
+      }),
+    ).rejects.toThrow(/booking_damage_excess_is_complete/);
+  });
+
+  it('refuses a negative hold, in the database', async () => {
+    const listingId = await newListing();
+    const created = await store.create(await booking(listingId, await newUser()));
+
+    await expect(
+      client.booking.update({
+        where: { id: created.id },
+        data: { damageExcessAmount: -1, damageExcessBoundBy: 'floor' },
+      }),
+    ).rejects.toThrow(/booking_damage_excess_is_complete/);
   });
 });
