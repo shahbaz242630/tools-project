@@ -2,6 +2,7 @@ import type {
   CategoryAttribute,
   CategoryFeePolicy,
   CategoryTransportOption,
+  DamageSecurityPolicy,
   ListingAttributeValues,
   ListingCollectionLocation,
   ListingStatus,
@@ -186,6 +187,31 @@ export interface PublicListingRecord {
    * to be the price payable today, and this *is* the shop window.
    */
   readonly currentFeePolicy: CategoryFeePolicy;
+  /**
+   * The excess band **as it stands now**, or null where the category requires
+   * no damage security (§8.7.2, ADR 0052, slice 5.5b-i).
+   *
+   * Current rather than pinned for exactly the reason the fee policy above is:
+   * this is the shop window, and a hold disclosed here is a statement about what
+   * would happen if somebody booked today. The version a renter is *held* to is
+   * the one their quote pins.
+   *
+   * **The band, not the amount.** Turning it into a figure needs the replacement
+   * value below, and §6.1 puts that arithmetic in `pricing/` — a store that
+   * returned a computed excess would be the second place rounding happened.
+   */
+  readonly currentDamageSecurity: DamageSecurityPolicy | null;
+  /**
+   * What replacing this item would cost, for the excess arithmetic above and
+   * nothing else.
+   *
+   * **It must not reach the wire.** `publicListingSchema` has never carried it
+   * and does not now: it is the owner's own valuation of a thing kept at an
+   * address we deliberately publish half a kilometre from the truth (§8.4.1),
+   * and a page naming both what an item is worth and roughly where it lives is
+   * a shopping list. What crosses is the derived excess.
+   */
+  readonly replacementValue: MoneyValue;
   readonly title: string;
   readonly description: string;
   readonly rates: ListingRateCard;

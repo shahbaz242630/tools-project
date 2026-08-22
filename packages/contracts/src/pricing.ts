@@ -511,6 +511,60 @@ export function parseDamageSecurityPolicy(raw: unknown): DamageSecurityPolicy | 
 export const NO_DAMAGE_SECURITY: DamageSecurityPolicy | null = null;
 
 /**
+ * Which of the band's three values decided the amount (slice 5.5a).
+ *
+ * **Carried rather than inferred**, `minimumFeeApplied`'s reason one step
+ * further: the interface has to explain the figure to somebody whose money is
+ * being held, and *"£75, the minimum for this kind of item"* reads differently
+ * from *"£75, 15% of what this item is worth"* — even where the two are equal.
+ */
+export const EXCESS_BOUNDS = ['floor', 'percentage', 'ceiling'] as const;
+
+export type ExcessBound = (typeof EXCESS_BOUNDS)[number];
+
+/**
+ * What a renter bears on one booking, and why that number — §8.7.2's applied
+ * excess, once the band has met a particular listing's replacement value.
+ *
+ * **In the contract rather than beside the arithmetic that produces it**, which
+ * is where it lived while 5.5a had no reader outside the API. From 5.5b-i a
+ * listing page renders it, so the shape crosses a wire and belongs where both
+ * sides read one definition — the treatment `DamageSecurityPolicy` above has.
+ *
+ * **It travels without the band that produced it, and that is deliberate.** The
+ * floor, percentage and ceiling are administrative configuration and reach only
+ * the admin surface and the audit digest; a public projection carrying them
+ * would publish the platform's own liability model on every listing page.
+ *
+ * **`amount` is derived from the listing's replacement value, which is not
+ * public** — and this is the closest thing to a leak in the shape. A `boundBy`
+ * of `'percentage'` says the amount is some fixed share of that value, so
+ * anybody who learned the share from one listing could invert it on the rest.
+ * It is carried anyway: a listing's own title names the make and model, which
+ * discloses what an item is worth more precisely than its excess does, and the
+ * alternative is a page asserting a figure it cannot explain. Reversible in one
+ * field if that ever stops being the right trade.
+ */
+export const appliedExcessSchema = z.strictObject({
+  /** What the renter bears, and from 5.5c what the hold must cover. */
+  amount: moneySchema,
+  boundBy: z.enum(EXCESS_BOUNDS),
+});
+
+export type AppliedExcess = z.infer<typeof appliedExcessSchema>;
+
+/**
+ * The applied excess, or an explicit statement that nothing is held.
+ *
+ * **`null` means the category requires no security, never "not calculated"**
+ * (ADR 0052). §8.7.2 permits a category configured to require none, so the
+ * absence has to travel rather than collapse to a zero amount — from 5.5c the
+ * distinction is what separates a handover that is deliberately unsecured from
+ * one whose hold failed, and §8.7.2 requires those be told apart.
+ */
+export const appliedExcessOrNoneSchema = appliedExcessSchema.nullable();
+
+/**
  * What a listing costs to rent, before any platform fee (BRD §8.5.2, §8.3).
  *
  * **Every rate is nullable, because §8.3 makes a draft permissive.** An owner

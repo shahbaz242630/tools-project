@@ -2,6 +2,7 @@ import { Controller, Get, Inject, NotFoundException, Param } from '@nestjs/commo
 import { PUBLIC_LISTING_ROUTE } from '@platform/contracts';
 import type { PublicListing } from '@platform/contracts';
 import { inclusiveDailyPrice } from '../pricing/daily-price.js';
+import { appliedExcessOrNone } from '../pricing/damage-excess.js';
 import { LISTINGS_SERVICE } from './catalogue.tokens.js';
 import type { ListingsService } from './listings.service.js';
 import type { PublicListingView } from './listings.service.js';
@@ -105,6 +106,27 @@ function toPublicListing({ listing, ownerStatus }: PublicListingView): PublicLis
     location: { outwardCode: listing.outwardCode, town: listing.town },
     inclusiveDailyPrice: price,
     rates: listing.rates,
+    /*
+     * **§8.7.2's applied excess, computed here for the same reason the price
+     * above is** — §6.1 puts rounding in `pricing/` and nowhere else, so the
+     * store hands over the band and the replacement value and this asks the one
+     * function that turns them into money. A stored figure would be a second
+     * copy of the arithmetic, going stale the moment either input changed.
+     *
+     * **The replacement value stops here.** It went into the calculation and
+     * does not come out of it: `publicListingSchema` has never carried what an
+     * owner thinks their item is worth, and §8.4.1 already publishes the
+     * location deliberately wrong — naming the value beside it would undo the
+     * point of that.
+     *
+     * **Null travels rather than collapsing to zero.** A category configured to
+     * require no security (ADR 0052) is a different fact from one whose hold is
+     * £0, and from 5.5c a different fact again from one whose hold failed.
+     */
+    appliedExcess: appliedExcessOrNone(
+      listing.currentDamageSecurity,
+      listing.replacementValue,
+    ),
     /*
      * **The consumer-law disclosure BRD §8.3 asks for** (slice 2.13). A renter
      * has materially stronger rights against a trader than against a private

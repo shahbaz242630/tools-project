@@ -1,6 +1,6 @@
 import { Money } from '@platform/core';
 import type { MoneyValue } from '@platform/core';
-import type { DamageSecurityPolicy } from '@platform/contracts';
+import type { AppliedExcess, DamageSecurityPolicy } from '@platform/contracts';
 import { basisPointsToPercent } from '@platform/contracts';
 
 /**
@@ -17,25 +17,12 @@ import { basisPointsToPercent } from '@platform/contracts';
  * Sited in `pricing/` rather than beside the payment code that will use it,
  * because §6.1 puts the rounding rule in one module and this rounds — the same
  * argument that moved `renterFeeOn` here at its second caller.
+ *
+ * **`AppliedExcess` itself lives in `@platform/contracts` from slice 5.5b-i**,
+ * where `DamageSecurityPolicy` already was. It was declared here while nothing
+ * outside this application read it; a listing page renders it now, so the shape
+ * crosses a wire and one definition has to serve both sides of it.
  */
-
-export interface AppliedExcess {
-  /** What the renter bears, and what the hold must cover. */
-  readonly amount: MoneyValue;
-  /**
-   * Which of the three configured values decided it.
-   *
-   * Carried rather than inferred, `RenterFee.minimumFeeApplied`'s reason: the
-   * interface has to explain the figure to somebody whose money it is, and
-   * "£75, the minimum for this category" reads differently from "£75, 15% of
-   * what this item is worth" — even where the two happen to be equal.
-   *
-   * It is also what makes a misconfigured category visible. A band whose ceiling
-   * binds on every listing is one where the percentage is doing nothing, and
-   * that is worth being able to see rather than deduce.
-   */
-  readonly boundBy: 'floor' | 'percentage' | 'ceiling';
-}
 
 /**
  * `min(ceiling, max(floor, percentage × replacement value))`.
