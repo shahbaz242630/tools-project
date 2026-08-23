@@ -8,6 +8,8 @@ import type {
   CategoryStore,
 } from './category-store.js';
 import { CATEGORY_LIST_LIMIT } from './limits.js';
+import { meetsMarginRule } from '../pricing/margin-rule.js';
+import type { CategoryFeePolicy } from '@platform/contracts';
 
 /**
  * The Catalogue module's application service.
@@ -50,6 +52,8 @@ export class CatalogueService {
     input: CategoryConfiguration & { readonly slug: string },
     reason: string,
   ): Promise<CategoryRecord> {
+    refuseNegativeMargin(input.feePolicy, input.slug);
+
     const created = await this.store.create(input, actor.userId);
 
     await this.audit.record({
@@ -84,6 +88,15 @@ export class CatalogueService {
   ): Promise<CategoryRecord | null> {
     const before = await this.store.findBySlug(slug);
     if (before === null) return null;
+
+    /*
+     * **After the existence check and before the write.** A slug nobody has is a
+     * 404 rather than a margin complaint, and refusing here means a category
+     * never reaches a state §3.4.3 forbids — rather than reaching it and having
+     * publication refused later, by which point an administrator has to work out
+     * which of several settings did it.
+     */
+    refuseNegativeMargin(configuration.feePolicy, slug);
 
     const after = await this.store.addVersion(slug, configuration, actor.userId);
     // The category existed a moment ago and categories are never removed, so
@@ -194,4 +207,40 @@ function auditable(record: CategoryRecord): Record<string, unknown> {
     feePolicy: record.feePolicy,
     damageSecurity: record.damageSecurity,
   };
+}
+
+/**
+ * BRD §3.4.3's binding clause, refused where a category's fees are written
+ * (slice 5.3b).
+ *
+ * §3.4.3: *"A category may not be enabled for public booking if contribution
+ * margin at the minimum booking total is negative."* **The refusal is here rather
+ * than at publication**, and the difference is who finds out. A category saved
+ * with fees that lose money is a defect the *administrator* introduced, in one
+ * form submission, with every relevant number in front of them; discovering it
+ * later — when an owner cannot publish, or worse when nobody notices — separates
+ * the cause from the symptom by days and by people.
+ *
+ * **§8.2's clause is the same rule read the other way**: *"A category may not be
+ * enabled for public booking until it has a completed unit economics worked
+ * example under 3.4.3."* Since every category here is one a listing may be
+ * published into, refusing the configuration is what makes both sentences true at
+ * once, and it needs no *enabled* flag that nothing would read.
+ *
+ * **The judgement is `pricing/`'s, not restated here.** A second implementation
+ * of a legal threshold beside the admin form is exactly what
+ * `scripts/unit-economics.mjs` already proves is easy to let drift.
+ */
+export class CategoryMarginError extends Error {}
+
+function refuseNegativeMargin(policy: CategoryFeePolicy, slug: string): void {
+  const verdict = meetsMarginRule(policy);
+  if (verdict.meetsRule) return;
+
+  throw new CategoryMarginError(
+    `BRD §3.4.3 does not allow ${slug} to be enabled for public booking: ` +
+      `${verdict.reason ?? 'its contribution margin at the minimum booking total is negative'}. ` +
+      'Raise the minimum booking total, the minimum platform fee, or the fee ' +
+      'percentages until the margin is positive.',
+  );
 }

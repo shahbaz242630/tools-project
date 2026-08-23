@@ -113,7 +113,21 @@ async function loadPricing() {
    */
   const core = await import(`file://${join(ROOT, 'packages/core/dist/index.js')}`);
 
-  return { economics: economics.default, costs: costs.default, Time: core.Time };
+  /*
+   * **The product's own §3.4.3 gate** (slice 5.3b), loaded so this script can
+   * check its verdict against the one `CatalogueService` enforces. See
+   * `assertAgreesWithTheProduct`.
+   */
+  const rule = await import(
+    `file://${join(ROOT, 'apps/api/dist/pricing/margin-rule.js')}`
+  );
+
+  return {
+    economics: economics.default,
+    costs: costs.default,
+    rule: rule.default,
+    Time: core.Time,
+  };
 }
 
 /**
@@ -187,8 +201,42 @@ function bookingValuesFor(category) {
   ];
 }
 
+/**
+ * Refuse to disagree with the product about §3.4.3 (slice 5.3b).
+ *
+ * **This report and `CatalogueService` both judge the same clause and they are
+ * two implementations of it.** The report's is richer — it names how many
+ * bookings a month would turn a losing category positive — and the product's is a
+ * gate that refuses a save. Merging them would make a report depend on a service
+ * or a service render prose, so they stay apart and are held to the same answer
+ * here instead.
+ *
+ * **What would drift is the activity level**, which is the one number that
+ * decides borderline cases: the report judges at one booking a month and so must
+ * the gate. If somebody raises either, this stops the script rather than letting
+ * the two quietly diverge until a category the product accepted shows up in a
+ * document saying it may not be enabled.
+ */
+function assertAgreesWithTheProduct(rule, category, policy) {
+  const reported = meetsMinimumMarginRule(category);
+  const enforced = rule.meetsMarginRule(policy);
+
+  if (reported.passed !== enforced.meetsRule) {
+    console.error(
+      `This report and the product disagree about §3.4.3 for ${category.slug}: ` +
+        `the report says ${reported.passed ? 'PASSES' : 'FAILS'} and ` +
+        `CatalogueService says ${enforced.meetsRule ? 'PASSES' : 'FAILS'}.
+` +
+        'They judge the same clause and must not diverge — check that both still ' +
+        'evaluate at the minimum booking total, at one booking per active owner ' +
+        'per month.',
+    );
+    process.exit(1);
+  }
+}
+
 async function main() {
-  const { economics, costs, Time } = await loadPricing();
+  const { economics, costs, rule, Time } = await loadPricing();
   const model = costs.UK_STRIPE_COST_MODEL;
   const gbp = (minor) => ({ amount: minor, currency: 'GBP' });
 
@@ -252,6 +300,10 @@ async function main() {
 
     return {
       ...category,
+      // Kept so `assertAgreesWithTheProduct` can hand the product's gate exactly
+      // the policy this report judged, rather than rebuilding it and comparing
+      // two things that were never the same input.
+      policy,
       rows,
       breakEvenBookingsPerMonth: economics.breakEvenOwnerActivity(
         { grossBookingValue: gbp(floorMinor), damageSecurityCaptured: gbp(0) },
@@ -277,6 +329,10 @@ async function main() {
 
   let failed = false;
   for (const category of rendered) {
+    // Before the verdict is printed, not after: a disagreement means the line
+    // below cannot be trusted either way.
+    assertAgreesWithTheProduct(rule, category, category.policy);
+
     const verdict = meetsMinimumMarginRule(category);
     const atFloor = category.rows.find(
       (row) => row.isMinimumBookingTotal && row.bookingsPerMonth === 1,

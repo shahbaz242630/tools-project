@@ -33,7 +33,7 @@ const FEE_POLICY = {
   ownerCommissionBasisPoints: 1_500,
   renterFeeBasisPoints: 800,
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
-  minimumPlatformFee: { amount: 100, currency: 'GBP' },
+  minimumPlatformFee: { amount: 200, currency: 'GBP' },
 };
 /**
  * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
