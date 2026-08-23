@@ -30,6 +30,7 @@ import type { MirroredUser } from '../identity/user-directory.js';
 import type { Actor } from '../audit/audit-log.js';
 import { CATALOGUE_SERVICE } from './catalogue.tokens.js';
 import { CategorySlugTakenError } from './category-store.js';
+import { CategoryMarginError } from './catalogue.service.js';
 import type { CategoryConfiguration, CategoryRecord } from './category-store.js';
 import type { CatalogueService } from './catalogue.service.js';
 
@@ -122,6 +123,15 @@ export class AdminCategoriesController {
         // it, and the fix is a different slug rather than a corrected field.
         throw new ConflictException({ message: error.message });
       }
+      if (error instanceof CategoryMarginError) {
+        /*
+         * **400, unlike the slug clash above.** Nothing about the state of the
+         * world refuses this — the numbers in the body do, and the fix is to
+         * correct them. The message names which ones, because an administrator
+         * refused with a bare "invalid" edits at random until it saves.
+         */
+        throw new BadRequestException({ message: error.message });
+      }
       throw error;
     }
   }
@@ -148,11 +158,13 @@ export class AdminCategoriesController {
     const configuration = parse(() => parseCategoryConfiguration(body));
     const why = parse(() => parseAdminReason(reason));
 
-    const updated = await this.catalogue.reconfigure(
-      actorOf(admin, request),
-      slug,
-      configurationOf(configuration),
-      why,
+    const updated = await refuseUnprofitable(() =>
+      this.catalogue.reconfigure(
+        actorOf(admin, request),
+        slug,
+        configurationOf(configuration),
+        why,
+      ),
     );
     if (updated === null) throw new NotFoundException();
 
@@ -233,4 +245,22 @@ function toAdminCategory(category: CategoryRecord): AdminCategory {
     versionCreatedAt: Time.toIsoUtc(category.versionCreatedAt),
     createdAt: Time.toIsoUtc(category.createdAt),
   };
+}
+
+/**
+ * Turn §3.4.3's refusal into a 400 (slice 5.3b).
+ *
+ * A helper rather than a second `try`/`catch`, because the create handler
+ * already has one for the slug clash and two shapes for the same translation is
+ * how one of them comes to be forgotten.
+ */
+async function refuseUnprofitable<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof CategoryMarginError) {
+      throw new BadRequestException({ message: error.message });
+    }
+    throw error;
+  }
 }

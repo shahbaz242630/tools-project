@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { CategoryAttribute, CategoryTransportOption } from '@platform/contracts';
 import { CategorySlugTakenError } from './category-store.js';
+import { CategoryMarginError } from './catalogue.service.js';
 import { createCatalogueFakes } from './testing/fakes.js';
 import type { CatalogueFakes } from './testing/fakes.js';
 import type { Actor } from '../audit/audit-log.js';
@@ -36,7 +37,7 @@ const FEE_POLICY = {
   ownerCommissionBasisPoints: 1_500,
   renterFeeBasisPoints: 800,
   minimumBookingTotal: { amount: 1_000, currency: 'GBP' },
-  minimumPlatformFee: { amount: 100, currency: 'GBP' },
+  minimumPlatformFee: { amount: 200, currency: 'GBP' },
 } as const;
 /**
  * A real band rather than `null`, for `FEE_POLICY`'s reason applied to §8.7.2:
@@ -624,5 +625,107 @@ describe('the transport options', () => {
 
     const entry = fakes.audit.log.entries()[1];
     expect(entry?.beforeHash).toBe(entry?.afterHash);
+  });
+});
+
+/**
+ * BRD §3.4.3's binding clause, asked by the service (slice 5.3b).
+ *
+ * **The rule itself is `pricing/`'s and is proved there** — `margin-rule.test.ts`
+ * covers the arithmetic against the rates the two launch categories actually
+ * carry. What these prove is that the *service* asks it, on both paths, and
+ * refuses **before writing anything**: a category that reached the store and was
+ * then complained about would be a configuration §3.4.3 forbids sitting in the
+ * database, and `category_versions` is append-only, so nobody could remove it.
+ */
+describe('§3.4.3, the margin rule', () => {
+  const losing = {
+    ...draft.feePolicy,
+    // £1, which is what both launch categories carried until 21 August 2026 and
+    // what `unit-economics.mjs` found losing money at their floors.
+    minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
+  };
+
+  /** The draft's configuration half, which `reconfigure` takes without the slug. */
+  const configuration = (): Omit<typeof draft, 'slug'> => {
+    const rest = { ...draft } as Partial<typeof draft>;
+    delete rest.slug;
+    return rest as Omit<typeof draft, 'slug'>;
+  };
+
+  it('refuses to create a category that loses money at its floor', async () => {
+    await expect(
+      fakes.service.create(ADMIN, { ...draft, feePolicy: losing }, REASON),
+    ).rejects.toBeInstanceOf(CategoryMarginError);
+  });
+
+  it('writes nothing when it refuses a creation', async () => {
+    await fakes.service
+      .create(ADMIN, { ...draft, feePolicy: losing }, REASON)
+      .catch(() => undefined);
+
+    expect(await fakes.service.list()).toEqual([]);
+  });
+
+  it('says which figures to change', async () => {
+    // An administrator refused with "invalid configuration" edits at random
+    // until it saves. The sentence names the clause, the floor and the loss.
+    const refusal = await fakes.service
+      .create(ADMIN, { ...draft, feePolicy: losing }, REASON)
+      .catch((error: unknown) => error);
+
+    expect(String(refusal)).toMatch(/§3\.4\.3/);
+    expect(String(refusal)).toMatch(/minimum booking total of £10\.00/);
+  });
+
+  it('refuses to reconfigure a category into losing money', async () => {
+    await fakes.service.create(ADMIN, draft, REASON);
+
+    await expect(
+      fakes.service.reconfigure(
+        ADMIN,
+        'outdoor-gardening',
+        { ...configuration(), feePolicy: losing },
+        REASON,
+      ),
+    ).rejects.toBeInstanceOf(CategoryMarginError);
+  });
+
+  it('leaves the category on its previous version when it refuses', async () => {
+    /*
+     * **The version number is the assertion.** `category_versions` is immutable
+     * and append-only, so a refused save that had already written would leave a
+     * version nobody can delete — and the number is the only thing that makes
+     * that visible.
+     */
+    await fakes.service.create(ADMIN, draft, REASON);
+
+    await fakes.service
+      .reconfigure(
+        ADMIN,
+        'outdoor-gardening',
+        { ...configuration(), feePolicy: losing },
+        REASON,
+      )
+      .catch(() => undefined);
+
+    const after = await fakes.service.findBySlug('outdoor-gardening');
+    expect(after?.versionNumber).toBe(1);
+  });
+
+  it('answers a missing slug before it judges the numbers', async () => {
+    /*
+     * Order matters. A slug nobody has is a 404, and a margin complaint for it
+     * would send an administrator to fix figures on a category that does not
+     * exist.
+     */
+    expect(
+      await fakes.service.reconfigure(
+        ADMIN,
+        'no-such-category',
+        { ...configuration(), feePolicy: losing },
+        REASON,
+      ),
+    ).toBeNull();
   });
 });
