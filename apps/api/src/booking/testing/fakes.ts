@@ -30,6 +30,11 @@ import type {
   HireChargeResult,
   HirePayments,
 } from '../hire-payments.js';
+import type {
+  CollectionSecurity,
+  CollectionSecurityRequest,
+  CollectionSecurityResult,
+} from '../damage-security.js';
 import type { ListingQuoteSource, QuotableListing } from '../listing-quote-source.js';
 import type {
   ExportableQuote,
@@ -844,6 +849,36 @@ export class RecordingHirePayments implements HirePayments {
   }
 }
 
+/**
+ * §8.7.2's hold at the collection window, as Booking sees it (slice 5.5c-ii).
+ *
+ * **Its own fake beside `RecordingHirePayments` rather than a method on it**, so
+ * a test can assert that securing a handover charged nobody, and that paying held
+ * nothing. One fake with two lists would make each of those a filter, and a filter
+ * that is wrong reads as a pass.
+ *
+ * **It defaults to `held`, not `not_required`.** The default is the case that
+ * exercises the most code; `not_required` short-circuits before the interesting
+ * part and would let a broken flow look green.
+ */
+export class RecordingCollectionSecurity implements CollectionSecurity {
+  readonly requests: CollectionSecurityRequest[] = [];
+
+  private next: CollectionSecurityResult = { status: 'held' };
+
+  /** Change what the next hold reports — a challenge, a refusal, nothing to hold. */
+  willReport(result: CollectionSecurityResult): void {
+    this.next = result;
+  }
+
+  holdForCollection(
+    request: CollectionSecurityRequest,
+  ): Promise<CollectionSecurityResult> {
+    this.requests.push(request);
+    return Promise.resolve(this.next);
+  }
+}
+
 export function createBookingFakes(
   /**
    * The clock the calendar service reads, for the two refusals that need to
@@ -864,6 +899,8 @@ export function createBookingFakes(
   readonly requestExpiry: RequestExpiryService;
   /** What the charge reports next, and what it was asked (slice 5.2c). */
   readonly payments: RecordingHirePayments;
+  /** What the hold reports next, and what it was asked (slice 5.5c-ii). */
+  readonly security: RecordingCollectionSecurity;
   /** Flip to prove the refusal when payment is switched off (slice 5.2c). */
   readonly paymentsEnabled: { value: boolean };
 } {
@@ -878,6 +915,7 @@ export function createBookingFakes(
   const quoteStore = new InMemoryQuoteStore();
   const quotableListings = new InMemoryListingQuoteSource();
   const payments = new RecordingHirePayments();
+  const security = new RecordingCollectionSecurity();
   /*
    * A box rather than a boolean, so a test can flip it *after* the service has
    * been constructed — the service holds the port, not the value.
@@ -886,6 +924,7 @@ export function createBookingFakes(
 
   return {
     payments,
+    security,
     paymentsEnabled,
     store,
     ownership,
@@ -924,6 +963,7 @@ export function createBookingFakes(
        * off, so both paths are covered rather than one.
        */
       { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
+      security,
       now,
     ),
     /*

@@ -636,6 +636,51 @@ async function bootstrap(): Promise<void> {
     },
     listingOwnership,
     { isPaymentEnabled: () => featureFlags.isEnabled('booking.payment') },
+    /*
+     * Securing the handover, answered by Payments (slice 5.5c-ii) — narrowed to
+     * one method at the seam, like the charge above and for the same reason.
+     *
+     * **The translation of `kind` into `status` is where the two vocabularies
+     * meet, and it is deliberately not a pass-through.** Payments answers *what it
+     * did* — `not_required`, or `attempted` with an intent that has its own
+     * status — and Booking asks *how did securing this handover turn out*. Only
+     * `failed` may move a booking to `SECURITY_FAILED`, so `initiated` and
+     * `processing` collapse to `pending_payer_action`: both mean the hold is
+     * unfinished, and unfinished is not failed.
+     */
+    {
+      holdForCollection: async (request) => {
+        const outcome = await payments.holdDamageSecurity({
+          bookingId: request.bookingId,
+          ownerId: request.ownerId,
+          categoryVersionId: request.categoryVersionId,
+          itemTitle: request.itemTitle,
+          excess: request.excess === null ? null : asMoney(request.excess),
+        });
+
+        if (outcome.kind === 'not_required') return { status: 'not_required' };
+
+        const { intent } = outcome;
+
+        if (intent.status === 'succeeded') return { status: 'held' };
+
+        if (intent.status === 'failed') {
+          return {
+            status: 'failed',
+            ...(intent.failure === undefined
+              ? {}
+              : { failureMessage: intent.failure.message }),
+          };
+        }
+
+        return {
+          status: 'pending_payer_action',
+          ...(outcome.payerAction === undefined
+            ? {}
+            : { payerAction: outcome.payerAction }),
+        };
+      },
+    },
   );
 
   /*

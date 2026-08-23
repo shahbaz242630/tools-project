@@ -33,6 +33,10 @@ import {
   payabilityOf,
 } from './payability.js';
 import type { PaymentSwitch } from './payment-switch.js';
+import type {
+  CollectionSecurity,
+  CollectionSecurityResult,
+} from './damage-security.js';
 import type { ListingOwnership } from './listing-ownership.js';
 import type { ListingQuoteSource } from './listing-quote-source.js';
 import type { QuoteStore } from './quote-store.js';
@@ -133,6 +137,8 @@ export class BookingsService {
      * provider that always fails.
      */
     private readonly paymentSwitch: PaymentSwitch,
+    /** §8.7.2's hold at the collection window, answered by Payments (5.5c-ii). */
+    private readonly security: CollectionSecurity,
     /** Injected so the expiry refusals are provable without waiting (ADR 0003). */
     private readonly now: () => Date = Time.nowUtc,
   ) {}
@@ -543,6 +549,136 @@ export class BookingsService {
           : { failureMessage: result.failureMessage }),
       },
     };
+  }
+
+  /**
+   * Secure a handover at the collection window — §8.7.2 (slice 5.5c-ii).
+   *
+   * **Nothing calls this yet, and that is the boundary rather than an oversight.**
+   * §8.7.2 authorises *at the collection window and never at reservation*, §14
+   * puts the collection window in Phase 7, and the split was settled on
+   * 21 August 2026: **Phase 5 builds the capability, Phase 7 decides when it
+   * fires.** So there is no route and no control — Phase 7 supplies both, along
+   * with whatever moves a booking into `READY_FOR_COLLECTION` in the first place,
+   * which nothing does today either.
+   *
+   * **Only a refused hold moves the booking.** `SECURITY_FAILED` is a state that
+   * says *we tried to secure this handover and could not*, and three of the four
+   * outcomes are not that:
+   *
+   * - **`not_required`** — the category holds nothing, or its band sizes this
+   *   booking's excess at zero. §8.7.2 requires this to stay distinguishable from
+   *   a failure, because the two call for opposite decisions about handing over
+   *   somebody's property, and Payments returns it without touching a provider.
+   * - **`held`** — the excess is authorised. The booking is ready as it was.
+   * - **`pending_payer_action`** — the renter has a Strong Customer
+   *   Authentication challenge in front of them. **Unfinished is not failed**, and
+   *   marking it `SECURITY_FAILED` would tell an owner to refuse a handover
+   *   because a renter was midway through a 3-D Secure prompt.
+   *
+   * **The booking is read before anything is asked**, and the excess it carries is
+   * passed through rather than interpreted (ADR 0052) — Payments owns what an
+   * absent one means, so the rule lives in one module.
+   *
+   * **It takes the renter, exactly as {@link pay} does.** The hold is against
+   * the renter's card and Strong Customer Authentication may put a challenge in
+   * front of them, so the renter is the party who has to be there — and
+   * `BookingStore` deliberately answers only *for a party*, never by id alone.
+   * **Phase 7 may well want a machine-initiated path** when the collection window
+   * opens on a clock rather than on somebody's click; ADR 0048 already describes
+   * how such a caller authenticates, and inventing it here would be a credential
+   * with no caller.
+   *
+   * Returns null when there is no such booking, or when the caller is not its
+   * renter. Throws {@link RequestRefusedError} when the booking is not at a
+   * collection window.
+   */
+  async secureCollection(
+    bookingId: string,
+    renterId: string,
+  ): Promise<CollectionSecurityResult | null> {
+    /*
+     * **The flag, first and before anything is read**, exactly as {@link pay}
+     * does. There is no payment provider until 5.2e, so this is the honest state
+     * of the platform rather than a temporary guard.
+     *
+     * **Phase 7 should revisit whether a no-security category may hand over with
+     * payments disabled**, because `not_required` needs no provider and this
+     * refuses it anyway. It is deliberately not solved here: 5.2e turns the flag
+     * on and the question is moot from that point, so answering it now would be
+     * inventing a rule for a window that closes before anybody reaches it.
+     */
+    if (!(await this.paymentSwitch.isPaymentEnabled())) {
+      throw new RequestRefusedError(PAYMENT_NOT_ENABLED);
+    }
+
+    const existing = await this.bookings.findForParty(bookingId, renterId);
+    if (existing === null) return null;
+
+    const { booking } = existing;
+    /*
+     * **`findForParty` answers for either party, and only one of them has a card
+     * in this.** An owner reaching it would be authorising a hold against
+     * somebody else's money. Null rather than a refusal, so it is
+     * indistinguishable from a booking that does not exist — {@link pay} makes
+     * the same call.
+     */
+    if (booking.renterId !== renterId) return null;
+
+    /*
+     * **One state, not a list.** §7 gives `SECURITY_FAILED` exactly one way in,
+     * from `READY_FOR_COLLECTION`, so a booking anywhere else has no collection
+     * window open and there is nothing to secure. Asking earlier is the anti-
+     * pattern §8.7.2 names by name: a hold taken at reservation is dead before
+     * handover, because card authorisations expire in days.
+     */
+    if (booking.state !== 'READY_FOR_COLLECTION') {
+      throw new RequestRefusedError(
+        'That booking is not at its collection window, so there is nothing to ' +
+          'secure yet. Nothing has been held.',
+      );
+    }
+
+    /*
+     * Asked before anything is held, so a listing that has somehow lost its owner
+     * refuses rather than reserving money against a claim nobody could be paid
+     * from. {@link pay} makes the same call for the same reason.
+     */
+    const ownerId = await this.ownership.ownerOf(booking.listingId);
+    if (ownerId === null) {
+      throw new RequestRefusedError(
+        'That item is no longer available to collect. Nothing has been held.',
+      );
+    }
+
+    const result = await this.security.holdForCollection({
+      bookingId,
+      ownerId,
+      categoryVersionId: booking.categoryVersionId,
+      itemTitle: booking.itemTitle,
+      excess: booking.appliedExcess === null ? null : booking.appliedExcess.amount,
+    });
+
+    if (result.status === 'failed') {
+      assertTransition('READY_FOR_COLLECTION', 'SECURITY_FAILED');
+
+      await this.bookings.advance({
+        bookingId,
+        from: 'READY_FOR_COLLECTION',
+        to: 'SECURITY_FAILED',
+        /*
+         * **`null`, because no person did this.** The platform acted on a card
+         * issuer's refusal rather than on anybody's click, and `settle` already
+         * notes that a webhook writing a transition is the same honest case.
+         * Attributing it to the renter would read as though they declined their
+         * own hold.
+         */
+        actorId: null,
+        now: this.now(),
+      });
+    }
+
+    return result;
   }
 
   /**

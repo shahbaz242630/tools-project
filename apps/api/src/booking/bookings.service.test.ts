@@ -10,6 +10,7 @@ import {
   InMemoryListingOwnership,
   InMemoryListingQuoteSource,
   InMemoryQuoteStore,
+  RecordingCollectionSecurity,
   RecordingHirePayments,
 } from './testing/fakes.js';
 
@@ -81,6 +82,7 @@ describe('BookingsService', () => {
   let listings: InMemoryListingQuoteSource;
   let availability: InMemoryAvailabilityStore;
   let payments: RecordingHirePayments;
+  let security: RecordingCollectionSecurity;
   let ownership: InMemoryListingOwnership;
   let paymentsEnabled: { value: boolean };
   let quotes: QuotesService;
@@ -100,6 +102,7 @@ describe('BookingsService', () => {
     availability = new InMemoryAvailabilityStore(bookingStore);
     quotes = new QuotesService(quoteStore, listings, availability, () => NOW);
     payments = new RecordingHirePayments();
+    security = new RecordingCollectionSecurity();
     ownership = new InMemoryListingOwnership().give(MOWER, OWNER);
     paymentsEnabled = { value: true };
     service = new BookingsService(
@@ -110,6 +113,7 @@ describe('BookingsService', () => {
       payments,
       ownership,
       { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
+      security,
       () => NOW,
     );
   });
@@ -344,6 +348,7 @@ describe('BookingsService', () => {
           ownerOf: () => Promise.resolve(null),
         },
         { isPaymentEnabled: () => Promise.resolve(true) },
+        security,
         () => NOW,
       );
 
@@ -433,6 +438,7 @@ describe('BookingsService', () => {
         payments,
         ownership,
         { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
+        security,
         () => Time.addHours(NOW, 49),
       );
 
@@ -455,6 +461,7 @@ describe('BookingsService', () => {
         payments,
         ownership,
         { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
+        security,
         () => Time.addHours(NOW, 49),
       );
 
@@ -712,6 +719,7 @@ describe('BookingsService', () => {
         payments,
         ownership,
         { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
+        security,
         () => Time.fromIsoUtc('2026-08-20T09:31:00.000Z'),
       );
 
@@ -733,6 +741,7 @@ describe('BookingsService', () => {
         payments,
         ownership,
         { isPaymentEnabled: () => Promise.resolve(true) },
+        security,
         () => NOW,
       );
 
@@ -844,6 +853,7 @@ describe('BookingsService', () => {
         payments,
         ownership,
         { isPaymentEnabled: () => Promise.resolve(paymentsEnabled.value) },
+        security,
         () => NOW,
       );
 
@@ -1202,6 +1212,184 @@ describe('BookingsService', () => {
       expect(row?.startDate).toBe('2026-08-21');
       expect(row?.endDate).toBe('2026-08-23');
       expect(row?.days).toBe(3);
+    });
+  });
+
+  /**
+   * §8.7.2's hold at the collection window (slice 5.5c-ii).
+   *
+   * **The subject is which outcomes move a booking, and three of the four do not.**
+   * `SECURITY_FAILED` says *we tried to secure this handover and could not*, and it
+   * is the sentence an owner decides whether to hand their property over on — so
+   * every case that is not a refusal has to leave the booking where it was.
+   */
+  describe('securing a handover (§8.7.2, slice 5.5c-ii)', () => {
+    /**
+     * A booking at its collection window.
+     *
+     * **Walked to `RESERVED` through the real service, then advanced the last hop
+     * on the store**, because nothing puts a booking in `READY_FOR_COLLECTION` yet
+     * — that is Phase 7's, along with whatever opens a collection window. Using the
+     * store for the hop the product cannot yet make keeps the rest of the
+     * arrangement honest.
+     */
+    async function givenABookingAtCollection(): Promise<string> {
+      const quoteId = await givenAQuote();
+      const booking = await service.request(ADA, { quoteId });
+      if (booking === null) throw new Error('expected a booking');
+      await service.accept(booking.id, OWNER);
+      await service.pay(booking.id, ADA);
+
+      await bookingStore.advance({
+        bookingId: booking.id,
+        from: 'RESERVED',
+        to: 'READY_FOR_COLLECTION',
+        actorId: OWNER,
+        now: NOW,
+      });
+
+      return booking.id;
+    }
+
+    it('leaves the booking ready when the hold stands', async () => {
+      const bookingId = await givenABookingAtCollection();
+      security.willReport({ status: 'held' });
+
+      const result = await service.secureCollection(bookingId, ADA);
+
+      expect(result?.status).toBe('held');
+      const after = await service.find(bookingId, ADA, IN_GOOD_STANDING);
+      expect(after?.state).toBe('READY_FOR_COLLECTION');
+    });
+
+    it('leaves the booking ready when the category holds nothing', async () => {
+      /*
+       * ADR 0052. A category configured to require no security, or one whose band
+       * sizes this booking's excess at zero, is a **deliberately unsecured**
+       * handover — and §8.7.2 requires that to stay distinguishable from a broken
+       * one, because the two call for opposite decisions about handing over
+       * somebody's property.
+       */
+      const bookingId = await givenABookingAtCollection();
+      security.willReport({ status: 'not_required' });
+
+      const result = await service.secureCollection(bookingId, ADA);
+
+      expect(result?.status).toBe('not_required');
+      const after = await service.find(bookingId, ADA, IN_GOOD_STANDING);
+      expect(after?.state).toBe('READY_FOR_COLLECTION');
+    });
+
+    it('does not fail a booking whose renter is still on a challenge', async () => {
+      /*
+       * **Unfinished is not failed.** Strong Customer Authentication applies to an
+       * authorisation as it does to a charge, so a hold can legitimately be
+       * mid-flight — and marking it `SECURITY_FAILED` would tell an owner to refuse
+       * a handover because a renter was halfway through a 3-D Secure prompt.
+       */
+      const bookingId = await givenABookingAtCollection();
+      security.willReport({
+        status: 'pending_payer_action',
+        payerAction: { kind: 'confirm_in_browser', token: 'tok_1' },
+      });
+
+      const result = await service.secureCollection(bookingId, ADA);
+
+      expect(result?.status).toBe('pending_payer_action');
+      expect(result?.payerAction?.token).toBe('tok_1');
+      const after = await service.find(bookingId, ADA, IN_GOOD_STANDING);
+      expect(after?.state).toBe('READY_FOR_COLLECTION');
+    });
+
+    it('moves the booking to SECURITY_FAILED when the hold is refused', async () => {
+      const bookingId = await givenABookingAtCollection();
+      security.willReport({
+        status: 'failed',
+        failureMessage: 'Your card was declined.',
+      });
+
+      const result = await service.secureCollection(bookingId, ADA);
+
+      expect(result?.status).toBe('failed');
+      const after = await service.find(bookingId, ADA, IN_GOOD_STANDING);
+      expect(after?.state).toBe('SECURITY_FAILED');
+    });
+
+    it('records the failure as nobody’s act', async () => {
+      // The platform acted on a card issuer's refusal rather than on anybody's
+      // click. Attributing it to the renter would read as though they declined
+      // their own hold.
+      const bookingId = await givenABookingAtCollection();
+      security.willReport({ status: 'failed' });
+
+      await service.secureCollection(bookingId, ADA);
+
+      /*
+       * **Read off the store, not the projection.** `bookingEventSchema`
+       * withholds `actorId` from a party deliberately — it is another person's
+       * identifier —
+       * so the fact only exists where it is stored, which is also the only place
+       * §6.2's history is evidence of anything.
+       */
+      const stored = await bookingStore.findForParty(bookingId, ADA);
+      const last = stored?.events.at(-1);
+      expect(last?.toState).toBe('SECURITY_FAILED');
+      expect(last?.actorId).toBeNull();
+    });
+
+    it('hands the hold the booking’s own stored excess', async () => {
+      // §8.2, and 5.5b-ii's whole argument: the excess is copied onto the booking
+      // because the replacement value it was derived from is a column an owner
+      // edits. Re-deriving it here would hold today's valuation against last
+      // month's hire.
+      const bookingId = await givenABookingAtCollection();
+
+      await service.secureCollection(bookingId, ADA);
+
+      const [request] = security.requests;
+      expect(request?.bookingId).toBe(bookingId);
+      expect(request?.ownerId).toBe(OWNER);
+      expect(request?.itemTitle).toBe('Petrol hedge trimmer');
+    });
+
+    it('refuses a booking that is not at its collection window', async () => {
+      /*
+       * §8.7.2 by name: a hold taken at reservation is dead before handover,
+       * because card authorisations expire in days. §7 gives `SECURITY_FAILED`
+       * exactly one way in, so anywhere else has no window open.
+       */
+      const quoteId = await givenAQuote();
+      const booking = await service.request(ADA, { quoteId });
+      if (booking === null) throw new Error('expected a booking');
+      await service.accept(booking.id, OWNER);
+
+      await expect(service.secureCollection(booking.id, ADA)).rejects.toThrow(
+        /not at its collection window/,
+      );
+      expect(security.requests).toEqual([]);
+    });
+
+    it('is null for the owner, who has no card in this', async () => {
+      // `findForParty` answers for either party and only one of them is paying.
+      // An owner reaching it would authorise a hold against somebody else's money.
+      const bookingId = await givenABookingAtCollection();
+
+      expect(await service.secureCollection(bookingId, OWNER)).toBeNull();
+      expect(security.requests).toEqual([]);
+    });
+
+    it('is null for a booking nobody has', async () => {
+      expect(
+        await service.secureCollection('00000000-0000-4000-8000-000000000000', ADA),
+      ).toBeNull();
+    });
+
+    it('refuses, and holds nothing, when payment is switched off', async () => {
+      const bookingId = await givenABookingAtCollection();
+      paymentsEnabled.value = false;
+
+      await expect(service.secureCollection(bookingId, ADA)).rejects.toThrow();
+      expect(security.requests).toEqual([]);
     });
   });
 });
