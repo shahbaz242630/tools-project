@@ -646,11 +646,17 @@ describe('§3.4.3, the margin rule', () => {
     minimumPlatformFee: { amount: 100, currency: 'GBP' as const },
   };
 
-  /** The draft's configuration half, which `reconfigure` takes without the slug. */
+  /**
+   * The draft's configuration half, which `reconfigure` takes without the slug.
+   *
+   * `void slug` rather than a `_slug` binding: this config's `no-unused-vars`
+   * has no ignore pattern for destructured names, and `delete` is refused
+   * because `draft` is `as const`. Discarding it explicitly satisfies both.
+   */
   const configuration = (): Omit<typeof draft, 'slug'> => {
-    const rest = { ...draft } as Partial<typeof draft>;
-    delete rest.slug;
-    return rest as Omit<typeof draft, 'slug'>;
+    const { slug, ...rest } = draft;
+    void slug;
+    return rest;
   };
 
   it('refuses to create a category that loses money at its floor', async () => {
