@@ -88,6 +88,8 @@ describe('BookingDataService', () => {
       { chargeForHire: () => Promise.resolve({ status: 'succeeded' as const }) },
       { isOwnedBy: () => Promise.resolve(true), ownerOf: () => Promise.resolve(OWNER) },
       { isPaymentEnabled: () => Promise.resolve(true) },
+      // Securing a handover is not what this file is about either (5.5c-ii).
+      { holdForCollection: () => Promise.resolve({ status: 'held' as const }) },
       () => NOW,
     );
     exporter = new BookingDataService(bookingStore, quoteStore);

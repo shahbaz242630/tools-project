@@ -126,6 +126,8 @@ describe('RequestExpiryService', () => {
       { chargeForHire: () => Promise.resolve({ status: 'succeeded' as const }) },
       { isOwnedBy: () => Promise.resolve(true), ownerOf: () => Promise.resolve(null) },
       { isPaymentEnabled: () => Promise.resolve(true) },
+      // Securing a handover is not what this file is about either (5.5c-ii).
+      { holdForCollection: () => Promise.resolve({ status: 'held' as const }) },
       () => clock,
     );
     expiry = new RequestExpiryService(bookingStore, logger.logger, () => clock);
