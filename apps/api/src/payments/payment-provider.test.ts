@@ -69,6 +69,8 @@ describe('the payment vocabulary', () => {
         Promise.resolve(scripted(request.amount.amount > 0 ? 'succeeded' : 'failed')),
       read: (reference) =>
         Promise.resolve({ providerReference: reference, status: 'processing' }),
+      hold: (request) =>
+        Promise.resolve(scripted(request.amount.amount > 0 ? 'succeeded' : 'failed')),
     };
 
     const begun = await provider.begin({

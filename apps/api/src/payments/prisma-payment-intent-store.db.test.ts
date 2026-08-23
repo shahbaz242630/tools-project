@@ -39,7 +39,7 @@ import { PrismaCategoryStore } from '../catalogue/prisma-category-store.js';
 import { PrismaListingStore } from '../catalogue/prisma-listing-store.js';
 import { createFieldEncryptor } from '../encryption/field-encryption.js';
 import { PaymentIntentError } from './payment-intent.js';
-import type { NewPaymentIntent } from './payment-intent.js';
+import type { NewDamageSecurityHold, NewHireCharge } from './payment-intent.js';
 import { PrismaPaymentIntentStore } from './prisma-payment-intent-store.js';
 
 const env = loadEnv();
@@ -217,7 +217,7 @@ afterAll(async () => {
   await client.$disconnect();
 });
 
-function attempt(over: Partial<NewPaymentIntent> = {}): NewPaymentIntent {
+function attempt(over: Partial<NewHireCharge> = {}): NewHireCharge {
   return {
     bookingId,
     ownerId,
@@ -548,5 +548,117 @@ describe('finding attempts to reconcile', () => {
     }
 
     expect(await store.findUnsettled(staleBefore(), 2)).toHaveLength(2);
+  });
+});
+
+/**
+ * §8.7.2's damage-security hold against real PostgreSQL (slice 5.5c-i).
+ *
+ * **The CHECK is the subject, not the adapter.** `intent_divides_only_if_it_is_a_charge`
+ * replaced three constraints that each assumed a division, and the failure mode
+ * it exists to prevent is the *obvious* relaxation: making those three tolerate
+ * NULL would have stopped requiring a hire charge to divide as well. So the
+ * charge cases below matter as much as the hold ones.
+ */
+describe('an attempt that does not divide', () => {
+  function hold(over: Partial<NewDamageSecurityHold> = {}): NewDamageSecurityHold {
+    return {
+      bookingId,
+      ownerId,
+      categoryVersionId,
+      purpose: 'damage_security',
+      attemptKey: `hold-${randomUUID()}`,
+      amount: pence(5_000),
+      provider: 'fake',
+      ...over,
+    };
+  }
+
+  it('stores a hold with no division, and reads it back with none', async () => {
+    const intent = await store.begin(hold());
+
+    expect(intent.purpose).toBe('damage_security');
+    expect(intent.amount).toEqual(pence(5_000));
+    // **NULL, not zero.** A zero item charge is a real thing — an item lent free
+    // — and a hold is the absence of a division rather than an empty one.
+    expect(intent.itemCharge).toBeUndefined();
+    expect(intent.renterFee).toBeUndefined();
+  });
+
+  it('refuses a hold that divides', async () => {
+    await expect(
+      insertRaw({
+        purpose: 'damage_security',
+        itemChargeMinor: 4_000,
+        renterFeeMinor: 1_000,
+        amountMinor: 5_000,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses half a division on a hold', async () => {
+    // The branch states every column's nullness explicitly for this case. A
+    // branch that left one implied would pass here, because a CHECK fails only
+    // on false and never on NULL — slice 5.5b-ii's finding.
+    await expect(
+      insertRaw({
+        purpose: 'damage_security',
+        itemChargeMinor: 5_000,
+        renterFeeMinor: null,
+        amountMinor: 5_000,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('still refuses a hire charge with no division', async () => {
+    // **The regression the whole constraint shape exists for.** Relaxing the
+    // three original CHECKs to tolerate NULL would have made this storable.
+    await expect(
+      insertRaw({ itemChargeMinor: null, renterFeeMinor: null }),
+    ).rejects.toThrow();
+  });
+
+  it('still refuses a hire charge whose parts are not its total', async () => {
+    await expect(insertRaw({ renterFeeMinor: 431 })).rejects.toThrow();
+  });
+
+  it('refuses a purpose it has never heard of', async () => {
+    /*
+     * Fail closed. The hold branch names `damage_security` rather than saying
+     * "not a charge", so a third purpose cannot be written until somebody amends
+     * the constraint and decides deliberately whether it divides.
+     */
+    await expect(
+      insertRaw({ purpose: 'refund', itemChargeMinor: null, renterFeeMinor: null }),
+    ).rejects.toThrow();
+  });
+
+  it('lets one booking carry both a charge and a hold', async () => {
+    const charge = await store.begin(attempt());
+    const held = await store.begin(hold());
+
+    const found = await store.findForBooking(bookingId);
+    const ours = found.filter((row) => row.id === charge.id || row.id === held.id);
+
+    // The partial unique index is scoped to `(bookingId, purpose)` for succeeded
+    // rows, so a booking legitimately has one of each — and every reader has to
+    // narrow on `purpose` rather than assume.
+    expect(ours).toHaveLength(2);
+    expect(new Set(ours.map((row) => row.purpose))).toEqual(
+      new Set(['hire_charge', 'damage_security']),
+    );
+  });
+
+  it('records the provider’s capture_before on a hold', async () => {
+    const intent = await store.begin(hold());
+    const captureBefore = new Date('2026-08-28T09:00:00.000Z');
+
+    const settled = await store.recordOutcome(intent.id, {
+      status: 'succeeded',
+      providerReference: 'auth_1',
+      authorisationExpiresAt: captureBefore,
+    });
+
+    expect(settled.authorisationExpiresAt).toEqual(captureBefore);
   });
 });

@@ -2358,9 +2358,14 @@ model PaymentIntent {
 
   /// What this attempt is for — one of `PAYMENT_INTENT_PURPOSES`.
   ///
-  /// **One value today, `hire_charge`.** §8.7.2's damage-security hold is the
-  /// second, and it arrives with the flow that writes it rather than in
-  /// anticipation of one — the rule slice 5.1 set for ledger account kinds.
+  /// **Two values from slice 5.5c: `hire_charge` and `damage_security`.** The
+  /// second arrived with the flow that writes it rather than in anticipation of
+  /// one, which is the rule slice 5.1 set for ledger account kinds.
+  ///
+  /// **It decides whether this row divides.** A hire charge splits between an
+  /// owner and us; a hold takes nothing and splits nothing, so its
+  /// `itemChargeMinor` and `renterFeeMinor` are null and
+  /// `intent_divides_only_if_it_is_a_charge` keys off this column.
   purpose String @db.Text
 
   /// What makes a double-pressed pay button one charge.
@@ -2398,17 +2403,24 @@ model PaymentIntent {
   /// The charge and its two parts, in integer minor units with the ISO 4217 code
   /// on the same record (ADR 0002).
   ///
-  /// **A `CHECK` requires the total to be its parts**, so a row that disagrees
-  /// with itself is unrepresentable — `settleHire` refuses one for the same
-  /// reason, and this is that rule one layer down. The item charge is positive;
-  /// the renter fee may be zero, because fees are versioned configuration and a
-  /// category may be run at cost.
+  /// **Nullable from slice 5.5c, and only for a hold.** §8.7.2's damage-security
+  /// hold has an owner and a version but does not divide — nothing is owed to
+  /// anybody while it stands, because no money has moved. The parts were `NOT
+  /// NULL` until then, and relaxing them was the reviewed migration the schema
+  /// said it would take.
   ///
-  /// **`NOT NULL`, and §8.7.2's damage-security hold will need them relaxed** —
-  /// a hold has an owner and a version but does not divide. That is a reviewed
-  /// migration, which is the right cost for a table holding money.
-  itemChargeMinor Int
-  renterFeeMinor  Int
+  /// **`intent_divides_only_if_it_is_a_charge` replaced the three CHECKs that
+  /// assumed a division**, and it is keyed on `purpose` rather than merely made
+  /// null-tolerant. That distinction is the point: a null-tolerant CHECK would
+  /// also stop requiring a hire charge to divide, so relaxing the rule for holds
+  /// would have quietly relaxed it for charges. A charge must still have both
+  /// parts, a positive item charge, a non-negative fee, and a total that is
+  /// exactly its parts; a hold must have neither part.
+  ///
+  /// The renter fee may be zero, because fees are versioned configuration and a
+  /// category may be run at cost.
+  itemChargeMinor Int?
+  renterFeeMinor  Int?
   amountMinor     Int
   currency        String @db.Text
 
@@ -2416,8 +2428,9 @@ model PaymentIntent {
   /// (`capture_before`), never a duration we assume (§8.7.2, normative).
   ///
   /// **Null for a hire charge**, which is captured outright and holds nothing.
-  /// It exists now because §6.2 names it as part of what this entity is; it is
-  /// first written by §8.7.2's damage-security flow.
+  /// Written by §8.7.2's damage-security flow from slice 5.5c — and it may still
+  /// be null on a hold, where the provider stated no expiry. An adapter must not
+  /// invent one.
   authorisationExpiresAt DateTime? @db.Timestamptz(3)
 
   /// Why it failed, in **our** vocabulary rather than the provider's, and a

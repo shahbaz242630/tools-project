@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Time } from '@platform/core';
 import { createRecordingLogger } from '@platform/observability/testing';
-import type { PaymentIntentRecord, PaymentIntentStatus } from './payment-intent.js';
+import type {
+  HireChargeRecord,
+  PaymentIntentRecord,
+  PaymentIntentStatus,
+} from './payment-intent.js';
 import { ReconciliationService } from './reconciliation.service.js';
 import type { PaymentRefresher } from './reconciliation.service.js';
 import { FakePaymentIntentStore } from './testing/fakes.js';
@@ -23,8 +27,8 @@ let sequence = 0;
 
 /** An attempt as it already stands, which is what a sweep meets. */
 function attempt(
-  over: Partial<PaymentIntentRecord> & { readonly minutesSinceUpdate: number },
-): PaymentIntentRecord {
+  over: Partial<HireChargeRecord> & { readonly minutesSinceUpdate: number },
+): HireChargeRecord {
   sequence += 1;
   const updatedAt = Time.addMinutes(NOW, -over.minutesSinceUpdate);
 

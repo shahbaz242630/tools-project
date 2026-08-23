@@ -96,9 +96,28 @@ export interface PaymentAttempt {
    * difference is at most the round trip.
    *
    * **The expiry of a hold is a different thing and is not this** — that is
-   * §8.7.2's `capture_before`, which arrives with the damage-security flow.
+   * §8.7.2's `capture_before`, which is `authorisationExpiresAt` below.
    */
   readonly occurredAt?: Date;
+
+  /**
+   * When a hold stops being capturable — §8.7.2's `capture_before`, and
+   * **read from the provider rather than assumed** (slice 5.5c).
+   *
+   * §8.7.2 is normative that this is the provider's own timestamp. Card holds do
+   * not have one lifetime: the common figure is 7 days, but a **Visa
+   * merchant-initiated re-authorisation holds 5**, and a scheme or an issuer may
+   * shorten either. A duration we computed would be right most of the time and
+   * silently wrong on the cases that matter — an item handed over against a hold
+   * that had already lapsed, with §8.7.1 making the held amount a hard ceiling on
+   * what can ever be recovered.
+   *
+   * **Absent on a hire charge**, which is captured outright and holds nothing.
+   * An adapter that cannot get a real expiry must leave this out rather than
+   * invent one; the flow above it decides what an unexpiring hold means, and it
+   * cannot decide that about a number we made up.
+   */
+  readonly authorisationExpiresAt?: Date;
 }
 
 /** What we are asking to be paid. */
@@ -154,4 +173,26 @@ export interface PaymentProvider {
    * a way to ask.
    */
   read(providerReference: string): Promise<PaymentAttempt>;
+
+  /**
+   * Reserve an amount against the payer's card without taking it — §8.7.2's
+   * damage-security hold (slice 5.5c).
+   *
+   * **Authorise, never capture**, and the distinction is the whole method. The
+   * money does not move, so nothing is posted to the ledger: §5's books record
+   * what moved, and an authorisation is a promise that it *could*. What it
+   * produces instead is an expiry — `PaymentAttempt.authorisationExpiresAt` —
+   * and a ceiling, because §8.7.1 makes the held amount the most that can ever be
+   * recovered on this booking. Overcapture is unavailable to this platform, so an
+   * adapter must never quietly authorise less than it was asked for.
+   *
+   * **Not `begin` with a flag.** The two do different things to somebody's money
+   * and produce different obligations, and a boolean argument deciding which is a
+   * boolean somebody eventually passes the wrong way round.
+   *
+   * Strong Customer Authentication applies to an authorisation as it does to a
+   * charge, so this returns the same asynchronous shape: the answer may be
+   * `pending_payer_action` and the outcome may arrive by webhook.
+   */
+  hold(request: PaymentRequest): Promise<PaymentAttempt>;
 }

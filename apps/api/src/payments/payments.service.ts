@@ -1,4 +1,5 @@
 import { Time } from '@platform/core';
+import type { MoneyValue } from '@platform/core';
 import type { CategoryFeePolicySource } from './category-fee-policy-source.js';
 import { hireCaptureEntries, settleHire } from './hire-settlement.js';
 import type { HireCharge, HireSettlement } from './hire-settlement.js';
@@ -11,8 +12,15 @@ import {
   hireAttemptKey,
   hireCaptureKey,
   isTerminal,
+  securityHoldKey,
 } from './payment-intent.js';
-import type { NewPaymentIntent, PaymentIntentRecord } from './payment-intent.js';
+import type {
+  DamageSecurityHoldRecord,
+  HireChargeRecord,
+  NewPaymentIntent,
+  PaymentIntentPurpose,
+  PaymentIntentRecord,
+} from './payment-intent.js';
 import type { PaymentIntentStore } from './payment-intent-store.js';
 import type {
   PayerAction,
@@ -72,11 +80,23 @@ import type {
  *
  * **No controller, no route and no Nest token.** 5.2c gives this a caller and
  * decides who may reach it; a token now would be dead wiring, which is the call
- * 5.1 made and 4.1 before it. **No damage security** — §8.7.2 authorises at the
- * collection window, which is Phase 7, and the intent record already carries the
- * `capture_before` column it will need. **No refund and no payout**, which are
- * their own flows with their own ledger vocabulary; the rule 5.1 set is that a
- * transaction kind arrives with the flow that posts it.
+ * 5.1 made and 4.1 before it. **No refund and no payout**, which are their own
+ * flows with their own ledger vocabulary; the rule 5.1 set is that a transaction
+ * kind arrives with the flow that posts it.
+ *
+ * ## Damage security is here from 5.5c, and nothing calls it yet
+ *
+ * {@link holdDamageSecurity} authorises §8.7.2's excess against the renter's
+ * card. **Phase 5 builds the capability and Phase 7 decides when it fires**
+ * (settled 21 August 2026): §8.7.2 is explicit that the hold is taken at the
+ * collection window and never at reservation, and there is no collection window
+ * yet. So it is exercised by tests behind the fake, the way 5.2b's charge was
+ * before 5.2c gave it a caller.
+ *
+ * **It posts nothing to the ledger, and that is not an omission.** §5's books
+ * record money that moved; an authorisation moves none. What it produces is a
+ * reservation and an expiry, and the ledger hears about it only if a claim is
+ * ever captured against it — a later phase, with its own transaction kind.
  */
 export class PaymentsService {
   constructor(
@@ -117,7 +137,7 @@ export class PaymentsService {
     const proposed: NewPaymentIntent = {
       bookingId: instruction.bookingId,
       purpose: 'hire_charge',
-      attemptKey: await this.attemptKeyFor(instruction.bookingId),
+      attemptKey: await this.attemptKeyFor(instruction.bookingId, 'hire_charge'),
       ownerId: instruction.ownerId,
       categoryVersionId: instruction.categoryVersionId,
       itemCharge: instruction.charge.itemCharge,
@@ -169,6 +189,98 @@ export class PaymentsService {
     return attempt.payerAction === undefined
       ? { intent: recorded }
       : { intent: recorded, payerAction: attempt.payerAction };
+  }
+
+  /**
+   * Reserve §8.7.2's applied excess against the renter's card, or say that this
+   * booking requires nothing (slice 5.5c).
+   *
+   * **An absent excess is not a failed hold, and keeping those apart is the one
+   * thing here that must not be got wrong** ([ADR 0052](../../../../adr/0052-the-applied-excess-is-capped-and-an-unset-band-means-no-security.md)).
+   * A category may be configured to require no security, in which case the
+   * booking carries no excess and the correct behaviour is to hold nothing and
+   * say so. Collapsing that to a zero-value hold, or to a refusal, would tell an
+   * owner that securing the handover was attempted and failed — and §8.7.2
+   * requires a deliberately unsecured handover and a broken one to be
+   * distinguishable, because they call for opposite decisions about handing over
+   * property. It returns a distinct kind rather than a nullable intent, so a
+   * caller cannot read past the distinction.
+   *
+   * **The amount comes from the booking's stored copy and is never recomputed.**
+   * The excess is a function of the category's band and the listing's replacement
+   * value, and the replacement value is an ordinary column its owner may edit at
+   * any time. 5.5b-ii wrote the figure onto the booking for exactly this moment,
+   * so what is authorised is the number both parties were shown.
+   *
+   * **Authorise, never capture** — §8.7.1 makes the held amount a hard ceiling on
+   * what can ever be recovered, because overcapture is unavailable to us.
+   *
+   * Throws {@link PaymentIntentError} when a key has been reused for different
+   * money.
+   */
+  async holdDamageSecurity(
+    instruction: DamageSecurityInstruction,
+  ): Promise<DamageSecurityOutcome> {
+    if (instruction.excess === null || instruction.excess.amount === 0) {
+      /*
+       * Decided here rather than by the caller, so the rule lives once. Phase 7
+       * will have more than one route into a collection window, and a rule
+       * re-implemented per route is a rule that is right in most of them.
+       *
+       * **Zero is here beside null, and it is reachable.** `appliedExcessFor`
+       * returns `min(ceiling, max(floor, percentage × value))`, and a band with a
+       * zero floor and a zero or tiny percentage produces £0 — the admin form
+       * permits both, and 5.5b-ii's migration is explicit that a zero excess is
+       * legitimate and distinct from an absent one. **The distinction survives
+       * where it matters**: the booking still records `null` or `0`, so what the
+       * two parties were told is unchanged. What cannot survive is the provider
+       * call — there is no such thing as authorising nothing, and
+       * `intent_amount_is_positive` would refuse the row, turning a legitimate
+       * configuration into a 500 at the collection window.
+       *
+       * Both are **configured outcomes rather than failures**, which is the only
+       * distinction §8.7.2 requires this return value to carry.
+       */
+      return { kind: 'not_required' };
+    }
+
+    const proposed: NewPaymentIntent = {
+      bookingId: instruction.bookingId,
+      purpose: 'damage_security',
+      attemptKey: await this.attemptKeyFor(instruction.bookingId, 'damage_security'),
+      ownerId: instruction.ownerId,
+      categoryVersionId: instruction.categoryVersionId,
+      amount: instruction.excess,
+      provider: this.provider.name,
+    };
+
+    // Get-or-create, and refused if the key has been used for different money —
+    // the hire charge's rule, and the same one.
+    const found = assertSameAttempt(proposed, await this.intents.begin(proposed));
+    const intent = asHold(found);
+
+    // An attempt already at the provider is not sent again. `initiated` is the
+    // one status that means the row was written and the call may never have
+    // happened.
+    if (intent.status !== 'initiated') {
+      return { kind: 'attempted', intent };
+    }
+
+    const attempt = await this.provider.hold({
+      idempotencyKey: intent.attemptKey,
+      amount: instruction.excess,
+      /*
+       * **The item's name and nothing else** (§8.4.1) — this reaches a card
+       * statement, so no address, no postcode and nobody's name.
+       */
+      description: instruction.itemTitle,
+    });
+
+    const recorded = asHold(await this.applyOutcome(intent, attempt));
+
+    return attempt.payerAction === undefined
+      ? { kind: 'attempted', intent: recorded }
+      : { kind: 'attempted', intent: recorded, payerAction: attempt.payerAction };
   }
 
   /**
@@ -229,12 +341,24 @@ export class PaymentsService {
    * reader of the other's attempt. A counter incremented here would have the
    * opposite property.
    */
-  private async attemptKeyFor(bookingId: string): Promise<string> {
+  private async attemptKeyFor(
+    bookingId: string,
+    purpose: PaymentIntentPurpose,
+  ): Promise<string> {
     const attempts = await this.intents.findForBooking(bookingId);
+    /*
+     * **Only this purpose's failures are counted**, which is the whole reason the
+     * parameter exists. A booking has both a charge and a hold; counting all
+     * failures together would let a declined card renumber the *hold's* next key,
+     * so a retry of the hold would mint a key the provider had never seen while
+     * the open attempt sat there unfound.
+     */
     const failed = attempts.filter(
-      (attempt) => attempt.purpose === 'hire_charge' && attempt.status === 'failed',
+      (attempt) => attempt.purpose === purpose && attempt.status === 'failed',
     );
-    return hireAttemptKey(bookingId, failed.length);
+    return purpose === 'hire_charge'
+      ? hireAttemptKey(bookingId, failed.length)
+      : securityHoldKey(bookingId, failed.length);
   }
 
   /**
@@ -253,12 +377,28 @@ export class PaymentsService {
     const disposition = dispositionOf(intent.status, attempt.status);
     if (disposition.kind === 'ignore') return intent;
 
-    if (attempt.status === 'succeeded') {
+    /*
+     * **A hold that succeeded posts nothing**, and the narrowing is what makes
+     * that structural rather than remembered: `postCapture` divides an attempt
+     * between an owner and us, and a hold has no division to give it. §5's ledger
+     * records money that moved and an authorisation moves none.
+     */
+    if (attempt.status === 'succeeded' && intent.purpose === 'hire_charge') {
       await this.postCapture(intent, attempt);
     }
 
     return this.intents.recordOutcome(intent.id, {
       status: attempt.status,
+      /*
+       * **Passed through exactly as the provider stated it** (§8.7.2), and
+       * omitted where it did not. A hire charge never carries one; a hold whose
+       * provider gave none must read back as having none, so that whatever
+       * decides what an unexpiring hold means is deciding about a fact rather
+       * than about a default we supplied.
+       */
+      ...(attempt.authorisationExpiresAt === undefined
+        ? {}
+        : { authorisationExpiresAt: attempt.authorisationExpiresAt }),
       /*
        * A succeeded attempt must carry a reference — the database says so, and
        * it is what daily reconciliation matches against. Anything earlier may
@@ -279,7 +419,7 @@ export class PaymentsService {
    * somehow charged twice.
    */
   private async postCapture(
-    intent: PaymentIntentRecord,
+    intent: HireChargeRecord,
     attempt: PaymentAttempt,
   ): Promise<void> {
     const settlement = await this.settle({
@@ -408,6 +548,79 @@ export interface HirePaymentInstruction {
    */
   readonly itemTitle: string;
 }
+
+/**
+ * Re-narrow a record the store returned for a hold we proposed.
+ *
+ * **A cast would do the same and say nothing.** `begin` is get-or-create and
+ * `recordOutcome` reads back, so both are typed as the whole union; the purpose
+ * is already guaranteed — `assertSameAttempt` refuses a row whose purpose
+ * differs — and this states that guarantee where TypeScript can use it. If the
+ * invariant ever broke, throwing here is far better than dividing a hold.
+ */
+function asHold(intent: PaymentIntentRecord): DamageSecurityHoldRecord {
+  if (intent.purpose !== 'damage_security') {
+    throw new PaymentIntentError(
+      `attempt ${intent.id} is a ${intent.purpose} and cannot be read as a damage security hold`,
+    );
+  }
+  return intent;
+}
+
+/** What it takes to secure one booking's handover (§8.7.2, slice 5.5c). */
+export interface DamageSecurityInstruction {
+  readonly bookingId: string;
+  /**
+   * Who would be paid from a claim against this hold — the listing's owner.
+   *
+   * Passed in rather than looked up, for the reason
+   * {@link HirePaymentInstruction.ownerId} gives: BRD §5.1 gives Booking the
+   * hire, and a port here asking whose booking this is would make Payments a
+   * reader of Booking's tables by proxy.
+   */
+  readonly ownerId: string;
+  /** The category version the booking pinned, whose band sized the excess (§8.2). */
+  readonly categoryVersionId: string;
+  /**
+   * §8.7.2's applied excess as the **booking stored it**, or `null` where the
+   * category requires no security at all.
+   *
+   * **`null` is a configured answer, not a missing one** (ADR 0052). It is
+   * typed as an explicit null rather than an optional field precisely so a caller
+   * has to have thought about it: an omitted property is something you can forget
+   * to pass, and forgetting would silently mean "no security required" for a
+   * booking that needed some.
+   */
+  readonly excess: MoneyValue | null;
+  /**
+   * What is being secured, for the payer's statement.
+   *
+   * **The item's title and nothing else** — never an address (§8.4.1).
+   */
+  readonly itemTitle: string;
+}
+
+/**
+ * What securing a handover produced.
+ *
+ * **Two kinds, because "nothing was held" has two meanings** and §8.7.2 requires
+ * they be told apart: a category that holds nothing by configuration, and a hold
+ * that was attempted and failed. The second arrives as `attempted` with a failed
+ * intent; the first never touches the provider.
+ */
+export type DamageSecurityOutcome =
+  /**
+   * Nothing is to be held — the category requires no security, or its band
+   * sizes this booking's excess at zero. Nothing was written and nobody was
+   * called, and neither is a failure.
+   */
+  | { readonly kind: 'not_required' }
+  /** A hold was opened. Its `status` says whether it stands, is pending or failed. */
+  | {
+      readonly kind: 'attempted';
+      readonly intent: DamageSecurityHoldRecord;
+      readonly payerAction?: PayerAction;
+    };
 
 /** Where an attempt got to, and what the payer must do about it. */
 export interface HirePaymentOutcome {

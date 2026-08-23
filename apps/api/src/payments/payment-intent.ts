@@ -26,14 +26,19 @@ import type { PaymentAttemptStatus, PaymentFailure } from './payment-provider.js
 /**
  * What an attempt is for.
  *
- * **One value today, and the second is not written in advance.** §8.7.2's
- * damage-security hold is the obvious next one — it is the reason
- * `authorisationExpiresAt` exists at all — but the rule slice 5.1 set for ledger
- * account kinds holds here too: a value arrives **with the flow that writes it**,
- * and with a test. A vocabulary invented ahead of its flow is one nobody can
- * exercise.
+ * **Two values, and the second arrived with the flow that writes it** — the
+ * rule slice 5.1 set for ledger account kinds, honoured here in slice 5.5c. It
+ * was deliberately not written in advance, because a vocabulary invented ahead of
+ * its flow is one nobody can exercise.
+ *
+ * **The two are not variations on one thing.** A `hire_charge` takes money and
+ * divides it between an owner and us; a `damage_security` hold takes nothing,
+ * divides nothing and posts nothing to the ledger — it reserves an amount and
+ * acquires an expiry (§8.7.2). Everything that reads an attempt has to know which
+ * it is holding, which is why `NewPaymentIntent` and `PaymentIntentRecord`
+ * discriminate on this rather than carrying nullable settlement columns.
  */
-export const PAYMENT_INTENT_PURPOSES = ['hire_charge'] as const;
+export const PAYMENT_INTENT_PURPOSES = ['hire_charge', 'damage_security'] as const;
 export type PaymentIntentPurpose = (typeof PAYMENT_INTENT_PURPOSES)[number];
 
 /**
@@ -109,19 +114,30 @@ export class PaymentIntentError extends Error {
  * journey can never complete. This is §8.2's copy-the-terms pattern one step
  * further along than the booking that already applies it.
  */
-export interface HireSettlementTerms {
-  /** Who is owed the proceeds — the listing's owner. */
-  readonly ownerId: string;
-  /** The version whose fee policy divides this, pinned by the booking (§8.2). */
-  readonly categoryVersionId: string;
+export interface HireSettlementTerms extends PaymentIntentParties {
   readonly itemCharge: MoneyValue;
   readonly renterFee: MoneyValue;
 }
 
-/** An attempt, as a caller opens one. */
-export interface NewPaymentIntent extends HireSettlementTerms {
+/**
+ * Who an attempt concerns, whatever it is for.
+ *
+ * **Both are meaningful on a hold as well as a charge**, which is why they sit
+ * here rather than with the division below. A hold names the `ownerId` because a
+ * claim against it would eventually pay that owner, and the
+ * `categoryVersionId` because §8.7.2's excess band lives on that immutable row —
+ * so the hold stays explicable long after the category has been reconfigured.
+ */
+export interface PaymentIntentParties {
+  /** Who is owed the proceeds, or would be paid from a claim — the listing's owner. */
+  readonly ownerId: string;
+  /** The version whose fee policy divides this, pinned by the booking (§8.2). */
+  readonly categoryVersionId: string;
+}
+
+/** What every attempt carries, whatever it is for. */
+interface PaymentIntentCommon extends PaymentIntentParties {
   readonly bookingId: string;
-  readonly purpose: PaymentIntentPurpose;
   /**
    * What makes a double-pressed pay button one charge.
    *
@@ -130,14 +146,47 @@ export interface NewPaymentIntent extends HireSettlementTerms {
    */
   readonly attemptKey: string;
   /**
-   * What the payer is charged — the item charge plus the renter fee.
+   * What the payer is charged, or what is held against their card.
    *
-   * A `CHECK` requires it to be exactly that sum, so a row that disagrees with
-   * itself is unrepresentable rather than merely wrong.
+   * For a hire charge a `CHECK` requires it to be exactly the item charge plus
+   * the renter fee, so a row that disagrees with itself is unrepresentable rather
+   * than merely wrong. For a hold there is nothing to agree with: it is §8.7.2's
+   * applied excess, copied from the booking.
    */
   readonly amount: MoneyValue;
   /** `PaymentProvider.name`, stored so the row stays readable after a move. */
   readonly provider: string;
+}
+
+/**
+ * An attempt, as a caller opens one.
+ *
+ * **A union on `purpose`, so a hold carrying a division is a compile error**
+ * rather than a row a `CHECK` has to catch. The alternative — one flat shape
+ * with `itemCharge` and `renterFee` made optional — would put the question
+ * *"can I settle this?"* at every reader as a null check, and a null check is
+ * something a reader can forget. `never` on the hold means the mistake cannot be
+ * written down.
+ */
+export type NewPaymentIntent = NewHireCharge | NewDamageSecurityHold;
+
+/** Money being taken, which divides between an owner and us. */
+export interface NewHireCharge extends PaymentIntentCommon, HireSettlementTerms {
+  readonly purpose: 'hire_charge';
+}
+
+/**
+ * An amount reserved against a card and not taken (§8.7.2).
+ *
+ * **It does not divide, and `never` is how that is said.** Nothing is owed to
+ * anybody while a hold stands — no owner proceeds, no platform fee — because no
+ * money has moved. §5's ledger therefore records nothing here, and a claim
+ * against the hold in a later phase is its own posting with its own reason.
+ */
+export interface NewDamageSecurityHold extends PaymentIntentCommon {
+  readonly purpose: 'damage_security';
+  readonly itemCharge?: never;
+  readonly renterFee?: never;
 }
 
 /** What a provider told us, in the shape the store writes. */
@@ -162,20 +211,48 @@ export interface PaymentIntentOutcome {
   readonly failure?: PaymentFailure;
 }
 
-/** An attempt as it reads back. */
-export interface PaymentIntentRecord extends HireSettlementTerms {
+/**
+ * An attempt as it reads back.
+ *
+ * **The same union as `NewPaymentIntent`, and for the stronger reason.** A
+ * caller opening an attempt knows what it asked for; a caller *reading* one has
+ * whatever the database held, and the settlement path must not be able to divide
+ * a hold by accident. Narrowing on `purpose` is what makes
+ * `PaymentsService.postCapture` unable to compile against a hold.
+ */
+export type PaymentIntentRecord = HireChargeRecord | DamageSecurityHoldRecord;
+
+/** What every attempt reads back with. */
+interface PaymentIntentRecordCommon extends PaymentIntentParties {
   readonly id: string;
   readonly bookingId: string;
-  readonly purpose: PaymentIntentPurpose;
   readonly attemptKey: string;
   readonly status: PaymentIntentStatus;
   readonly provider: string;
   readonly providerReference?: string;
   readonly amount: MoneyValue;
+  /**
+   * The provider's `capture_before` for a hold (§8.7.2), where it gave one.
+   *
+   * Absent on a hire charge, which holds nothing.
+   */
   readonly authorisationExpiresAt?: Date;
   readonly failure?: PaymentFailure;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/** A hire charge as it reads back — it divides, so it can be settled. */
+export interface HireChargeRecord
+  extends PaymentIntentRecordCommon, HireSettlementTerms {
+  readonly purpose: 'hire_charge';
+}
+
+/** A damage-security hold as it reads back. It does not divide. */
+export interface DamageSecurityHoldRecord extends PaymentIntentRecordCommon {
+  readonly purpose: 'damage_security';
+  readonly itemCharge?: never;
+  readonly renterFee?: never;
 }
 
 /**
@@ -251,10 +328,16 @@ export function assertSameAttempt(
     found.purpose !== proposed.purpose ||
     found.ownerId !== proposed.ownerId ||
     found.categoryVersionId !== proposed.categoryVersionId ||
-    found.itemCharge.amount !== proposed.itemCharge.amount ||
-    found.renterFee.amount !== proposed.renterFee.amount ||
     found.amount.amount !== proposed.amount.amount ||
-    found.amount.currency !== proposed.amount.currency;
+    found.amount.currency !== proposed.amount.currency ||
+    /*
+     * **The division is compared only where there is one**, and `purpose` above
+     * has already proved both sides agree about that. A hold has no parts to
+     * disagree over — its `amount` is the whole of what it claims — so comparing
+     * absent fields would be comparing `undefined` to `undefined` and calling it
+     * a check.
+     */
+    dividesDifferently(proposed, found);
 
   if (differs) {
     throw new PaymentIntentError(
@@ -263,6 +346,26 @@ export function assertSameAttempt(
   }
 
   return found;
+}
+
+/**
+ * Whether two attempts that agree on their purpose disagree on the split.
+ *
+ * Reached only for a hire charge; the hold branch has nothing to compare and says
+ * so by returning false rather than by being unreachable.
+ */
+function dividesDifferently(
+  proposed: NewPaymentIntent,
+  found: PaymentIntentRecord,
+): boolean {
+  if (proposed.purpose !== 'hire_charge' || found.purpose !== 'hire_charge') {
+    return false;
+  }
+
+  return (
+    found.itemCharge.amount !== proposed.itemCharge.amount ||
+    found.renterFee.amount !== proposed.renterFee.amount
+  );
 }
 
 /**
@@ -292,6 +395,26 @@ export function assertSameAttempt(
  */
 export function hireAttemptKey(bookingId: string, failedAttempts: number): string {
   return `hire:${bookingId}:${String(failedAttempts)}`;
+}
+
+/**
+ * The provider idempotency key for one attempt at a booking's hold (slice 5.5c).
+ *
+ * **The same derivation as `hireAttemptKey`, under a different prefix**, and the
+ * prefix is the point: the two flows must never collide on a key. A booking has
+ * both a charge and a hold, `payment_intents.attemptKey` is unique across the
+ * whole table, and a shared key would make the hold read back the charge's row —
+ * an amount of money reserved that nobody asked for, or a charge silently treated
+ * as already attempted.
+ *
+ * The three cases are the hire's, with the collection window in place of the pay
+ * button: two attempts to secure the same handover mint the same key and hold
+ * once; an attempt while a challenge is in flight finds the open one; an attempt
+ * after a decline mints a new one, because the provider's own idempotency would
+ * otherwise return the first refusal for ever.
+ */
+export function securityHoldKey(bookingId: string, failedAttempts: number): string {
+  return `security:${bookingId}:${String(failedAttempts)}`;
 }
 
 /**
