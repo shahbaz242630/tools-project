@@ -162,21 +162,34 @@ export class FakePaymentIntentStore implements PaymentIntentStore {
 
     this.sequence += 1;
     const now = Time.nowUtc();
-    const record: PaymentIntentRecord = {
+    /*
+     * **Built per purpose rather than spread**, so the fake cannot store a shape
+     * the real table would refuse. A single flat object with both parts copied
+     * across would give a hold an `itemCharge` of `undefined` — which type-checks
+     * against the union's `never` only by accident, and would let a service test
+     * pass against a row `intent_divides_only_if_it_is_a_charge` rejects.
+     */
+    const common = {
       id: `fake-intent-${this.sequence}`,
       bookingId: intent.bookingId,
       ownerId: intent.ownerId,
       categoryVersionId: intent.categoryVersionId,
-      purpose: intent.purpose,
       attemptKey: intent.attemptKey,
-      status: 'initiated',
+      status: 'initiated' as const,
       provider: intent.provider,
-      itemCharge: intent.itemCharge,
-      renterFee: intent.renterFee,
       amount: intent.amount,
       createdAt: now,
       updatedAt: now,
     };
+    const record: PaymentIntentRecord =
+      intent.purpose === 'hire_charge'
+        ? {
+            ...common,
+            purpose: 'hire_charge',
+            itemCharge: intent.itemCharge,
+            renterFee: intent.renterFee,
+          }
+        : { ...common, purpose: 'damage_security' };
     this.rows.push(record);
     return Promise.resolve(record);
   }
@@ -276,6 +289,15 @@ export class FakePaymentProvider implements PaymentProvider {
   readonly name = 'fake';
   readonly requests: PaymentRequest[] = [];
   readonly reads: string[] = [];
+  /**
+   * What `hold` was asked for, kept apart from `requests` (slice 5.5c).
+   *
+   * **Two lists rather than one with a tag**, because most of what these tests
+   * assert is that the *other* verb was not called: a hire charge must never
+   * authorise, and a hold must never capture. One list would make that assertion
+   * a filter, and a filter that is wrong reads as a pass.
+   */
+  readonly holds: PaymentRequest[] = [];
 
   private nextReference = 0;
 
@@ -303,6 +325,23 @@ export class FakePaymentProvider implements PaymentProvider {
   read(providerReference: string): Promise<PaymentAttempt> {
     this.reads.push(providerReference);
     return Promise.resolve({ ...this.outcome, providerReference });
+  }
+
+  /**
+   * Authorise without capturing.
+   *
+   * **It reports `authorisationExpiresAt` only when a test set one**, and never
+   * invents a default. §8.7.2 makes the expiry the provider's to state, so a fake
+   * that supplied a plausible one would let a caller that ignores an absent
+   * expiry pass every test and fail against a real provider that omitted it.
+   */
+  hold(request: PaymentRequest): Promise<PaymentAttempt> {
+    this.holds.push(request);
+    this.nextReference += 1;
+    return Promise.resolve({
+      ...this.outcome,
+      providerReference: `fake-hold-${this.nextReference}`,
+    });
   }
 }
 

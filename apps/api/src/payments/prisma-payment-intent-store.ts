@@ -37,8 +37,8 @@ type IntentRow = {
   status: string;
   provider: string;
   providerReference: string | null;
-  itemChargeMinor: number;
-  renterFeeMinor: number;
+  itemChargeMinor: number | null;
+  renterFeeMinor: number | null;
   amountMinor: number;
   currency: string;
   authorisationExpiresAt: Date | null;
@@ -81,8 +81,15 @@ export class PrismaPaymentIntentStore implements PaymentIntentStore {
           attemptKey: intent.attemptKey,
           status: 'initiated' satisfies PaymentIntentStatus,
           provider: intent.provider,
-          itemChargeMinor: intent.itemCharge.amount,
-          renterFeeMinor: intent.renterFee.amount,
+          /*
+           * **A hold writes NULL, never zero** (slice 5.5c). Zero is a real
+           * amount — an item charge of nothing, a fee waived — and a hold does
+           * not divide at all. `intent_divides_only_if_it_is_a_charge` makes the
+           * two unconfusable in the database, and the union above makes them
+           * unconfusable here.
+           */
+          itemChargeMinor: intent.itemCharge?.amount ?? null,
+          renterFeeMinor: intent.renterFee?.amount ?? null,
           amountMinor: intent.amount.amount,
           currency: intent.amount.currency,
         },
@@ -196,25 +203,17 @@ function toRecord(row: IntentRow): PaymentIntentRecord {
 
   const currency = row.currency as CurrencyCode;
 
-  return {
+  const common = {
     id: row.id,
     bookingId: row.bookingId,
     ownerId: row.ownerId,
     categoryVersionId: row.categoryVersionId,
-    purpose: row.purpose as PaymentIntentPurpose,
     attemptKey: row.attemptKey,
     status: row.status as PaymentIntentStatus,
     provider: row.provider,
     ...(row.providerReference === null
       ? {}
       : { providerReference: row.providerReference }),
-    /*
-     * `Money.money` refuses a non-integer and an unsupported currency. This
-     * number is what somebody was charged, so reading it loosely is the wrong
-     * kind of forgiving — the listing store makes the same argument.
-     */
-    itemCharge: Money.money(row.itemChargeMinor, currency),
-    renterFee: Money.money(row.renterFeeMinor, currency),
     amount: Money.money(row.amountMinor, currency),
     ...(row.authorisationExpiresAt === null
       ? {}
@@ -222,6 +221,37 @@ function toRecord(row: IntentRow): PaymentIntentRecord {
     ...(failure === undefined ? {} : { failure }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+
+  if ((row.purpose as PaymentIntentPurpose) === 'damage_security') {
+    return { ...common, purpose: 'damage_security' };
+  }
+
+  /*
+   * **Asserted, not defaulted.** `intent_divides_only_if_it_is_a_charge`
+   * guarantees a hire charge has both parts, and TypeScript cannot see a CHECK —
+   * so this states what the database enforces rather than re-deriving it. The
+   * alternative, `?? 0`, would turn a constraint violation that cannot happen
+   * into a silently wrong settlement if it ever did, and the settlement decides
+   * what an owner is paid. `asDamageSecurity` makes the same argument.
+   */
+  if (row.itemChargeMinor === null || row.renterFeeMinor === null) {
+    throw new PaymentIntentError(
+      `payment intent ${row.id} is a hire charge with no division, which ` +
+        'intent_divides_only_if_it_is_a_charge should make unstorable',
+    );
+  }
+
+  return {
+    ...common,
+    purpose: 'hire_charge',
+    /*
+     * `Money.money` refuses a non-integer and an unsupported currency. This
+     * number is what somebody was charged, so reading it loosely is the wrong
+     * kind of forgiving — the listing store makes the same argument.
+     */
+    itemCharge: Money.money(row.itemChargeMinor, currency),
+    renterFee: Money.money(row.renterFeeMinor, currency),
   };
 }
 

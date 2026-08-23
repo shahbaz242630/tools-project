@@ -44,6 +44,19 @@ export class NoPaymentProvider implements PaymentProvider {
   read(): Promise<PaymentAttempt> {
     return Promise.reject(refusal());
   }
+
+  /**
+   * **Refused like the others, and the refusal matters more here.**
+   *
+   * §8.7.2 requires a failed hold to become `SECURITY_FAILED` — a state that
+   * says *"we tried to secure this handover and could not"*. Returning a
+   * fabricated failure from a platform that never contacted a bank would put
+   * that sentence in a booking's history untruthfully, and it is the sentence an
+   * owner decides whether to hand their property over on.
+   */
+  hold(): Promise<PaymentAttempt> {
+    return Promise.reject(refusal());
+  }
 }
 
 function refusal(): PaymentIntentError {

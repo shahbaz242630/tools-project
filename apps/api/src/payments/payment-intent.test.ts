@@ -10,8 +10,8 @@ import {
   isTerminal,
 } from './payment-intent.js';
 import type {
+  HireChargeRecord,
   NewPaymentIntent,
-  PaymentIntentRecord,
   PaymentIntentStatus,
 } from './payment-intent.js';
 import { PAYMENT_ATTEMPT_STATUSES } from './payment-provider.js';
@@ -37,10 +37,13 @@ describe('the payment intent vocabulary', () => {
     ]);
   });
 
-  it('has one purpose, and does not invent the second in advance', () => {
-    // §8.7.2's damage-security hold is the obvious next one and arrives with the
-    // flow that writes it — the rule 5.1 set for ledger account kinds.
-    expect([...PAYMENT_INTENT_PURPOSES]).toEqual(['hire_charge']);
+  it('has the two purposes that have flows, and no more', () => {
+    // The second arrived in 5.5c with the flow that writes it — the rule 5.1 set
+    // for ledger account kinds. A third must not be added ahead of its flow, and
+    // this is the test that says so: `intent_divides_only_if_it_is_a_charge`
+    // names both of these explicitly and refuses anything else, so a value added
+    // here without a migration would be unstorable rather than merely unused.
+    expect([...PAYMENT_INTENT_PURPOSES]).toEqual(['hire_charge', 'damage_security']);
   });
 
   it('names no provider anywhere in it', () => {
@@ -133,7 +136,7 @@ describe('refusing a reused attempt key', () => {
     provider: 'fake',
   };
 
-  const found = (over: Partial<PaymentIntentRecord> = {}): PaymentIntentRecord => ({
+  const found = (over: Partial<HireChargeRecord> = {}): HireChargeRecord => ({
     ...PROPOSED,
     id: 'intent-1',
     status: 'initiated',

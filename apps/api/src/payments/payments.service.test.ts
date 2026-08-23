@@ -434,3 +434,204 @@ describe('reading a booking’s attempts', () => {
     ]);
   });
 });
+
+/**
+ * §8.7.2's damage-security hold (slice 5.5c-i).
+ *
+ * **The distinction under test throughout is between three outcomes that all
+ * end with no money taken**: a category that requires no security, a hold that
+ * stands, and a hold that failed. §8.7.2 requires the first and the third to be
+ * told apart, because they call for opposite decisions about handing over
+ * somebody's property — and the second takes nothing either, which is why
+ * nothing may reach the ledger.
+ */
+describe('holding damage security', () => {
+  const EXCESS = pence(5_000);
+
+  const SECURING = {
+    bookingId: 'booking-1',
+    ownerId: 'user-dale',
+    categoryVersionId: PINNED_VERSION,
+    excess: EXCESS,
+    itemTitle: 'Petrol hedge trimmer',
+  };
+
+  it('holds nothing, and calls nobody, when the category requires no security', async () => {
+    /*
+     * ADR 0052: a null applied excess is a configured answer — "items in this
+     * category are handed over with nothing held" — and never a missing one.
+     * **This is the case that must never become `SECURITY_FAILED`.**
+     */
+    const outcome = await payments.holdDamageSecurity({ ...SECURING, excess: null });
+
+    expect(outcome.kind).toBe('not_required');
+    // Nothing was written and nobody was asked. A zero-value hold would have
+    // told an owner we secured the handover; a refusal would have told them we
+    // tried and could not.
+    expect(provider.holds).toEqual([]);
+    expect(await intents.findForBooking('booking-1')).toEqual([]);
+  });
+
+  it('holds nothing when the band sizes this booking’s excess at zero', async () => {
+    /*
+     * **Reachable, not theoretical.** A band with a zero floor and a zero or tiny
+     * percentage produces £0 — the admin form permits both — and 5.5b-ii's
+     * migration is explicit that a zero excess is legitimate and distinct from an
+     * absent one. There is no such thing as authorising nothing, and
+     * `intent_amount_is_positive` refuses the row, so without this guard a
+     * legitimate configuration becomes a 500 at the collection window.
+     */
+    const outcome = await payments.holdDamageSecurity({
+      ...SECURING,
+      excess: pence(0),
+    });
+
+    expect(outcome.kind).toBe('not_required');
+    expect(provider.holds).toEqual([]);
+    expect(await intents.findForBooking('booking-1')).toEqual([]);
+  });
+
+  it('authorises the excess without capturing it, and posts nothing to the ledger', async () => {
+    const outcome = await payments.holdDamageSecurity(SECURING);
+
+    expect(outcome.kind).toBe('attempted');
+    expect(provider.holds).toHaveLength(1);
+    expect(provider.holds[0]?.amount).toEqual(EXCESS);
+
+    // **Authorise, never capture.** `begin` is the verb that takes money and it
+    // must not have been called.
+    expect(provider.requests).toEqual([]);
+
+    /*
+     * **An authorisation moves no money, so §5's books say nothing about it.**
+     * This is the assertion that would fail if somebody "tidied" the purpose
+     * narrowing out of `applyOutcome`.
+     */
+    expect(ledgerStore.posted).toEqual([]);
+  });
+
+  it('sizes the hold from the excess it was given and never from a fee policy', async () => {
+    await payments.holdDamageSecurity(SECURING);
+
+    // A hold does not divide, so nothing about it is a question for the pinned
+    // fee policy — asking would be the first step towards settling one.
+    expect(feePolicies.asked).toEqual([]);
+  });
+
+  it('records the provider’s own expiry, and invents none when it gives none', async () => {
+    const captureBefore = new Date('2026-08-28T09:00:00.000Z');
+    provider.willReport({ status: 'succeeded', authorisationExpiresAt: captureBefore });
+
+    const held = await payments.holdDamageSecurity(SECURING);
+    expect(held.kind === 'attempted' && held.intent.authorisationExpiresAt).toEqual(
+      captureBefore,
+    );
+
+    /*
+     * §8.7.2 is normative that the expiry is the provider's timestamp. A hold
+     * whose provider stated none must read back with none — a default supplied
+     * here would be a duration we assumed, and Visa merchant-initiated re-auths
+     * hold 5 days where the common figure is 7.
+     */
+    provider.willReport({ status: 'succeeded' });
+    const second = await payments.holdDamageSecurity({
+      ...SECURING,
+      bookingId: 'booking-2',
+    });
+    expect(
+      second.kind === 'attempted' && second.intent.authorisationExpiresAt,
+    ).toBeUndefined();
+  });
+
+  it('does not hold twice when the collection window is worked twice', async () => {
+    provider.willReport({ status: 'pending_payer_action' });
+
+    await payments.holdDamageSecurity(SECURING);
+    await payments.holdDamageSecurity(SECURING);
+
+    // The second call finds the open attempt by its derived key and stops. Two
+    // holds against one card for one handover is money a renter cannot spend.
+    expect(provider.holds).toHaveLength(1);
+  });
+
+  it('keeps its attempt keys clear of the hire charge’s', async () => {
+    await payments.payForHire(INSTRUCTION);
+    await payments.holdDamageSecurity(SECURING);
+
+    const keys = (await intents.findForBooking('booking-1')).map((i) => i.attemptKey);
+
+    /*
+     * `attemptKey` is unique across the whole table, so a shared key would make
+     * the hold read back the charge's row — an amount reserved that nobody asked
+     * for, or a charge treated as already attempted.
+     */
+    expect([...keys].sort()).toEqual(['hire:booking-1:0', 'security:booking-1:0']);
+    // Sorted, because the order the store returns them in is not the property
+    // under test — that both exist and differ is.
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it('does not let a declined card renumber the other flow’s next key', async () => {
+    provider.willReport({
+      status: 'failed',
+      failure: { reason: 'declined', message: 'Your card was declined.' },
+    });
+    await payments.holdDamageSecurity(SECURING);
+
+    provider.willReport({ status: 'succeeded' });
+    await payments.payForHire(INSTRUCTION);
+
+    /*
+     * The hire's key still counts from zero. If failures were counted across
+     * purposes, this charge would mint `hire:booking-1:1` — a key the provider
+     * has never seen — while any open attempt sat there unfound.
+     */
+    expect(provider.requests[0]?.idempotencyKey).toBe('hire:booking-1:0');
+  });
+
+  it('reports a failed hold as an attempt rather than as no security', async () => {
+    provider.willReport({
+      status: 'failed',
+      failure: { reason: 'declined', message: 'Your card was declined.' },
+    });
+
+    const outcome = await payments.holdDamageSecurity(SECURING);
+
+    /*
+     * **The whole point of the two kinds.** A failed hold is `attempted` with a
+     * failed intent, never `not_required` — the caller in 5.5c-ii decides
+     * `SECURITY_FAILED` from exactly this difference, and collapsing them would
+     * hand an item over against a hold that was never taken.
+     */
+    expect(outcome.kind).toBe('attempted');
+    expect(outcome.kind === 'attempted' && outcome.intent.status).toBe('failed');
+    expect(ledgerStore.posted).toEqual([]);
+  });
+
+  it('settles a hold arriving later by webhook without posting to the ledger', async () => {
+    /*
+     * **The path a real hold usually takes.** SCA means the answer normally
+     * arrives out of band, so the hold completes through `refresh` rather than
+     * through the call that opened it — and `refresh` is purpose-agnostic. If
+     * the narrowing in `applyOutcome` were removed, *this* is where a hold would
+     * be settled as a hire charge and posted to the books.
+     */
+    provider.willReport({ status: 'pending_payer_action' });
+    const opened = await payments.holdDamageSecurity(SECURING);
+    if (opened.kind !== 'attempted') throw new Error('expected an attempt');
+
+    provider.willReport({ status: 'succeeded' });
+    const settled = await payments.refresh(opened.intent.id);
+
+    expect(settled?.status).toBe('succeeded');
+    expect(ledgerStore.posted).toEqual([]);
+  });
+
+  it('refuses an attempt key reused for a different amount', async () => {
+    await payments.holdDamageSecurity(SECURING);
+
+    await expect(
+      payments.holdDamageSecurity({ ...SECURING, excess: pence(7_500) }),
+    ).rejects.toBeInstanceOf(PaymentIntentError);
+  });
+});
