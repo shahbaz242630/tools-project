@@ -256,6 +256,10 @@ jobs:
             -e CLERK_AUTHORIZED_PARTIES=http://localhost:3000 \
             -e PERSONAL_DATA_ENCRYPTION_KEY="$(head -c 32 /dev/zero | base64)" \
             -e INTERNAL_TRIGGER_SECRET=ci-only-internal-trigger-secret-not-a-real-one \
+            -e MEDIA_S3_ENDPOINT=https://ci.r2.invalid \
+            -e MEDIA_S3_BUCKET=ci-only \
+            -e MEDIA_S3_ACCESS_KEY_ID=ci-only \
+            -e MEDIA_S3_SECRET_ACCESS_KEY=ci-only \
             rental-api:ci
 
           # Generous: a cold Node start on a loaded runner has been seen to take
@@ -524,6 +528,10 @@ jobs:
               -e "s|^PERSONAL_DATA_ENCRYPTION_KEY=.*|PERSONAL_DATA_ENCRYPTION_KEY=$(head -c 32 /dev/zero | base64)|" \
               -e 's|^INTERNAL_TRIGGER_SECRET=.*|INTERNAL_TRIGGER_SECRET=rehearsal-only-internal-trigger-secret|' \
               -e 's|^TRUSTED_PROXY_HOPS=.*|TRUSTED_PROXY_HOPS=1|' \
+              -e 's|^MEDIA_S3_ENDPOINT=.*|MEDIA_S3_ENDPOINT=https://rehearsal.r2.invalid|' \
+              -e 's|^MEDIA_S3_BUCKET=.*|MEDIA_S3_BUCKET=rehearsal-only|' \
+              -e 's|^MEDIA_S3_ACCESS_KEY_ID=.*|MEDIA_S3_ACCESS_KEY_ID=rehearsal-only|' \
+              -e 's|^MEDIA_S3_SECRET_ACCESS_KEY=.*|MEDIA_S3_SECRET_ACCESS_KEY=rehearsal-only|' \
               infra/compose/app.env.example > "${RUNNER_TEMP}/release-root/staging.env"
 
           sed -e 's|^ACME_EMAIL=.*|ACME_EMAIL=rehearsal@example.invalid|' \
