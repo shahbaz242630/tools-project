@@ -17,10 +17,17 @@
  * exactly as the real store issues no `UPDATE`.
  */
 
+import { randomUUID } from 'node:crypto';
 import { DEFAULT_MODERATION_STATE, isPubliclyVisible } from '@platform/contracts';
 import { Postcode, Time } from '@platform/core';
 import { ObjectStoreUnavailableError } from '../object-store.js';
-import type { ObjectStore } from '../object-store.js';
+import { MemoryObjectStore } from '../memory-object-store.js';
+import { ListingMediaService } from '../listing-media.service.js';
+import type {
+  ListingMediaRecord,
+  ListingMediaStore,
+  NewListingMedia,
+} from '../listing-media-store.js';
 import {
   createRecordingLogger,
   createRecordingMetrics,
@@ -953,6 +960,15 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
 export interface ListingFakes {
   readonly categories: InMemoryCategoryStore;
   readonly listings: InMemoryListingStore;
+  /**
+   * The photographs service over the same listing store (slice 2.6b-i).
+   *
+   * On `ListingFakes` rather than built separately, because it is only usable
+   * with *this* listing store — ownership is proved through it, so a media
+   * service holding a different one would answer null to everything and every
+   * test would pass without reaching the code under test.
+   */
+  readonly media: ListingMediaFakes;
   /** Seed it with `knows(...)` for a test that needs a listing to be locatable. */
   readonly geocoder: FakeGeocoder;
   /** For asserting that a bound firing is reported rather than silent (H2). */
@@ -1141,10 +1157,12 @@ export function createListingFakes(
   // empty set would let a service that never asked pass — which is precisely the
   // defect that would delete listings out from under other people's history.
   const bookings = createBookingFakes();
+  const media = createListingMediaFakes(listings);
 
   return {
     categories,
     listings,
+    media,
     geocoder,
     logger,
     publication,
@@ -1173,6 +1191,11 @@ export function createListingFakes(
       // also how the real application is wired.
       metrics.metrics,
       bookings.references,
+      // The real media service, not a stub. An erasure test must go through the
+      // code that actually deletes the objects — a stub that swallowed the call
+      // would let a service that never erased a photograph pass, which is the
+      // precise defect this port exists to prevent.
+      media.service,
     ),
   };
 }
@@ -1197,9 +1220,7 @@ export function createListingFakes(
  * the *bytes* — that what reached the store carries no EXIF, and that a deleted
  * listing left nothing behind.
  */
-export class InMemoryObjectStore implements ObjectStore {
-  private readonly objects = new Map<string, { bytes: Buffer; contentType: string }>();
-
+export class InMemoryObjectStore extends MemoryObjectStore {
   private failure: ObjectStoreUnavailableError | null = null;
 
   /** Every key written, in order, so a test can assert what was stored and when. */
@@ -1218,34 +1239,39 @@ export class InMemoryObjectStore implements ObjectStore {
     return this;
   }
 
-  private takeFailure(): void {
+  /**
+   * **Rejects rather than throwing synchronously**, because `R2ObjectStore`'s
+   * methods are `async` and therefore can only ever reject.
+   *
+   * Found by a test: a caller using `.catch()` — which handles a rejection and
+   * not a synchronous throw — passed against the real adapter and failed against
+   * this double. A double that fails in a way production cannot is worse than no
+   * double, because it sends you to fix code that was already correct.
+   */
+  private takeFailure(): Promise<void> | null {
     const failure = this.failure;
-    if (failure === null) return;
+    if (failure === null) return null;
     this.failure = null;
-    throw failure;
+    return Promise.reject(failure);
   }
 
-  put(key: string, bytes: Buffer, contentType: string): Promise<void> {
-    this.takeFailure();
-    this.objects.set(key, { bytes, contentType });
+  override put(key: string, bytes: Buffer, contentType: string): Promise<void> {
+    const failed = this.takeFailure();
+    if (failed !== null) return failed;
+
     this.written.push(key);
-    return Promise.resolve();
+    return super.put(key, bytes, contentType);
   }
 
-  delete(key: string): Promise<void> {
-    this.takeFailure();
-    this.objects.delete(key);
+  override delete(key: string): Promise<void> {
+    const failed = this.takeFailure();
+    if (failed !== null) return failed;
+
     this.deleted.push(key);
-    return Promise.resolve();
+    return super.delete(key);
   }
 
-  signedUrl(key: string, ttlSeconds: number): Promise<string> {
-    return Promise.resolve(
-      `https://object-store.test/${key}?expires=${String(ttlSeconds)}`,
-    );
-  }
-
-  /** What is stored at a key, or null. For asserting on bytes, not for production shapes. */
+  /** What is stored at a key, or null. For asserting on bytes. */
   read(key: string): { bytes: Buffer; contentType: string } | null {
     return this.objects.get(key) ?? null;
   }
@@ -1253,4 +1279,179 @@ export class InMemoryObjectStore implements ObjectStore {
   get size(): number {
     return this.objects.size;
   }
+}
+
+/**
+ * `listing_media` in a Map (slice 2.6b-i).
+ *
+ * **Mirrors the two behaviours the real table has that a naive double would
+ * not**, which is this file's standing rule:
+ *
+ *   - **Reads come back in `(position, createdAt, id)` order**, the total order
+ *     that makes the absent unique constraint on `(listingId, position)` safe.
+ *     A double returning insertion order would let a test pass while the real
+ *     store returned something else the moment two rows shared a position.
+ *   - **`append` picks the position** by reading the current maximum, so a test
+ *     never supplies one — matching the port, where a caller that chose its own
+ *     position would be racing.
+ *
+ * It deliberately does **not** mirror the foreign key: deleting a listing does
+ * not cascade here. Nothing in the fake world deletes a listing without going
+ * through the service, and a hand-rolled cascade would be a second, divergent
+ * implementation of a rule Postgres already owns — the sort a test comes to
+ * depend on and production does not have.
+ */
+export class InMemoryListingMediaStore implements ListingMediaStore {
+  private readonly rows = new Map<string, ListingMediaRecord>();
+  private sequence = 0;
+
+  private ordered(listingId: string): ListingMediaRecord[] {
+    return [...this.rows.values()]
+      .filter((row) => row.listingId === listingId)
+      .sort(
+        (a, b) =>
+          a.position - b.position ||
+          a.createdAt.getTime() - b.createdAt.getTime() ||
+          a.id.localeCompare(b.id),
+      );
+  }
+
+  listFor(listingId: string): Promise<readonly ListingMediaRecord[]> {
+    return Promise.resolve(this.ordered(listingId));
+  }
+
+  listForListings(
+    listingIds: readonly string[],
+  ): Promise<readonly ListingMediaRecord[]> {
+    const wanted = new Set(listingIds);
+    return Promise.resolve(
+      [...this.rows.values()].filter((row) => wanted.has(row.listingId)),
+    );
+  }
+
+  append(media: NewListingMedia): Promise<ListingMediaRecord> {
+    const existing = this.ordered(media.listingId);
+    const last = existing[existing.length - 1];
+
+    this.sequence += 1;
+    const record: ListingMediaRecord = {
+      // A real UUID, because the column is one and the contract validates it as
+      // one. A readable `media-1` here would have every projection fail its own
+      // schema — which is how this was found.
+      id: randomUUID(),
+      listingId: media.listingId,
+      position: last === undefined ? 0 : last.position + 1,
+      displayKey: media.displayKey,
+      thumbnailKey: media.thumbnailKey,
+      contentType: media.contentType,
+      byteSize: media.byteSize,
+      width: media.width,
+      height: media.height,
+      thumbnailWidth: media.thumbnailWidth,
+      thumbnailHeight: media.thumbnailHeight,
+      sha256: media.sha256,
+      moderationState: DEFAULT_MODERATION_STATE,
+      /*
+       * Distinct and increasing, so the `(position, createdAt, id)` tiebreak is
+       * exercisable rather than every row sharing one instant.
+       *
+       * `Time.nowUtc()` plus the sequence rather than a literal date: the
+       * project bans a bare `Date` so that timezone handling stays explicit, and
+       * a fake is not an exception — a double that reaches for `new Date` is one
+       * that will disagree with production about what "now" means.
+       */
+      createdAt: Time.fromEpochMs(Time.nowUtc().getTime() + this.sequence),
+    };
+
+    this.rows.set(record.id, record);
+    return Promise.resolve(record);
+  }
+
+  remove(listingId: string, mediaId: string): Promise<ListingMediaRecord | null> {
+    const row = this.rows.get(mediaId);
+    // Scoped by both, exactly as the adapter is: matching on the media id alone
+    // would let a test pass that the real store would refuse.
+    if (row === undefined || row.listingId !== listingId) {
+      return Promise.resolve(null);
+    }
+
+    this.rows.delete(mediaId);
+    return Promise.resolve(row);
+  }
+
+  reorder(listingId: string, mediaIds: readonly string[]): Promise<void> {
+    mediaIds.forEach((id, position) => {
+      const row = this.rows.get(id);
+      if (row === undefined || row.listingId !== listingId) return;
+      this.rows.set(id, { ...row, position });
+    });
+
+    return Promise.resolve();
+  }
+
+  deleteFor(listingIds: readonly string[]): Promise<void> {
+    const wanted = new Set(listingIds);
+    for (const [id, row] of this.rows) {
+      if (wanted.has(row.listingId)) this.rows.delete(id);
+    }
+
+    return Promise.resolve();
+  }
+
+  /** Every row, for asserting that an erasure left nothing behind. */
+  get all(): readonly ListingMediaRecord[] {
+    return [...this.rows.values()];
+  }
+}
+
+export interface ListingMediaFakes {
+  readonly store: InMemoryListingMediaStore;
+  readonly objects: InMemoryObjectStore;
+  readonly logger: RecordingLogger;
+  readonly service: ListingMediaService;
+}
+
+/**
+ * A media service over in-memory everything.
+ *
+ * Takes the listing store rather than creating one, because ownership is proved
+ * through it: a media service with its own empty listing store would answer
+ * `null` to every call, and every test would pass by never reaching the code
+ * under test.
+ */
+export function createListingMediaFakes(
+  listings: InMemoryListingStore,
+): ListingMediaFakes {
+  const store = new InMemoryListingMediaStore();
+  const objects = new InMemoryObjectStore();
+  const logger = createRecordingLogger();
+
+  return {
+    store,
+    objects,
+    logger,
+    service: new ListingMediaService(listings, store, objects, logger.logger),
+  };
+}
+
+/**
+ * The two Catalogue services `AppModule.register` requires, ready to spread.
+ *
+ * **The counterpart to `bookingModuleFakes`, and it exists for the same
+ * reason.** Slice 2.6b-i made `listingMedia` a required module option — on the
+ * argument that an optional one is what ten boot sites forget — and that turned
+ * every `AppModule.register` in the suite into a compile error. A helper that
+ * spreads both keeps the fix to one line per site, and means the next required
+ * Catalogue service is one edit here rather than twenty-three.
+ *
+ * ```ts
+ * AppModule.register({ ...listingModuleFakes(categories), audit: audit.service })
+ * ```
+ */
+export function listingModuleFakes(
+  categories?: InMemoryCategoryStore,
+  audit?: AuditFakes,
+): { listings: ListingsService; listingMedia: ListingMediaService } {
+  const fakes = createListingFakes(categories, audit);
+  return { listings: fakes.service, listingMedia: fakes.media.service };
 }

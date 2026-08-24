@@ -14,8 +14,11 @@ import { createAuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import { createIdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from '../catalogue/catalogue.service.js';
-import { InMemoryCategoryStore } from '../catalogue/testing/fakes.js';
-import { createListingFakes } from '../catalogue/testing/fakes.js';
+import {
+  InMemoryCategoryStore,
+  listingModuleFakes,
+} from '../catalogue/testing/fakes.js';
+
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { INTERNAL_TRIGGER_HEADER } from '../internal-trigger/internal-trigger.guard.js';
 import {
@@ -76,7 +79,7 @@ beforeEach(async () => {
           createRecordingLogger().logger,
         ),
         featureFlags: createFeatureFlagFakes(audit).service,
-        listings: createListingFakes(categories).service,
+        ...listingModuleFakes(categories),
         ...bookingModuleFakes(),
       }),
     ],

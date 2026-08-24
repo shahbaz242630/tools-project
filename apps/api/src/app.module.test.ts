@@ -9,7 +9,7 @@ import {
 import { createRecordingLogger } from '@platform/observability/testing';
 import { createIdentityFakes } from './identity/testing/fakes.js';
 import { createAuditFakes } from './audit/testing/fakes.js';
-import { createCatalogueFakes, createListingFakes } from './catalogue/testing/fakes.js';
+import { createCatalogueFakes, listingModuleFakes } from './catalogue/testing/fakes.js';
 import { createProfileFakes } from './profiles/testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from './feature-flags/testing/fakes.js';
@@ -40,7 +40,7 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
         audit: createAuditFakes().service,
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
-        listings: createListingFakes().service,
+        ...listingModuleFakes(),
         ...bookingModuleFakes(),
         ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
       }),

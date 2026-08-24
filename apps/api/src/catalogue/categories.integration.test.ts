@@ -19,7 +19,7 @@ import { createProfileFakes } from '../profiles/testing/fakes.js';
 import { createIdentityFakes } from '../identity/testing/fakes.js';
 import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from './catalogue.service.js';
-import { InMemoryCategoryStore, createListingFakes } from './testing/fakes.js';
+import { InMemoryCategoryStore, listingModuleFakes } from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { bookingModuleFakes } from '../booking/testing/fakes.js';
@@ -136,7 +136,7 @@ beforeEach(async () => {
         // Sharing `store` so both surfaces talk about the same categories — a
         // category created through the admin routes here is one an owner could
         // then list in.
-        listings: createListingFakes(store, audit).service,
+        ...listingModuleFakes(store, audit),
         ...bookingModuleFakes(),
       }),
     ],

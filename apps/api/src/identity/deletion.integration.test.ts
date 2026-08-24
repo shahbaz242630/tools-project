@@ -246,6 +246,7 @@ beforeEach(async () => {
         ),
         featureFlags: createFeatureFlagFakes().service,
         listings: listings.service,
+        listingMedia: listings.media.service,
         ...bookingModuleFakes(),
       }),
     ],

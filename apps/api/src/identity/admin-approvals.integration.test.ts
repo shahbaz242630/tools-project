@@ -17,7 +17,7 @@ import { AppModule } from '../app.module.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
 import {
   createCatalogueFakes,
-  createListingFakes,
+  listingModuleFakes,
 } from '../catalogue/testing/fakes.js';
 import type { AuditFakes } from '../audit/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
@@ -102,7 +102,7 @@ beforeEach(async () => {
         audit: audit.service,
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
-        listings: createListingFakes().service,
+        ...listingModuleFakes(),
         ...bookingModuleFakes(),
       }),
     ],

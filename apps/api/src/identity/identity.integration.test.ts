@@ -10,7 +10,7 @@ import { createIdentityFakes } from './testing/fakes.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
 import {
   createCatalogueFakes,
-  createListingFakes,
+  listingModuleFakes,
 } from '../catalogue/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import type { IdentityFakes } from './testing/fakes.js';
@@ -66,7 +66,7 @@ beforeEach(async () => {
         audit: createAuditFakes().service,
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
-        listings: createListingFakes().service,
+        ...listingModuleFakes(),
         ...bookingModuleFakes(),
       }),
     ],
