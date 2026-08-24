@@ -131,6 +131,36 @@ const PROVIDER_SDKS = [
     adapters: ['apps/worker/src/worker.ts', 'apps/worker/src/scheduler.ts'],
   },
   { specifier: 'prom-client', adapters: ['packages/observability/src/metrics.ts'] },
+  /*
+   * The S3 signer for R2 (slice 2.6a). One file, and it should stay one: the
+   * whole reason `ObjectStore` exists is that a second caller signing its own
+   * request would take the provider's endpoint shape and error format into code
+   * no test can substitute.
+   */
+  {
+    specifier: 'aws4fetch',
+    adapters: ['apps/api/src/catalogue/r2-object-store.ts'],
+  },
+  /*
+   * **sharp is listed as a provider even though it is a library rather than a
+   * service**, because the rule's purpose applies exactly: it is a native
+   * binary whose behaviour varies by platform, it is the only thing standing
+   * between an uploaded file and our memory, and every limit that makes it safe
+   * — `limitInputPixels`, `animated: false` — is an option on the constructor.
+   * A second file calling `sharp()` is a second decoder configured by whoever
+   * wrote that line, which is how a decompression-bomb guard gets left off.
+   *
+   * The test file is listed too, deliberately: its fixtures have to be built
+   * with the real encoder, and building them through `prepareImage` would mean
+   * the arrangement and the subject were the same code.
+   */
+  {
+    specifier: 'sharp',
+    adapters: [
+      'apps/api/src/catalogue/prepare-image.ts',
+      'apps/api/src/catalogue/prepare-image.test.ts',
+    ],
+  },
   { specifier: '@prisma/adapter-pg', adapters: ['packages/database/src/client.ts'] },
   { specifier: '@prisma/client', adapters: ['packages/database/src/client.ts'] },
 ];
