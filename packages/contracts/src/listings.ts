@@ -31,6 +31,8 @@ import type { CoarseLocation, PostalAddress } from './address.js';
 import { ownerStatusSchema } from './profiles.js';
 import type { OwnerStatus } from './profiles.js';
 import { boundedMoneySchema, moneySchema } from './money.js';
+import { publicListingMediaSchema } from './media.js';
+import type { PublicListingMedia } from './media.js';
 import { categoryAttributesSchema, categorySlugSchema } from './catalogue.js';
 import type { CategoryAttribute } from './catalogue.js';
 import {
@@ -948,6 +950,29 @@ export interface PublicListing {
    * constant** — the day traders are supported, the page renders the truth
    * without being edited, instead of confidently rendering yesterday's.
    */
+  /**
+   * This listing's photographs, in the owner's order (slice 2.6b-ii).
+   *
+   * **Empty rather than null when there are none, and that is a promise the
+   * page can rely on.** A listing with no photographs is legal and most have
+   * none today, so "no photographs" is an ordinary state rather than an
+   * absence of information — `[]` says the server looked and there were none,
+   * where `null` would leave a reader unable to tell that from a server that
+   * did not look. The same reasoning `originStatus` and `page` are given in
+   * `search.ts`, applied to a collection.
+   *
+   * **The URLs inside are signed and short-lived**, minted per response and
+   * valid for fifteen minutes. Nothing may persist one, cache one beyond its
+   * life, or use one as a key — the id beside it is the stable handle. That is
+   * why `/hire/[id]` is `force-dynamic`.
+   *
+   * **Only `APPROVED` photographs appear here.** §6.2 gives media its own
+   * moderation state precisely so one bad photograph need not hide a whole
+   * listing, and the filter is applied in the query rather than after it, for
+   * the reason `PUBLICLY_VISIBLE` is: a row filtered in memory on a public path
+   * is the shape that leaks when somebody later adds a log line.
+   */
+  readonly media: readonly PublicListingMedia[];
   readonly ownerStatus: OwnerStatus;
 }
 
@@ -1029,6 +1054,8 @@ export const publicListingSchema = z.object({
    * indistinguishable.
    */
   appliedExcess: appliedExcessOrNoneSchema,
+  /** Signed, short-lived, `APPROVED` only, and empty rather than null. */
+  media: z.array(publicListingMediaSchema),
   ownerStatus: ownerStatusSchema,
 });
 

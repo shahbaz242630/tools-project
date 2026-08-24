@@ -232,6 +232,23 @@ export interface PublicListingRecord {
   /** The publishable half of the address, and there is no other half here. */
   readonly outwardCode: string;
   readonly town: string;
+  /**
+   * This listing's approved photographs, in the owner's order (slice 2.6b-ii).
+   *
+   * **Keys rather than URLs**, because a record built by a database adapter
+   * cannot sign one — signing needs the object store's credential and yields a
+   * string that expires in fifteen minutes. The controller signs at the moment
+   * it answers.
+   *
+   * **Filtered to `APPROVED` in the query, not here.** §6.2 gives media its own
+   * moderation state so one bad photograph need not hide a whole listing, and
+   * the filter belongs in the `where` for the reason `PUBLICLY_VISIBLE` is
+   * given: a row filtered in memory on a public path is the shape that leaks
+   * when somebody later adds a log line. Nothing sets the column away from its
+   * default yet, which is exactly why the filter has to exist before something
+   * does.
+   */
+  readonly media: readonly PublicListingMediaRecord[];
 }
 
 /**
@@ -314,6 +331,33 @@ export interface QuotableListingRecord {
   readonly currentCategoryVersionId: string;
 }
 
+/**
+ * One rendition of one photograph, as it is stored (slice 2.6b-ii).
+ *
+ * **A storage key, never a URL.** Signing needs the object store's credential
+ * and produces a string that expires in fifteen minutes, so a record built by a
+ * database adapter cannot hold one and must not pretend to.
+ */
+export interface ListingImageRecord {
+  readonly key: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * One photograph on a public read: both renditions, and **no position**.
+ *
+ * The array order is the order — a total order by `(position, createdAt, id)`,
+ * which is what makes the absent unique constraint on `(listingId, position)`
+ * harmless. A position number carried beside it would be a second, weaker
+ * statement of the same fact.
+ */
+export interface PublicListingMediaRecord {
+  readonly id: string;
+  readonly display: ListingImageRecord;
+  readonly thumbnail: ListingImageRecord;
+}
+
 export interface PublicListingSummaryRecord {
   readonly id: string;
   readonly ownerId: string;
@@ -325,6 +369,18 @@ export interface PublicListingSummaryRecord {
   /** The publishable half of the address, and there is no other half here. */
   readonly outwardCode: string;
   readonly town: string;
+  /**
+   * The first approved photograph's **thumbnail**, or null for none.
+   *
+   * **`ListingImageRecord` rather than `PublicListingMediaRecord`, and the
+   * narrowing is a safety property rather than a saving.** The wider shape
+   * carries the display key beside the thumbnail one, and a card that signed
+   * the display rendition would work perfectly while fetching roughly ten times
+   * what it needs, twenty times per page — a mistake that shows up on somebody's
+   * data allowance rather than in a test. This shape has no display key to
+   * reach for.
+   */
+  readonly thumbnail: ListingImageRecord | null;
 }
 
 /**

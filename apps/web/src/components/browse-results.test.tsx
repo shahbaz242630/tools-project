@@ -13,6 +13,9 @@ const SCARIFIER: PublicListingSummary = {
   title: 'Petrol lawn scarifier',
   categoryName: 'Outdoor and gardening',
   location: { outwardCode: 'BS7', town: 'Bristol' },
+  // No photograph, which is the ordinary case and stays so until 2.6c gives an
+  // owner a way to upload one.
+  thumbnail: null,
   inclusiveDailyPrice: {
     rate: { amount: 2_200, currency: 'GBP' },
     renterFee: { amount: 176, currency: 'GBP' },

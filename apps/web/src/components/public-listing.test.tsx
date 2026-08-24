@@ -52,6 +52,9 @@ function listing(over: Partial<PublicListing> = {}): PublicListing {
     categoryAttributes: ATTRIBUTES,
     // `condition_notes` deliberately unanswered — see the disclosure tests.
     attributes: { power_source: 'petrol', weight_kg: 52 },
+    // No photographs by default; the gallery arrives in 2.6c. Overridable, so a
+    // test that wants one says so rather than inheriting it.
+    media: [],
     transportRequirement: 'car_boot',
     requiresTwoPersonLift: false,
     location: { outwardCode: 'BS7', town: 'Bristol' },

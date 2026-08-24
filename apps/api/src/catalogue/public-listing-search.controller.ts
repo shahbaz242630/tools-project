@@ -190,6 +190,7 @@ function toSummary({
   listing,
   ownerStatus,
   distance,
+  thumbnail,
 }: NearbyListingView): PublicListingSummary {
   const price = inclusiveDailyPrice(listing.rates, listing.currentFeePolicy);
 
@@ -215,6 +216,14 @@ function toSummary({
     // Already coarse when it crossed the proximity boundary (ADR 0044). Nothing
     // here rounds, because nothing here has anything precise to round.
     distance,
+    /*
+     * **Already the thumbnail rendition and already signed** (slice 2.6b-ii).
+     * The store resolved which of the two renditions a card may have — the
+     * record it returns has no display key to reach for — and the service
+     * signed it after the visibility checks. Null where the listing has no
+     * photograph, which is most of them.
+     */
+    thumbnail,
     ownerStatus,
   };
 }

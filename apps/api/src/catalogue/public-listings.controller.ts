@@ -77,7 +77,11 @@ export class PublicListingsController {
  * with no price is a broken invariant rather than a 404: answering "not found"
  * would hide it, and this is the sort of thing that should page somebody.
  */
-function toPublicListing({ listing, ownerStatus }: PublicListingView): PublicListing {
+function toPublicListing({
+  listing,
+  ownerStatus,
+  media,
+}: PublicListingView): PublicListing {
   const price = inclusiveDailyPrice(listing.rates, listing.currentFeePolicy);
 
   /* c8 ignore next 5 -- unreachable: publication refuses a listing with no
@@ -106,6 +110,14 @@ function toPublicListing({ listing, ownerStatus }: PublicListingView): PublicLis
     location: { outwardCode: listing.outwardCode, town: listing.town },
     inclusiveDailyPrice: price,
     rates: listing.rates,
+    /*
+     * **Taken from the view, not from the record** (slice 2.6b-ii). The record
+     * holds object keys; the service signed them, because signing needs the
+     * bucket credential and this class is unguarded. This function still chooses
+     * no fields of its own — it renders one it was handed, exactly as it does
+     * `ownerStatus`.
+     */
+    media,
     /*
      * **§8.7.2's applied excess, computed here for the same reason the price
      * above is** — §6.1 puts rounding in `pricing/` and nowhere else, so the

@@ -657,6 +657,10 @@ describe('fetchPublicListing', () => {
     // sayable value — so a response that simply omits it is `malformed` rather
     // than a page quietly telling somebody nothing will be held.
     appliedExcess: { amount: { amount: 7_500, currency: 'GBP' }, boundBy: 'floor' },
+    // The gallery. Required on the wire and `[]` is the sayable value, so a
+    // response that omits it is `malformed` rather than a page silently
+    // rendering no photographs for a listing that has some.
+    media: [],
     // Â§8.3's consumer-law disclosure. Required on the wire, so a response
     // missing it is `malformed` rather than a page that quietly says "private".
     ownerStatus: 'private_owner',
@@ -844,6 +848,9 @@ describe('fetchListingSearch', () => {
           minimumFeeApplied: false,
         },
         distance: { kind: 'under_a_mile' },
+        // Required on the wire, `null` being the sayable value for "no
+        // photograph" — the same rule `appliedExcess` above follows.
+        thumbnail: null,
         ownerStatus: 'private_owner',
       },
     ],

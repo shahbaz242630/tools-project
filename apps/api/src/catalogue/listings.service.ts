@@ -35,10 +35,12 @@ import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
 import type { BookingReferences } from './booking-references.js';
 import type { ListingMediaEraser } from './listing-media-eraser.js';
+import type { ListingImageSigner } from './listing-image-signer.js';
 import type { ListingProximity } from './listing-proximity.js';
 import type { PublicationSwitch } from './publication-switch.js';
 import type { OwnerStatusSource } from './owner-status-source.js';
 import type { OwnerStatus } from '@platform/contracts';
+import type { ListingMediaImage, PublicListingMedia } from '@platform/contracts';
 import type { ListingRateCard } from '@platform/contracts';
 import type { MoneyValue } from '@platform/core';
 import type {
@@ -131,6 +133,19 @@ export type SubmittedListingEdit = Omit<SubmittedListing, 'ownerId' | 'categoryS
 export interface PublicListingView {
   readonly listing: PublicListingRecord;
   readonly ownerStatus: OwnerStatus;
+  /**
+   * The listing's photographs with their URLs already signed (slice 2.6b-ii).
+   *
+   * **Beside the record rather than on it**, which is the rule this type
+   * already follows for `ownerStatus`: the record is what the store can say,
+   * and a signed URL is not — it comes from the object store's credential and
+   * expires in fifteen minutes. Folding it into `PublicListingRecord` would
+   * make a database adapter responsible for a value it cannot produce.
+   *
+   * Empty rather than null when there are none, matching the wire type: most
+   * listings have no photograph, and that is an answer rather than an absence.
+   */
+  readonly media: readonly PublicListingMedia[];
 }
 
 /**
@@ -147,6 +162,15 @@ export interface NearbyListingView {
   readonly listing: PublicListingSummaryRecord;
   readonly ownerStatus: OwnerStatus;
   readonly distance: DistanceBucket;
+  /**
+   * The card's photograph, signed, or null where the listing has none
+   * (slice 2.6b-ii).
+   *
+   * A fourth value from a fourth source, extending this type's own argument:
+   * the listing is Catalogue's, the status is the person's, the distance is the
+   * searcher's, and this one is the object store's.
+   */
+  readonly thumbnail: ListingMediaImage | null;
 }
 
 /**
@@ -486,6 +510,24 @@ export class ListingsService {
      * cascade also cannot remove the bytes from object storage at all.
      */
     private readonly media: ListingMediaEraser,
+    /**
+     * Object keys turned into URLs a browser may fetch (slice 2.6b-ii).
+     *
+     * **The signer rather than `ObjectStore`, and the narrowing is the point** —
+     * exactly the argument `media` above makes for a one-method port. This
+     * service renders photographs on the two public read paths and must never
+     * write or destroy one; `ObjectStore` offers `put` and `delete` beside
+     * `signedUrl`, so injecting it would give the class that serves the
+     * internet every capability the bucket has.
+     *
+     * **Signing happens here rather than in the controllers**, which is where a
+     * wire concern would ordinarily live. The two public controllers are the
+     * only unguarded, internet-facing classes in this module, and handing them
+     * a bucket credential widens what a mistake in either can do. The views
+     * below already compose facts the store cannot supply — an owner's
+     * disclosure, a distance — and a signed URL is a third of exactly that kind.
+     */
+    private readonly images: ListingImageSigner,
   ) {}
 
   /**
@@ -853,7 +895,17 @@ export class ListingsService {
     // vocabulary grows.
     if (ownerStatus !== 'private_owner') return null;
 
-    return { listing, ownerStatus };
+    /*
+     * **Signed after the visibility checks, never before.** A signed URL is a
+     * fifteen-minute grant of read access to an object in a private bucket, so
+     * minting one for a listing this method is about to refuse would hand a
+     * stranger the photographs of a listing they are not allowed to see — and
+     * `signedUrl` does no network call, so nothing would fail and nothing would
+     * be logged. The two `return null`s above are the whole control.
+     */
+    const media = await this.images.signAll(listing.media);
+
+    return { listing, ownerStatus, media };
   }
 
   /**
@@ -1045,7 +1097,19 @@ export class ListingsService {
       // negative would have let null through.
       if (ownerStatus !== 'private_owner') continue;
 
-      results.push({ listing, ownerStatus, distance: match.distance });
+      results.push({
+        listing,
+        ownerStatus,
+        distance: match.distance,
+        /*
+         * **Signed inside the loop that has already dropped what it drops.**
+         * Every `continue` above is a listing this searcher may not see, and
+         * signing before them would mint a live URL to a moderated or a
+         * trader's listing that nothing ever renders and nothing ever logs.
+         * The cost is one local HMAC per surviving result.
+         */
+        thumbnail: await this.images.sign(listing.thumbnail),
+      });
     }
 
     /*
