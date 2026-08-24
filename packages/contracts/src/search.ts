@@ -14,6 +14,8 @@ import type { InclusiveDailyPrice } from './pricing.js';
 import { ownerStatusSchema } from './profiles.js';
 import type { OwnerStatus } from './profiles.js';
 import { parseWith } from './parse.js';
+import { listingMediaImageSchema } from './media.js';
+import type { ListingMediaImage } from './media.js';
 
 /**
  * Finding a listing near somewhere (BRD §8.4, §8.4.1, slice 3.1a).
@@ -666,6 +668,30 @@ export interface PublicListingSummary {
    * the reason `PublicListing.ownerStatus` gives — and carried rather than
    * assumed for the same reason.
    */
+  /**
+   * The first photograph, or null where the listing has none (slice 2.6b-ii).
+   *
+   * **One, not the array.** A card renders a single image, and sending ten so
+   * the page can take the first would be a search response carrying ninety
+   * images nobody looks at — on the one public route with no rate limit in
+   * front of it. `PublicListing` carries the gallery; this carries the card.
+   *
+   * **The thumbnail rendition, never the display one.** They are different
+   * objects with different bytes, and a card that pointed at the display
+   * rendition would work perfectly and quietly download roughly ten times what
+   * it needs, twenty times per page.
+   *
+   * **Nullable, and that is the honest shape rather than the convenient one.**
+   * Most listings have no photograph today. Substituting a placeholder URL on
+   * the server would make the card always renderable and would make an
+   * unphotographed listing indistinguishable from one photographed with the
+   * placeholder — a presentation decision belonging to the page, taken where it
+   * cannot be seen. The server states the fact; 2.6c decides the picture.
+   *
+   * Signed and short-lived like every other media URL: minted per response,
+   * fifteen minutes, never cached, never a key.
+   */
+  readonly thumbnail: ListingMediaImage | null;
   readonly ownerStatus: OwnerStatus;
 }
 
@@ -766,6 +792,11 @@ const publicListingSearchResultsSchema = z.object({
       location: coarseLocationSchema,
       inclusiveDailyPrice: inclusiveDailyPriceSchema,
       distance: distanceBucketSchema,
+      // The thumbnail rendition or nothing. `.nullable()` and not `.optional()`:
+      // absent would mean the server may not have told us, where null says there
+      // is no photograph -- the ambiguity `originStatus` below is at pains to
+      // avoid, applied to a field most listings will have.
+      thumbnail: listingMediaImageSchema.nullable(),
       ownerStatus: ownerStatusSchema,
     }),
   ),

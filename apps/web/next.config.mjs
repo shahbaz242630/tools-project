@@ -58,7 +58,28 @@ const CONTENT_SECURITY_POLICY = [
   // Clerk composes its appearance into inline styles (see lib/clerk-appearance),
   // and Next inlines critical CSS. Nonces would cover both and need middleware.
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://img.clerk.com",
+  /*
+   * R2 joins this in slice 2.6b-ii, because a listing's photographs are served
+   * straight from the bucket by short-lived signed URL rather than proxied
+   * through us — so the browser fetches them from Cloudflare's origin and the
+   * policy has to say so.
+   *
+   * **A wildcard over one vendor host, and the narrower form was considered and
+   * rejected.** The exact host is `https://<account-id>.eu.r2.cloudflarestorage.com`,
+   * which only the API knows: `MEDIA_S3_ENDPOINT` is the API's environment, and
+   * the web app deliberately holds no media credentials at all. Threading the
+   * account id into this file would mean a build argument present at
+   * `docker build` time — a fourth place the value lives, and the one nobody
+   * would set when the bucket changes. The wildcard covers any R2 bucket rather
+   * than only ours; `connect-src` and `default-src` are where exfiltration is
+   * actually constrained, and neither is widened here.
+   *
+   * **`object-store.invalid` is absent on purpose.** `MemoryObjectStore` signs
+   * URLs on that reserved domain in local development, so photographs do not
+   * render there — and the fix is real credentials in `.env`, not a policy that
+   * pretends an unresolvable host is a picture.
+   */
+  "img-src 'self' data: blob: https://img.clerk.com https://*.r2.cloudflarestorage.com",
   "font-src 'self'",
   "connect-src 'self' https://*.clerk.accounts.dev https://clerk-telemetry.com",
   // Clerk runs its session refresh in a worker created from a blob URL.

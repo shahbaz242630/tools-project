@@ -30,6 +30,8 @@ import type {
   ListingRecord,
   ListingStore,
   ModerationDecision,
+  ListingImageRecord,
+  PublicListingMediaRecord,
   PublicListingRecord,
   PublicListingSummaryRecord,
   QuotableListingRecord,
@@ -553,7 +555,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
   async findPublished(id: string): Promise<PublicListingRecord | null> {
     const listing = await this.prisma.listing.findFirst({
       where: { id, ...PUBLICLY_VISIBLE },
-      include: PUBLIC_LISTING_CATEGORY,
+      include: { ...PUBLIC_LISTING_CATEGORY, ...PUBLIC_LISTING_MEDIA },
     });
     if (listing === null) return null;
 
@@ -596,6 +598,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
       requiresTwoPersonLift: listing.requiresTwoPersonLift,
       outwardCode: listing.outwardCode,
       town: listing.town,
+      media: listing.media.map(asPublicMedia),
     };
   }
 
@@ -630,7 +633,7 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
 
     const listings = await this.prisma.listing.findMany({
       where: { id: { in: [...ids] }, ...PUBLICLY_VISIBLE },
-      include: PUBLIC_LISTING_CATEGORY,
+      include: { ...PUBLIC_LISTING_CATEGORY, ...PUBLIC_LISTING_THUMBNAIL },
     });
 
     return listings.flatMap((listing) => {
@@ -649,6 +652,14 @@ export class PrismaListingStore implements ListingStore, CategoryOptionSource {
           rates: asRateCard(listing),
           outwardCode: listing.outwardCode,
           town: listing.town,
+          /*
+           * `take: 1` above means at most one row, so this is the first
+           * photograph or none — and it is the **thumbnail** rendition, which
+           * is the only one a card may have. `?? null` rather than a length
+           * check because an empty array is the ordinary case: most listings
+           * have no photograph, and that is not an error.
+           */
+          thumbnail: asListingImage(listing.media[0], 'thumbnail'),
         },
       ];
     });
@@ -1041,6 +1052,62 @@ const PUBLIC_LISTING_CATEGORY = {
   },
 } as const;
 
+/**
+ * The photographs a public read may show, in the order a reader gets them
+ * (slice 2.6b-ii).
+ *
+ * **Its own constant rather than fields on `PUBLIC_LISTING_CATEGORY`**, because
+ * that one is shared with `findQuotable`, and a quote renders no photographs.
+ * Folding media into it would make every price calculation fetch up to ten
+ * media rows it never looks at.
+ *
+ * **`moderationState` is in the `where`**, which is the whole reason this is a
+ * filtered include rather than `media: true`. §6.2 gives media its own
+ * moderation state so a single bad photograph need not hide a listing, and
+ * nothing sets the column away from `APPROVED` yet — which is precisely why the
+ * filter has to be here before something does. Filtering in TypeScript
+ * afterwards would work and would mean the rejected row existed in memory on a
+ * public path.
+ *
+ * **The order is the port's total order** — `(position, createdAt, id)` — and
+ * `@@index([listingId, position, createdAt])` answers it from the index. It is
+ * total whatever the data says, which is what makes the deliberately absent
+ * unique constraint on `(listingId, position)` harmless.
+ */
+const PUBLIC_LISTING_MEDIA = {
+  media: {
+    where: { moderationState: 'APPROVED' },
+    // `as const` on each direction rather than on the whole object, because the
+    // outer form makes `orderBy` a **readonly tuple** and Prisma's input type
+    // takes a mutable array — it rejects the constant outright, and the error it
+    // reports is that `categoryVersion` does not exist, twelve lines away.
+    orderBy: [
+      { position: 'asc' as const },
+      { createdAt: 'asc' as const },
+      { id: 'asc' as const },
+    ],
+  },
+};
+
+/**
+ * The one photograph a search card renders.
+ *
+ * `PUBLIC_LISTING_MEDIA` with `take: 1`. **A card gets one image**, and sending
+ * ten so the page can pick the first would fetch ninety rows nobody looks at,
+ * on the one public route with no rate limit in front of it.
+ *
+ * **This is what stops the thumbnail being an N+1.** It joins inside the single
+ * `findMany` that already reads the page, rather than asking the media store
+ * once per card — which is the shape a results page acquires by accident and
+ * nobody notices until the catalogue is real.
+ */
+const PUBLIC_LISTING_THUMBNAIL = {
+  media: {
+    ...PUBLIC_LISTING_MEDIA.media,
+    take: 1,
+  },
+};
+
 /** The current configuration: highest version number, one row. */
 const LATEST_VERSION = {
   versions: { orderBy: { versionNumber: 'desc' }, take: 1 },
@@ -1275,6 +1342,64 @@ function rateColumns(rates: ListingRateCard) {
  * and for a stronger reason: this number is multiplied by a fee rate and shown
  * to a stranger as what they will pay.
  */
+/**
+ * One stored photograph row, as a public read describes it (slice 2.6b-ii).
+ *
+ * **Both renditions, and no `position`.** The array order already carries the
+ * order — `(position, createdAt, id)`, a total order whatever the data says —
+ * and a position number sent beside it would be a second, weaker statement of
+ * the same fact. `listing_media` deliberately has no unique constraint on
+ * `(listingId, position)`, so two rows may share one; the array cannot
+ * disagree with itself, and a number can.
+ */
+function asPublicMedia(media: MediaRow): PublicListingMediaRecord {
+  return {
+    id: media.id,
+    display: { key: media.displayKey, width: media.width, height: media.height },
+    thumbnail: {
+      key: media.thumbnailKey,
+      width: media.thumbnailWidth,
+      height: media.thumbnailHeight,
+    },
+  };
+}
+
+/**
+ * One rendition of one photograph, or null where there is no photograph.
+ *
+ * **The rendition is named at the call site rather than inferred**, because the
+ * two are interchangeable to the compiler — both are a key and two numbers —
+ * and picking the wrong one is a mistake that works. A card asking for
+ * `'thumbnail'` and silently receiving the display rendition would fetch
+ * roughly ten times what it needs, twenty times per page, and no test would
+ * fail.
+ */
+function asListingImage(
+  media: MediaRow | undefined,
+  rendition: 'display' | 'thumbnail',
+): ListingImageRecord | null {
+  if (media === undefined) return null;
+
+  return rendition === 'display'
+    ? { key: media.displayKey, width: media.width, height: media.height }
+    : {
+        key: media.thumbnailKey,
+        width: media.thumbnailWidth,
+        height: media.thumbnailHeight,
+      };
+}
+
+/** The media columns a public read selects. Structural, so Prisma's row fits. */
+interface MediaRow {
+  readonly id: string;
+  readonly displayKey: string;
+  readonly thumbnailKey: string;
+  readonly width: number;
+  readonly height: number;
+  readonly thumbnailWidth: number;
+  readonly thumbnailHeight: number;
+}
+
 function asRateCard(listing: {
   id: string;
   dailyRateAmount: number | null;

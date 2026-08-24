@@ -496,6 +496,9 @@ describe('parsing search results', () => {
       minimumFeeApplied: false,
     },
     distance: { kind: 'under_a_mile' },
+    // No photograph — the ordinary case, and the one the base fixture should
+    // describe so a test wanting a thumbnail has to say so.
+    thumbnail: null,
     ownerStatus: 'private_owner',
   };
 
@@ -565,6 +568,65 @@ describe('parsing search results', () => {
 
   it('refuses a response with no page, which would leave the pager guessing', () => {
     expect(() => parsePublicListingSearchResults(withoutTheField('page'))).toThrow();
+  });
+
+  /*
+   * The card's photograph (slice 2.6b-ii). Three properties, and the third is
+   * the one worth a test: `null` is a *value* here rather than an absence, so a
+   * response that simply leaves the field out is refused rather than read as
+   * "no photograph". That is the same rule `originStatus` is given above, and
+   * the reason is the same — a field the server forgot and a field the server
+   * says is empty must not be the same thing on the wire.
+   */
+  it('accepts a card with a thumbnail', () => {
+    const parsed = parsePublicListingSearchResults({
+      ...RESULTS,
+      results: [
+        {
+          ...RESULT,
+          thumbnail: {
+            url: 'https://account.eu.r2.cloudflarestorage.com/k?X-Amz-Signature=abc',
+            width: 400,
+            height: 300,
+          },
+        },
+      ],
+    });
+
+    expect(parsed.results[0]?.thumbnail?.width).toBe(400);
+  });
+
+  it('accepts a card with no thumbnail, which is most of them', () => {
+    expect(parsePublicListingSearchResults(RESULTS).results[0]?.thumbnail).toBeNull();
+  });
+
+  it('refuses a card with no thumbnail field, which is not the same as none', () => {
+    // Removal from the complete fixture rather than a hand-built partial, which
+    // is `withoutTheField` above's argument: a hand-built one goes stale as the
+    // shape grows and keeps reporting green about something it stopped testing.
+    const withoutThumbnail: Record<string, unknown> = { ...RESULT };
+    delete withoutThumbnail.thumbnail;
+
+    expect(() =>
+      parsePublicListingSearchResults({ ...RESULTS, results: [withoutThumbnail] }),
+    ).toThrow();
+  });
+
+  /*
+   * A thumbnail is a URL, and `z.url()` is what says so. It matters because the
+   * value is minted from the object store's credential and interpolated into an
+   * `<img src>` — a bare object key reaching a page would be a broken image with
+   * nothing in any log, and a `javascript:` string would be worse.
+   */
+  it('refuses a thumbnail whose url is not a url', () => {
+    expect(() =>
+      parsePublicListingSearchResults({
+        ...RESULTS,
+        results: [
+          { ...RESULT, thumbnail: { url: 'listings/a/b.webp', width: 4, height: 3 } },
+        ],
+      }),
+    ).toThrow();
   });
 
   /*

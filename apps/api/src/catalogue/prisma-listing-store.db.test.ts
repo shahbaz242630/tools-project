@@ -2485,6 +2485,154 @@ describe('the public read', () => {
     );
   }
 
+  /*
+   * ------------------------------------------------------------------
+   * Photographs on the public reads (slice 2.6b-ii)
+   * ------------------------------------------------------------------
+   *
+   * These write `listing_media` through the client rather than through
+   * `PrismaListingMediaStore`, deliberately: what is under test is the *read* —
+   * the filter, the order and the `take: 1` — and going through the other
+   * adapter would make a failure here ambiguous between the two.
+   */
+
+  /** One media row, positioned and moderated exactly as asked. */
+  async function givenPhotograph(
+    listingId: string,
+    { position = 0, moderationState = 'APPROVED', label = 'a' } = {},
+  ) {
+    return client.listingMedia.create({
+      data: {
+        listingId,
+        position,
+        moderationState,
+        displayKey: `listings/${listingId}/${label}/display.webp`,
+        thumbnailKey: `listings/${listingId}/${label}/thumbnail.webp`,
+        contentType: 'image/webp',
+        byteSize: 250_000,
+        width: 1_600,
+        height: 1_200,
+        thumbnailWidth: 400,
+        thumbnailHeight: 300,
+        sha256: label.repeat(64).slice(0, 64),
+      },
+    });
+  }
+
+  async function givenVisibleListing() {
+    const owner = await newUser();
+    const category = await newCategory(owner);
+    const created = await givenListing(owner, category.slug);
+    await store.publish(created.id, owner);
+    return created;
+  }
+
+  it('carries a listing’s photographs, both renditions, as keys', async () => {
+    const created = await givenVisibleListing();
+    await givenPhotograph(created.id);
+
+    const listing = await store.findPublished(created.id);
+
+    expect(listing?.media).toHaveLength(1);
+    expect(listing?.media[0]?.display.key).toContain('display.webp');
+    expect(listing?.media[0]?.display.width).toBe(1_600);
+    expect(listing?.media[0]?.thumbnail.key).toContain('thumbnail.webp');
+    expect(listing?.media[0]?.thumbnail.width).toBe(400);
+  });
+
+  it('carries an empty gallery for a listing with none', async () => {
+    const created = await givenVisibleListing();
+
+    expect((await store.findPublished(created.id))?.media).toEqual([]);
+  });
+
+  /*
+   * **The filter with no writer.** Nothing moves `listing_media.moderationState`
+   * off `APPROVED` until Phase 9, so the query behaves identically without the
+   * predicate today and starts publishing rejected photographs the day a route
+   * exists. This is the only thing standing between those two facts.
+   */
+  it('leaves out a photograph that is not APPROVED', async () => {
+    const created = await givenVisibleListing();
+    const approved = await givenPhotograph(created.id, { position: 0, label: 'a' });
+    await givenPhotograph(created.id, {
+      position: 1,
+      label: 'b',
+      moderationState: 'REJECTED',
+    });
+    await givenPhotograph(created.id, {
+      position: 2,
+      label: 'c',
+      moderationState: 'UNDER_REVIEW',
+    });
+
+    const listing = await store.findPublished(created.id);
+
+    expect(listing?.media.map((item) => item.id)).toEqual([approved.id]);
+  });
+
+  /*
+   * **The total order, over data that makes it necessary.** `listing_media` has
+   * no unique constraint on `(listingId, position)` — a reorder needs an
+   * intermediate state where two rows share one, and Prisma cannot express
+   * DEFERRABLE — so duplicates are representable and the order must not rest on
+   * `position` alone. Two rows at position 0 are separated by `createdAt`, and
+   * rows written in the same millisecond by `id`.
+   */
+  it('orders by position, then createdAt, then id — a total order either way', async () => {
+    const created = await givenVisibleListing();
+    const first = await givenPhotograph(created.id, { position: 0, label: 'a' });
+    const second = await givenPhotograph(created.id, { position: 0, label: 'b' });
+    const last = await givenPhotograph(created.id, { position: 1, label: 'c' });
+
+    const listing = await store.findPublished(created.id);
+    const ids = listing?.media.map((item) => item.id);
+
+    // `last` is at position 1 and therefore last, whatever its timestamp.
+    expect(ids?.[2]).toBe(last.id);
+    // The two sharing position 0 come back stably, and in the same order every
+    // time — which is the property, not which of the two wins.
+    expect(new Set(ids?.slice(0, 2))).toEqual(new Set([first.id, second.id]));
+
+    const again = await store.findPublished(created.id);
+    expect(again?.media.map((item) => item.id)).toEqual(ids);
+  });
+
+  it('gives a search card the first photograph’s thumbnail and only that', async () => {
+    const created = await givenVisibleListing();
+    await givenPhotograph(created.id, { position: 0, label: 'a' });
+    await givenPhotograph(created.id, { position: 1, label: 'b' });
+
+    const [summary] = await store.findPublishedSummaries([created.id]);
+
+    expect(summary?.thumbnail?.key).toContain('/a/thumbnail.webp');
+    expect(summary?.thumbnail?.width).toBe(400);
+  });
+
+  it('gives a search card no thumbnail where the listing has no photograph', async () => {
+    const created = await givenVisibleListing();
+
+    const [summary] = await store.findPublishedSummaries([created.id]);
+
+    expect(summary?.thumbnail).toBeNull();
+  });
+
+  it('skips a rejected first photograph and shows the next approved one', async () => {
+    const created = await givenVisibleListing();
+    await givenPhotograph(created.id, {
+      position: 0,
+      label: 'a',
+      moderationState: 'REJECTED',
+    });
+    await givenPhotograph(created.id, { position: 1, label: 'b' });
+
+    const [summary] = await store.findPublishedSummaries([created.id]);
+
+    // `take: 1` is applied *after* the `where`, which is what this pins: taking
+    // one row and then filtering it would leave the card with nothing.
+    expect(summary?.thumbnail?.key).toContain('/b/thumbnail.webp');
+  });
+
   it('serves a listing that is published and approved', async () => {
     const owner = await newUser();
     const category = await newCategory(owner);

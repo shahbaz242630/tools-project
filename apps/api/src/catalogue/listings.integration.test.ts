@@ -18,6 +18,8 @@ import {
   parsePublicListing,
   parsePublicCategories,
   parsePublicListingSearchResults,
+  listingMediaPath,
+  parseOwnerListingMediaList,
   publicListingPath,
   publicListingSearchPath,
 } from '@platform/contracts';
@@ -27,6 +29,8 @@ import type {
   DamageSecurityPolicy,
 } from '@platform/contracts';
 import { createRecordingLogger } from '@platform/observability/testing';
+import sharp from 'sharp';
+import { registerImageUploadParser } from './image-upload-parser.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module.js';
 import { FakeGeocoder } from '../search-location/testing/fakes.js';
@@ -209,6 +213,13 @@ beforeEach(async () => {
   app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
     logger: false,
   });
+  /*
+   * The raw-body parser for photograph uploads (slice 2.6b-i), registered here
+   * because `main.ts` registers it there — a Nest testing module does not run
+   * the composition root. Without it an upload is 415 and the public-media
+   * tests below fail looking like a header problem.
+   */
+  registerImageUploadParser(app.getHttpAdapter().getInstance());
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
 });
@@ -2726,6 +2737,174 @@ describe('the public listing page', () => {
     return created;
   }
 
+  /*
+   * ------------------------------------------------------------------
+   * Photographs on the page a stranger reads (slice 2.6b-ii)
+   * ------------------------------------------------------------------
+   */
+
+  /** A real JPEG, so the pipeline decodes something genuine rather than a stub. */
+  async function photograph(): Promise<Buffer> {
+    return sharp({
+      create: {
+        width: 900,
+        height: 600,
+        channels: 3,
+        background: { r: 20, g: 120, b: 60 },
+      },
+    })
+      .jpeg()
+      .toBuffer();
+  }
+
+  async function uploadTo(listingId: string) {
+    return app.inject({
+      method: 'POST',
+      url: listingMediaPath(listingId),
+      headers: { ...auth('alice-token'), 'content-type': 'application/octet-stream' },
+      // Awaited. A promise here reaches the raw-body parser as an object rather
+      // than bytes and comes back 415, which reads as a header problem.
+      payload: await photograph(),
+    });
+  }
+
+  it('shows a published listing with no photographs as having none', async () => {
+    const created = await givenVisible();
+
+    const listing = parsePublicListing((await read(created.id)).json());
+
+    // `[]` rather than absent, and this is the assertion that would fail if the
+    // field were ever made optional: most listings are in this state.
+    expect(listing.media).toEqual([]);
+  });
+
+  it('serves an owner’s photograph to somebody with no session', async () => {
+    const created = await givenVisible();
+    expect((await uploadTo(created.id)).statusCode).toBe(201);
+
+    const listing = parsePublicListing((await read(created.id)).json());
+
+    expect(listing.media).toHaveLength(1);
+    // Both renditions, both signed. A URL rather than a key is the whole
+    // difference between this and what the store holds.
+    expect(listing.media[0]?.display.url).toMatch(/^https:\/\//);
+    expect(listing.media[0]?.thumbnail.url).toMatch(/^https:\/\//);
+    expect(listing.media[0]?.display.width).toBeGreaterThan(0);
+  });
+
+  /*
+   * **The narrowing, fired rather than asserted.** `PublicListingMedia` carries
+   * exactly three fields, so this proves the public projection cannot be
+   * widened back into the owner's shape without a test going red.
+   *
+   * **What it deliberately does not assert is that the object key never
+   * appears.** It does appear, and it must: a presigned S3 URL *is* the key
+   * with a signature attached, `https://host/<key>?X-Amz-Signature=...`. An
+   * earlier version of this test asserted the key was absent and failed against
+   * correct code. The property that actually matters is that the key is only
+   * ever present **inside a signed, expiring URL** — never as a field of its
+   * own that something could fetch unsigned or store as a stable address.
+   */
+  it('carries three fields and no bare storage key', async () => {
+    const created = await givenVisible();
+    await uploadTo(created.id);
+
+    const raw = (await read(created.id)).json() as { media: Record<string, unknown>[] };
+    const photo = raw.media[0] ?? {};
+
+    expect(Object.keys(photo).sort()).toEqual(['display', 'id', 'thumbnail']);
+    // No `position`, and no `displayKey`/`thumbnailKey` under any spelling.
+    expect(
+      Object.keys(photo).filter((key) => key.toLowerCase().includes('key')),
+    ).toEqual([]);
+
+    const listing = parsePublicListing(raw);
+    /*
+     * The key is inside the URL, which is what a presigned URL is, and there is
+     * a query string carrying what makes it expire. **Not asserted here: the
+     * `X-Amz-Signature` parameter itself** — this suite runs against
+     * `MemoryObjectStore`, which signs to `object-store.invalid` with a plain
+     * `?expires=`. What the real adapter mints is `r2-object-store.test.ts`'s
+     * subject, and pinning its format here would be this test failing for a
+     * reason it does not own.
+     */
+    const url = new URL(listing.media[0]?.display.url ?? '');
+    expect(url.protocol).toBe('https:');
+    expect(url.pathname).toContain(created.id);
+    expect(url.search).not.toBe('');
+  });
+
+  it('keeps photographs in the order they were uploaded', async () => {
+    const created = await givenVisible();
+    await uploadTo(created.id);
+    await uploadTo(created.id);
+    await uploadTo(created.id);
+
+    const listing = parsePublicListing((await read(created.id)).json());
+    const owned = parseOwnerListingMediaList(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingMediaPath(created.id),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+
+    // The same order the owner sees, which is the only order there is: the
+    // public shape carries no position to sort by.
+    expect(listing.media.map((item) => item.id)).toEqual(
+      owned.media.map((item) => item.id),
+    );
+  });
+
+  /*
+   * **The filter that has nothing to fail on yet.** Nothing sets
+   * `listing_media.moderationState` away from `APPROVED` — no route moderates a
+   * photograph until Phase 9 — so the query would behave identically without
+   * the predicate today, and start publishing rejected photographs the day one
+   * exists. This reaches past the routes to set the column, which is the only
+   * way to test a rule whose writer has not been built.
+   */
+  it('hides a photograph a moderator has rejected, before any route can reject one', async () => {
+    const created = await givenVisible();
+    await uploadTo(created.id);
+    await uploadTo(created.id);
+
+    const rows = listings.media.store.all.filter((row) => row.listingId === created.id);
+    expect(rows).toHaveLength(2);
+    listings.media.store.setModerationState(rows[0]?.id ?? '', 'REJECTED');
+
+    const listing = parsePublicListing((await read(created.id)).json());
+
+    expect(listing.media.map((item) => item.id)).toEqual([rows[1]?.id]);
+  });
+
+  /*
+   * **A signed URL is a fifteen-minute grant of read access to a private
+   * bucket.** Minting one for a listing the route is about to refuse would hand
+   * a stranger the photographs of something they may not see — and `signedUrl`
+   * does no network call, so nothing would fail and nothing would be logged.
+   * The only observable proof is that the object store was never asked.
+   */
+  it('signs nothing for a listing it refuses to show', async () => {
+    const created = await givenVisible();
+    await uploadTo(created.id);
+
+    // Paused: still a real listing with real photographs, and a 404 to a stranger.
+    await app.inject({
+      method: 'DELETE',
+      url: listingPublicationPath(created.id),
+      headers: auth('alice-token'),
+    });
+
+    const before = listings.media.objects.signings;
+    const response = await read(created.id);
+
+    expect(response.statusCode).toBe(404);
+    expect(listings.media.objects.signings).toBe(before);
+  });
+
   it('serves a published listing to somebody with no session', async () => {
     const created = await givenVisible();
 
@@ -3239,6 +3418,141 @@ describe('searching for listings near a postcode', () => {
     listings.proximity.places(created.id, metresAway, category?.id ?? null, text);
     return created;
   }
+
+  /*
+   * ------------------------------------------------------------------
+   * The card's photograph (slice 2.6b-ii)
+   * ------------------------------------------------------------------
+   */
+
+  async function uploadToCard(listingId: string) {
+    return app.inject({
+      method: 'POST',
+      url: listingMediaPath(listingId),
+      headers: { ...auth('alice-token'), 'content-type': 'application/octet-stream' },
+      payload: await sharp({
+        create: {
+          width: 900,
+          height: 600,
+          channels: 3,
+          background: { r: 20, g: 120, b: 60 },
+        },
+      })
+        .jpeg()
+        .toBuffer(),
+    });
+  }
+
+  it('shows no thumbnail for a listing with no photographs, which is most of them', async () => {
+    await givenAListing(3_000);
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    // Null rather than absent, and rather than a placeholder URL the server
+    // chose: the card says there is no photograph and the page decides what to
+    // draw instead.
+    expect(results.results[0]?.thumbnail).toBeNull();
+  });
+
+  /*
+   * **The rendition is the assertion.** Both renditions are a URL and two
+   * numbers, so a card handed the display one would render perfectly and fetch
+   * roughly ten times what it needs, twenty times per page — a mistake that
+   * shows up on somebody's data allowance rather than in a test. The
+   * dimensions are what tell them apart: `prepareImage` bounds a thumbnail to
+   * `THUMBNAIL_MAX_EDGE` and a 900x600 photograph therefore thumbnails to 400
+   * wide, where the display rendition stays 900.
+   */
+  it('puts the thumbnail rendition on the card, never the display one', async () => {
+    const created = await givenAListing(3_000);
+    expect((await uploadToCard(created.id)).statusCode).toBe(201);
+
+    const results = parsePublicListingSearchResults((await search()).json());
+    const thumbnail = results.results[0]?.thumbnail;
+
+    expect(thumbnail?.url).toMatch(/^https:/);
+    expect(thumbnail?.width).toBe(400);
+    expect(thumbnail?.height).toBe(267);
+  });
+
+  /*
+   * **One photograph on a card however many the listing has.** The adapter's
+   * `take: 1` is what does it, and without it a results page would carry every
+   * photograph of every listing — up to ten each, ninety images nobody looks at
+   * on a full page — on the one public route with no rate limit in front of it.
+   */
+  it('sends one photograph per card, not the whole gallery', async () => {
+    const created = await givenAListing(3_000);
+    await uploadToCard(created.id);
+    await uploadToCard(created.id);
+    await uploadToCard(created.id);
+
+    const raw = (await search()).json() as {
+      results: Record<string, unknown>[];
+    };
+
+    // A single object, not an array: the shape itself refuses a gallery.
+    expect(Array.isArray(raw.results[0]?.thumbnail)).toBe(false);
+    expect(JSON.stringify(raw.results[0]).match(/"url"/g)).toHaveLength(1);
+  });
+
+  it('shows the first photograph in the owner’s order', async () => {
+    const created = await givenAListing(3_000);
+    await uploadToCard(created.id);
+    await uploadToCard(created.id);
+
+    const owned = parseOwnerListingMediaList(
+      (
+        await app.inject({
+          method: 'GET',
+          url: listingMediaPath(created.id),
+          headers: auth('alice-token'),
+        })
+      ).json(),
+    );
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    // The same rendition of the same row the owner sees first.
+    expect(results.results[0]?.thumbnail?.url).toBe(owned.media[0]?.thumbnail.url);
+  });
+
+  it('hides a rejected photograph from a card as well as from the page', async () => {
+    const created = await givenAListing(3_000);
+    await uploadToCard(created.id);
+
+    const row = listings.media.store.all.find((item) => item.listingId === created.id);
+    listings.media.store.setModerationState(row?.id ?? '', 'UNDER_REVIEW');
+
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    // The listing is still there — one bad photograph must not hide it (§6.2) —
+    // and it is there without a picture.
+    expect(results.results.map((result) => result.id)).toEqual([created.id]);
+    expect(results.results[0]?.thumbnail).toBeNull();
+  });
+
+  /*
+   * **The N+1 that a results page acquires by accident.** The thumbnail is
+   * joined inside the single `findMany` that already reads the page, so signing
+   * is the only per-result work — one local HMAC each. A version that asked the
+   * media store once per card would pass every assertion above and cost a query
+   * per row, which nobody notices until the catalogue is real.
+   */
+  it('signs once per result and no more, so the join stays a join', async () => {
+    const listingIds = [
+      await givenAListing(1_000),
+      await givenAListing(2_000),
+      await givenAListing(3_000),
+    ];
+    for (const listing of listingIds) await uploadToCard(listing.id);
+
+    const before = listings.media.objects.signings;
+    const results = parsePublicListingSearchResults((await search()).json());
+
+    expect(results.results).toHaveLength(3);
+    // Three cards, three signatures. Not six (both renditions), and not nine.
+    expect(listings.media.objects.signings - before).toBe(3);
+  });
 
   it('returns a listing inside the radius, to somebody with no session', async () => {
     const created = await givenAListing(3_000);

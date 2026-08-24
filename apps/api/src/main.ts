@@ -66,6 +66,7 @@ import { PrismaListingMediaStore } from './catalogue/prisma-listing-media-store.
 import { ListingMediaService } from './catalogue/listing-media.service.js';
 import { R2ObjectStore } from './catalogue/r2-object-store.js';
 import { MemoryObjectStore } from './catalogue/memory-object-store.js';
+import { ListingImageSigner } from './catalogue/listing-image-signer.js';
 import { assertDecodersAvailable } from './catalogue/prepare-image.js';
 import { registerImageUploadParser } from './catalogue/image-upload-parser.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
@@ -415,6 +416,40 @@ async function bootstrap(): Promise<void> {
     logger.child({ module: 'feature-flags' }),
   );
 
+  /*
+   * A listing's photographs (slice 2.6b-i).
+   *
+   * **Built before `listings`, not beside `listingMedia` below** (slice
+   * 2.6b-ii). The public read paths sign object keys, so `ListingsService`
+   * takes a signer over this store — and a lazy delegate like the eraser's
+   * would be reaching for a workaround where an ordering change does. Nothing
+   * here depends on a listing.
+   *
+   * **The object store is chosen here and nowhere else**, which is the whole
+   * point of a composition root: `mediaStorageFrom` returns null when no bucket
+   * is configured, and that is a supported state meaning "run against memory".
+   * Local development takes it, so a developer machine cannot write into the
+   * bucket a deployed environment serves from — the object-storage form of the
+   * rule that local development never shares a database. Under
+   * `NODE_ENV=production` the same absence refuses to boot instead, because a
+   * deployed environment that silently accepts no photographs and shows none
+   * passes every health check.
+   */
+  const mediaStorage = mediaStorageFrom(loadMediaEnv());
+  const objectStore =
+    mediaStorage === null
+      ? new MemoryObjectStore()
+      : new R2ObjectStore(mediaStorage, logger.child({ module: 'catalogue' }));
+
+  if (mediaStorage === null) {
+    logger.warn('No object store is configured; photographs are held in memory', {
+      // Not an error: it is the correct configuration for local development and
+      // the only one it can have. It is a warning because the same line in a
+      // deployed environment would be the explanation for every missing image.
+      reason: 'media-storage-absent',
+    });
+  }
+
   const listings = new ListingsService(
     listingStore,
     listingStore,
@@ -500,35 +535,15 @@ async function bootstrap(): Promise<void> {
      * the binding is always resolved by the time it runs.
      */
     { eraseForListings: (ids) => listingMedia.eraseForListings(ids) },
+    /*
+     * The signer, over the object store chosen above.
+     *
+     * **The signer rather than `objectStore` itself**: this service renders
+     * photographs on two unguarded public reads and must never write or destroy
+     * one, and `ObjectStore` carries `put` and `delete` beside `signedUrl`.
+     */
+    new ListingImageSigner(objectStore),
   );
-
-  /*
-   * A listing's photographs (slice 2.6b-i).
-   *
-   * **The object store is chosen here and nowhere else**, which is the whole
-   * point of a composition root: `mediaStorageFrom` returns null when no bucket
-   * is configured, and that is a supported state meaning "run against memory".
-   * Local development takes it, so a developer machine cannot write into the
-   * bucket a deployed environment serves from — the object-storage form of the
-   * rule that local development never shares a database. Under
-   * `NODE_ENV=production` the same absence refuses to boot instead, because a
-   * deployed environment that silently accepts no photographs and shows none
-   * passes every health check.
-   */
-  const mediaStorage = mediaStorageFrom(loadMediaEnv());
-  const objectStore =
-    mediaStorage === null
-      ? new MemoryObjectStore()
-      : new R2ObjectStore(mediaStorage, logger.child({ module: 'catalogue' }));
-
-  if (mediaStorage === null) {
-    logger.warn('No object store is configured; photographs are held in memory', {
-      // Not an error: it is the correct configuration for local development and
-      // the only one it can have. It is a warning because the same line in a
-      // deployed environment would be the explanation for every missing image.
-      reason: 'media-storage-absent',
-    });
-  }
 
   /*
    * **Fired at boot rather than at the first upload.** sharp ships a different

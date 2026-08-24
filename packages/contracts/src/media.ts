@@ -71,7 +71,7 @@ export interface OwnerListingMedia {
   readonly thumbnail: ListingMediaImage;
 }
 
-const listingMediaImageSchema = z.strictObject({
+export const listingMediaImageSchema = z.strictObject({
   url: z.url(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
@@ -87,6 +87,35 @@ export const ownerListingMediaSchema = z.strictObject({
 export function parseOwnerListingMedia(raw: unknown): OwnerListingMedia {
   return parseWith(ownerListingMediaSchema, 'The photograph', raw);
 }
+
+/**
+ * One photograph, as anybody on the internet sees it (slice 2.6b-ii).
+ *
+ * **A third type for the same row, and the narrowing is the point.** It carries
+ * no `position`, and that is not tidiness — it is the one field on the owner's
+ * shape that can *lie* to a reader. `listing_media` has no unique constraint on
+ * `(listingId, position)` deliberately, because a reorder needs an intermediate
+ * state where two rows briefly share one and Prisma cannot express DEFERRABLE.
+ * Duplicates are therefore representable, and what makes them harmless is that
+ * every read orders by `(position, createdAt, id)` — a total order whatever the
+ * data says. The array order is that total order. A position number sent beside
+ * it would be a second, weaker statement of the same fact, and the day two rows
+ * share a `2` the two would disagree in public.
+ *
+ * The owner's shape keeps it because an owner reorders and needs a handle to
+ * reorder *by*. A reader only needs them in order, and they are.
+ */
+export interface PublicListingMedia {
+  readonly id: string;
+  readonly display: ListingMediaImage;
+  readonly thumbnail: ListingMediaImage;
+}
+
+export const publicListingMediaSchema = z.strictObject({
+  id: z.uuid(),
+  display: listingMediaImageSchema,
+  thumbnail: listingMediaImageSchema,
+});
 
 export const ownerListingMediaListSchema = z.strictObject({
   media: z.array(ownerListingMediaSchema),

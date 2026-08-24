@@ -23,6 +23,7 @@ import { Postcode, Time } from '@platform/core';
 import { ObjectStoreUnavailableError } from '../object-store.js';
 import { MemoryObjectStore } from '../memory-object-store.js';
 import { ListingMediaService } from '../listing-media.service.js';
+import { ListingImageSigner } from '../listing-image-signer.js';
 import type {
   ListingMediaRecord,
   ListingMediaStore,
@@ -61,6 +62,7 @@ import type {
   ListingRecord,
   ListingStore,
   ModerationDecision,
+  PublicListingMediaRecord,
   PublicListingRecord,
   PublicListingSummaryRecord,
   QuotableListingRecord,
@@ -340,8 +342,56 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
    */
   private readonly offsets = new Map<string, StoredFuzzOffset>();
   private nextId = 1;
+  /**
+   * Where this double reads photographs from (slice 2.6b-ii).
+   *
+   * **Set afterwards rather than taken in the constructor**, because the media
+   * store is built *from* this one — `createListingMediaFakes` needs a listing
+   * store to prove ownership against — so the two cannot both be constructor
+   * arguments of each other.
+   *
+   * **Null means no media store is wired, not "no photographs".** A test that
+   * never touches media gets empty projections, which is right; a test that
+   * does gets the real rows, filtered and ordered the way the adapter does it.
+   * Returning `[]` unconditionally would have made every assertion about
+   * photographs on a public read pass without a photograph ever existing.
+   */
+  private media: InMemoryListingMediaStore | null = null;
 
   constructor(private readonly categories: InMemoryCategoryStore) {}
+
+  /** Read photographs from this store on the two public projections. */
+  useMedia(media: InMemoryListingMediaStore): void {
+    this.media = media;
+  }
+
+  /**
+   * This listing's approved photographs, in the order the adapter returns them.
+   *
+   * **The same three rules as `PUBLIC_LISTING_MEDIA`**, restated because a
+   * double that skipped any of them would let the real one's absence pass:
+   * `APPROVED` only, ordered by `(position, createdAt, id)`, and keys rather
+   * than URLs.
+   */
+  private async publicMedia(
+    listingId: string,
+  ): Promise<readonly PublicListingMediaRecord[]> {
+    if (this.media === null) return [];
+
+    const rows = await this.media.listFor(listingId);
+
+    return rows
+      .filter((row) => row.moderationState === 'APPROVED')
+      .map((row) => ({
+        id: row.id,
+        display: { key: row.displayKey, width: row.width, height: row.height },
+        thumbnail: {
+          key: row.thumbnailKey,
+          width: row.thumbnailWidth,
+          height: row.thumbnailHeight,
+        },
+      }));
+  }
 
   async createDraft(draft: ListingDraft): Promise<ListingRecord> {
     const category = await this.categories.findBySlug(draft.categorySlug);
@@ -613,7 +663,10 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
     /* c8 ignore next -- unreachable: a listing cannot exist without its category. */
     if (category === null) return null;
 
+    const media = await this.publicMedia(hydrated.id);
+
     return {
+      media,
       id: hydrated.id,
       ownerId: hydrated.ownerId,
       categorySlug: hydrated.categorySlug,
@@ -671,7 +724,12 @@ export class InMemoryListingStore implements ListingStore, CategoryOptionSource 
 
       const hydrated = await this.hydrate(listing);
 
+      // `[0]` because a card gets one, matching the adapter's `take: 1` — and
+      // `?? null` because most listings have no photograph, which is ordinary.
+      const thumbnail = (await this.publicMedia(hydrated.id))[0]?.thumbnail ?? null;
+
       summaries.push({
+        thumbnail,
         id: hydrated.id,
         ownerId: hydrated.ownerId,
         categoryName: hydrated.categoryName,
@@ -1158,6 +1216,13 @@ export function createListingFakes(
   // defect that would delete listings out from under other people's history.
   const bookings = createBookingFakes();
   const media = createListingMediaFakes(listings);
+  /*
+   * **Wired both ways, and this line is why a media assertion can fail.**
+   * Without it the listing store's two public projections return no
+   * photographs whatever the media store holds, so every test about a
+   * photograph reaching a public read would pass with no photograph anywhere.
+   */
+  listings.useMedia(media.store);
 
   return {
     categories,
@@ -1196,6 +1261,9 @@ export function createListingFakes(
       // would let a service that never erased a photograph pass, which is the
       // precise defect this port exists to prevent.
       media.service,
+      // The same object store the media service writes through, so a signed URL
+      // in a public projection refers to bytes a test actually uploaded.
+      new ListingImageSigner(media.objects),
     ),
   };
 }
@@ -1225,6 +1293,17 @@ export class InMemoryObjectStore extends MemoryObjectStore {
 
   /** Every key written, in order, so a test can assert what was stored and when. */
   readonly written: string[] = [];
+  /**
+   * How many URLs have been signed (slice 2.6b-ii).
+   *
+   * **A count rather than a list of keys**, because what it exists to prove is
+   * a *negative*: that a read which refuses a listing signed nothing for it. A
+   * signed URL is a fifteen-minute grant of access to a private object, and
+   * `signedUrl` does no network call — so minting one for a listing nobody may
+   * see fails nothing and logs nothing, and the only observable trace is that
+   * the store was asked.
+   */
+  signings = 0;
   /** Every key deleted, including ones that were never there. */
   readonly deleted: string[] = [];
 
@@ -1261,6 +1340,19 @@ export class InMemoryObjectStore extends MemoryObjectStore {
 
     this.written.push(key);
     return super.put(key, bytes, contentType);
+  }
+
+  /**
+   * Signs exactly as the parent does, and counts (slice 2.6b-ii).
+   *
+   * **It does not consume `willFail`**, matching the real adapter: presigning is
+   * local arithmetic over a key and a credential, so it cannot discover that the
+   * bucket is unreachable. A double that failed here would send somebody to
+   * write error handling for a case production does not have.
+   */
+  override signedUrl(key: string, ttlSeconds: number): Promise<string> {
+    this.signings += 1;
+    return super.signedUrl(key, ttlSeconds);
   }
 
   override delete(key: string): Promise<void> {
@@ -1304,6 +1396,27 @@ export class InMemoryObjectStore extends MemoryObjectStore {
 export class InMemoryListingMediaStore implements ListingMediaStore {
   private readonly rows = new Map<string, ListingMediaRecord>();
   private sequence = 0;
+
+  /**
+   * Move one photograph's moderation state (slice 2.6b-ii).
+   *
+   * **A test affordance with no production counterpart, deliberately.** No
+   * route moderates a photograph until Phase 9 — §6.2 asked for the column and
+   * 2.6b-i added it so it would not have to be retrofitted onto existing rows —
+   * so the public read's `APPROVED` filter has nothing that can exercise it
+   * through the API. Without this the filter would be untested until the day it
+   * mattered, which is the day a rejected photograph is already public.
+   *
+   * It is on the double rather than the port for exactly that reason: adding
+   * `setModerationState` to `ListingMediaStore` would put a write on the
+   * interface that production has no caller for, and Phase 9's real one will
+   * want a moderator, a reason and an audit entry rather than this.
+   */
+  setModerationState(mediaId: string, state: string): void {
+    const row = this.rows.get(mediaId);
+    if (row === undefined) throw new Error(`No such photograph: ${mediaId}`);
+    this.rows.set(mediaId, { ...row, moderationState: state });
+  }
 
   private ordered(listingId: string): ListingMediaRecord[] {
     return [...this.rows.values()]
