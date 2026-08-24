@@ -17,21 +17,37 @@ services:
     container_name: rental-ingress
     restart: unless-stopped
 
+    # **Loopback by default, and that default is the whole of BRD §10.2 here.**
+    #
+    # Behind Cloudflare's Tunnel nothing dials this box: `cloudflared` makes an
+    # outbound connection and reaches Caddy by container name on the `edge`
+    # network, so the published port is not on the path at all. It exists for
+    # the CI rehearsal, which curls `http://localhost` from the runner.
+    #
+    # Binding to `127.0.0.1` means exposing the edge is an explicit act
+    # (`INGRESS_BIND_ADDRESS=0.0.0.0`) rather than the default. An origin
+    # reachable except through the filtering layer is what §10.2 forbids, and
+    # the address is discoverable from certificate transparency however new the
+    # hostname is.
+    #
+    # **No 443.** TLS terminates at Cloudflare's edge, so Caddy never sees a
+    # certificate and ACME never runs — see the site addresses below.
     ports:
-      - '80:80'
-      # 443 over UDP as well as TCP: without it Caddy advertises HTTP/3 in
-      # Alt-Svc and browsers retry on a port nothing is listening on, which
-      # shows up as intermittent slow first loads rather than as an error.
-      - '443:443'
-      - '443:443/udp'
+      - '${INGRESS_BIND_ADDRESS:-127.0.0.1}:80:80'
 
     environment:
       # Required, not defaulted. A placeholder address here would be sent to
       # Let's Encrypt as the account contact, and expiry warnings would go
       # nowhere.
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL to a mailbox you actually read}
-      # A bare hostname makes Caddy obtain a certificate automatically. An
-      # `http://` prefix disables that, which is what local rehearsals use.
+      # A bare hostname makes Caddy obtain a certificate automatically; an
+      # `http://` prefix disables that.
+      #
+      # **Behind the Tunnel the `http://` form is the correct one on a public
+      # box**, which reverses what this file used to say. Cloudflare terminates
+      # TLS at its edge and `cloudflared` carries the request inward over the
+      # Docker network, so a certificate here would be one nothing presents and
+      # ACME would fail anyway — the hostname resolves to Cloudflare, not to us.
       PRODUCTION_SITE_ADDRESS: ${PRODUCTION_SITE_ADDRESS:?set PRODUCTION_SITE_ADDRESS}
       STAGING_SITE_ADDRESS: ${STAGING_SITE_ADDRESS:?set STAGING_SITE_ADDRESS}
 
@@ -60,6 +76,65 @@ services:
     # ones, so a probe here would buy reporting rather than recovery — and the
     # reporting is already unambiguous: a proxy that is up answers with a 502
     # when an upstream is down, and one that is not answers nothing at all.
+
+  # The only thing that reaches the internet, and it reaches it outbound.
+  #
+  # BRD §10.2 does not merely ask for a filtering layer in front of public
+  # traffic — the part that is normative and easy to undo is that **the origin
+  # must not be reachable except through it**. An allowlist of edge addresses
+  # proves only that a packet came from the provider, not that it was sent for
+  # our zone, which is why §10.2 names an outbound-only tunnel or mutual TLS.
+  # This is the outbound-only option: no inbound port, no public address to
+  # find, nothing for certificate transparency to leak.
+  #
+  # **Behind a profile deliberately.** The CI rehearsal brings this same file up
+  # to prove the edge routes by hostname and keeps the API private, and it has
+  # no tunnel to join; without the profile it would sit in a crash loop and make
+  # a green job look broken. On the box it is started with `--profile tunnel`,
+  # which the provisioning runbook spells out.
+  cloudflared:
+    # Pinned, per ADR 0012. `latest` on the edge means the thing carrying all
+    # public traffic changes under us on a restart we did not intend.
+    image: cloudflare/cloudflared:2026.8.2
+    container_name: rental-tunnel
+    restart: unless-stopped
+    profiles:
+      - tunnel
+
+    # `--no-autoupdate` for the same reason the tag is pinned: cloudflared
+    # replaces its own binary by default, which would undo the pin at runtime
+    # and restart the edge at a moment nobody chose.
+    command: tunnel --no-autoupdate run
+
+    environment:
+      # Secret. It carries the tunnel's credentials, so anyone holding it can
+      # serve traffic as this hostname — treat it like a private key. Required
+      # rather than defaulted: an empty token starts a process that cannot
+      # connect and reports it only in its own logs.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+      # Structured logs, so `scripts/logs.mjs` reads the same shape here as it
+      # does from Caddy.
+      TUNNEL_METRICS: 0.0.0.0:2000
+
+    networks:
+      # Reaches Caddy by container name. The public hostname configured at
+      # Cloudflare points at `http://rental-ingress:80` — so the routing table
+      # that decides *which environment* a hostname belongs to stays in the
+      # Caddyfile, in version control, rather than moving into a dashboard.
+      - edge
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+    security_opt:
+      - no-new-privileges:true
+
+    # No healthcheck, matching Caddy above: an unhealthy container is not
+    # restarted by Docker, and a tunnel that has lost its connection is already
+    # loud — Cloudflare serves 1033 and the dashboard shows the connector gone.
 
 networks:
   edge:

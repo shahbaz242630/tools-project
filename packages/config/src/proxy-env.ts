@@ -27,11 +27,17 @@ const schema = z.object({
    * `audit_logs.ipAddress` as *evidence*. A default of one would record a
    * stranger's claim as fact.
    *
-   * Today the correct value genuinely is `0`: the Caddy ingress has never run,
-   * because bringing it up without a domain would put plain HTTP on a dialable
-   * public IP (BRD §10.2). It becomes `1` when the ingress comes up and `2`
-   * behind Cloudflare's Tunnel — **in the same change that brings the proxy up**,
-   * which is the step ADR 0017 warned would otherwise be silent.
+   * `0` remains the default and remains correct with nothing in front — local
+   * development, and any environment reached directly. **Staging is no longer
+   * one of them:** from 24 August 2026 it runs behind Cloudflare's Tunnel in
+   * front of Caddy and sets `2`, which was done in the same change that brought
+   * the proxy up rather than after it — the step ADR 0017 warned would
+   * otherwise be silent.
+   *
+   * The value only reaches a deployed container because
+   * `docker-compose.app.yml` now passes it. It did not until that change, so
+   * setting it in the box's env file would have done nothing and said nothing —
+   * the same silence, one layer down.
    *
    * **Bounded at 4**, because this is set by hand during a topology change: a
    * fat-fingered `40` would reach past every real entry and return null forever,

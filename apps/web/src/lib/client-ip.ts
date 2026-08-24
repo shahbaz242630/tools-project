@@ -40,9 +40,12 @@ function trustedHops(): number {
  *
  * **This function used to take the last entry unconditionally**, on the stated
  * assumption of *"exactly one trusted proxy in front, which is what we deploy"*.
- * That assumption has never been true: `infra/compose`'s Caddy ingress **has
- * never run** — it is deliberately down until a domain exists, because bringing
- * it up would put plain HTTP on a dialable public IP (§10.2).
+ * That assumption was false for as long as it stood: `infra/compose`'s Caddy
+ * ingress had never run, being deliberately down until a domain existed,
+ * because bringing it up would have put plain HTTP on a dialable public IP
+ * (§10.2). **The ingress came up on 24 August 2026** behind Cloudflare's
+ * Tunnel, so the assumption is now wrong in the other direction — there are
+ * *two* hops, not one, which is why the count is configuration.
  *
  * With no proxy appending anything, *every* entry is one the caller typed,
  * including the last. So this returned an **attacker-controlled** address, and

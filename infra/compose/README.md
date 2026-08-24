@@ -6,7 +6,11 @@ Everything here follows [ADR 0009](../../adr/0009-self-hosted-vps-with-off-box-b
 
 > **Used for real on 9 August 2026**, on a Hetzner CX23 against Neon, and corrected where it was wrong — which was the point of writing it down. What it produced: `web`, `api`, `worker` and Redis healthy, no Postgres container, no published ports, `/ready` reporting `postgres: ok`.
 >
-> **Still unexercised:** the ingress. It has never run, and it is expected to be the wrong shape — it listens for inbound traffic, and Cloudflare's Tunnel makes an outbound-only connection instead. Until a domain exists the ingress stays down deliberately, because bringing it up would put plain HTTP on a dialable public IP, which BRD §10.2 forbids. Reach the stack over an SSH tunnel meanwhile:
+> **The ingress ran for the first time on 24 August 2026**, and the note that stood here for a month — _"it has never run, and it is expected to be the wrong shape"_ — turned out to be half right. It **was** the wrong shape: it held ports 80 and 443 and obtained its own certificates, which is not what sits behind an outbound-only tunnel. What survived is the part that mattered: **routing by `Host` header stays here**, in version control, and Cloudflare's public-hostname list points every hostname at this one container.
+>
+> What changed: no 443 at all, port 80 published on **loopback only** (`INGRESS_BIND_ADDRESS`, defaulting to `127.0.0.1`), site addresses carrying an `http://` prefix so ACME never runs, and a `cloudflared` service behind the `tunnel` profile. A CI step now asserts the edge binds nothing but loopback, because §10.2 is undone by one character and nothing else in the pipeline would notice.
+>
+> The SSH tunnel below is still the way in when the edge is down, or to reach a container the ingress deliberately cannot see — the API, or Grafana:
 >
 > ```sh
 > # The container name resolves inside the compose network and NOT on the host,
@@ -213,23 +217,42 @@ ssh -i ci_deploy deploy@<box> 'cat /opt/rental/staging.env'   # must be refused
 ssh -i ci_deploy deploy@<box>                           # must refuse a shell
 ```
 
-**10. DNS.**
+**10. DNS and the tunnel.**
 
-Point both hostnames at the box's IPv4 address with A records, and wait for them to resolve. Caddy obtains certificates on first request, and it cannot do that before DNS is live.
+**Do not create A records pointing at the box.** That is what this section used to say and it is now wrong: an A record makes the origin dialable, and BRD §10.2's binding clause is that the origin must not be reachable except through the filtering layer. The box publishes nothing, and the hostname resolves to Cloudflare.
 
-```sh
-dig +short app.example.com
-dig +short staging.example.com
-```
+In the Cloudflare dashboard, under **Zero Trust → Networks → Tunnels & Mesh**:
+
+1. Create a tunnel. Copy the token — it is the tunnel's whole identity, so treat it as a private key.
+2. Add a **public hostname** for each environment, both pointing at the _same_ service:
+
+   | Hostname              | Service                    |
+   | --------------------- | -------------------------- |
+   | `staging.example.com` | `http://rental-ingress:80` |
+   | `app.example.com`     | `http://rental-ingress:80` |
+
+   Cloudflare creates the DNS records itself, as `CNAME`s to the tunnel. **Which environment a hostname belongs to is decided by Caddy, not here** — the Caddyfile routes on the `Host` header, so that routing table stays in version control rather than in a dashboard.
+
+3. Put the token in `/opt/rental/ingress.env` as `CLOUDFLARE_TUNNEL_TOKEN`, and set both site addresses with an **`http://` prefix** — TLS terminates at Cloudflare, so Caddy must not attempt ACME for a name that resolves to somebody else.
 
 **11. Bring up the edge.**
 
 ```sh
 cd /opt/rental/repo/infra/compose
-docker compose --env-file /opt/rental/ingress.env -f docker-compose.ingress.yml up -d
+docker compose --env-file /opt/rental/ingress.env --profile tunnel   -f docker-compose.ingress.yml up -d
 ```
 
-It will return 502 for both hostnames until an environment is deployed. That is correct — it means TLS and routing work and there is nothing behind them yet.
+**`--profile tunnel` is not optional here, and omitting it fails quietly**: Caddy comes up, nothing connects it to Cloudflare, and the hostname serves Cloudflare's 1033 error while `docker ps` looks healthy. The profile exists because the CI rehearsal brings this same file up with no tunnel to join.
+
+It will return 502 for a hostname whose environment is not deployed. That is correct — it means routing works and there is nothing behind it yet.
+
+Check both halves rather than the container list:
+
+```sh
+docker logs rental-tunnel 2>&1 | tail -20      # expect "Registered tunnel connection" x4
+curl -sS -o /dev/null -w '%{http_code}
+' https://staging.example.com/
+```
 
 ## Deploying
 
