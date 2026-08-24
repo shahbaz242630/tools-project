@@ -10,8 +10,8 @@
     "dev": "node --env-file=../../.env --watch dist/main.js"
   },
   "dependencies": {
-    "@clerk/backend": "^3.16.5",
-    "@fastify/helmet": "^13.1.0",
+    "@clerk/backend": "^3.16.10",
+    "@fastify/helmet": "^13.1.1",
     "@nestjs/common": "^11.2.1",
     "@nestjs/core": "^11.2.1",
     "@nestjs/platform-fastify": "^11.2.1",
