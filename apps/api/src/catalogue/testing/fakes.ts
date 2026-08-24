@@ -19,6 +19,8 @@
 
 import { DEFAULT_MODERATION_STATE, isPubliclyVisible } from '@platform/contracts';
 import { Postcode, Time } from '@platform/core';
+import { ObjectStoreUnavailableError } from '../object-store.js';
+import type { ObjectStore } from '../object-store.js';
 import {
   createRecordingLogger,
   createRecordingMetrics,
@@ -1173,4 +1175,82 @@ export function createListingFakes(
       bookings.references,
     ),
   };
+}
+
+/**
+ * An object store in a Map.
+ *
+ * BRD §5 requires a fake beside every provider adapter, and this one carries
+ * the three behaviours a test would otherwise get wrong by assuming S3 is a
+ * filesystem:
+ *
+ *   - **`delete` on an absent key succeeds.** It is not an error in S3 and it
+ *     must not be one here, or a test would pin behaviour the real store does
+ *     not have and the retry path would look broken.
+ *   - **`put` replaces.** The same key twice is one object, which is what makes
+ *     a caller's retry safe.
+ *   - **`signedUrl` does no lookup.** It returns a URL for a key that was never
+ *     written, exactly as signing arithmetic does, so a test cannot come to
+ *     rely on the store telling it something exists.
+ *
+ * It also holds what was stored, because the assertions worth making are about
+ * the *bytes* — that what reached the store carries no EXIF, and that a deleted
+ * listing left nothing behind.
+ */
+export class InMemoryObjectStore implements ObjectStore {
+  private readonly objects = new Map<string, { bytes: Buffer; contentType: string }>();
+
+  private failure: ObjectStoreUnavailableError | null = null;
+
+  /** Every key written, in order, so a test can assert what was stored and when. */
+  readonly written: string[] = [];
+  /** Every key deleted, including ones that were never there. */
+  readonly deleted: string[] = [];
+
+  /**
+   * Make the **next** operation fail, once.
+   *
+   * Once rather than permanently, so a test can assert the recovery as well as
+   * the failure — the same shape `FakeGeocoder.willFail` uses.
+   */
+  willFail(message = 'The object store could not be reached'): this {
+    this.failure = new ObjectStoreUnavailableError(message);
+    return this;
+  }
+
+  private takeFailure(): void {
+    const failure = this.failure;
+    if (failure === null) return;
+    this.failure = null;
+    throw failure;
+  }
+
+  put(key: string, bytes: Buffer, contentType: string): Promise<void> {
+    this.takeFailure();
+    this.objects.set(key, { bytes, contentType });
+    this.written.push(key);
+    return Promise.resolve();
+  }
+
+  delete(key: string): Promise<void> {
+    this.takeFailure();
+    this.objects.delete(key);
+    this.deleted.push(key);
+    return Promise.resolve();
+  }
+
+  signedUrl(key: string, ttlSeconds: number): Promise<string> {
+    return Promise.resolve(
+      `https://object-store.test/${key}?expires=${String(ttlSeconds)}`,
+    );
+  }
+
+  /** What is stored at a key, or null. For asserting on bytes, not for production shapes. */
+  read(key: string): { bytes: Buffer; contentType: string } | null {
+    return this.objects.get(key) ?? null;
+  }
+
+  get size(): number {
+    return this.objects.size;
+  }
 }

@@ -21,9 +21,11 @@
     "@platform/database": "workspace:*",
     "@platform/observability": "workspace:*",
     "@platform/runtime": "workspace:*",
+    "aws4fetch": "^1.0.20",
     "ioredis": "^6.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "sharp": "^0.35.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
