@@ -56,10 +56,15 @@ import type { ProfilesService } from './profiles/profiles.service.js';
 import { AdminCategoriesController } from './catalogue/admin-categories.controller.js';
 import { AdminListingsController } from './catalogue/admin-listings.controller.js';
 import { OwnerListingsController } from './catalogue/owner-listings.controller.js';
+import { OwnerListingMediaController } from './catalogue/owner-listing-media.controller.js';
 import { PublicListingsController } from './catalogue/public-listings.controller.js';
 import { PublicListingSearchController } from './catalogue/public-listing-search.controller.js';
 import { PublicCategoriesController } from './catalogue/public-categories.controller.js';
-import { CATALOGUE_SERVICE, LISTINGS_SERVICE } from './catalogue/catalogue.tokens.js';
+import {
+  CATALOGUE_SERVICE,
+  LISTINGS_SERVICE,
+  LISTING_MEDIA_SERVICE,
+} from './catalogue/catalogue.tokens.js';
 import { OwnerAvailabilityController } from './booking/owner-availability.controller.js';
 import {
   AVAILABILITY_SERVICE,
@@ -86,6 +91,7 @@ import { FEATURE_FLAGS_SERVICE } from './feature-flags/feature-flags.tokens.js';
 import type { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
 import type { CatalogueService } from './catalogue/catalogue.service.js';
 import type { ListingsService } from './catalogue/listings.service.js';
+import type { ListingMediaService } from './catalogue/listing-media.service.js';
 import { MetricsController } from './observability/metrics.controller.js';
 import { MetricsHook } from './observability/metrics.hook.js';
 import { METRICS } from './observability/metrics.tokens.js';
@@ -196,6 +202,19 @@ export interface AppModuleOptions {
   readonly listings: ListingsService;
 
   /**
+   * A listing's photographs (slice 2.6b-i).
+   *
+   * Required rather than optional, like `listings` above and for the same
+   * reason. **In particular it is not made optional to mean "no object store
+   * configured"** — that state is real (local development runs against the
+   * in-memory store) but it belongs in the composition root, which chooses which
+   * `ObjectStore` to build. A module option that is sometimes absent is one
+   * every boot site has to remember, and the failure would arrive as an
+   * undefined injection at upload time.
+   */
+  readonly listingMedia: ListingMediaService;
+
+  /**
    * Feature flags and the kill switches §9 asks for (slice H3a, ADR 0036).
    *
    * Required for the reason `catalogue` and `listings` are. It is worse here
@@ -290,6 +309,7 @@ export class AppModule implements NestModule {
         AdminCategoriesController,
         AdminFeatureFlagsController,
         OwnerListingsController,
+        OwnerListingMediaController,
         AdminListingsController,
         // The owner's calendar (slice 4.3b) — authenticated, owner-scoped, and
         // sitting with the other two for that reason rather than with the
@@ -380,6 +400,7 @@ export class AppModule implements NestModule {
         { provide: AUDIT_SERVICE, useValue: options.audit },
         { provide: CATALOGUE_SERVICE, useValue: options.catalogue },
         { provide: LISTINGS_SERVICE, useValue: options.listings },
+        { provide: LISTING_MEDIA_SERVICE, useValue: options.listingMedia },
         { provide: FEATURE_FLAGS_SERVICE, useValue: options.featureFlags },
         { provide: AVAILABILITY_SERVICE, useValue: options.availability },
         { provide: QUOTES_SERVICE, useValue: options.quotes },

@@ -11,7 +11,7 @@ import { createIdentityFakes } from '../identity/testing/fakes.js';
 import { createAuditFakes } from '../audit/testing/fakes.js';
 import {
   createCatalogueFakes,
-  createListingFakes,
+  listingModuleFakes,
 } from '../catalogue/testing/fakes.js';
 import { createProfileFakes } from '../profiles/testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
@@ -67,7 +67,7 @@ async function boot(
         audit: createAuditFakes().service,
         catalogue: createCatalogueFakes().service,
         featureFlags: createFeatureFlagFakes().service,
-        listings: createListingFakes().service,
+        ...listingModuleFakes(),
         ...bookingModuleFakes(),
       }),
     ],

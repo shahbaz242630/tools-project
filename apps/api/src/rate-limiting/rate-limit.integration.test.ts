@@ -32,7 +32,7 @@ import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from '../catalogue/catalogue.service.js';
 import {
   InMemoryCategoryStore,
-  createListingFakes,
+  listingModuleFakes,
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import {
@@ -89,7 +89,7 @@ async function boot(rateLimiter: FakeRateLimiter | typeof allowAllRateLimiter) {
           createRecordingLogger().logger,
         ),
         featureFlags: createFeatureFlagFakes(audit).service,
-        listings: createListingFakes(categories).service,
+        ...listingModuleFakes(categories),
         availability: booking.service,
         quotes: booking.quotes,
         bookings: booking.bookings,

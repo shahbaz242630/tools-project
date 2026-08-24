@@ -14,7 +14,7 @@ import type { IdentityFakes } from '../identity/testing/fakes.js';
 import { CatalogueService } from '../catalogue/catalogue.service.js';
 import {
   InMemoryCategoryStore,
-  createListingFakes,
+  listingModuleFakes,
 } from '../catalogue/testing/fakes.js';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { bookingModuleFakes } from '../booking/testing/fakes.js';
@@ -68,7 +68,7 @@ beforeEach(async () => {
           createRecordingLogger().logger,
         ),
         featureFlags: createFeatureFlagFakes().service,
-        listings: createListingFakes(categories).service,
+        ...listingModuleFakes(categories),
         ...bookingModuleFakes(),
       }),
     ],

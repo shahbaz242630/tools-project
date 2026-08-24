@@ -384,3 +384,16 @@ async function encode(
     byteSize: output.data.byteLength,
   };
 }
+
+/**
+ * Slack between the transport's limit and the pipeline's.
+ *
+ * The transport refuses at `MAX_INPUT_BYTES + UPLOAD_HEADROOM_BYTES` so that a
+ * file *at* the documented limit is never cut off by Fastify before
+ * `prepareImage` can refuse it with a sentence that names the limit. Without the
+ * gap the two boundaries sit on the same byte, and an owner uploading exactly
+ * 15 MB gets a dropped connection instead of an explanation.
+ *
+ * Deliberately small. It is room for an off-by-a-few, not a second allowance.
+ */
+export const UPLOAD_HEADROOM_BYTES = 64 * 1024;

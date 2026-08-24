@@ -17,3 +17,13 @@ export const CATALOGUE_SERVICE = Symbol('CATALOGUE_SERVICE');
  * log it never uses.
  */
 export const LISTINGS_SERVICE = Symbol('LISTINGS_SERVICE');
+
+/**
+ * Injection token for the listing media service (slice 2.6b-i).
+ *
+ * Its own token for the reason `LISTINGS_SERVICE` is separate from
+ * `CATALOGUE_SERVICE`: the collaborators differ. This one needs an
+ * `ObjectStore`, which nothing else in the module does, and a test of the
+ * listing routes should not have to construct one to get a listings service.
+ */
+export const LISTING_MEDIA_SERVICE = Symbol('LISTING_MEDIA_SERVICE');

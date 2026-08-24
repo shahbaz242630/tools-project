@@ -1282,6 +1282,18 @@ model Listing {
   /// making them the same would have caused.
   quotes Quote[]
 
+  /// Photographs of this item (slice 2.6b-i).
+  ///
+  /// `ON DELETE CASCADE`, the same side as `availabilityBlocks` and for the same
+  /// reason: a photograph is the owner's own picture of their own item, so it
+  /// goes when the listing does. There is nobody else whose record it is.
+  ///
+  /// **The cascade is not the whole erasure story and reading it as such is the
+  /// trap** — see `ListingMedia`. It removes rows; it cannot remove the bytes in
+  /// object storage, and it never fires for a listing *collapsed* rather than
+  /// deleted because a booking references it.
+  media ListingMedia[]
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
@@ -1295,6 +1307,136 @@ model Listing {
   /// slice's whole query depends on.
   @@index([searchDocument], type: Gin)
   @@map("listings")
+}
+
+/// A photograph of a listed item (slice 2.6b-i).
+///
+/// BRD §6.2's **Listing media** entity — *"Storage key, order, moderation
+/// status, hash, metadata"*. One row per photograph; the bytes live in object
+/// storage and only their addresses live here.
+///
+/// **Two storage keys, not one, because `prepareImage` produces two
+/// renditions.** A listing page wants 1600 px and a search card wants 400 px,
+/// and serving the large one to a card would spend a renter's mobile data to
+/// render a thumbnail. They are separate columns rather than one prefix with a
+/// naming convention, because a convention is a rule that lives in whichever
+/// file last remembered it.
+///
+/// ## What this table does not do, and what has to do it instead
+///
+/// **`ON DELETE CASCADE` removes these rows and cannot remove the bytes.**
+/// Postgres cannot call `ObjectStore.delete`, so every path that destroys a
+/// listing must delete the objects *first* and the rows after — deliberately
+/// that order, because a failed object delete then leaves the row behind and a
+/// retry finishes the job, where rows-first would leave bytes nothing has a
+/// record of. `ListingsService.eraseFor` and the media service both do this.
+///
+/// **The cascade never fires for a collapsed listing.** §10.1's erasure keeps a
+/// listing a booking references, so its `listing_locations` row is deleted and
+/// the shell survives. A photograph of somebody's garden, driveway or front
+/// door is theirs, not the renter's record of what they hired — so erasure
+/// deletes this listing's media explicitly, in both branches. That is a second
+/// statement in `eraseOwnedBy`, not something the schema can express.
+model ListingMedia {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The listing this belongs to.
+  ///
+  /// `ON DELETE CASCADE`, the same side as `availability_blocks`: the owner's
+  /// own picture of their own item, with nobody else's record in it.
+  listingId String  @db.Uuid
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  /// Where this photograph sits in the owner's chosen order, from 0.
+  ///
+  /// **No unique constraint on `(listingId, position)`, and that is the decision
+  /// this table had to make rather than inherit** — nothing else in this schema
+  /// models an ordered collection, so there was no precedent to copy.
+  ///
+  /// A unique constraint is the obvious shape and it cannot express a reorder.
+  /// Swapping two rows needs an intermediate state where two rows briefly share
+  /// a position, which requires a DEFERRABLE constraint — and **Prisma cannot
+  /// express DEFERRABLE**, exactly as it cannot express `NULLS NOT DISTINCT`.
+  /// The house answer to that, set by the ledger's natural-key column, is to
+  /// change the model rather than reach for SQL Prisma cannot see.
+  ///
+  /// So duplicates are *representable*. What makes that harmless is that reads
+  /// order by `(position, createdAt, id)` — a total order whatever the data says
+  /// — and that a reorder rewrites every row in one transaction rather than
+  /// editing one. A duplicate is therefore a display-order question with a
+  /// deterministic answer, never a crash and never a row that cannot be reached.
+  position Int @db.Integer
+
+  /// The object keys for the two renditions, opaque and unguessable.
+  ///
+  /// `listings/<listingId>/<mediaId>/display.webp`. The listing id is public —
+  /// it is in the URL of the page — but the media id is a fresh UUID, so a
+  /// signed URL that leaks says nothing about the photographs beside it. Access
+  /// never rests on a key being secret; it rests on the bucket being private and
+  /// the URL being signed and short-lived.
+  displayKey   String @db.Text
+  thumbnailKey String @db.Text
+
+  /// Always `image/webp` today. Stored rather than assumed because it is what a
+  /// signed URL is served with, and a column is where a second output format
+  /// would land without a migration to every reader.
+  contentType String @db.Text
+
+  /// The display rendition's size and dimensions, for laying out a page before
+  /// the bytes arrive and for knowing what storage is actually being used.
+  byteSize Int @db.Integer
+  width    Int @db.Integer
+  height   Int @db.Integer
+
+  /// The thumbnail's dimensions.
+  ///
+  /// **Stored rather than derived from the display pair, and the reason is not
+  /// convenience.** Deriving means scaling by `THUMBNAIL_MAX_EDGE` — today's
+  /// constant — against bytes encoded under whatever it was when they were
+  /// written. Change that constant and every existing row starts reporting a
+  /// size its actual pixels do not have, which is a layout shift nobody can
+  /// trace. `prepareImage` already knows the true values; throwing them away to
+  /// recompute them later is how a derived value comes to disagree with the
+  /// thing it describes.
+  thumbnailWidth  Int @db.Integer
+  thumbnailHeight Int @db.Integer
+
+  /// SHA-256 of the display bytes, hex — BRD §6.2's *"hash"*.
+  ///
+  /// **Of what we store, not of what was uploaded**, because nothing keeps the
+  /// original: this is checkable later by re-reading the object. It also
+  /// deduplicates, since the encode is deterministic — but there is deliberately
+  /// **no unique constraint** on it. Two owners may legitimately photograph the
+  /// same mass-produced drill against the same white wall, and a constraint
+  /// would refuse the second one a photograph.
+  sha256 String @db.Text
+
+  /// Whether the platform is showing this photograph (ADR 0041's vocabulary).
+  ///
+  /// **The same three values `listings.moderationState` uses, not a second
+  /// vocabulary.** The first draft of this column invented `visible`, and the
+  /// adapter's own strictness caught it on the first db test — which is the
+  /// argument for that adapter throwing rather than defaulting.
+  ///
+  /// Text with the vocabulary in code and no `CHECK`, the convention slice 2.4a
+  /// set: a closed union with an adapter that throws on anything else. It is
+  /// deliberately the *listing's* moderation vocabulary rather than a second
+  /// one — BRD §6.2 asks for a moderation status per media item because a single
+  /// bad photograph should not require hiding a whole listing.
+  ///
+  /// **Nothing sets it away from the default yet.** No route moderates a
+  /// photograph; the column exists because §6.2 names it and because retrofitting
+  /// it onto rows that already exist is a migration nobody would enjoy. The
+  /// admin surface for it is Phase 9's.
+  moderationState String @default("APPROVED") @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// The only query this table serves: one listing's photographs, in the owner's
+  /// order. `createdAt` is in the index so the tiebreak above is answered by the
+  /// index rather than by a sort.
+  @@index([listingId, position, createdAt])
+  @@map("listing_media")
 }
 
 /// Where a listing actually is — **the half that is never published**.

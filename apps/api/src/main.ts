@@ -9,6 +9,8 @@ import {
   describeEnv,
   loadEnv,
   loadIdentityEnv,
+  loadMediaEnv,
+  mediaStorageFrom,
   loadPersonalDataEnv,
 } from '@platform/config';
 import {
@@ -60,6 +62,12 @@ import { BookingDataService } from './booking/booking-data.service.js';
 import { RequestExpiryService } from './booking/request-expiry.service.js';
 import { PrismaListingSearch } from './search-location/prisma-listing-search.js';
 import { PrismaListingStore } from './catalogue/prisma-listing-store.js';
+import { PrismaListingMediaStore } from './catalogue/prisma-listing-media-store.js';
+import { ListingMediaService } from './catalogue/listing-media.service.js';
+import { R2ObjectStore } from './catalogue/r2-object-store.js';
+import { MemoryObjectStore } from './catalogue/memory-object-store.js';
+import { assertDecodersAvailable } from './catalogue/prepare-image.js';
+import { registerImageUploadParser } from './catalogue/image-upload-parser.js';
 import { FeatureFlagsService } from './feature-flags/feature-flags.service.js';
 import { PrismaFeatureFlagStore } from './feature-flags/prisma-flag-store.js';
 import { LedgerService } from './payments/ledger.service.js';
@@ -483,6 +491,59 @@ async function bootstrap(): Promise<void> {
      * bookings at all.
      */
     { findBookedListings: (ids) => bookingStore.findBookedListings(ids) },
+    /*
+     * The media eraser, as a delegate rather than the object.
+     *
+     * `listingMedia` is built *below* this call, because it needs the same
+     * listing store for ownership — so the reference is read at call time rather
+     * than at construction. Erasure happens on a request, long after boot, so
+     * the binding is always resolved by the time it runs.
+     */
+    { eraseForListings: (ids) => listingMedia.eraseForListings(ids) },
+  );
+
+  /*
+   * A listing's photographs (slice 2.6b-i).
+   *
+   * **The object store is chosen here and nowhere else**, which is the whole
+   * point of a composition root: `mediaStorageFrom` returns null when no bucket
+   * is configured, and that is a supported state meaning "run against memory".
+   * Local development takes it, so a developer machine cannot write into the
+   * bucket a deployed environment serves from — the object-storage form of the
+   * rule that local development never shares a database. Under
+   * `NODE_ENV=production` the same absence refuses to boot instead, because a
+   * deployed environment that silently accepts no photographs and shows none
+   * passes every health check.
+   */
+  const mediaStorage = mediaStorageFrom(loadMediaEnv());
+  const objectStore =
+    mediaStorage === null
+      ? new MemoryObjectStore()
+      : new R2ObjectStore(mediaStorage, logger.child({ module: 'catalogue' }));
+
+  if (mediaStorage === null) {
+    logger.warn('No object store is configured; photographs are held in memory', {
+      // Not an error: it is the correct configuration for local development and
+      // the only one it can have. It is a warning because the same line in a
+      // deployed environment would be the explanation for every missing image.
+      reason: 'media-storage-absent',
+    });
+  }
+
+  /*
+   * **Fired at boot rather than at the first upload.** sharp ships a different
+   * prebuilt libvips per platform and libc, and they do not carry identical
+   * codec sets — so a runtime image with the wrong binary would accept an iPhone
+   * photograph and refuse it as "not an image", which reads as the owner's fault
+   * and is ours.
+   */
+  assertDecodersAvailable();
+
+  const listingMedia = new ListingMediaService(
+    listingStore,
+    new PrismaListingMediaStore(database),
+    objectStore,
+    logger.child({ module: 'catalogue' }),
   );
 
   /*
@@ -754,6 +815,7 @@ async function bootstrap(): Promise<void> {
       catalogue,
       featureFlags,
       listings,
+      listingMedia,
       availability,
       quotes,
       bookings,
@@ -796,6 +858,11 @@ async function bootstrap(): Promise<void> {
   );
 
   await app.register(helmet);
+
+  // Image uploads arrive as raw bytes. The registration lives in the catalogue
+  // module so that the tests exercise the same code this line does — see
+  // `image-upload-parser.ts` for why that mattered.
+  registerImageUploadParser(app.getHttpAdapter().getInstance());
 
   installShutdownHandlers(app, database, redis, logger);
 

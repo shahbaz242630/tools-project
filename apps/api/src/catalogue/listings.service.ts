@@ -34,6 +34,7 @@ import type { Actor } from '../audit/audit-log.js';
 import type { AuditService } from '../audit/audit.service.js';
 import type { ListingLocator } from './listing-locator.js';
 import type { BookingReferences } from './booking-references.js';
+import type { ListingMediaEraser } from './listing-media-eraser.js';
 import type { ListingProximity } from './listing-proximity.js';
 import type { PublicationSwitch } from './publication-switch.js';
 import type { OwnerStatusSource } from './owner-status-source.js';
@@ -467,6 +468,24 @@ export class ListingsService {
      * outright, which is a statutory obligation.
      */
     private readonly bookings: BookingReferences,
+    /*
+     * How a listing's photographs are erased with it (slice 2.6b-i).
+     *
+     * **A port with one method, not the media service**, the same narrowing
+     * every collaborator across this file gets. Erasure is the only thing
+     * listings need to say to media, and a whole service here would let a
+     * future edit reach `add` from the erasure path.
+     *
+     * **Why this exists at all, because the schema looks like it should not.**
+     * `listing_media.listingId` cascades, so deleting a listing already removes
+     * its photographs — but §10.1 does not delete every listing. One a booking
+     * references is *collapsed* instead, keeping the shell a renter's history
+     * needs, and the cascade never fires for those. A photograph of somebody's
+     * garden, driveway or front door is the owner's personal data rather than
+     * the renter's record of what they hired, so it goes in both branches. The
+     * cascade also cannot remove the bytes from object storage at all.
+     */
+    private readonly media: ListingMediaEraser,
   ) {}
 
   /**
@@ -1528,6 +1547,24 @@ export class ListingsService {
   async eraseFor(actor: Actor): Promise<void> {
     const owned = await this.store.listIdsOwnedBy(actor.userId);
     const booked = await this.bookings.findBookedListings(owned);
+
+    /*
+     * **Photographs first, and the order is the point.**
+     *
+     * `eraseForListings` deletes the bytes before the rows, because the rows are
+     * the only record of where the bytes are — `ObjectStore` deliberately offers
+     * no `list`, so a row deleted first leaves personal data in a bucket nothing
+     * can find again. Doing it before `eraseOwnedBy` is what makes that possible
+     * at all: after it, the cascade has already taken the rows for every deleted
+     * listing.
+     *
+     * **Every owned listing, not only the collapsed ones.** The cascade would
+     * handle the deleted ones' rows, but never their objects — and asking which
+     * branch each listing is about to take, only to then treat them the same,
+     * would be a distinction with no consequence and one more thing to get
+     * wrong.
+     */
+    await this.media.eraseForListings(owned);
 
     await this.store.eraseOwnedBy(actor.userId, booked);
   }

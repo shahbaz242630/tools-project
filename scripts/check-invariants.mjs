@@ -60,6 +60,7 @@ const TABLE_OWNERS = {
   categoryVersion: 'catalogue',
   listing: 'catalogue',
   listingLocation: 'catalogue',
+  listingMedia: 'catalogue',
   booking: 'booking',
   bookingEvent: 'booking',
   availabilityBlock: 'booking',
