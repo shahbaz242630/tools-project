@@ -523,11 +523,13 @@ jobs:
               -e 's|^CLERK_AUTHORIZED_PARTIES=.*|CLERK_AUTHORIZED_PARTIES=http://localhost|' \
               -e "s|^PERSONAL_DATA_ENCRYPTION_KEY=.*|PERSONAL_DATA_ENCRYPTION_KEY=$(head -c 32 /dev/zero | base64)|" \
               -e 's|^INTERNAL_TRIGGER_SECRET=.*|INTERNAL_TRIGGER_SECRET=rehearsal-only-internal-trigger-secret|' \
+              -e 's|^TRUSTED_PROXY_HOPS=.*|TRUSTED_PROXY_HOPS=1|' \
               infra/compose/app.env.example > "${RUNNER_TEMP}/release-root/staging.env"
 
           sed -e 's|^ACME_EMAIL=.*|ACME_EMAIL=rehearsal@example.invalid|' \
               -e 's|^PRODUCTION_SITE_ADDRESS=.*|PRODUCTION_SITE_ADDRESS=http://production.localhost|' \
               -e 's|^STAGING_SITE_ADDRESS=.*|STAGING_SITE_ADDRESS=http://localhost|' \
+              -e 's|^CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=rehearsal-only-not-a-real-token|' \
               infra/compose/ingress.env.example > "${RUNNER_TEMP}/release-root/ingress.env"
 
       - name: Both compose files are valid
@@ -539,6 +541,40 @@ jobs:
           docker compose \
             --env-file "${RELEASE_ROOT}/ingress.env" \
             -f infra/compose/docker-compose.ingress.yml config --quiet
+
+      - name: The edge opens no public port
+        run: |
+          set -euo pipefail
+
+          # The assertion that keeps BRD §10.2 true, and the reason it is a
+          # check rather than a comment: §10.2's binding clause is not "put a
+          # filtering layer in front" but "the origin must not be reachable
+          # except through it". Publishing on 0.0.0.0 undoes that in one
+          # character, serves plain HTTP from an address certificate
+          # transparency already published, and nothing else in this pipeline
+          # would fail.
+          #
+          # Read off the resolved config rather than the file, so an override
+          # or a changed default is caught too. INGRESS_BIND_ADDRESS is left
+          # unset on purpose: this asserts what the box gets by default.
+          #
+          # A port with no host_ip binds every interface, so jq reports that
+          # as ALL-INTERFACES rather than letting an absent field read as a
+          # pass.
+          bindings=$(docker compose \
+            --env-file "${RELEASE_ROOT}/ingress.env" \
+            -f infra/compose/docker-compose.ingress.yml config --format json \
+            | jq -r '.services[].ports // [] | .[] | .host_ip // "ALL-INTERFACES"' \
+            | sort -u)
+
+          echo "host bindings: ${bindings:-<none published>}"
+
+          if [ -n "$bindings" ] && [ "$bindings" != "127.0.0.1" ]; then
+            echo "::error::the edge binds ${bindings}, not 127.0.0.1 alone — the origin would be dialable"
+            exit 1
+          fi
+
+          echo "the edge binds loopback only; the tunnel is the sole route in"
 
       - name: The compose file deploys no database of its own
         run: |

@@ -118,6 +118,24 @@ services:
       # unparsed body, which exists only in this process.
       CLERK_WEBHOOK_SIGNING_SECRET: ${CLERK_WEBHOOK_SIGNING_SECRET:?set CLERK_WEBHOOK_SIGNING_SECRET}
 
+      # How many proxies **we control** sit in front of this app, so
+      # `clientIpFrom` can count back to the caller's real address.
+      #
+      # **Required, not defaulted, and this file did not pass it at all until
+      # the ingress came up.** That is the failure ADR 0017 predicted, arriving
+      # exactly as predicted: `packages/config` has carried the setting since
+      # H7a and the deployed container never received it, so setting it in
+      # `staging.env` would have changed nothing and reported nothing. The value
+      # feeds `audit_logs.ipAddress`, which is *evidence* kept for six years.
+      #
+      # `:?` rather than a default because the honest value is a fact about the
+      # topology, and a default here would be this file guessing on behalf of
+      # whoever changed the topology. Behind Cloudflare's Tunnel it is `2`
+      # (Cloudflare's edge appends the caller, Caddy appends Cloudflare); with
+      # Caddy alone it is `1`; with nothing in front it is `0`, which means the
+      # address is unknowable and is recorded as null.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:?set TRUSTED_PROXY_HOPS to the number of proxies in front of the web app}
+
       NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
       NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
       NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /

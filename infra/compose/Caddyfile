@@ -51,5 +51,24 @@
 
 {$STAGING_SITE_ADDRESS} {
 	import common
+
+	# **Staging is never indexable, and this is the layer that guarantees it.**
+	#
+	# Here rather than in `(common)` deliberately: production above must stay
+	# crawlable, so a shared rule would be wrong the moment a real site exists.
+	# Here rather than in `apps/web` for the same reason — the app cannot know
+	# which hostname served it, and a header keyed on environment would be a
+	# second place for the rule to live.
+	#
+	# It matters more than it looks. Staging serves the same pages as production
+	# from a different hostname, so an indexed staging is duplicate content
+	# competing with the real site, and every link a crawler stores is one that
+	# dies when the hostname does. Slice 2.12 owns canonical URLs; it does not
+	# own this, because this must hold whatever 2.12 decides.
+	#
+	# `nofollow` as well as `noindex`: without it a crawler still walks outward
+	# from here and discovers listing pages by their staging URLs.
+	header X-Robots-Tag "noindex, nofollow"
+
 	reverse_proxy rental-staging-web:3000
 }

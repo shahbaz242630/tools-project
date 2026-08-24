@@ -69,9 +69,11 @@ describe('clientIpFrom', () => {
   /**
    * **The security boundary, and the reason this parameter exists.**
    *
-   * `infra/compose`'s Caddy ingress has never run — it is deliberately down
-   * until a domain exists (§10.2). So the real deployment today has *nothing*
-   * in front, and every entry in the header is one the caller typed.
+   * This described the deployment until 24 August 2026, when the Cloudflare
+   * Tunnel and the ingress came up and staging moved to two hops. It is still
+   * the case for **local development and anything reached directly**, and it is
+   * still the direction a mistake must fail in: with nothing in front, every
+   * entry in the header is one the caller typed.
    */
   describe('when nothing we control is in front', () => {
     it('refuses to name an address, however plausible the header looks', () => {
@@ -90,11 +92,23 @@ describe('clientIpFrom', () => {
   describe('when two proxies are in front', () => {
     it('takes the entry the outermost one appended, not the innermost', () => {
       /*
-       * The Cloudflare Tunnel §10.2 requires makes this the real topology:
-       * client → Cloudflare → Caddy → web. Cloudflare appends the client, Caddy
-       * appends Cloudflare. Taking the last entry would record *Cloudflare's*
-       * address for every request on the platform — the failure ADR 0017
-       * predicted and said would not fail loudly.
+       * **This is the deployed topology from 24 August 2026**, not a
+       * hypothetical one: client → Cloudflare → `cloudflared` → Caddy → web.
+       *
+       * **Measured against the running tunnel rather than reasoned about**, by
+       * sending `X-Forwarded-For: 1.2.3.4, 9.9.9.9` from outside and reading
+       * what Caddy logged. Cloudflare **appends** the caller to whatever the
+       * caller already wrote rather than replacing it, and Caddy then appends
+       * the peer it saw — `cloudflared`'s container address, not Cloudflare's:
+       *
+       *     1.2.3.4, 9.9.9.9, <real caller>, 172.18.0.3
+       *     ^^^^^^^^^^^^^^^^  the caller typed these two
+       *
+       * So `2` steps over the forged entries and lands on the caller. `1` would
+       * return `cloudflared`'s own container address, and `3` would return
+       * `9.9.9.9` — **a value the attacker chose**, written to
+       * `audit_logs.ipAddress` as evidence. That is the failure ADR 0017
+       * predicted and said would not fail loudly, and it is one off.
        */
       expect(clientIpFrom('198.51.100.9, 203.0.113.7, 192.0.2.1', 2)).toBe(
         '203.0.113.7',
