@@ -15,7 +15,7 @@
     "@platform/core": "workspace:*",
     "@platform/observability": "workspace:*",
     "@platform/runtime": "workspace:*",
-    "bullmq": "^6.1.1",
+    "bullmq": "^6.2.0",
     "ioredis": "^6.0.0"
   },
   "devDependencies": {
