@@ -61,6 +61,7 @@ beforeEach(async () => {
           accountData: fakes.accountData,
           accountAdmin: fakes.accountAdmin,
           roleApprovals: fakes.roleApprovals,
+          secondFactor: fakes.secondFactor,
         },
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,

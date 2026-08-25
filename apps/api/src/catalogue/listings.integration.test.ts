@@ -194,6 +194,7 @@ beforeEach(async () => {
           accountData: identity.accountData,
           accountAdmin: identity.accountAdmin,
           roleApprovals: identity.roleApprovals,
+          secondFactor: identity.secondFactor,
         },
         profiles: profiles.service,
         audit: audit.service,

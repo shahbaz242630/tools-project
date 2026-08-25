@@ -6,13 +6,11 @@ import { createAuditFakes } from '../audit/testing/fakes.js';
 import { RecordingEraser } from './testing/fakes.js';
 import type { SessionInput } from './testing/fakes.js';
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  AuthGuard,
-  MAX_SECOND_FACTOR_AGE_MINUTES,
-  Roles,
-  bearerToken,
-  clientIpFrom,
-} from './auth.guard.js';
+import { AuthGuard, Roles, bearerToken, clientIpFrom } from './auth.guard.js';
+import { MAX_SECOND_FACTOR_AGE_MINUTES } from './admin-second-factor.js';
+import { ClerkSecondFactor } from './clerk-second-factor.js';
+import { DevelopmentSecondFactor } from './development-second-factor.js';
+import { SecondFactorChain } from './second-factor-chain.js';
 import { currentUserFrom } from './current-user.decorator.js';
 import type { AuthenticatedRequest } from './auth.guard.js';
 import { IdentityService } from './identity.service.js';
@@ -87,6 +85,30 @@ const SESSION = {
 /** The same session, with a second factor verified a few minutes ago. */
 const MFA_SESSION = { ...SESSION, secondFactorAgeMinutes: 5 };
 
+/**
+ * The enforced regime: the real prover and nothing else.
+ *
+ * Every test in this file runs under this except the block that says
+ * otherwise, and the chain is passed explicitly rather than defaulted so a
+ * reader of any single test can see which regime it is under.
+ */
+const enforcingChain = (logger = createRecordingLogger().logger) =>
+  new SecondFactorChain({ provers: [new ClerkSecondFactor()], logger });
+
+/**
+ * The development regime — ADR 0030's exception, now an adapter (ADR 0053).
+ *
+ * **The real prover is still first.** That ordering is the exception's safety
+ * property: the rule it replaces is evaluated and logged before the exception
+ * is ever consulted, so the day the flag is wrongly set nothing has gone
+ * unexercised. `main.ts` composes it the same way round.
+ */
+const bypassedChain = (logger = createRecordingLogger().logger) =>
+  new SecondFactorChain({
+    provers: [new ClerkSecondFactor(), new DevelopmentSecondFactor(logger)],
+    logger,
+  });
+
 beforeEach(() => {
   users = new InMemoryUserDirectory();
   verifier = new FakeSessionVerifier().accept('good', SESSION);
@@ -95,10 +117,7 @@ beforeEach(() => {
     verifier,
     mirrorFor(users),
     createRecordingLogger().logger,
-    // MFA enforced, which is every test in this file except the two that say
-    // otherwise. The bypass is passed explicitly rather than defaulted, so a
-    // reader of any single test can see which regime it is under.
-    false,
+    enforcingChain(),
   );
 });
 
@@ -156,7 +175,7 @@ describe('AuthGuard', () => {
       new FakeSessionVerifier().accept('good', MFA_SESSION),
       mirrorFor(admin),
       createRecordingLogger().logger,
-      false,
+      enforcingChain(),
     );
 
     await expect(
@@ -211,7 +230,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
       exploding(boom),
       mirrorFor(users),
       createRecordingLogger().logger,
-      false,
+      enforcingChain(),
     );
 
     await expect(broken.canActivate(contextFor(authorised('good')))).rejects.toBe(boom);
@@ -233,7 +252,7 @@ describe('AuthGuard — failures that are not authentication failures', () => {
       verifier,
       mirrorFor(failing),
       createRecordingLogger().logger,
-      false,
+      enforcingChain(),
     );
 
     await expect(broken.canActivate(contextFor(authorised('good')))).rejects.toBe(boom);
@@ -308,7 +327,7 @@ describe('clientIpFrom', () => {
 });
 
 describe('the second factor an admin route requires', () => {
-  function adminGuardFor(session: SessionInput, mfaBypassed = false): AuthGuard {
+  function adminGuardFor(session: SessionInput, bypassed = false): AuthGuard {
     const directory = new InMemoryUserDirectory();
     directory.seed({
       id: '00000000-0000-4000-8000-000000000001',
@@ -327,7 +346,7 @@ describe('the second factor an admin route requires', () => {
       new FakeSessionVerifier().accept('good', session),
       mirrorFor(directory),
       createRecordingLogger().logger,
-      mfaBypassed,
+      bypassed ? bypassedChain() : enforcingChain(),
     );
   }
 
@@ -419,7 +438,7 @@ describe('when the second-factor check is switched off', () => {
       new FakeSessionVerifier().accept('good', session),
       mirrorFor(directory),
       createRecordingLogger().logger,
-      true,
+      bypassedChain(),
     );
   }
 
@@ -459,7 +478,7 @@ describe('when the second-factor check is switched off', () => {
       new FakeSessionVerifier().accept('good', SESSION),
       mirrorFor(ordinary),
       createRecordingLogger().logger,
-      true,
+      bypassedChain(),
     );
 
     await expect(asAdmin(guard)).rejects.toBeInstanceOf(ForbiddenException);
@@ -484,7 +503,7 @@ describe('when the second-factor check is switched off', () => {
       new FakeSessionVerifier().accept('good', SESSION),
       mirrorFor(suspended),
       createRecordingLogger().logger,
-      true,
+      bypassedChain(),
     );
 
     await expect(asAdmin(guard)).rejects.toBeInstanceOf(ForbiddenException);
@@ -512,7 +531,7 @@ describe('when the second-factor check is switched off', () => {
       new FakeSessionVerifier().accept('good', SESSION),
       mirrorFor(directory),
       recorder.logger,
-      true,
+      bypassedChain(recorder.logger),
     );
 
     await asAdmin(guard);

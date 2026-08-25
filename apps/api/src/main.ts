@@ -29,6 +29,7 @@ import { PostgresCheck } from './health/postgres.check.js';
 import { RedisCheck } from './health/redis.check.js';
 import { RedisRateLimiter } from './rate-limiting/redis-rate-limiter.js';
 import { ClerkSessionVerifier } from './identity/clerk-session-verifier.js';
+import { composeSecondFactor } from './identity/compose-second-factor.js';
 import { IdentityService } from './identity/identity.service.js';
 import { AccountErasure } from './identity/account-erasure.js';
 import { AccountDataService } from './identity/account-data.service.js';
@@ -237,6 +238,21 @@ async function bootstrap(): Promise<void> {
     verifyToken,
     jwtKey: identityEnv.CLERK_JWT_PUBLIC_KEY,
     authorizedParties: identityEnv.CLERK_AUTHORIZED_PARTIES,
+  });
+
+  // What may prove an administrator's second factor, **in the order asked**
+  // (ADR 0021, ADR 0053). Clerk's `fva` claim first, because it is the real
+  // one; the development exception last, so that on the day it is wrongly
+  // installed the rule it replaces has still been evaluated and logged. The
+  // chain short-circuits on the first prover that proves *within* the age
+  // bound, so a stale real factor does not mask a fresh one.
+  //
+  // The exception is not added at all unless the flag is set, and
+  // `loadIdentityEnv` refuses to load that flag under NODE_ENV=production — so
+  // an environment that cannot set it cannot construct the adapter.
+  const secondFactor = composeSecondFactor({
+    allowWithoutSecondFactor: identityEnv.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
+    logger,
   });
 
   // Built before identity and profiles, because both write to it. Its digest
@@ -824,7 +840,7 @@ async function bootstrap(): Promise<void> {
         accountData,
         accountAdmin,
         roleApprovals,
-        mfaBypassed: identityEnv.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
+        secondFactor,
       },
       profiles,
       audit,

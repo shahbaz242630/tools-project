@@ -33,7 +33,10 @@ import {
   InMemoryUserDirectory,
   InMemoryWebhookLedger,
 } from './testing/fakes.js';
-import { InMemoryAuthenticationEvents } from './testing/fakes.js';
+import {
+  InMemoryAuthenticationEvents,
+  createSecondFactorChain,
+} from './testing/fakes.js';
 import { createNoopMetrics } from '@platform/observability';
 import { createFeatureFlagFakes } from '../feature-flags/testing/fakes.js';
 import { bookingModuleFakes } from '../booking/testing/fakes.js';
@@ -155,6 +158,7 @@ beforeEach(async () => {
           accountData,
           accountAdmin,
           roleApprovals,
+          secondFactor: createSecondFactorChain(),
         },
         profiles,
         audit: audit.service,

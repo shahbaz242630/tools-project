@@ -1,6 +1,15 @@
 # 0030. Give the admin second-factor check a development escape hatch that cannot reach production
 
-- **Status:** Accepted
+> **SUPERSEDED by [ADR 0053](0053-the-admin-second-factor-is-a-port-and-the-escape-hatch-is-an-adapter.md),
+> 25 August 2026.** The flag still exists and still cannot reach production, but
+> it is no longer a branch inside `AuthGuard` — it is an adapter behind the
+> `AdminSecondFactor` port, and the guard now contains no bypass at all. **Read
+> 0053 before concluding from this document that the flag should have been
+> deleted**: its removal condition named buying Clerk Pro, which did not happen.
+> Cloudflare Access supplies the real second factor instead, and Access cannot
+> reach `localhost`, so the development adapter survives.
+
+- **Status:** Superseded by ADR 0053
 - **Date:** 2026-08-04
 - **Relates to:** BRD §9, §10.1, §14 Phase 1; ADR 0015, ADR 0021
 

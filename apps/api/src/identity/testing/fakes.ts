@@ -14,6 +14,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { Time } from '@platform/core';
+import { ClerkSecondFactor } from '../clerk-second-factor.js';
+import { SecondFactorChain } from '../second-factor-chain.js';
 import { createRecordingLogger } from '@platform/observability/testing';
 import type { RecordingLogger } from '@platform/observability/testing';
 import {
@@ -612,6 +614,25 @@ export class InMemoryAuthenticationEvents implements AuthenticationEvents {
   }
 }
 
+/**
+ * The enforced second-factor chain: the real prover and nothing else.
+ *
+ * `createIdentityFakes` returns one of these ready-made, and most tests take it
+ * from there. This exists for the two integration tests that hand-build their
+ * doubles rather than calling the aggregate — borrowing the whole aggregate
+ * just to reach one field would give them a second `IdentityService` beside the
+ * one they built, which is precisely the "two fakes, one row" mistake the
+ * aggregate's own doc warns about.
+ *
+ * **It never installs `DevelopmentSecondFactor`.** A fake that quietly admitted
+ * administrators would make every admin fixture in the suite silently
+ * privileged.
+ */
+export const createSecondFactorChain = (
+  logger = createRecordingLogger().logger,
+): SecondFactorChain =>
+  new SecondFactorChain({ provers: [new ClerkSecondFactor()], logger });
+
 export interface IdentityFakes {
   readonly sessionVerifier: FakeSessionVerifier;
   readonly users: InMemoryUserDirectory;
@@ -639,6 +660,17 @@ export interface IdentityFakes {
   readonly summaries: StubProfileSummarySource;
   readonly approvals: InMemoryAdminApprovalStore;
   readonly authenticationEvents: InMemoryAuthenticationEvents;
+  /**
+   * What may prove an administrator's second factor.
+   *
+   * **Holds only the real prover, so every test runs the enforced path.** The
+   * development exception is not installed here and must never be: a fake that
+   * quietly admitted administrators would make ~40 fixtures across a dozen
+   * files silently privileged, which is the same failure as
+   * `FakeSessionVerifier` defaulting `secondFactorAgeMinutes` to null — a test
+   * that expects to reach an admin route has to say so.
+   */
+  readonly secondFactor: SecondFactorChain;
   /** Exposed so a test can assert on a drop that has no other trace. */
   readonly logger: RecordingLogger;
 }
@@ -695,6 +727,10 @@ export function createIdentityFakes(audit = createAuditFakes()): IdentityFakes {
     authenticationEvents,
     logger,
     erasure,
+    secondFactor: new SecondFactorChain({
+      provers: [new ClerkSecondFactor()],
+      logger: logger.logger,
+    }),
     service: new IdentityService(
       users,
       ledger,
