@@ -1521,6 +1521,14 @@ export interface ListingMediaFakes {
   readonly store: InMemoryListingMediaStore;
   readonly objects: InMemoryObjectStore;
   readonly logger: RecordingLogger;
+  /**
+   * What was counted, so a test can assert a refusal was recorded (slice 2.6c).
+   *
+   * Exposed rather than hidden behind the service, because "the owner was told
+   * no" and "we counted that we told them no" are two different claims, and the
+   * second is the one that goes silently missing.
+   */
+  readonly metrics: RecordingMetrics;
   readonly service: ListingMediaService;
 }
 
@@ -1538,12 +1546,20 @@ export function createListingMediaFakes(
   const store = new InMemoryListingMediaStore();
   const objects = new InMemoryObjectStore();
   const logger = createRecordingLogger();
+  const metrics = createRecordingMetrics();
 
   return {
     store,
     objects,
     logger,
-    service: new ListingMediaService(listings, store, objects, logger.logger),
+    metrics,
+    service: new ListingMediaService(
+      listings,
+      store,
+      objects,
+      logger.logger,
+      metrics.metrics,
+    ),
   };
 }
 

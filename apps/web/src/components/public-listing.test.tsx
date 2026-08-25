@@ -387,3 +387,148 @@ describe('collecting it', () => {
     expect(document.body.textContent).toContain('has not said what is needed');
   });
 });
+
+/**
+ * The gallery (slice 2.6c).
+ *
+ * **The empty state is tested first and deliberately**, because it is the common
+ * case: most listings have no photograph and will not for a long time. A gallery
+ * that renders beautifully with four pictures and breaks the page with none is
+ * the wrong way round.
+ */
+function photograph(id: string, over: { readonly width?: number } = {}) {
+  return {
+    id,
+    display: {
+      url: `https://bucket.example/${id}/display?signature=abc`,
+      width: over.width ?? 1600,
+      height: 1200,
+    },
+    thumbnail: {
+      url: `https://bucket.example/${id}/thumbnail?signature=abc`,
+      width: 400,
+      height: 300,
+    },
+  };
+}
+
+const ONE = '22222222-2222-4222-8222-222222222221';
+const TWO = '22222222-2222-4222-8222-222222222222';
+const THREE = '22222222-2222-4222-8222-222222222223';
+
+describe('the photographs', () => {
+  it('says whose omission it is when there are none', () => {
+    render(<PublicListingView requestPanel={A_PANEL} listing={listing()} />);
+
+    expect(document.body.textContent).toContain('No photo yet');
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
+  it('shows the first photograph large', () => {
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ media: [photograph(ONE), photograph(TWO)] })}
+      />,
+    );
+
+    const images = screen.getAllByRole('img');
+    // The display rendition for the first, the thumbnail for the rest — the
+    // large one must not be the 400px thumbnail upscaled.
+    expect(images[0]?.getAttribute('src')).toContain(`${ONE}/display`);
+    expect(images[1]?.getAttribute('src')).toContain(`${TWO}/thumbnail`);
+  });
+
+  it('drops the no-photo block once there is a photograph', () => {
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ media: [photograph(ONE)] })}
+      />,
+    );
+
+    // The two states are exclusive. Both at once would be a page apologising for
+    // a photograph it is displaying.
+    expect(document.body.textContent).not.toContain('No photo yet');
+  });
+
+  it('renders one photograph without a thumbnail strip', () => {
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ media: [photograph(ONE)] })}
+      />,
+    );
+
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(screen.queryByRole('list')).toBeNull();
+  });
+
+  it('numbers the strip from two, because the large one is the first', () => {
+    /*
+     * A small lie a screen reader would repeat: "photograph 1 of 3" spoken on
+     * the second picture makes the page's own account of itself disagree with
+     * what is on it.
+     */
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({
+          media: [photograph(ONE), photograph(TWO), photograph(THREE)],
+        })}
+      />,
+    );
+
+    expect(screen.getByAltText(/photograph 2 of 3/i)).toBeTruthy();
+    expect(screen.getByAltText(/photograph 3 of 3/i)).toBeTruthy();
+    expect(screen.queryByAltText(/photograph 1 of 3/i)).toBeNull();
+  });
+
+  it('renders the photographs in the order the projection gave them', () => {
+    // There is no `position` on the public projection to sort by, deliberately —
+    // the array order *is* the owner's order, and this component must not
+    // reorder it.
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({
+          media: [photograph(THREE), photograph(ONE), photograph(TWO)],
+        })}
+      />,
+    );
+
+    const sources = screen.getAllByRole('img').map((img) => img.getAttribute('src'));
+    expect(sources[0]).toContain(THREE);
+    expect(sources[1]).toContain(ONE);
+    expect(sources[2]).toContain(TWO);
+  });
+
+  it('carries intrinsic dimensions, so the page does not jump as bytes arrive', () => {
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ media: [photograph(ONE)] })}
+      />,
+    );
+
+    const image = screen.getAllByRole('img')[0];
+    expect(image?.getAttribute('width')).toBe('1600');
+    expect(image?.getAttribute('height')).toBe('1200');
+  });
+
+  it('still discloses nothing about where the item is', () => {
+    // The disclosure discipline this file exists for, re-asserted with media
+    // present: a photograph is the one field that could carry a location, and
+    // the pipeline strips EXIF precisely so it cannot.
+    render(
+      <PublicListingView
+        requestPanel={A_PANEL}
+        listing={listing({ media: [photograph(ONE), photograph(TWO)] })}
+      />,
+    );
+
+    const text = document.body.textContent ?? '';
+    expect(text).not.toMatch(/\bBS7\s*9[A-Z]{2}\b/);
+    expect(text).not.toContain('latitude');
+  });
+});

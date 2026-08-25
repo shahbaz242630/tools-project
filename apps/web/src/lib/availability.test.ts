@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blockPeriod, fetchAvailability, unblockPeriod } from './availability';
 import type { FetchLike } from './listings';
+import { jsonBodyOf } from './testing/captured-body';
 
 const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
@@ -106,7 +107,7 @@ describe('blockPeriod', () => {
     const outcome = await blockPeriod(API, TOKEN, LISTING, A_PERIOD, fetchImpl);
 
     expect(calls[0]?.init?.method).toBe('POST');
-    expect(JSON.parse(calls[0]?.init?.body ?? '{}')).toEqual(A_PERIOD);
+    expect(jsonBodyOf(calls[0]?.init)).toEqual(A_PERIOD);
     expect(outcome).toEqual({ kind: 'loaded', value: A_BLOCK });
   });
 

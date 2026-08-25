@@ -13,8 +13,8 @@ const SCARIFIER: PublicListingSummary = {
   title: 'Petrol lawn scarifier',
   categoryName: 'Outdoor and gardening',
   location: { outwardCode: 'BS7', town: 'Bristol' },
-  // No photograph, which is the ordinary case and stays so until 2.6c gives an
-  // owner a way to upload one.
+  // No photograph, which stays the ordinary case after 2.6c: owners can upload
+  // one now, and most listings will not have one for a long time.
   thumbnail: null,
   inclusiveDailyPrice: {
     rate: { amount: 2_200, currency: 'GBP' },
@@ -1208,5 +1208,104 @@ describe('what a dated search says it found (slice 4.9)', () => {
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
       '1 tool free 15 Sept 2026',
     );
+  });
+});
+
+/**
+ * The card's photograph (slice 2.6c).
+ *
+ * **`thumbnail` is nullable and most cards will be null**, so both branches are
+ * tested and the empty one first. The card is the busiest surface in the product
+ * — a page of them — and it is the one place a broken image would be twenty
+ * broken images.
+ */
+const PHOTOGRAPHED: PublicListingSummary = {
+  ...SCARIFIER,
+  thumbnail: {
+    url: 'https://bucket.example/scarifier/thumbnail?signature=abc',
+    width: 400,
+    height: 300,
+  },
+};
+
+describe('a card’s photograph', () => {
+  it('falls back to the item’s initial when there is none', () => {
+    render(<BrowseResults results={page()} categoryName={null} search={searchFor()} />);
+
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(document.body.textContent).toContain('P');
+  });
+
+  it('shows the thumbnail when the projection carries one', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [PHOTOGRAPHED] })}
+        categoryName={null}
+        search={searchFor()}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    expect(image.getAttribute('src')).toContain('scarifier/thumbnail');
+  });
+
+  it('names the item in the alt text rather than saying “photo of”', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [PHOTOGRAPHED] })}
+        categoryName={null}
+        search={searchFor()}
+      />,
+    );
+
+    expect(screen.getByAltText('Petrol lawn scarifier')).toBeTruthy();
+  });
+
+  it('loads lazily, because most cards are below the fold', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [PHOTOGRAPHED] })}
+        categoryName={null}
+        search={searchFor()}
+      />,
+    );
+
+    expect(screen.getByRole('img').getAttribute('loading')).toBe('lazy');
+  });
+
+  it('carries intrinsic dimensions, so a grid does not reflow as bytes arrive', () => {
+    render(
+      <BrowseResults
+        results={page({ results: [PHOTOGRAPHED] })}
+        categoryName={null}
+        search={searchFor()}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    expect(image.getAttribute('width')).toBe('400');
+    expect(image.getAttribute('height')).toBe('300');
+  });
+
+  it('mixes photographed and unphotographed listings on one page', () => {
+    // The realistic state for a long time, and the one that would look worst if
+    // the two treatments had different footprints.
+    render(
+      <BrowseResults
+        results={page({
+          results: [
+            PHOTOGRAPHED,
+            // A distinct id: two cards sharing one is a React key collision, and
+            // the warning it prints is the kind a passing suite hides.
+            { ...SCARIFIER, id: '8fe74923-e424-421c-b5a2-590280af0fb0' },
+          ],
+        })}
+        categoryName={null}
+        search={searchFor()}
+      />,
+    );
+
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(screen.getAllByRole('link').length).toBeGreaterThanOrEqual(2);
   });
 });

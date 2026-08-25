@@ -6,7 +6,10 @@ import {
   InMemoryCategoryStore,
   InMemoryListingStore,
 } from './testing/fakes.js';
-import { createRecordingLogger } from '@platform/observability/testing';
+import {
+  createRecordingLogger,
+  createRecordingMetrics,
+} from '@platform/observability/testing';
 import type { RecordingLogger } from '@platform/observability/testing';
 
 /**
@@ -50,6 +53,7 @@ beforeEach(() => {
     media,
     objects,
     logger.logger,
+    createRecordingMetrics().metrics,
   );
 });
 

@@ -13,6 +13,7 @@ import {
 } from './listings';
 import type { ListingSearchQuery } from '@platform/contracts';
 import type { FetchLike } from './listings';
+import { jsonBodyOf } from './testing/captured-body';
 
 const API = 'http://api.internal:3001';
 const TOKEN = 'session-token';
@@ -99,7 +100,7 @@ describe('createListing', () => {
 
     expect(calls[0]?.init?.method).toBe('POST');
     expect(calls[0]?.url).toContain('/listings');
-    expect(JSON.parse(calls[0]?.init?.body ?? '{}')).toEqual(DRAFT);
+    expect(jsonBodyOf(calls[0]?.init)).toEqual(DRAFT);
     expect(outcome.kind).toBe('loaded');
   });
 

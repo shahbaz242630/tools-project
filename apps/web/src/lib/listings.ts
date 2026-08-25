@@ -41,6 +41,19 @@ import { correlationHeaders } from './correlation';
 
 export const LISTINGS_TIMEOUT_MS = 5_000;
 
+/**
+ * How long an image upload may take (slice 2.6c).
+ *
+ * **Deliberately longer than the R2 adapter's own 10 s PUT timeout**, because
+ * the request it wraps is strictly more work: the bytes travel to the API, are
+ * decoded, re-oriented, resized twice and re-encoded, and only then written to
+ * the store. A budget equal to the adapter's would make the client the first to
+ * give up, and this codebase has a name for that failure — it reports a refusal
+ * for work that then completes, leaving a photograph the owner was told did not
+ * upload and which appears on the next reload.
+ */
+export const MEDIA_UPLOAD_TIMEOUT_MS = 20_000;
+
 export type ListingOutcome<T> =
   | { readonly kind: 'loaded'; readonly value: T }
   | { readonly kind: 'signed-out' }
@@ -174,15 +187,30 @@ export type FetchLike = (
     method?: string;
     signal?: AbortSignal;
     headers?: Record<string, string>;
-    body?: string;
+    /**
+     * **`Uint8Array` from slice 2.6c, for the one route that carries an image.**
+     * Widened rather than given a second `FetchLike`, because a second one
+     * would need a second status mapping beside `call` — the duplication this
+     * file's own docblock says H3a was caused by.
+     */
+    body?: string | Uint8Array;
     cache?: string;
   },
 ) => Promise<FetchResponse>;
 
-function describe(error: unknown): string {
+/**
+ * A failure as a sentence.
+ *
+ * **The budget is a parameter from slice 2.6c**, and it is not decoration: the
+ * timeout branch states a number, and an upload waits 20 s while every other
+ * call waits 5. Left as a constant it would have reported *"no response within
+ * 5000ms"* after twenty seconds — a specific, confident, false sentence of
+ * exactly the kind `LESSONS.md` says a green suite cannot see.
+ */
+function describe(error: unknown, budgetMs: number = LISTINGS_TIMEOUT_MS): string {
   if (error instanceof Error) {
     return error.name === 'TimeoutError'
-      ? `no response within ${String(LISTINGS_TIMEOUT_MS)}ms`
+      ? `no response within ${String(budgetMs)}ms`
       : error.message;
   }
   return String(error);
@@ -226,7 +254,21 @@ export async function call<T, E422 = never, E503 = never, E409 = never>(
   clientIp: string | null,
   fetchImpl: FetchLike,
   parse: (raw: unknown) => T,
-  init: { method: string; body?: unknown } = { method: 'GET' },
+  /**
+   * The verb, and at most one kind of body.
+   *
+   * **`bytes` is not `body` with a different type** (slice 2.6c). A JSON body is
+   * serialised here and labelled `application/json`; an image is neither, and
+   * `POST /listings/:id/media` reads its raw body through a parser registered
+   * for `application/octet-stream` only — send it as JSON and Fastify parses it
+   * as something else, which the controller answers 400 for. Two fields make the
+   * content type follow from what the caller has rather than from a flag they
+   * could forget to set. Supplying both is a type error rather than a precedence
+   * question nobody should have to look up.
+   */
+  init:
+    | { method: string; body?: unknown; bytes?: never }
+    | { method: string; bytes: Uint8Array; body?: never } = { method: 'GET' },
   /**
    * What a 422 means, for the one route that can send one.
    *
@@ -260,10 +302,23 @@ export async function call<T, E422 = never, E503 = never, E409 = never>(
   try {
     response = await fetchImpl(url, {
       method: init.method,
-      signal: AbortSignal.timeout(LISTINGS_TIMEOUT_MS),
+      /*
+       * **An upload gets its own, longer timeout** (slice 2.6c). Five seconds is
+       * right for a read; an upload carries up to `MAX_INPUT_BYTES` over a
+       * domestic connection and is then decoded, resized twice and written to
+       * R2, whose own PUT timeout is 10 s. A client that gives up before the
+       * adapter does reports a failure for work that then succeeds — leaving a
+       * photograph the owner was told did not upload.
+       */
+      signal: AbortSignal.timeout(
+        init.bytes === undefined ? LISTINGS_TIMEOUT_MS : MEDIA_UPLOAD_TIMEOUT_MS,
+      ),
       headers: {
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(init.bytes === undefined
+          ? {}
+          : { 'content-type': 'application/octet-stream' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
       },
@@ -271,9 +326,16 @@ export async function call<T, E422 = never, E503 = never, E409 = never>(
       // holding what it said before.
       cache: 'no-store',
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      ...(init.bytes === undefined ? {} : { body: init.bytes }),
     });
   } catch (error) {
-    return { kind: 'unreachable', reason: describe(error) };
+    return {
+      kind: 'unreachable',
+      reason: describe(
+        error,
+        init.bytes === undefined ? LISTINGS_TIMEOUT_MS : MEDIA_UPLOAD_TIMEOUT_MS,
+      ),
+    };
   }
 
   if (response.status === 401) return { kind: 'signed-out' };

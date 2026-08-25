@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
+import { LISTING_MEDIA_MAX_BYTES } from '@platform/contracts';
 
 /**
  * Turning a file somebody uploaded into bytes we are willing to store.
@@ -87,12 +88,14 @@ export type AcceptedInputFormat = (typeof ACCEPTED_INPUT_FORMATS)[number];
 /**
  * The largest file we will look at, refused before a decoder is handed anything.
  *
- * A 12-megapixel phone JPEG is 2–8 MB and an iPhone HEIC is 2–3 MB, so 15 MB
- * clears any real camera with room to spare. It is the cheapest of the limits
- * here — it costs a length check — and it is the one that stops the pipeline
- * being a place to spend our CPU.
+ * **The number moved to `@platform/contracts` in slice 2.6c and this is now an
+ * alias**, because the browser has to know it too — to refuse a 40 MB file
+ * before spending a minute uploading it, and to name the limit in the sentence
+ * that says so. Re-exported rather than replaced at every call site so the
+ * pipeline still reads in its own vocabulary, and so the *reason* the cap exists
+ * stays next to the code it constrains.
  */
-export const MAX_INPUT_BYTES = 15 * 1024 * 1024;
+export const MAX_INPUT_BYTES: number = LISTING_MEDIA_MAX_BYTES;
 
 /**
  * The largest image we will decode, in pixels.

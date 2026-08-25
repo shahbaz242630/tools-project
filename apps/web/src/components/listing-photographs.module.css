@@ -1,0 +1,216 @@
+/*
+ * An owner's photographs (slice 2.6c).
+ *
+ * 744px is the mobile breakpoint documented in `globals.css`. Every colour here
+ * is a token — the no-photo pair `--photo-empty` / `--photo-empty-glyph` was
+ * already defined for the empty state this section replaces.
+ */
+
+.section {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line-hairline);
+}
+
+.heading {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.intro {
+  margin: 0 0 16px;
+  font-size: var(--text-helper);
+  color: var(--ink-muted);
+}
+
+.empty {
+  margin: 0 0 20px;
+  padding: 16px;
+  border-radius: var(--radius-card);
+  background: var(--surface-sunken);
+  font-size: var(--text-body);
+  color: var(--ink-secondary);
+}
+
+/*
+ * **`auto-fill` with a minimum, not a fixed column count.** Ten photographs on a
+ * phone and ten on a desktop are the same list; the grid decides how many fit
+ * rather than a breakpoint deciding for it. 140px is wide enough that the
+ * thumbnail — 400px on its longest edge — is never upscaled.
+ */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*
+ * **`aspect-ratio` with `object-fit: cover`, so a portrait and a landscape
+ * photograph make the same shape.** The intrinsic width and height are still on
+ * the element — that is what reserves the space before the bytes arrive and
+ * stops the page jumping as each one loads.
+ */
+.image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+  background: var(--photo-empty);
+}
+
+/*
+ * Which one a stranger sees first, said on the photograph rather than only in
+ * the paragraph above — the paragraph explains the rule, this points at the one
+ * it applies to.
+ */
+.badge {
+  margin: 0;
+  font-size: var(--text-helper);
+  font-weight: 600;
+  color: var(--ink-label);
+}
+
+/*
+ * **`margin-top: auto` bottom-aligns the controls across a row**, and it is a
+ * fix rather than a flourish (found by looking at the page, slice 2.6c). Only
+ * the first photograph carries the "Shown first" line, so without this its
+ * buttons sit one line lower than its neighbours' — and the badge lands at the
+ * same height as the next item's "Move earlier", reading as a label for a
+ * button it has nothing to do with. Grid items stretch to the row's height, so
+ * pushing the controls to the bottom lines them up whatever sits above them.
+ */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.control {
+  margin: 0;
+}
+
+/*
+ * **44px minimum on a phone**, which is the mobile touch target `globals.css`
+ * documents. These sit under a thumbnail on a small screen and are the controls
+ * most likely to be pressed with a thumb.
+ */
+.button {
+  padding: 6px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: var(--text-helper);
+  color: var(--ink-label);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.remove {
+  color: var(--danger);
+}
+
+.remove:hover:not(:disabled) {
+  background: var(--danger-tint);
+  border-color: var(--danger-line);
+}
+
+.upload {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 460px;
+}
+
+.label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--ink-label);
+}
+
+.file {
+  padding: 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: var(--text-body);
+  color: var(--ink);
+}
+
+.file:disabled {
+  opacity: 0.55;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-helper);
+  color: var(--ink-muted);
+}
+
+.pending {
+  margin: 0;
+  font-size: var(--text-helper);
+  color: var(--ink-secondary);
+}
+
+.full {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+  font-size: var(--text-body);
+  color: var(--ink-secondary);
+}
+
+.error {
+  margin: 6px 0 0;
+  font-size: var(--text-helper);
+  color: var(--danger);
+}
+
+/*
+ * The focus ring on the outcome anchor. It is `tabIndex={-1}` and focused
+ * programmatically, so without this a screen-reader user is moved somewhere with
+ * nothing visible to show a sighted user where they went.
+ */
+.upload div:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+
+@media (max-width: 744px) {
+  .gallery {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  .button {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+
+  .upload {
+    max-width: none;
+  }
+}

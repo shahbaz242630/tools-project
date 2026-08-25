@@ -426,15 +426,43 @@ function ListingCard({ listing }: { readonly listing: PublicListingSummary }) {
   return (
     <Link href={hirePath(listing.id)} className={styles.card}>
       {/*
-        **The no-photo block, and it is the normal state rather than a
-        fallback.** Media is slice 2.6 and blocked on the domain, so every card
-        looks like this today. Same treatment as the listing page: the item's
-        initial on a tinted block, never a camera icon and never a grey
-        rectangle.
+        **The no-photo block is still the normal state rather than a fallback**
+        (slice 2.6c). Photographs exist now, and most listings will not have one
+        for a long time — so this branch is the common case and was designed
+        first, not last. Same treatment as the listing page: the item's initial
+        on a tinted block, never a camera icon and never a grey rectangle.
+
+        **`thumbnail` is nullable on the projection and that is load-bearing.**
+        The API returns the first `APPROVED` photograph or nothing at all, so
+        this component makes no decision about what may be shown — it renders
+        what it was handed, which is the rule the whole public path follows.
+
+        **`aria-hidden` on the initial, and a real `alt` on the photograph.** The
+        letter is decoration standing in for a picture; a photograph is content.
+        The card is a link whose accessible name comes from the title beneath, so
+        the alt text names the item rather than repeating "photo of".
       */}
-      <span className={styles.cardMedia} aria-hidden="true">
-        {listing.title.trim().charAt(0).toUpperCase()}
-      </span>
+      {listing.thumbnail === null ? (
+        <span className={styles.cardMedia} aria-hidden="true">
+          {listing.title.trim().charAt(0).toUpperCase()}
+        </span>
+      ) : (
+        <img
+          alt={listing.title}
+          className={styles.cardPhoto}
+          height={listing.thumbnail.height}
+          /*
+           * **`lazy`, and it is the one place in this slice where it belongs.**
+           * A results page carries up to a full page of cards, most below the
+           * fold; the listing page carries one photograph that is the reason
+           * somebody opened it. The signed URL still expires in fifteen minutes
+           * either way, which is far longer than a scroll.
+           */
+          loading="lazy"
+          src={listing.thumbnail.url}
+          width={listing.thumbnail.width}
+        />
+      )}
 
       <span className={styles.cardBody}>
         <span className={styles.cardTitle}>{listing.title}</span>

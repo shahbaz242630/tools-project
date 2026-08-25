@@ -36,8 +36,17 @@ afterEach(cleanup);
  * `button` and asking for it by role exercises exactly that path.
  *
  * `cleanup` afterwards leaves the document exactly as a test expects to find it.
+ *
+ * **Skipped where there is no document** (slice 2.6c). One file in this project
+ * runs `@vitest-environment node` — the media upload route handler, which parses
+ * a multipart body that jsdom cannot — and a warm-up that renders would fail its
+ * whole suite before a single test ran, with `document is not defined` pointing
+ * at this file rather than at the one that opted out. There is nothing to warm
+ * up without a DOM, so there is nothing to do.
  */
 beforeAll(() => {
+  if (typeof document === 'undefined') return;
+
   render(<button type="button">warm</button>);
   screen.getByRole('button', { name: 'warm' });
   cleanup();

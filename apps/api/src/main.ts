@@ -559,6 +559,7 @@ async function bootstrap(): Promise<void> {
     new PrismaListingMediaStore(database),
     objectStore,
     logger.child({ module: 'catalogue' }),
+    metrics,
   );
 
   /*

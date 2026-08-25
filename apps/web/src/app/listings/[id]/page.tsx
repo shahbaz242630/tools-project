@@ -12,6 +12,8 @@ import {
 import type { CategoryAttribute, OwnerListing } from '@platform/contracts';
 import { clientIpFrom } from '../../../lib/client-ip';
 import { fetchListing } from '../../../lib/listings';
+import { fetchListingMedia } from '../../../lib/listing-media';
+import { ListingPhotographs } from '../../../components/listing-photographs';
 import { editListingPath, listingCalendarPath } from '../../../lib/page-paths';
 import type { ReactNode } from 'react';
 import { fetchRequests } from '../../../lib/requests';
@@ -55,9 +57,15 @@ export default async function ListingPage({
    * has no check of its own to forget: a listing that is not theirs answers 404
    * below, and the requests read answers with an empty list rather than a 403.
    */
-  const [outcome, requests] = await Promise.all([
+  const [outcome, requests, photographs] = await Promise.all([
     fetchListing(webEnv().API_BASE_URL, token, id, undefined, clientIp),
     fetchRequests(webEnv().API_BASE_URL, token, id, undefined, clientIp),
+    /*
+     * **The third read, issued with the other two** (slice 2.6c). Ownership is
+     * enforced by the API on all three, so this page still has no check of its
+     * own to forget — a listing that is not theirs answers 404 here as well.
+     */
+    fetchListingMedia(webEnv().API_BASE_URL, token, id, undefined, clientIp),
   ]);
 
   // Somebody else's listing answers 404 rather than 403, and this page says the
@@ -70,6 +78,18 @@ export default async function ListingPage({
       {outcome.kind === 'loaded' ? (
         <Listing
           listing={outcome.value}
+          photographs={
+            /*
+             * **Rendered only when the read succeeded**, for the reason the
+             * requests slot beside it gives. An empty gallery would state that
+             * this listing has no photographs; a failed read knows nothing of
+             * the sort, and the owner's other controls must not be taken down
+             * by it either.
+             */
+            photographs.kind === 'loaded' ? (
+              <ListingPhotographs listingId={id} media={photographs.value} />
+            ) : null
+          }
           requests={
             /*
              * **Rendered only when the read succeeded, and silently absent
@@ -102,9 +122,19 @@ export default async function ListingPage({
 
 function Listing({
   listing,
+  photographs,
   requests,
 }: {
   readonly listing: OwnerListing;
+  /**
+   * This listing's photographs, or nothing (slice 2.6c).
+   *
+   * **A slot, for the reason `requests` is one** — and it degrades the same way.
+   * A failed media read renders nothing rather than an empty gallery, because an
+   * empty gallery is a claim: it says this listing has no photographs, which is
+   * a different thing from not having been able to find out.
+   */
+  readonly photographs: ReactNode;
   /**
    * The requests waiting on this listing, or nothing (slice 4.6b).
    *
@@ -431,9 +461,14 @@ function Listing({
         />
       </div>
 
-      <p className={styles.footnote}>
-        Photographs are not built yet. When they are, they will appear here.
-      </p>
+      {/*
+        **This was the sentence "Photographs are not built yet. When they are,
+        they will appear here." until slice 2.6c**, and retiring it is the point
+        of the slice. It was true when written and had no test on it, which is
+        the exact shape `LESSONS.md` warns about: a green suite cannot see a
+        false sentence, and this one would have outlived the feature it promised.
+      */}
+      {photographs}
     </>
   );
 }

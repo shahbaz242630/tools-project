@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Logger } from '@platform/observability';
+import type { Logger, Metrics } from '@platform/observability';
 import { LISTING_MEDIA_LIMIT } from '@platform/contracts';
 import type { ListingMediaRefusal, OwnerListingMedia } from '@platform/contracts';
 import { ImageRejectedError, prepareImage } from './prepare-image.js';
@@ -61,7 +61,40 @@ export class ListingMediaService {
     private readonly media: ListingMediaStore,
     private readonly objects: ObjectStore,
     private readonly logger: Logger,
+    /**
+     * Where upload refusals are counted (slice 2.6c, deferred from 2.6b-i).
+     *
+     * **Last and required rather than optional.** An optional metrics port is
+     * one a new call site silently omits, and a counter nobody increments looks
+     * exactly like a platform nobody is being refused by — which is the failure
+     * `recordRateLimit`'s docblock describes one port along. Every construction
+     * site passes the no-op or the recording fake.
+     */
+    private readonly metrics: Metrics,
   ) {}
+
+  /**
+   * Refuse an **upload**, counting it on the way out.
+   *
+   * **Only `add` calls this, and that is the design rather than an oversight.**
+   * `reorder` also refuses with a `ListingMediaRefusedError`, reusing the member
+   * `not-an-image` for an order that does not match the listing's photographs —
+   * routing that through here would mix a stale-tab count into a series about
+   * photographs and make `listing_media_refusals_total{reason="not-an-image"}`
+   * mean two unrelated things at once.
+   *
+   * The reason is a closed union, which is what makes it safe as a label.
+   * **Nothing else about the upload may be counted** — not the filename, not the
+   * byte size, not the listing id.
+   */
+  private refuse(
+    reason: ListingMediaRefusal,
+    message: string,
+    cause?: unknown,
+  ): ListingMediaRefusedError {
+    this.metrics.recordMediaRefusal({ reason });
+    return new ListingMediaRefusedError(reason, message, cause);
+  }
 
   /**
    * This listing's photographs, or null if it is not this owner's.
@@ -110,7 +143,7 @@ export class ListingMediaService {
      */
     const existing = await this.media.listFor(listingId);
     if (existing.length >= LISTING_MEDIA_LIMIT) {
-      throw new ListingMediaRefusedError(
+      throw this.refuse(
         'too-many-photographs',
         `A listing may have ${String(LISTING_MEDIA_LIMIT)} photographs, and this one already has ${String(existing.length)}`,
       );
@@ -121,7 +154,7 @@ export class ListingMediaService {
       // it is carried through rather than flattened to "bad image" — the owner
       // is told their photograph is too large rather than that it is broken.
       if (error instanceof ImageRejectedError) {
-        throw new ListingMediaRefusedError(error.reason, error.message, error);
+        throw this.refuse(error.reason, error.message, error);
       }
       throw error;
     });
@@ -149,7 +182,7 @@ export class ListingMediaService {
           listingId,
           reason: 'object-store-unavailable',
         });
-        throw new ListingMediaRefusedError(
+        throw this.refuse(
           'storage-unavailable',
           'The photograph could not be stored. Please try again.',
           error,
