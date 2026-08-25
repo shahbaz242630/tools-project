@@ -22,60 +22,70 @@ import { z } from 'zod';
 import { EnvironmentError } from './env.js';
 import type { EnvSource } from './env.js';
 
-const schema = z
-  .object({
-    NODE_ENV: z.string().optional(),
+const shape = z.object({
+  NODE_ENV: z.string().optional(),
 
-    /**
-     * The S3 endpoint for the bucket's jurisdiction.
-     *
-     * **Configuration rather than a constructed string, because the
-     * jurisdiction changes it.** An EU-jurisdiction R2 bucket answers at
-     * `<account>.eu.r2.cloudflarestorage.com`; the default endpoint omits the
-     * `.eu.` and does not reach it. Deriving this from an account id would work
-     * until the first bucket chosen for data residency — which is ours.
-     */
-    MEDIA_S3_ENDPOINT: z.url().optional(),
+  /**
+   * The S3 endpoint for the bucket's jurisdiction.
+   *
+   * **Configuration rather than a constructed string, because the
+   * jurisdiction changes it.** An EU-jurisdiction R2 bucket answers at
+   * `<account>.eu.r2.cloudflarestorage.com`; the default endpoint omits the
+   * `.eu.` and does not reach it. Deriving this from an account id would work
+   * until the first bucket chosen for data residency — which is ours.
+   */
+  MEDIA_S3_ENDPOINT: z.url().optional(),
 
-    MEDIA_S3_BUCKET: z.string().min(1).optional(),
+  MEDIA_S3_BUCKET: z.string().min(1).optional(),
 
-    /**
-     * The credential. **Object-scoped and bucket-scoped, never account-admin.**
-     *
-     * The token this is issued from can read, write and list objects in one
-     * named bucket. It deliberately cannot create or delete buckets or change
-     * bucket configuration, so the worst a leaked API process can do is corrupt
-     * the media of listings it could already read.
-     */
-    MEDIA_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
-    MEDIA_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
-  })
-  .superRefine((env, ctx) => {
-    const fields = [
-      'MEDIA_S3_ENDPOINT',
-      'MEDIA_S3_BUCKET',
-      'MEDIA_S3_ACCESS_KEY_ID',
-      'MEDIA_S3_SECRET_ACCESS_KEY',
-    ] as const;
+  /**
+   * The credential. **Object-scoped and bucket-scoped, never account-admin.**
+   *
+   * The token this is issued from can read, write and list objects in one
+   * named bucket. It deliberately cannot create or delete buckets or change
+   * bucket configuration, so the worst a leaked API process can do is corrupt
+   * the media of listings it could already read.
+   */
+  MEDIA_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  MEDIA_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+});
 
-    const present = fields.filter((field) => env[field] !== undefined);
-    if (present.length === 0 || present.length === fields.length) return;
+/**
+ * Every variable this schema declares, derived from it rather than restated.
+ *
+ * See `SERVER_ENV_KEYS` in `env.ts` for why these exist: the deployed compose
+ * file enumerates variables by name and passes no env file through, so a
+ * variable added here reaches a deployed process only if that file was edited
+ * too. It has been forgotten twice.
+ */
+export const MEDIA_ENV_KEYS: readonly string[] = Object.keys(shape.shape);
 
-    // Half-configured is the dangerous state: it reads as "media is set up" to
-    // anybody looking at the env file, and behaves as "media is off" at
-    // runtime. Name the missing ones rather than the present ones — the
-    // question being answered is "what do I still have to set".
-    const missing = fields.filter((field) => env[field] === undefined);
-    ctx.addIssue({
-      code: 'custom',
-      path: [missing[0] ?? 'MEDIA_S3_ENDPOINT'],
-      message:
-        `is required once any MEDIA_S3_* value is set. Missing: ${missing.join(', ')}. ` +
-        'Leave all four unset to run against the in-memory store, which is what ' +
-        'local development should do — a developer machine must never write to a ' +
-        'shared bucket.',
-    });
+const schema = shape.superRefine((env, ctx) => {
+  const fields = [
+    'MEDIA_S3_ENDPOINT',
+    'MEDIA_S3_BUCKET',
+    'MEDIA_S3_ACCESS_KEY_ID',
+    'MEDIA_S3_SECRET_ACCESS_KEY',
+  ] as const;
+
+  const present = fields.filter((field) => env[field] !== undefined);
+  if (present.length === 0 || present.length === fields.length) return;
+
+  // Half-configured is the dangerous state: it reads as "media is set up" to
+  // anybody looking at the env file, and behaves as "media is off" at
+  // runtime. Name the missing ones rather than the present ones — the
+  // question being answered is "what do I still have to set".
+  const missing = fields.filter((field) => env[field] === undefined);
+  ctx.addIssue({
+    code: 'custom',
+    path: [missing[0] ?? 'MEDIA_S3_ENDPOINT'],
+    message:
+      `is required once any MEDIA_S3_* value is set. Missing: ${missing.join(', ')}. ` +
+      'Leave all four unset to run against the in-memory store, which is what ' +
+      'local development should do — a developer machine must never write to a ' +
+      'shared bucket.',
   });
+});
 
 export type MediaEnv = z.infer<typeof schema>;
 

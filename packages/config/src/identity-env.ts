@@ -64,85 +64,95 @@ const explicitBoolean = z
   .default('false')
   .transform((value) => value === 'true');
 
-const schema = z
-  .object({
-    /**
-     * Read here as well as in `loadEnv`, and that is not duplication of a source
-     * of truth — it is this schema needing to know the environment in order to
-     * decide whether its *own* fields are valid. See the refinement below.
-     */
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+const shape = z.object({
+  /**
+   * Read here as well as in `loadEnv`, and that is not duplication of a source
+   * of truth — it is this schema needing to know the environment in order to
+   * decide whether its *own* fields are valid. See the refinement below.
+   */
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
-    /**
-     * Clerk's JWT signing key, in PEM form (ADR 0015).
-     *
-     * **A public key, and that is the point.** Supplying it makes session
-     * verification networkless: the API validates a signature locally and never
-     * calls Clerk. The alternative — omitting it and letting the SDK fetch JWKS —
-     * requires `CLERK_SECRET_KEY`, which can mint sessions, read the entire user
-     * directory and impersonate anyone. The API has no business holding that to
-     * perform an operation a public key answers.
-     *
-     * Derive it from the instance's published JWKS; there is nothing to protect
-     * and nothing to rotate secretly. Required, because an API that starts
-     * without it authenticates nobody and only discovers that on first request.
-     */
-    CLERK_JWT_PUBLIC_KEY: pemPublicKey,
+  /**
+   * Clerk's JWT signing key, in PEM form (ADR 0015).
+   *
+   * **A public key, and that is the point.** Supplying it makes session
+   * verification networkless: the API validates a signature locally and never
+   * calls Clerk. The alternative — omitting it and letting the SDK fetch JWKS —
+   * requires `CLERK_SECRET_KEY`, which can mint sessions, read the entire user
+   * directory and impersonate anyone. The API has no business holding that to
+   * perform an operation a public key answers.
+   *
+   * Derive it from the instance's published JWKS; there is nothing to protect
+   * and nothing to rotate secretly. Required, because an API that starts
+   * without it authenticates nobody and only discovers that on first request.
+   */
+  CLERK_JWT_PUBLIC_KEY: pemPublicKey,
 
-    /**
-     * Origins whose tokens this API will accept, as the `azp` claim.
-     *
-     * Without this a token minted by *any* Clerk application verifies against our
-     * key set for its own issuer — so an attacker who signs in to an unrelated
-     * Clerk app on our instance's frontend origin could present that token here.
-     * Clerk's own documentation calls this out; it is not defence in depth, it is
-     * the check that makes the audience meaningful.
-     */
-    CLERK_AUTHORIZED_PARTIES: originList,
+  /**
+   * Origins whose tokens this API will accept, as the `azp` claim.
+   *
+   * Without this a token minted by *any* Clerk application verifies against our
+   * key set for its own issuer — so an attacker who signs in to an unrelated
+   * Clerk app on our instance's frontend origin could present that token here.
+   * Clerk's own documentation calls this out; it is not defence in depth, it is
+   * the check that makes the audience meaningful.
+   */
+  CLERK_AUTHORIZED_PARTIES: originList,
 
-    /**
-     * Open every admin route to an administrator with no verified second factor.
-     *
-     * **A development escape hatch, and the name is the documentation.** ADR 0021
-     * requires a second factor for administrative access and reads Clerk's `fva`
-     * claim to prove it; Clerk gates every MFA strategy — and passkeys — behind a
-     * paid plan, so on the free plan there is no second factor anybody can enrol
-     * and the guard correctly refuses every administrator, everywhere. That was
-     * accepted on 4 August as a cost to defer, and reversed on the same day once
-     * it became clear what it costs: **four slices whose main surface no human has
-     * ever used**, including a statutory confirmation, verified by tests alone.
-     *
-     * Being unable to open the admin pages is not merely inconvenient. Every
-     * recent bug in this project was found by using a page — a form that threw on
-     * submit, a refusal with an enabled form beneath it, an error rendered above
-     * the fold. A surface nobody can operate is a surface where that class of
-     * defect accumulates silently until launch.
-     *
-     * **It cannot reach a deployed environment.** Setting it with
-     * `NODE_ENV=production` does not disable it, ignore it or warn about it: the
-     * process refuses to start. A flag that is quietly dropped in production is
-     * one somebody eventually believes is working.
-     */
-    DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: explicitBoolean,
-  })
-  .superRefine((env, ctx) => {
-    if (!env.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA) return;
-    if (env.NODE_ENV !== 'production') return;
+  /**
+   * Open every admin route to an administrator with no verified second factor.
+   *
+   * **A development escape hatch, and the name is the documentation.** ADR 0021
+   * requires a second factor for administrative access and reads Clerk's `fva`
+   * claim to prove it; Clerk gates every MFA strategy — and passkeys — behind a
+   * paid plan, so on the free plan there is no second factor anybody can enrol
+   * and the guard correctly refuses every administrator, everywhere. That was
+   * accepted on 4 August as a cost to defer, and reversed on the same day once
+   * it became clear what it costs: **four slices whose main surface no human has
+   * ever used**, including a statutory confirmation, verified by tests alone.
+   *
+   * Being unable to open the admin pages is not merely inconvenient. Every
+   * recent bug in this project was found by using a page — a form that threw on
+   * submit, a refusal with an enabled form beneath it, an error rendered above
+   * the fold. A surface nobody can operate is a surface where that class of
+   * defect accumulates silently until launch.
+   *
+   * **It cannot reach a deployed environment.** Setting it with
+   * `NODE_ENV=production` does not disable it, ignore it or warn about it: the
+   * process refuses to start. A flag that is quietly dropped in production is
+   * one somebody eventually believes is working.
+   */
+  DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: explicitBoolean,
+});
 
-    // Refusing to boot rather than falling back to the safe behaviour. Both end
-    // with MFA enforced, and only this one tells somebody that what they
-    // configured is not what they got — a silent correction here would be a
-    // production instance running under an assumption nobody can see.
-    ctx.addIssue({
-      code: 'custom',
-      path: ['DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA'],
-      message:
-        'cannot be enabled when NODE_ENV is production — it removes the second-factor ' +
-        'check ADR 0021 and BRD §9 require for every administrative action. It exists ' +
-        'only so the admin surface can be operated in local development while Clerk ' +
-        'MFA is unavailable on the free plan',
-    });
+/**
+ * Every variable this schema declares, derived from it rather than restated.
+ *
+ * See `SERVER_ENV_KEYS` in `env.ts` for why these exist: the deployed compose
+ * file enumerates variables by name and passes no env file through, so a
+ * variable added here reaches a deployed process only if that file was edited
+ * too. It has been forgotten twice.
+ */
+export const IDENTITY_ENV_KEYS: readonly string[] = Object.keys(shape.shape);
+
+const schema = shape.superRefine((env, ctx) => {
+  if (!env.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA) return;
+  if (env.NODE_ENV !== 'production') return;
+
+  // Refusing to boot rather than falling back to the safe behaviour. Both end
+  // with MFA enforced, and only this one tells somebody that what they
+  // configured is not what they got — a silent correction here would be a
+  // production instance running under an assumption nobody can see.
+  ctx.addIssue({
+    code: 'custom',
+    path: ['DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA'],
+    message:
+      'cannot be enabled when NODE_ENV is production — it removes the second-factor ' +
+      'check ADR 0021 and BRD §9 require for every administrative action. It exists ' +
+      'only so the admin surface can be operated in local development while Clerk ' +
+      'MFA is unavailable on the free plan',
   });
+});
 
 export type IdentityEnv = z.infer<typeof schema>;
 

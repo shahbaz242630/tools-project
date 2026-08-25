@@ -123,6 +123,16 @@ export interface WebEnv extends RawWebEnv {
   readonly isProduction: boolean;
 }
 
+/**
+ * Every variable this schema declares, derived from it rather than restated.
+ *
+ * See `SERVER_ENV_KEYS` in `env.ts` for why these exist: the deployed compose
+ * file enumerates variables by name and passes no env file through, so a
+ * variable added here reaches a deployed process only if that file was edited
+ * too. It has been forgotten twice.
+ */
+export const WEB_ENV_KEYS: readonly string[] = Object.keys(schema.shape);
+
 /** Parse and validate, reporting every problem rather than only the first. */
 export function loadWebEnv(source: EnvSource = process.env): WebEnv {
   // invariant-ok: no-direct-env — this module is part of the one validated
