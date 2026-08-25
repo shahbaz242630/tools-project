@@ -203,6 +203,23 @@ const schema = z.object({
  * is a legitimate answer over a private network — it just has to be one somebody
  * typed.
  */
+/**
+ * Every variable this schema declares, derived from it rather than restated.
+ *
+ * **It exists so that `env-reaches-the-container.test.mjs` can check the one
+ * bridge nothing else can see** (25 August 2026). A deployed container gets its
+ * environment from `infra/compose/docker-compose.app.yml`, which **enumerates
+ * every variable by name and does not pass an env file through** — so a variable
+ * added here and set on the box reaches the process only if somebody also edited
+ * that file. It has been forgotten twice: `TRUSTED_PROXY_HOPS` (silently, for a
+ * month) and `MEDIA_S3_*` (caught by a refuse-to-boot guard, one layer below
+ * where ADR 0017 predicted it).
+ *
+ * `Object.keys(shape)` rather than a written list, because a second list is the
+ * thing that drifts — which is the defect this exists to prevent, one level up.
+ */
+export const SERVER_ENV_KEYS: readonly string[] = Object.keys(schema.shape);
+
 const withProductionTlsStated = schema.superRefine((env, ctx) => {
   if (env.NODE_ENV !== 'production') return;
   if (env.POSTGRES_SSLMODE !== undefined) return;

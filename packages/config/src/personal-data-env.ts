@@ -56,6 +56,16 @@ const schema = z.object({
 
 export type PersonalDataEnv = z.infer<typeof schema>;
 
+/**
+ * Every variable this schema declares, derived from it rather than restated.
+ *
+ * See `SERVER_ENV_KEYS` in `env.ts` for why these exist: the deployed compose
+ * file enumerates variables by name and passes no env file through, so a
+ * variable added here reaches a deployed process only if that file was edited
+ * too. It has been forgotten twice.
+ */
+export const PERSONAL_DATA_ENV_KEYS: readonly string[] = Object.keys(schema.shape);
+
 /** Parse and validate, reporting every problem rather than only the first. */
 export function loadPersonalDataEnv(source: EnvSource = process.env): PersonalDataEnv {
   const result = schema.safeParse(source);
