@@ -43,6 +43,8 @@ import {
   USAGE,
 } from './lib/release-plan.mjs';
 
+import { envFileValuesIn, passThroughKeysIn } from './lib/container-environment.mjs';
+
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE_FILE = join(REPO_ROOT, 'infra', 'compose', 'docker-compose.app.yml');
 const EDGE_NETWORK = 'rental-edge';
@@ -414,6 +416,61 @@ function captureFailedLogs(env, tag) {
   };
 }
 
+/** What a running container actually has, as a map. */
+function containerEnvironment(env, service) {
+  const result = run('docker', ['exec', `rental-${env}-${service}`, 'printenv']);
+  if (result.status !== 0) return null;
+
+  const values = new Map();
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const at = line.indexOf('=');
+    if (at > 0) values.set(line.slice(0, at), line.slice(at + 1));
+  }
+
+  return values;
+}
+
+/**
+ * Confirm the running containers carry the configuration on disk.
+ *
+ * **Everything else in this script can be right while this is wrong.** On
+ * 25 August 2026 two variables were correct in `staging.env`, correct in the
+ * compose file, and correctly resolved by `docker compose config` — and empty
+ * inside the running API, because the containers had been created before the
+ * file was edited. Health checks passed, readiness passed, the image tag was
+ * right, and the feature was silently switched off. `docker exec printenv` was
+ * the only thing that could tell, which is a poor place for a control to live.
+ *
+ * Compared only for keys the compose file passes through by name, and only when
+ * the container carries the key at all — a variable meant for another service is
+ * not a mismatch, it is the design.
+ */
+function verifyContainerEnvironment(env) {
+  const expected = envFileValuesIn(readFileSync(envFilePath(env), 'utf8'));
+  const passThrough = passThroughKeysIn(readFileSync(COMPOSE_FILE, 'utf8'));
+  const drift = [];
+
+  for (const service of ['api', 'web', 'worker']) {
+    const actual = containerEnvironment(env, service);
+    if (actual === null) continue;
+
+    for (const [key, value] of expected) {
+      if (!passThrough.has(key)) continue;
+      if (!actual.has(key)) continue;
+      if (actual.get(key) === value) continue;
+
+      // The value is never printed. Several of these are secrets, and a deploy
+      // log is not where they belong — the name and the shape are enough to act.
+      drift.push(
+        `  ${service}: ${key} is ${actual.get(key) === '' ? 'empty' : 'different'} ` +
+          `in the running container but set in ${env}.env`,
+      );
+    }
+  }
+
+  return drift;
+}
+
 function runningImage(env, service) {
   const result = run('docker', [
     'inspect',
@@ -541,6 +598,19 @@ async function applyRelease(env, plan, timeoutSeconds, revertOnFailure) {
       plan.action === 'rollback'
         ? nextStateAfterRollback(readState(env))
         : nextStateAfterDeploy(readState(env), plan.target);
+
+    // Before anything is recorded as a success. A release whose containers do
+    // not carry the configuration on disk has not deployed what it claims to.
+    const drift = verifyContainerEnvironment(env);
+    if (drift.length > 0) {
+      say('');
+      say('FAILED: the running containers do not match the environment file.');
+      for (const line of drift) say(line);
+      say('');
+      say('  Nothing was reverted — the containers are healthy, they are just');
+      say('  running stale configuration. Re-run this deploy to recreate them.');
+      return 1;
+    }
 
     writeState(env, next);
     recordTagInEnvFile(env, plan.target);

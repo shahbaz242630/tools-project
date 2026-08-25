@@ -154,6 +154,76 @@ describe('the deployment compose file', () => {
     ).toBe(true);
   });
 
+  /**
+   * Variables the compose file may hand over as an **empty string**.
+   *
+   * `${VAR:-}` does not mean "leave it unset". Docker Compose expands an unset
+   * variable to an empty string and still sets the key, so the process receives
+   * `VAR=''` rather than nothing at all. A schema that treats the field as
+   * optional but validates it with `min(1)` therefore **refuses to boot** in
+   * every environment that has not configured the feature — an optional thing
+   * becoming a required one, discovered at deploy time rather than here.
+   *
+   * That is not hypothetical: it is what `CLOUDFLARE_ACCESS_*` did on 25 August
+   * 2026, and the API stayed up only because the schema had been taught the
+   * difference an hour earlier.
+   *
+   * Every variable written this way must therefore be listed with a note saying
+   * its schema reads an empty value as absent. The list is not the control — the
+   * schema is — but it is what makes the next person go and check.
+   */
+  const EMPTY_MEANS_ABSENT = {
+    CLOUDFLARE_ACCESS_TEAM_DOMAIN:
+      'absentWhenEmpty() in identity-env.ts maps an empty string to undefined, so an ' +
+      'environment with no Cloudflare Access simply installs no prover',
+    CLOUDFLARE_ACCESS_AUD:
+      'absentWhenEmpty() in identity-env.ts maps an empty string to undefined; the ' +
+      'both-or-neither rule then treats the pair as wholly absent',
+  };
+
+  it('accounts for every variable that can arrive as an empty string', () => {
+    const text = readFileSync(COMPOSE, 'utf8');
+    const bare = new Set();
+
+    for (const line of text.split(/\r?\n/)) {
+      // `NAME: ${NAME:-}` with nothing after the dash. A default value is fine —
+      // `${LOG_LEVEL:-info}` can never arrive empty.
+      const matched = line.match(
+        /^ {6}([A-Z][A-Z0-9_]*):\s*\$\{[A-Z][A-Z0-9_]*:-\}\s*$/,
+      );
+      if (matched) bare.add(matched[1]);
+    }
+
+    for (const key of bare) {
+      expect(
+        typeof EMPTY_MEANS_ABSENT[key] === 'string' &&
+          EMPTY_MEANS_ABSENT[key].length > 40,
+        `${key} is written as \${${key}:-} in docker-compose.app.yml, so a deployed ` +
+          `process receives it as an EMPTY STRING when it is not configured — not as ` +
+          `absent. Make its schema read an empty value as absent (see absentWhenEmpty ` +
+          `in identity-env.ts), then record here how it does so. Otherwise every ` +
+          `environment without this feature refuses to boot.`,
+      ).toBe(true);
+    }
+  });
+
+  it('leaves no note behind for a variable that is no longer optional', () => {
+    // Same rule as NOT_DEPLOYED below, for the same reason: a note about a
+    // variable that has since become required reads as a decision about
+    // something that is no longer true.
+    //
+    // **It is also what stops the check above going vacuous.** If the compose
+    // file's indentation changes and the matcher stops finding anything, that
+    // check passes by examining nothing — but this one fails, because every
+    // note it holds then describes a line it can no longer find.
+    const text = readFileSync(COMPOSE, 'utf8');
+    const stale = Object.keys(EMPTY_MEANS_ABSENT).filter(
+      (key) => !text.includes(`      ${key}: \${${key}:-}`),
+    );
+
+    expect(stale).toEqual([]);
+  });
+
   it('excuses nothing that no schema declares', () => {
     /*
      * The other direction, and it is what stops this list becoming a graveyard.
