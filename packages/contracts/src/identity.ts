@@ -11,6 +11,24 @@
 import { z } from 'zod';
 import { parseWith } from './parse.js';
 
+/**
+ * Where a Cloudflare Access assertion reaches the API (slice H8b).
+ *
+ * Cloudflare sets `Cf-Access-Jwt-Assertion` on every request it admits, and it
+ * arrives at the **web** app, because only `web` is on the edge network. The web
+ * app forwards it inward under the same name, exactly as it forwards the client
+ * address under `CLIENT_IP_HEADER` — see ADR 0017 for why that trust is
+ * acceptable: the API is unreachable from the internet, so only the web app can
+ * set it.
+ *
+ * **The header being present proves nothing, and the API does not treat it as
+ * proof.** It is a signed JWT that is verified against Cloudflare's rotating
+ * public keys, its issuer and its audience before it means anything at all. The
+ * header is where the assertion is found; the signature is what makes it
+ * evidence. Anything a request can carry, a request can forge.
+ */
+export const ACCESS_ASSERTION_HEADER = 'cf-access-jwt-assertion';
+
 /** Where the API serves this. Callers should not spell the path themselves. */
 export const ME_PATH = '/me';
 

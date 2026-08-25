@@ -113,6 +113,24 @@ const PRISMA_WRITES = [
  */
 const PROVIDER_SDKS = [
   { specifier: '@clerk/backend', adapters: ['apps/api/src/main.ts'] },
+  /*
+   * JWT verification for Cloudflare Access assertions (slice H8b).
+   *
+   * **One file, and unlike every other entry here that is a security boundary
+   * rather than a tidiness rule.** `jose` is general-purpose: it will verify
+   * any token against any key set, including ones an attacker chooses. Confining
+   * it to the adapter keeps every decision about *which* issuer, *which*
+   * audience and *which* algorithm in the one file a reviewer has to read.
+   *
+   * Deliberately not in `main.ts` beside `@clerk/backend`. That one is there
+   * because `verifyToken` is passed *into* the adapter as a function, keeping
+   * session verification networkless; this one fetches a rotating key set, so
+   * the adapter owns the call, the timeout and the failure.
+   */
+  {
+    specifier: 'jose',
+    adapters: ['apps/api/src/identity/cloudflare-access-second-factor.ts'],
+  },
   { specifier: 'ioredis', adapters: ['apps/api/src/main.ts'] },
   /*
    * **Two files, and the split is consumer and producer.** `worker.ts` wraps
