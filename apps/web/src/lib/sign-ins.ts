@@ -20,6 +20,7 @@ import {
   parseSignInsResponse,
 } from '@platform/contracts';
 import type { SignInEntry } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const SIGN_INS_TIMEOUT_MS = 3_000;
@@ -73,6 +74,7 @@ export async function fetchSignIns(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
     });
   } catch (error) {

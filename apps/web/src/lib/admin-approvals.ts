@@ -18,6 +18,7 @@ import {
   parseAdminApprovalList,
 } from '@platform/contracts';
 import type { AdminAccount, AdminApprovalView, UserRole } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const ADMIN_APPROVALS_TIMEOUT_MS = 5_000;
@@ -145,6 +146,7 @@ async function call<T>(
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     });

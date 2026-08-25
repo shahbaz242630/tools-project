@@ -64,6 +64,68 @@ const explicitBoolean = z
   .default('false')
   .transform((value) => value === 'true');
 
+/**
+ * A Cloudflare Zero Trust team domain, which is both the JWT issuer and the
+ * host the signing keys are fetched from.
+ *
+ * **No trailing slash, checked rather than trimmed.** The adapter builds
+ * `${teamDomain}/cdn-cgi/access/certs` and compares the value against the
+ * token's `iss` claim; a trailing slash makes the first a double slash and the
+ * second a mismatch, so every admin request would fail verification with an
+ * error pointing at the token rather than at this variable. Refusing it here
+ * costs one line and names the actual problem.
+ *
+ * The `https://` prefix is required for the same reason: `iss` carries the
+ * scheme, and a bare hostname silently never matches.
+ */
+/**
+ * Optional, where an **empty string also means absent**.
+ *
+ * `.optional()` alone is not enough, and the gap is not theoretical: the
+ * deployed compose file writes `${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-}`, and Docker
+ * Compose expands an unset variable to an *empty string* rather than omitting
+ * the key. So an environment with Access simply not configured would hand this
+ * schema `''`, fail `min(1)`, and the API would **refuse to boot** — turning an
+ * optional feature into a required one, on staging, at deploy time.
+ *
+ * Written as a preprocess rather than by loosening the validators, so the
+ * checks below still apply in full to any value somebody actually set.
+ */
+const absentWhenEmpty = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
+
+const accessTeamDomain = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => value.startsWith('https://'),
+    'must begin https:// — it is compared against the token issuer, which carries the scheme',
+  )
+  .refine(
+    (value) => !value.endsWith('/'),
+    'must not end with a slash — the certs path is appended to it',
+  );
+
+/**
+ * The Application Audience tag of the Access application guarding `/admin`.
+ *
+ * **This is what makes the assertion ours.** Cloudflare signs every
+ * application's tokens with the same account keys, so signature alone proves
+ * only that some Access application admitted somebody — the audience is what
+ * says it was *this* one. Without it, an assertion minted for any other
+ * application in the account would verify here.
+ *
+ * A 64-character hex string. Checked in shape rather than merely non-empty,
+ * because pasting the application *name* or its UUID instead is an easy
+ * mistake and both would fail as an opaque verification error on every request.
+ */
+const accessAudience = z
+  .string()
+  .regex(
+    /^[0-9a-f]{64}$/,
+    'must be the 64-character hex Application Audience (AUD) tag',
+  );
+
 const shape = z.object({
   /**
    * Read here as well as in `loadEnv`, and that is not duplication of a source
@@ -123,6 +185,22 @@ const shape = z.object({
    * one somebody eventually believes is working.
    */
   DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA: explicitBoolean,
+
+  /**
+   * Cloudflare Access as a second-factor provider (ADR 0053, slice H8b).
+   *
+   * **Both optional, and both-or-neither.** Absent means the Access adapter is
+   * not installed at all, which is correct for local development — Access
+   * protects a public hostname and cannot see `localhost`. Present means the
+   * chain gains a prover that verifies `Cf-Access-Jwt-Assertion` against
+   * Cloudflare's rotating keys.
+   *
+   * Half-configured is refused rather than tolerated: a team domain with no
+   * audience would verify tokens minted for *any* application in the account,
+   * which is a weaker check that looks like a working one.
+   */
+  CLOUDFLARE_ACCESS_TEAM_DOMAIN: absentWhenEmpty(accessTeamDomain),
+  CLOUDFLARE_ACCESS_AUD: absentWhenEmpty(accessAudience),
 });
 
 /**
@@ -136,6 +214,20 @@ const shape = z.object({
 export const IDENTITY_ENV_KEYS: readonly string[] = Object.keys(shape.shape);
 
 const schema = shape.superRefine((env, ctx) => {
+  // Both-or-neither. One without the other is a misconfiguration that would
+  // otherwise present as "the second factor silently never works" (no domain)
+  // or "any Access application in the account satisfies it" (no audience).
+  const domain = env.CLOUDFLARE_ACCESS_TEAM_DOMAIN !== undefined;
+  const audience = env.CLOUDFLARE_ACCESS_AUD !== undefined;
+  if (domain !== audience) {
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        'CLOUDFLARE_ACCESS_TEAM_DOMAIN and CLOUDFLARE_ACCESS_AUD must be set together — one without the other is a second factor that either never works or accepts any application in the account',
+      path: [domain ? 'CLOUDFLARE_ACCESS_AUD' : 'CLOUDFLARE_ACCESS_TEAM_DOMAIN'],
+    });
+  }
+
   if (!env.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA) return;
   if (env.NODE_ENV !== 'production') return;
 

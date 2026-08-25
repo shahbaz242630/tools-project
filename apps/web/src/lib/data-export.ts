@@ -18,6 +18,7 @@ import {
   ME_EXPORT_PATH,
   parseDataExport,
 } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 /** Longer than a read: this assembles several tables and decrypts an address. */
@@ -78,6 +79,7 @@ export async function fetchDataExport(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
     });
   } catch (error) {

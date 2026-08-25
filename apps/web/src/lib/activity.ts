@@ -15,6 +15,7 @@ import {
   parseActivityResponse,
 } from '@platform/contracts';
 import type { ActivityEntry } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const ACTIVITY_TIMEOUT_MS = 3_000;
@@ -76,6 +77,7 @@ export async function fetchActivity(
         [AUTHORIZATION_HEADER]: `Bearer ${token}`,
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
     });
   } catch (error) {

@@ -15,6 +15,7 @@ import {
   ME_DELETION_PATH,
   parseDeletionResponse,
 } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const DELETION_TIMEOUT_MS = 5_000;
@@ -85,6 +86,7 @@ export async function requestDeletion(
         // Worth more here than anywhere else: this is the one request whose
         // effects cannot be replayed, so the trace is the only account of it.
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
     });
   } catch (error) {

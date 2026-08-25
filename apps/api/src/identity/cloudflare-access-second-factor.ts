@@ -25,6 +25,7 @@
  * and BRD §5 requires an explicit timeout and error strategy for that.
  */
 
+import { Time } from '@platform/core';
 import { ACCESS_ASSERTION_HEADER } from '@platform/contracts';
 import type { Logger } from '@platform/observability';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -57,6 +58,15 @@ export interface CloudflareAccessSecondFactorOptions {
   readonly logger: Logger;
   /** Injected only so a test can verify without reaching Cloudflare. */
   readonly verify?: AccessTokenVerifier;
+  /**
+   * The clock, injected the way `AvailabilityService` injects it.
+   *
+   * `Time.nowUtc` rather than a bare `Date`, which this project's lint rule
+   * refuses outright so that timezone handling stays explicit — and taking it
+   * as a parameter means a test states the instant it is reasoning about
+   * instead of reaching for fake timers.
+   */
+  readonly now?: () => Date;
 }
 
 /**
@@ -77,10 +87,12 @@ export class CloudflareAccessSecondFactor implements AdminSecondFactor {
 
   private readonly logger: Logger;
   private readonly verify: AccessTokenVerifier;
+  private readonly now: () => Date;
 
   constructor(options: CloudflareAccessSecondFactorOptions) {
     this.logger = options.logger;
     this.verify = options.verify ?? defaultVerifier(options);
+    this.now = options.now ?? Time.nowUtc;
   }
 
   async ageMinutes(evidence: SecondFactorEvidence): Promise<number | null> {
@@ -115,7 +127,7 @@ export class CloudflareAccessSecondFactor implements AdminSecondFactor {
       return null;
     }
 
-    return ageInMinutes(claims['iat'], this.logger);
+    return ageInMinutes(claims['iat'], this.now(), this.logger);
   }
 }
 
@@ -159,13 +171,13 @@ function isHumanIdentity(claims: Record<string, unknown>): boolean {
  * answer to a clock that disagrees with ours, and it is the answer that reads
  * correctly in a log.
  */
-function ageInMinutes(iat: unknown, logger: Logger): number | null {
+function ageInMinutes(iat: unknown, now: Date, logger: Logger): number | null {
   if (typeof iat !== 'number' || !Number.isFinite(iat)) {
     logger.warn('a Cloudflare Access assertion carried no usable issued-at claim');
     return null;
   }
 
-  const seconds = Math.floor(Date.now() / 1000) - iat;
+  const seconds = Math.floor(now.getTime() / 1000) - iat;
   if (seconds < 0) {
     logger.warn('a Cloudflare Access assertion was issued in the future', { seconds });
     return null;
