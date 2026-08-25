@@ -10,16 +10,29 @@ describe('Landing', () => {
     );
   });
 
-  it('says booking is not open yet, above the fold', () => {
+  it('says paying is not open yet, above the fold', () => {
     /*
-     * Booking is Phase 4 and payments are Phase 5, so every verb in the
-     * how-it-works section describes the product rather than something a visitor
-     * can do. Without this line the page is a shopfront for a shop that cannot
-     * sell anything — the same disclosure `public-listing.tsx` has carried since
-     * slice 2.10, in the same words.
+     * Payments are Phase 5, so the page must say that money does not move here
+     * yet. Without the line it is a shopfront for a shop that cannot take
+     * payment.
+     *
+     * **It used to assert `/Booking is not open yet/`, and that is the whole
+     * point of this comment.** The sentence was true when written and stopped
+     * being true when Phase 4 closed on 19 August 2026 — booking requests work,
+     * acceptance works, expiry works. This test went on pinning it for six days,
+     * green the entire time, which is a test whose name reads as proof of a
+     * disclosure and whose body was pinning a falsehood. The suite could not
+     * tell; somebody reading the page could.
      */
     render(<Landing />);
-    expect(screen.getByText(/Booking is not open yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Paying is not open yet/)).toBeInTheDocument();
+  });
+
+  it('does not tell a visitor that booking is shut, because it is not', () => {
+    // The specific regression. Phase 4 shipped requests, acceptance and expiry;
+    // a visitor told otherwise will not try the most valuable thing they can do.
+    render(<Landing />);
+    expect(document.body.textContent).not.toContain('Booking is not open yet');
   });
 
   it('offers the one thing a visitor can actually do', () => {

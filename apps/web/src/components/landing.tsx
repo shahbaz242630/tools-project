@@ -44,9 +44,10 @@ import styles from './landing.module.css';
  * that contradicts the disclosure on the page you book from is the wrong half to
  * keep. §8.15 is emphatic that substance beats labels.
  *
- * The page therefore also says booking is not open, in the same words the public
- * listing page uses. Without it this is a shopfront for a shop that cannot sell
- * you anything.
+ * The page therefore also says **paying** is not open. Without it this is a
+ * shopfront for a shop that cannot take payment. It said *booking* was not open
+ * until 25 August 2026, six days after Phase 4 closed and made that false — see
+ * the notice itself for the account.
  */
 export function Landing() {
   return (
@@ -62,28 +63,46 @@ export function Landing() {
         </p>
 
         {/*
-          **The honest state of the platform, above the fold.** The public
-          listing page has said this since slice 2.10 and the front page cannot
-          say less: booking is Phase 4 and payments are Phase 5, so every verb in
-          the section below is a description of the product rather than something
-          a visitor can do today.
+          **The honest state of the platform, above the fold** — and it went
+          stale for six days, which is the reason this comment is longer than
+          the sentence it explains.
 
-          The one thing they *can* do is list an item, which is also what the
-          platform needs most — BRD §17 names low inventory density as the
-          dominant failure mode of local marketplaces, and supply has to exist
-          before demand has anywhere to go.
+          It read *"Booking is not open yet … renting opens when it is ready"*
+          from slice 3.1e until 25 August 2026. That was true when it was
+          written: booking was Phase 4 and unbuilt. **Phase 4 closed on 19
+          August**, and nobody came back here — so the front page went on telling
+          people not to try the single most valuable thing they could do, while
+          `landing.test.tsx` pinned the wrong sentence and every check stayed
+          green. Found by reading the page before sending a beta link, which is
+          `LESSONS.md`'s standing lesson arriving exactly on schedule.
+
+          **What is true now:** a renter can pick dates, read a firm inclusive
+          total and ask an owner for the item; the owner can accept or decline;
+          an unanswered request expires on its own. What does not work is
+          **paying** — `booking.payment` is off until 5.2e, so an accepted
+          booking rests in `ACCEPTED` and goes no further.
+
+          So the notice names *payment*, not booking. Say the narrowest true
+          thing: a visitor who is told the wrong door is shut does not try the
+          one that is open.
+
+          Listing is still called out first, because it is what the platform
+          needs most — BRD §17 names low inventory density as the dominant
+          failure mode of local marketplaces, and supply has to exist before
+          demand has anywhere to go.
         */}
         <p className={styles.notice}>
-          <strong>Booking is not open yet.</strong> The marketplace is still being
-          built. You can list an item today, and renting opens when it is ready.
+          <strong>Paying is not open yet.</strong> You can list an item, find one near
+          you and ask its owner for it — and an owner can accept or decline. Money does
+          not change hands here yet, so agree that between yourselves for now.
         </p>
 
         {/*
           **The ask, and it sits below the notice on purpose** (slice 3.1e).
-          Search works today — it finds real listings — but booking does not, and
-          inviting somebody to search before saying so would put the good news
-          above the honest news. Same instinct as D3's decision to keep the
-          notice above the fold at all.
+          Search works, and so does asking an owner for an item — but paying does
+          not, and inviting somebody to search before saying so would put the
+          good news above the honest news. Same instinct as D3's decision to keep
+          the notice above the fold at all.
 
           It is the search page's own form rather than a copy, so the field
           names, the five radii and the placeholder cannot drift from what the
