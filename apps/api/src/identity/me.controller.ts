@@ -19,13 +19,17 @@ import type { MirroredUser } from './user-directory.js';
 @UseGuards(AuthGuard)
 export class MeController {
   /**
-   * The same value the guard was given, reported rather than re-derived.
+   * Whether the chain the guard asks contains a prover that admits without a
+   * real second factor.
    *
-   * Injecting the token means the banner the web app renders and the check the
-   * guard performs are the *same* boolean. Reading the environment again here
-   * would be a second source that can disagree — and it would disagree exactly
-   * when it matters, because the two would then be answering different
-   * questions: what is configured, and what is being enforced.
+   * **Derived from that chain, not from the environment.** Until slice H8a this
+   * was literally the same boolean the guard was handed; the guard now takes
+   * the chain instead (ADR 0053), and `app.module.ts` computes this from
+   * `chain.bypassesSecondFactor`. The property that matters is unchanged and is
+   * the reason for both shapes: reading the environment again here would be a
+   * second source that can disagree, and it would disagree exactly when it
+   * matters, because the two would then be answering different questions —
+   * what is configured, and what is being enforced.
    */
   constructor(@Inject(ADMIN_MFA_BYPASS) private readonly mfaBypassed: boolean) {}
 

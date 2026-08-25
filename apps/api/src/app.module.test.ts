@@ -16,8 +16,14 @@ import { createFeatureFlagFakes } from './feature-flags/testing/fakes.js';
 import { bookingModuleFakes } from './booking/testing/fakes.js';
 
 async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
-  const { sessionVerifier, service, accountData, accountAdmin, roleApprovals } =
-    createIdentityFakes();
+  const {
+    sessionVerifier,
+    service,
+    accountData,
+    accountAdmin,
+    roleApprovals,
+    secondFactor,
+  } = createIdentityFakes();
 
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -35,6 +41,7 @@ async function resolveTimeout(readinessTimeoutMs?: number): Promise<number> {
           accountData,
           accountAdmin,
           roleApprovals,
+          secondFactor,
         },
         profiles: createProfileFakes().service,
         audit: createAuditFakes().service,

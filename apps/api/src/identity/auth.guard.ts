@@ -7,8 +7,10 @@ import type { Logger } from '@platform/observability';
 import { AccountDeletedError } from './identity-errors.js';
 import { validIpOrNull } from './ip-address.js';
 import type { IdentityService } from './identity.service.js';
+import type { SecondFactorEvidence } from './admin-second-factor.js';
+import type { SecondFactorChain } from './second-factor-chain.js';
 import { SessionVerificationError } from './session-verifier.js';
-import type { SessionVerifier, VerifiedSession } from './session-verifier.js';
+import type { SessionVerifier } from './session-verifier.js';
 import type { MirroredUser, UserRole } from './user-directory.js';
 
 export const SESSION_VERIFIER = Symbol('SESSION_VERIFIER');
@@ -25,28 +27,28 @@ export const IDENTITY_SERVICE = Symbol('IDENTITY_SERVICE');
 export const AUTH_LOGGER = Symbol('AUTH_LOGGER');
 
 /**
- * Whether to admit an administrator with no verified second factor.
+ * Whether any installed prover admits an administrator with no second factor.
  *
- * **A development escape hatch — see `DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA` in
- * `@platform/config`, which refuses to load it in production at all.** It is an
- * injected value rather than a module-level read of the environment so that both
- * states are reachable from a test, and so this file states no opinion about
- * where it is running.
+ * **Reported by `/me` so the admin layout can carry ADR 0030's banner, and read
+ * by nothing else.** It is no longer a flag the guard consults: from slice H8a
+ * the guard has no bypass branch at all and asks {@link ADMIN_SECOND_FACTOR}
+ * instead. `app.module.ts` derives this boolean *from the chain*, so what a
+ * page says and what the guard enforces cannot disagree — which is the property
+ * ADR 0030 was protecting when it refused to let the web app hold a flag of its
+ * own.
  */
 export const ADMIN_MFA_BYPASS = Symbol('ADMIN_MFA_BYPASS');
 
+/**
+ * The chain of things that can prove an administrator's second factor.
+ *
+ * See `admin-second-factor.ts` for the port and `second-factor-chain.ts` for the
+ * order it asks in, which is load-bearing.
+ */
+export const ADMIN_SECOND_FACTOR = Symbol('ADMIN_SECOND_FACTOR');
+
 const REQUIRED_ROLES = Symbol('REQUIRED_ROLES');
 const ALLOWS_SUSPENDED = Symbol('ALLOWS_SUSPENDED');
-
-/**
- * How recently an administrator's second factor must have been verified.
- *
- * An engineering bound on how long a privileged session stays privileged, not a
- * business rule — BRD §8.13 asks for step-up authentication on high-risk
- * actions without naming a number. Twelve hours keeps a support shift working
- * without leaving a forgotten browser tab administratively capable overnight.
- */
-export const MAX_SECOND_FACTOR_AGE_MINUTES = 12 * 60;
 
 /**
  * Restrict a route to the listed roles.
@@ -83,9 +85,6 @@ export interface AuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
   user?: MirroredUser;
   sessionId?: string;
-
-  /** Minutes since the second factor was verified, or null if it never was. */
-  secondFactorAgeMinutes?: number | null;
 
   /**
    * The client's address as the web app reported it, or null.
@@ -160,7 +159,7 @@ export class AuthGuard implements CanActivate {
     @Inject(SESSION_VERIFIER) private readonly verifier: SessionVerifier,
     @Inject(IDENTITY_SERVICE) private readonly identity: IdentityService,
     @Inject(AUTH_LOGGER) private readonly logger: Logger,
-    @Inject(ADMIN_MFA_BYPASS) private readonly mfaBypassed: boolean,
+    @Inject(ADMIN_SECOND_FACTOR) private readonly secondFactor: SecondFactorChain,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -181,9 +180,18 @@ export class AuthGuard implements CanActivate {
     request.user = user;
     request.sessionId = session.sessionId;
     request.clientIp = clientIp;
-    request.secondFactorAgeMinutes = session.secondFactorAgeMinutes;
+    // `secondFactorAgeMinutes` was attached here until slice H8a and is not
+    // any more. It meant "what Clerk said", which stopped being the same thing
+    // as "whether a second factor was proven" the moment a second prover
+    // existed — an admitted request can now carry a null Clerk age. Nothing
+    // read it, so it went rather than acquiring a caveat nobody would reread.
 
-    this.authorise(context, user, session);
+    // The headers travel with the session because one prover reads an assertion
+    // out of them (Cloudflare Access, slice H8b) while another reads the
+    // session. Assembled here rather than inside the guard's private methods so
+    // there is one place a reviewer can see everything a second factor may rest
+    // on.
+    await this.authorise(context, user, { session, headers: request.headers });
 
     return true;
   }
@@ -217,11 +225,11 @@ export class AuthGuard implements CanActivate {
     }
   }
 
-  private authorise(
+  private async authorise(
     context: ExecutionContext,
     user: MirroredUser,
-    session: VerifiedSession,
-  ): void {
+    evidence: SecondFactorEvidence,
+  ): Promise<void> {
     this.refuseIfSuspended(context, user);
 
     const required = this.reflector.getAllAndOverride<readonly UserRole[] | undefined>(
@@ -249,7 +257,7 @@ export class AuthGuard implements CanActivate {
     // without it by forgetting something — the same reasoning that makes an
     // absent `@Roles` mean "authenticated" rather than "anyone".
     if (required.includes('ADMIN')) {
-      this.requireSecondFactor(user, session);
+      await this.requireSecondFactor(user, evidence);
     }
   }
 
@@ -285,41 +293,40 @@ export class AuthGuard implements CanActivate {
   }
 
   /**
-   * Refuse unless the session proves a recent second factor.
+   * Refuse unless something proves a recent second factor.
    *
-   * **Null fails.** It means the token carried no factor-verification claim,
-   * which happens when the Clerk instance was not provisioned with one — and
-   * the only safe reading of "we cannot tell" is "not verified". Treating it as
-   * satisfied would turn a missing piece of instance configuration into an open
-   * admin surface, silently, on a correctly-signed token (ADR 0021).
+   * **There is no bypass in here, and that is the point of slice H8a.** The
+   * guard asks the chain and refuses when the answer is null; whether an
+   * exception is installed is a fact about how `main.ts` composed the chain,
+   * not a branch in the one method that must never be able to say "no
+   * credential needed". `DevelopmentSecondFactor` is the exception now, it is
+   * asked last, and it cannot be constructed in production at all.
+   *
+   * **Null still fails, for the same reason it always did.** No prover could
+   * tell — an absent claim, an absent assertion, a provider that did not
+   * answer — and the only safe reading of "we cannot tell" is "not verified".
+   * Treating it as satisfied would turn a missing piece of provider
+   * configuration into an open admin surface, silently, on a correctly-signed
+   * token (ADR 0021).
    */
-  private requireSecondFactor(user: MirroredUser, session: VerifiedSession): void {
-    const age = session.secondFactorAgeMinutes;
+  private async requireSecondFactor(
+    user: MirroredUser,
+    evidence: SecondFactorEvidence,
+  ): Promise<void> {
+    const decision = await this.secondFactor.prove(evidence);
 
-    if (age === null || age > MAX_SECOND_FACTOR_AGE_MINUTES) {
-      // **The bypass is checked here, after the real check has already failed,
-      // and never before it.** Written this way round on purpose: a bypass
-      // consulted first would short-circuit the rule, and the day the flag is
-      // wrongly true nothing would ever have evaluated the thing it replaces.
-      // Here the ordinary path still runs, still logs, and the flag only
-      // changes what happens next.
-      if (this.mfaBypassed) {
-        this.logger.warn('admitted an admin request with no verified second factor', {
-          userId: user.id,
-          secondFactorAgeMinutes: age,
-          // Named in the log line so a search for the variable finds the
-          // requests it actually admitted, not just the startup banner.
-          reason: 'DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA',
-        });
-        return;
-      }
-
+    if (decision.proof === null) {
       this.logger.warn('rejected admin request without a recent second factor', {
         userId: user.id,
-        // The age, not the reason for the decision — an administrator debugging
-        // their own lockout needs to see whether the claim was absent or stale.
-        secondFactorAgeMinutes: age,
-        maximumMinutes: MAX_SECOND_FACTOR_AGE_MINUTES,
+        // Every prover that answered, with its age — not the reason for the
+        // decision. An administrator debugging their own lockout needs to see
+        // whether a claim was *absent* or merely *stale*, and which provider
+        // said so; a bare 403 sends them looking at the wrong thing.
+        attempts: decision.attempts,
+        // The chain's own bound, not the module constant. They are the same
+        // today; a line that says otherwise the first time one is overridden
+        // is a false sentence waiting to be written.
+        maximumMinutes: this.secondFactor.maximumAge,
       });
       throw new ForbiddenException();
     }

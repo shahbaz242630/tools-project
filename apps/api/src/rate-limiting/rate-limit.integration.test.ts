@@ -80,6 +80,7 @@ async function boot(rateLimiter: FakeRateLimiter | typeof allowAllRateLimiter) {
           accountData: identity.accountData,
           accountAdmin: identity.accountAdmin,
           roleApprovals: identity.roleApprovals,
+          secondFactor: identity.secondFactor,
         },
         profiles: createProfileFakes(audit).service,
         audit: audit.service,

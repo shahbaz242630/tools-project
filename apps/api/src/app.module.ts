@@ -22,11 +22,13 @@ import { resolvePolicies } from './rate-limiting/policy.js';
 import type { RateLimitTier, RateLimiter } from './rate-limiting/rate-limiter.js';
 import {
   ADMIN_MFA_BYPASS,
+  ADMIN_SECOND_FACTOR,
   AUTH_LOGGER,
   AuthGuard,
   IDENTITY_SERVICE,
   SESSION_VERIFIER,
 } from './identity/auth.guard.js';
+import type { SecondFactorChain } from './identity/second-factor-chain.js';
 import { AUDIT_SERVICE } from './audit/audit.tokens.js';
 import { AdminActivityController } from './audit/admin-activity.controller.js';
 import { MeActivityController } from './audit/me-activity.controller.js';
@@ -156,17 +158,19 @@ export interface AppModuleOptions {
     readonly roleApprovals: RoleApprovalService;
 
     /**
-     * Admit an administrator with no verified second factor (ADR 0030).
+     * What may prove an administrator's second factor (ADR 0021, ADR 0053).
      *
-     * **Optional here, and defaulting to `false`, which is the one place in this
-     * options object where an optional field is the right shape.** Slice 2.1's
-     * rule — an optional dependency is one that ten boot sites forget — is about
-     * dependencies whose absence breaks something. This one's absence is the
-     * safe state, and the failure mode of forgetting it is that MFA is
-     * *enforced*. `main.ts` passes it from an environment variable that
-     * `loadIdentityEnv` refuses to accept in production at all.
+     * **Required, unlike the `mfaBypassed` boolean it replaced in slice H8a.**
+     * That field was allowed to be optional because forgetting it *enforced*
+     * MFA — the safe direction. This one is a dependency rather than a
+     * setting, and forgetting it would leave the guard with nothing to ask, so
+     * slice 2.1's ordinary rule applies again: an optional dependency is one
+     * that ten boot sites forget.
+     *
+     * Whether an exception is installed is a property of the chain `main.ts`
+     * built, not a separate flag — see `ADMIN_MFA_BYPASS` below.
      */
-    readonly mfaBypassed?: boolean;
+    readonly secondFactor: SecondFactorChain;
   };
 
   /**
@@ -389,11 +393,14 @@ export class AppModule implements NestModule {
         { provide: ACCOUNT_ADMIN_SERVICE, useValue: options.identity.accountAdmin },
         { provide: ROLE_APPROVAL_SERVICE, useValue: options.identity.roleApprovals },
         { provide: AUTH_LOGGER, useValue: options.logger },
+        { provide: ADMIN_SECOND_FACTOR, useValue: options.identity.secondFactor },
         {
           provide: ADMIN_MFA_BYPASS,
-          // `?? false` rather than the option being required: forgetting it
-          // enforces MFA, which is the direction a mistake should fail in.
-          useValue: options.identity.mfaBypassed ?? false,
+          // Derived from the chain rather than read from the environment a
+          // second time. `/me` reports this so the admin layout can raise ADR
+          // 0030's banner, and two sources answering "what is configured" and
+          // "what is enforced" would disagree exactly when it matters.
+          useValue: options.identity.secondFactor.bypassesSecondFactor,
         },
 
         { provide: PROFILES_SERVICE, useValue: options.profiles },
