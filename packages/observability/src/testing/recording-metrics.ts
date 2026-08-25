@@ -3,6 +3,7 @@ import type {
   GeocodeSample,
   HttpRequestSample,
   ListingSearchSample,
+  MediaRefusalSample,
   Metrics,
   QueueJobSample,
   RateLimitSample,
@@ -23,6 +24,7 @@ export interface RecordingMetrics {
   readonly queueJobs: QueueJobSample[];
   readonly listingSearches: ListingSearchSample[];
   readonly rateLimits: RateLimitSample[];
+  readonly mediaRefusals: MediaRefusalSample[];
   readonly geocodes: GeocodeSample[];
 }
 
@@ -53,6 +55,7 @@ export function createRecordingMetrics(): RecordingMetrics {
   const queueJobs: QueueJobSample[] = [];
   const listingSearches: ListingSearchSample[] = [];
   const rateLimits: RateLimitSample[] = [];
+  const mediaRefusals: MediaRefusalSample[] = [];
   const geocodes: GeocodeSample[] = [];
 
   return {
@@ -62,6 +65,7 @@ export function createRecordingMetrics(): RecordingMetrics {
       recordQueueJob: (sample) => queueJobs.push(sample),
       recordListingSearch: (sample) => listingSearches.push(sample),
       recordRateLimit: (sample) => rateLimits.push(sample),
+      recordMediaRefusal: (sample) => mediaRefusals.push(sample),
       recordGeocode: (sample) => geocodes.push(sample),
       render: () => Promise.resolve(''),
       contentType: PROMETHEUS_CONTENT_TYPE,
@@ -71,6 +75,7 @@ export function createRecordingMetrics(): RecordingMetrics {
     queueJobs,
     listingSearches,
     rateLimits,
+    mediaRefusals,
     geocodes,
   };
 }

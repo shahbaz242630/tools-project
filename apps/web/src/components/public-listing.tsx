@@ -57,19 +57,29 @@ export function PublicListingView({
   return (
     <div className={styles.layout}>
       {/*
-          **The normal state, not an edge case.** Photographs are slice 2.6 and
-          blocked on the domain, so every listing looks like this today. The
-          handoff designs it rather than leaving a gap: the item's initial on a
-          tinted block, and a caption that says whose omission it is.
+          **The empty state is still a designed state, not a fallback** (slice
+          2.6c). Photographs now exist and most listings will not have one for a
+          long time, so this branch is the common case rather than the edge: the
+          item's initial on a tinted block, and a caption that says whose
+          omission it is. The comment here used to say media was "blocked on the
+          domain", which stopped being true on 24 August.
+
+          **The projection decides what may be shown and this component does
+          not** — `listing.media` is already filtered to `APPROVED` and signed by
+          the API, which is the same sentence the rest of this file carries.
         */}
-      <div className={styles.media}>
-        <span className={styles.photoInitial} aria-hidden="true">
-          {listing.title.trim().charAt(0).toUpperCase()}
-        </span>
-        <span className={styles.photoCaption}>
-          No photo yet — the owner hasn&rsquo;t added one
-        </span>
-      </div>
+      {listing.media.length === 0 ? (
+        <div className={`${styles.media} ${styles.noPhoto}`}>
+          <span className={styles.photoInitial} aria-hidden="true">
+            {listing.title.trim().charAt(0).toUpperCase()}
+          </span>
+          <span className={styles.photoCaption}>
+            No photo yet — the owner hasn&rsquo;t added one
+          </span>
+        </div>
+      ) : (
+        <Gallery listing={listing} />
+      )}
 
       <header className={styles.header}>
         <h1 className={styles.title}>{listing.title}</h1>
@@ -271,6 +281,64 @@ export function PublicListingView({
           <Link href="/">Home</Link>
         </p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The item's photographs, as a stranger sees them (slice 2.6c).
+ *
+ * **The first is large and the rest are a strip beneath it**, which is the shape
+ * every marketplace uses because it answers the two questions in order: what is
+ * it, and what else is there to see. The owner's order is the array's order —
+ * there is no `position` on the public projection to sort by, deliberately, and
+ * none is needed: the API returns a total order and this renders it.
+ *
+ * **No lightbox, no carousel, no `next/image`.** A signed URL expires in fifteen
+ * minutes and may not be cached or used as a key, which removes most of what an
+ * image component buys; and a gallery whose every photograph is already on the
+ * page needs no machinery to reach the second one. `/hire/[id]` is
+ * `force-dynamic`, which is what makes per-response signing correct.
+ *
+ * **Nothing here persists a URL.** They are rendered and forgotten.
+ */
+function Gallery({ listing }: { readonly listing: PublicListing }) {
+  const [first, ...rest] = listing.media;
+  if (first === undefined) return null;
+
+  return (
+    <div className={styles.media}>
+      <img
+        alt={`${listing.title}, photographed by its owner`}
+        className={styles.photo}
+        height={first.display.height}
+        src={first.display.url}
+        width={first.display.width}
+      />
+
+      {rest.length === 0 ? null : (
+        <ul className={styles.thumbnails}>
+          {rest.map((photograph, index) => (
+            <li key={photograph.id}>
+              <img
+                /*
+                 * **Numbered from two, because the large one above is the
+                 * first.** "Photograph 1 of 4" on the second picture is the kind
+                 * of small lie that makes a screen reader's account of a page
+                 * disagree with what is on it.
+                 */
+                alt={`${listing.title}, photograph ${String(index + 2)} of ${String(
+                  listing.media.length,
+                )}`}
+                className={styles.thumbnail}
+                height={photograph.thumbnail.height}
+                src={photograph.thumbnail.url}
+                width={photograph.thumbnail.width}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -534,3 +534,95 @@ describe('the transport limit', () => {
     expect(IMAGE_UPLOAD_BODY_LIMIT).toBeGreaterThan(MAX_INPUT_BYTES);
   });
 });
+
+/**
+ * The refusal counter (slice 2.6c, deferred from 2.6b-i).
+ *
+ * **Its whole value is telling one class of refusal from another**, and the
+ * split is not cosmetic: `storage-unavailable` climbing means R2 is refusing us
+ * and every owner uploading right now is being turned away, which — like the
+ * geocoder — is served as an ordinary refusal and is otherwise indistinguishable
+ * from a run of people choosing bad files.
+ *
+ * These assertions are on the recording fake rather than on exposition text.
+ * What the code *decided* is the property; whether `prom-client` renders it is
+ * `metrics.test.ts`'s job.
+ */
+describe('counting refusals', () => {
+  it('counts a file we would not store, by reason', async () => {
+    const listingId = await givenAListing();
+
+    await upload(listingId, Buffer.from('PK not a jpeg'));
+
+    expect(listings.media.metrics.mediaRefusals).toEqual([{ reason: 'not-an-image' }]);
+  });
+
+  it('counts an eleventh photograph as the cap rather than as a bad file', async () => {
+    const listingId = await givenAListing();
+    for (let i = 0; i < LISTING_MEDIA_LIMIT; i++) {
+      await upload(listingId, await photograph(120, 120));
+    }
+
+    await upload(listingId, await photograph(120, 120));
+
+    expect(listings.media.metrics.mediaRefusals).toEqual([
+      { reason: 'too-many-photographs' },
+    ]);
+  });
+
+  it('counts a storage outage, which is the one reason that is ours', async () => {
+    const listingId = await givenAListing();
+    listings.media.objects.willFail();
+
+    await upload(listingId, await photograph());
+
+    expect(listings.media.metrics.mediaRefusals).toEqual([
+      { reason: 'storage-unavailable' },
+    ]);
+  });
+
+  it('counts nothing when a photograph is stored', async () => {
+    // Successes are counted by the HTTP histogram. A second total here would be
+    // two numbers that can disagree about one thing.
+    const listingId = await givenAListing();
+
+    await upload(listingId, await photograph());
+
+    expect(listings.media.metrics.mediaRefusals).toEqual([]);
+  });
+
+  it('counts nothing for a listing that is not the caller’s', async () => {
+    // Not a refusal about a photograph — nobody's upload was judged, and the
+    // series would otherwise carry a probe for listing ids.
+    await givenAListing();
+
+    await upload('11111111-1111-4111-8111-111111111111', await photograph());
+
+    expect(listings.media.metrics.mediaRefusals).toEqual([]);
+  });
+
+  it('does NOT count a refused reorder, whose reason describes something else', async () => {
+    /*
+     * **The assertion this whole group exists for.** `reorder` refuses a stale
+     * order by reusing the member `not-an-image`, which describes nothing true
+     * about it. Counting it would mix a stale-tab count into a series about
+     * photographs and make `listing_media_refusals_total{reason="not-an-image"}`
+     * mean two unrelated things at once — uninterpretable rather than merely
+     * noisy, and impossible to notice from a dashboard.
+     */
+    const listingId = await givenAListing();
+    const added = parseOwnerListingMedia(
+      (await upload(listingId, await photograph())).json(),
+    );
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: listingMediaOrderPath(listingId),
+      headers: auth('alice-token'),
+      payload: { mediaIds: [added.id, '11111111-1111-4111-8111-111111111111'] },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(listings.media.metrics.mediaRefusals).toEqual([]);
+  });
+});

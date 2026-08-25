@@ -545,3 +545,77 @@ describe('metrics turned off', () => {
     expect(createNoopMetrics().contentType).toContain('text/plain');
   });
 });
+
+/**
+ * The media refusal counter (slice 2.6c, deferred from 2.6b-i).
+ *
+ * The reason it exists: five of its six reasons are the owner's problem and one
+ * — `storage-unavailable` — is ours, and the HTTP histogram cannot tell them
+ * apart because both are just a non-2xx on the same route.
+ */
+describe('recording a media refusal', () => {
+  it('counts a refusal by reason', async () => {
+    const m = metrics();
+    m.recordMediaRefusal({ reason: 'too-many-bytes' });
+
+    const text = await m.render();
+    expect(text).toContain('listing_media_refusals_total');
+    expect(text).toContain('reason="too-many-bytes"');
+  });
+
+  it('keeps each reason as its own series', async () => {
+    const m = metrics();
+    m.recordMediaRefusal({ reason: 'too-many-bytes' });
+    m.recordMediaRefusal({ reason: 'too-many-bytes' });
+    m.recordMediaRefusal({ reason: 'storage-unavailable' });
+
+    const text = await m.render();
+    expect(valueOf(text, 'listing_media_refusals_total', 'too-many-bytes')).toBe('2');
+    expect(valueOf(text, 'listing_media_refusals_total', 'storage-unavailable')).toBe(
+      '1',
+    );
+  });
+
+  it('carries no label but the reason', async () => {
+    /*
+     * **The cardinality rule, asserted rather than trusted.** A filename, a
+     * listing id or a byte size here would each mint a series per value in a
+     * store with none of §10.1's retention or erasure rules — and a filename is
+     * free text somebody chose, which can carry a name.
+     */
+    const m = metrics();
+    m.recordMediaRefusal({ reason: 'not-an-image' });
+
+    /*
+     * `labelsOf` returns label *names*, which is the assertion that matters:
+     * one label of our own, and no second one carrying anything unbounded.
+     * `service` is the registry-wide default label every metric here carries.
+     */
+    expect(labelsOf(await m.render(), 'listing_media_refusals_total')).toEqual([
+      'reason',
+      'service',
+    ]);
+  });
+
+  it('holds at six series however many refusals arrive', async () => {
+    const m = metrics();
+    const reasons = [
+      'too-many-bytes',
+      'too-many-pixels',
+      'unsupported-format',
+      'not-an-image',
+      'too-many-photographs',
+      'storage-unavailable',
+    ] as const;
+
+    for (const reason of reasons) {
+      for (let i = 0; i < 5; i++) m.recordMediaRefusal({ reason });
+    }
+
+    const lines = (await m.render())
+      .split('\n')
+      .filter((line) => line.startsWith('listing_media_refusals_total{'));
+
+    expect(lines).toHaveLength(reasons.length);
+  });
+});

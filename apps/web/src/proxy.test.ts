@@ -152,6 +152,24 @@ const CLASSIFIED: Readonly<Record<string, 'signed-in' | 'public'>> = {
   // A sign-in redirect here would stop every `user.created` reaching the
   // mirror, with nothing failing loudly.
   '/api/webhooks/clerk': 'public',
+  /*
+   * The photograph upload (slice 2.6c). **Not proxied, and "public" is the
+   * wrong word for it** — it refuses an anonymous caller in its own first ten
+   * lines and forwards the bearer token so that ownership is still decided by
+   * the API. What this table records is whether `proxy.ts` calls
+   * `auth.protect()`, and here it deliberately must not.
+   *
+   * **Because `auth.protect()` answers with a redirect to the sign-in page**,
+   * and this route is reached by `fetch` rather than by navigation. The control
+   * would follow the redirect, receive an HTML page, fail to find a message on
+   * it and tell the owner their photograph *"could not be uploaded (200)"* —
+   * a confident, specific, wrong sentence about a session that had simply
+   * expired. The route's own 401 says what actually happened and what to do.
+   *
+   * `/account/data/download` differs only by living under a protected prefix,
+   * and it makes the same check for the same reason.
+   */
+  '/api/listings/[id]/media': 'public',
   '/bookings': 'signed-in',
   /*
    * Where a renter pays (slice 5.2d). Signed-in by the `/bookings` prefix

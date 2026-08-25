@@ -170,8 +170,12 @@
 }
 
 /*
- * The no-photo block, matching the listing page's treatment — every card is in
- * this state today, because media is slice 2.6 and blocked on the domain.
+ * The no-photo block, matching the listing page's treatment.
+ *
+ * **Still the common case after slice 2.6c, which is why it stays a designed
+ * state.** Photographs exist now; most listings will not have one for a long
+ * time, so this is what a results grid mostly looks like rather than a fallback
+ * to apologise for.
  */
 .cardMedia {
   display: flex;
@@ -183,6 +187,39 @@
   font-size: 44px;
   font-weight: 600;
   line-height: 1;
+}
+
+/*
+ * The photograph, where there is one (slice 2.6c).
+ *
+ * Exactly the block above's footprint — same 4:3, same corner — so a grid of
+ * cards with photographs and cards without stays a grid rather than becoming a
+ * ragged column. `object-fit: cover` is what makes a portrait photograph occupy
+ * a landscape slot without letterboxing.
+ */
+.cardPhoto {
+  display: block;
+  width: 100%;
+  /*
+   * **`height: auto` is load-bearing and its absence is invisible to every
+   * test we have** (found by looking at the page, slice 2.6c).
+   *
+   * The element carries `width="400" height="300"` so the browser can reserve
+   * the space before the bytes arrive. Those attributes are *presentational
+   * hints*: they set `width` and `height` in CSS, and `width: 100%` above
+   * overrides only the first. Without this line the card renders 263 × **300**
+   * — its own intrinsic height, ignoring `aspect-ratio` entirely — so a
+   * photographed card stands about 100px taller than one without and the
+   * results grid goes ragged.
+   *
+   * A component test asserts `height="300"` is on the element and passes either
+   * way, because jsdom computes no layout. `listing-photographs.module.css` and
+   * `public-listing.module.css` both carry the same line for the same reason.
+   */
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--photo-empty);
 }
 
 .cardBody {

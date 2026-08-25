@@ -127,6 +127,25 @@ export function listingCalendarPath(id: string): string {
 }
 
 /**
+ * Where the browser posts a photograph (slice 2.6c).
+ *
+ * **This one is genuinely a route in this application** rather than a page, and
+ * it is the first entry here that is neither. It belongs in this file anyway,
+ * for the reason the module docblock gives: `listingMediaPath` from
+ * `@platform/contracts` is `/listings/:id/media` on the **API**, this is
+ * `/api/listings/:id/media` in the **web app**, and they are one word apart. A
+ * component that wrote either by hand would compile.
+ *
+ * **Not built from `ownerListingPath`**, deliberately — unlike the edit form and
+ * the calendar, which are pages under the listing and must move with it when
+ * §8.17's slugs land in 2.12. This is a machine endpoint keyed by id, and a slug
+ * has no business in it.
+ */
+export function listingMediaUploadPath(id: string): string {
+  return `/api/listings/${encodeURIComponent(id)}/media`;
+}
+
+/**
  * A search, as a link.
  *
  * **It takes the whole search rather than a field per parameter** (slice 3.2a),

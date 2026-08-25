@@ -44,18 +44,65 @@
 
 /*
  * **The no-photo block, and it is a designed state rather than a fallback.**
- * Every listing is in it today — media is slice 2.6, blocked on the domain — so
- * this is what the page normally looks like, not an edge case. The handoff is
- * explicit: a tinted block carrying the item's initial and the words "No photo
- * yet", never a camera icon and never a grey rectangle.
+ * Most listings are in it and will be for a long time, so this is what the page
+ * usually looks like rather than an edge case. The handoff is explicit: a tinted
+ * block carrying the item's initial and the words "No photo yet", never a camera
+ * icon and never a grey rectangle.
+ *
+ * **Split out of `.media` in slice 2.6c**, which is a fix rather than tidying.
+ * `.media` was two rules — one placing the slot in the grid, one painting the
+ * empty state — so the day a photograph arrived it would have been laid out by
+ * `justify-content: center` inside a block tinted `--photo-empty` and locked to
+ * 4:3. Placement is what the slot owns; what fills it is the branch's business.
  */
-.media {
+.noPhoto {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   aspect-ratio: 4 / 3;
   border-radius: var(--radius-card);
+  background: var(--photo-empty);
+}
+
+/*
+ * The photograph itself (slice 2.6c).
+ *
+ * `aspect-ratio` with `object-fit: cover` so a portrait photograph makes the
+ * same shape as a landscape one — the slot's proportions are the page's design,
+ * not the camera's. The intrinsic `width`/`height` stay on the element: that is
+ * what reserves the space before the bytes arrive, so the page does not jump.
+ */
+.photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-card);
+  background: var(--photo-empty);
+}
+
+/*
+ * The rest, as a strip beneath. It scrolls sideways rather than wrapping — ten
+ * photographs wrapping to three rows would push the title and the price off a
+ * phone screen, and the first photograph is the one that matters.
+ */
+.thumbnails {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.thumbnail {
+  display: block;
+  width: 88px;
+  height: 66px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
   background: var(--photo-empty);
 }
 

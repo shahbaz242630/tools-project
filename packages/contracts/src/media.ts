@@ -39,6 +39,61 @@ import { parseWith } from './parse.js';
  */
 export const LISTING_MEDIA_LIMIT = 10;
 
+/**
+ * The largest file the API will look at, refused before a decoder sees it.
+ *
+ * **Moved here from `prepare-image.ts` in slice 2.6c, because two sides need
+ * it.** The API refuses above this and always will — that is the control. The
+ * browser needs the same number to say so *before* spending a minute uploading
+ * something that was never going to be accepted, and to write the sentence that
+ * names the limit. A number duplicated in the page would be the one that drifts
+ * the day the cap moves, and the drift is invisible: the page would keep
+ * refusing at the old figure while the API accepted more, or promise the upload
+ * and have it refused at the far end.
+ *
+ * A 12-megapixel phone JPEG is 2–8 MB and an iPhone HEIC is 2–3 MB, so 15 MB
+ * clears any real camera with room to spare. It is the cheapest of the pipeline's
+ * limits — it costs a length check — and it is the one that stops the pipeline
+ * being a place to spend our CPU.
+ *
+ * **It is not the decompression-bomb limit.** `MAX_INPUT_PIXELS` stays in the
+ * API and stays there deliberately: a 100 KB PNG can declare 50,000 × 50,000
+ * pixels, so the pixel cap is invisible to a browser holding only a file size
+ * and cannot be pre-checked. Anything the page cannot honestly check itself is
+ * the API's alone.
+ */
+export const LISTING_MEDIA_MAX_BYTES = 15 * 1024 * 1024;
+
+/**
+ * What a file input should offer, as MIME types.
+ *
+ * **A hint, not a control**, and the distinction is the reason this is safe to
+ * keep beside the real list rather than derived from it. A browser file input's
+ * `accept` filters a picker that every platform lets you override, so the API's
+ * `ACCEPTED_INPUT_FORMATS` remains the only thing that decides. This exists so
+ * the picker shows photographs rather than every file on the machine.
+ *
+ * **`image/heic` and `image/heif` are both here for one API-side format.** They
+ * are the same container and platforms disagree about which they report; an
+ * iPhone photograph is the case that matters, and omitting either is how it
+ * silently stops appearing in the picker.
+ *
+ * `listing-media-accept.test.ts` in the API fails if this drifts from the
+ * formats actually accepted — which is what makes a hint safe to state twice.
+ */
+export const LISTING_MEDIA_ACCEPT_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+  'image/tiff',
+] as const;
+
+/** The same list as a file input's `accept` attribute. */
+export const LISTING_MEDIA_ACCEPT = LISTING_MEDIA_ACCEPT_TYPES.join(',');
+
 /** Where a photograph's bytes are served from, and how long that URL lasts. */
 export interface ListingMediaImage {
   /**

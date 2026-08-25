@@ -211,6 +211,35 @@ export interface RateLimitSample {
   readonly outcome: RateLimitOutcome;
 }
 
+/**
+ * Why a photograph was not stored (slice 2.6c, deferred from 2.6b-i).
+ *
+ * **Restated here rather than imported from `@platform/contracts`**, which this
+ * package deliberately does not depend on — observability sits underneath the
+ * API and its wire types, and a dependency the other way would make a metric
+ * definition a reason to rebuild the contract. `listing-media-refusals.test.ts`
+ * in the API fails if the two ever disagree, which is the same arrangement the
+ * file-picker hint uses.
+ *
+ * Every value is a member of the API's own closed union, and that is what makes
+ * it safe as a label: six values, fixed at compile time, none of them anything a
+ * person typed. **Nothing else about an upload may be labelled** — not the
+ * filename, not the size, not the listing, not the account. A filename is free
+ * text somebody chose and can carry a name; a listing id is unbounded and would
+ * mint a series per listing in a store with none of §10.1's erasure rules.
+ */
+export type MediaRefusalReason =
+  | 'too-many-bytes'
+  | 'too-many-pixels'
+  | 'unsupported-format'
+  | 'not-an-image'
+  | 'too-many-photographs'
+  | 'storage-unavailable';
+
+export interface MediaRefusalSample {
+  readonly reason: MediaRefusalReason;
+}
+
 export interface Metrics {
   recordHttpRequest(sample: HttpRequestSample): void;
   recordDatabaseQuery(sample: DatabaseQuerySample): void;
@@ -240,6 +269,29 @@ export interface Metrics {
    * signal, exactly like the seven failed deploys nobody noticed.
    */
   recordRateLimit(sample: RateLimitSample): void;
+  /**
+   * One photograph the platform would not store (slice 2.6c).
+   *
+   * **The reason this is worth counting is that five of the six reasons are the
+   * owner's problem and one is ours.** `storage-unavailable` climbing means R2
+   * is refusing us and every owner uploading right now is being turned away —
+   * which, like the geocoder, is served as an ordinary refusal and is otherwise
+   * indistinguishable from a run of people choosing bad files. The other five
+   * are how we find out that a limit is set wrong: a steady stream of
+   * `too-many-bytes` means the cap is below what phones actually produce, and
+   * `unsupported-format` means a real camera format is missing from the
+   * allowlist.
+   *
+   * **Only uploads are counted here.** A reorder can also be refused, and the
+   * service reuses `not-an-image` for a stale order — recording that would
+   * quietly mix a stale-tab count into a number about photographs, and the
+   * series would be uninterpretable rather than merely noisy.
+   *
+   * **Nothing counts successes**, deliberately: the HTTP histogram already
+   * counts every call to the upload route by status class, so a second total
+   * would be two numbers that can disagree about one thing.
+   */
+  recordMediaRefusal(sample: MediaRefusalSample): void;
   /**
    * One call to the postcode geocoder (slice 3.1f).
    *
@@ -408,6 +460,19 @@ export function createPrometheusMetrics(options: {
     registers: [registry],
   });
 
+  /*
+   * **One label, six values, and no `outcome` beside it.** Every sample here is
+   * a refusal — a stored photograph is counted by the HTTP histogram like every
+   * other successful call — so an `outcome` label would have exactly one value
+   * and would be a column of the word "refused".
+   */
+  const mediaRefusals = new Counter({
+    name: 'listing_media_refusals_total',
+    help: 'Photographs the platform would not store, by reason.',
+    labelNames: ['reason'],
+    registers: [registry],
+  });
+
   const geocodeDuration = new Histogram({
     name: 'geocode_duration_seconds',
     help: 'How long postcode geocoding took, and how it ended.',
@@ -469,6 +534,12 @@ export function createPrometheusMetrics(options: {
       rateLimitDecisions.inc({ tier: sample.tier, outcome: sample.outcome });
     },
 
+    recordMediaRefusal(sample) {
+      // A closed union at the call site, so there is nothing to narrow and no
+      // value a caller can invent. Six series, total.
+      mediaRefusals.inc({ reason: sample.reason });
+    },
+
     recordGeocode(sample) {
       geocodeDuration.observe({ outcome: sample.outcome }, sample.durationMs / 1000);
     },
@@ -507,6 +578,9 @@ export function createNoopMetrics(logger?: Logger): Metrics {
       /* deliberately nothing */
     },
     recordRateLimit() {
+      /* deliberately nothing */
+    },
+    recordMediaRefusal() {
       /* deliberately nothing */
     },
     recordGeocode() {
