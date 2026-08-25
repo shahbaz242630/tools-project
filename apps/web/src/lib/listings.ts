@@ -37,6 +37,7 @@ import type {
   PublicListingSearchResults,
   PublicationBlocker,
 } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const LISTINGS_TIMEOUT_MS = 5_000;
@@ -321,6 +322,7 @@ export async function call<T, E422 = never, E503 = never, E409 = never>(
           : { 'content-type': 'application/octet-stream' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
       // A listing somebody has just written must not be served from a cache
       // holding what it said before.

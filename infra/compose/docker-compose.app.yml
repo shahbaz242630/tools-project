@@ -232,6 +232,19 @@ services:
       # token minted by any Clerk application on the instance verifies here.
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:?set CLERK_AUTHORIZED_PARTIES}
 
+      # --- Cloudflare Access as a second-factor provider (ADR 0053) ---
+      # The team domain is the token issuer *and* the host its signing keys are
+      # fetched from; the AUD tag is what says an assertion was minted for *this*
+      # application rather than any other in the account.
+      #
+      # `:-` and not `:?`, deliberately, and this is the one pair here that is
+      # allowed to be absent: an environment without them simply installs no
+      # Access prover, which is the correct state anywhere Access does not sit in
+      # front — a laptop, or the CI container check. `loadIdentityEnv` refuses
+      # one without the other, so half-configured cannot boot.
+      CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-}
+      CLOUDFLARE_ACCESS_AUD: ${CLOUDFLARE_ACCESS_AUD:-}
+
       # --- Personal data encryption (ADR 0016) ---
       # Decrypts the street lines of stored addresses. `:?` because an API that
       # starts without it cannot read back an address anybody has saved, and

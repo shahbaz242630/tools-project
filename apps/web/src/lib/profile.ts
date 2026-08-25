@@ -20,6 +20,7 @@ import {
   publicProfilePath,
 } from '@platform/contracts';
 import type { MyProfile, ProfileInput, PublicProfile } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 /** Matches `ACCOUNT_TIMEOUT_MS`: one row, no dependency probing. */
@@ -142,7 +143,11 @@ export async function fetchMyProfile(
   try {
     response = await fetchImpl(new URL(ME_PROFILE_PATH, apiBaseUrl).toString(), {
       signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
-      headers: { ...authHeaders(token, clientIp), ...(await correlationHeaders()) },
+      headers: {
+        ...authHeaders(token, clientIp),
+        ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
+      },
     });
   } catch (error) {
     return { kind: 'unreachable', reason: describe(error) };
@@ -195,6 +200,7 @@ export async function saveMyProfile(
         ...authHeaders(token, clientIp),
         'content-type': 'application/json',
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
       body: JSON.stringify(input),
     });

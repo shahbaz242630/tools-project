@@ -252,6 +252,18 @@ async function bootstrap(): Promise<void> {
   // an environment that cannot set it cannot construct the adapter.
   const secondFactor = composeSecondFactor({
     allowWithoutSecondFactor: identityEnv.DANGEROUSLY_ALLOW_ADMIN_WITHOUT_MFA,
+    // Spread rather than passed as `undefined`: `exactOptionalPropertyTypes`
+    // makes an omitted optional and an explicit `undefined` different types,
+    // and the schema guarantees the pair is whole or absent.
+    ...(identityEnv.CLOUDFLARE_ACCESS_TEAM_DOMAIN !== undefined &&
+    identityEnv.CLOUDFLARE_ACCESS_AUD !== undefined
+      ? {
+          access: {
+            teamDomain: identityEnv.CLOUDFLARE_ACCESS_TEAM_DOMAIN,
+            audience: identityEnv.CLOUDFLARE_ACCESS_AUD,
+          },
+        }
+      : {}),
     logger,
   });
 

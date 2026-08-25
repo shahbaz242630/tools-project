@@ -185,3 +185,137 @@ describe('loadIdentityEnv', () => {
     ]);
   });
 });
+
+/**
+ * Cloudflare Access as a second-factor provider (ADR 0053, slice H8b).
+ *
+ * Both variables are optional — absent means the adapter is not installed, which
+ * is the correct state on a laptop, because Access protects a public hostname
+ * and cannot see `localhost`.
+ */
+describe('the Cloudflare Access second factor', () => {
+  const AUD = 'a'.repeat(64);
+  const DOMAIN = 'https://spring-river-c250.cloudflareaccess.com';
+
+  const withAccess = (overrides: Record<string, string>) =>
+    loadIdentityEnv({
+      ...valid,
+      CLOUDFLARE_ACCESS_TEAM_DOMAIN: DOMAIN,
+      CLOUDFLARE_ACCESS_AUD: AUD,
+      ...overrides,
+    });
+
+  it('is absent by default, so nothing is installed', () => {
+    const env = loadIdentityEnv(valid);
+
+    expect(env.CLOUDFLARE_ACCESS_TEAM_DOMAIN).toBeUndefined();
+    expect(env.CLOUDFLARE_ACCESS_AUD).toBeUndefined();
+  });
+
+  describe('an empty string means absent, not invalid', () => {
+    // **Not a nicety.** `docker-compose.app.yml` writes
+    // `${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-}`, and Compose expands an unset
+    // variable to an empty string rather than omitting the key. Without this,
+    // every deployed environment that has not configured Access would hand the
+    // schema `''` and the API would refuse to boot — an optional feature
+    // becoming a required one, discovered at deploy time.
+    it('treats both empty strings as not configured', () => {
+      const env = loadIdentityEnv({
+        ...valid,
+        CLOUDFLARE_ACCESS_TEAM_DOMAIN: '',
+        CLOUDFLARE_ACCESS_AUD: '',
+      });
+
+      expect(env.CLOUDFLARE_ACCESS_TEAM_DOMAIN).toBeUndefined();
+      expect(env.CLOUDFLARE_ACCESS_AUD).toBeUndefined();
+    });
+
+    it('still refuses an empty domain beside a real audience', () => {
+      // Empty means absent, and absent beside a present one is still the
+      // half-configured state the both-or-neither rule exists to catch.
+      expect(() =>
+        loadIdentityEnv({
+          ...valid,
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: '',
+          CLOUDFLARE_ACCESS_AUD: AUD,
+        }),
+      ).toThrow(EnvironmentError);
+    });
+  });
+
+  it('accepts a team domain and an audience together', () => {
+    const env = withAccess({});
+
+    expect(env.CLOUDFLARE_ACCESS_TEAM_DOMAIN).toBe(DOMAIN);
+    expect(env.CLOUDFLARE_ACCESS_AUD).toBe(AUD);
+  });
+
+  describe('both or neither', () => {
+    it('refuses a team domain with no audience', () => {
+      // The dangerous half. Without an audience the adapter would verify a
+      // token minted for *any* Access application in the account — a weaker
+      // check that looks like a working one.
+      expect(() =>
+        loadIdentityEnv({ ...valid, CLOUDFLARE_ACCESS_TEAM_DOMAIN: DOMAIN }),
+      ).toThrow(EnvironmentError);
+    });
+
+    it('refuses an audience with no team domain', () => {
+      expect(() => loadIdentityEnv({ ...valid, CLOUDFLARE_ACCESS_AUD: AUD })).toThrow(
+        EnvironmentError,
+      );
+    });
+
+    it('says which one is missing', () => {
+      expect(() =>
+        loadIdentityEnv({ ...valid, CLOUDFLARE_ACCESS_TEAM_DOMAIN: DOMAIN }),
+      ).toThrow(/CLOUDFLARE_ACCESS_AUD/);
+    });
+  });
+
+  describe('the team domain', () => {
+    it('refuses a trailing slash', () => {
+      // The certs path is appended to it, and the value is compared against the
+      // token's `iss`. A slash breaks both — as a verification error on every
+      // request, pointing at the token rather than at this variable.
+      expect(() => withAccess({ CLOUDFLARE_ACCESS_TEAM_DOMAIN: `${DOMAIN}/` })).toThrow(
+        EnvironmentError,
+      );
+    });
+
+    it('refuses a bare hostname with no scheme', () => {
+      // `iss` carries the scheme, so a bare hostname silently never matches.
+      expect(() =>
+        withAccess({
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: 'spring-river-c250.cloudflareaccess.com',
+        }),
+      ).toThrow(EnvironmentError);
+    });
+
+    it('refuses plain http', () => {
+      expect(() =>
+        withAccess({
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: 'http://team.cloudflareaccess.com',
+        }),
+      ).toThrow(EnvironmentError);
+    });
+  });
+
+  describe('the audience tag', () => {
+    it.each([
+      ['the application name', 'admin'],
+      ['a UUID', '3f700d7b-4fe9-413e-bed0-380e233830e4'],
+      ['too short', 'a'.repeat(63)],
+      ['too long', 'a'.repeat(65)],
+      ['uppercase hex', 'A'.repeat(64)],
+      ['not hex', 'z'.repeat(64)],
+    ])('refuses %s', (_label, value) => {
+      // Pasting the name or the UUID instead of the AUD tag is an easy mistake,
+      // and both would otherwise fail as an opaque verification error on every
+      // admin request rather than at startup.
+      expect(() => withAccess({ CLOUDFLARE_ACCESS_AUD: value })).toThrow(
+        EnvironmentError,
+      );
+    });
+  });
+});

@@ -22,6 +22,7 @@ import {
   parseAdminFeatureFlags,
 } from '@platform/contracts';
 import type { AdminFeatureFlag } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const ADMIN_FEATURE_FLAGS_TIMEOUT_MS = 5_000;
@@ -136,6 +137,7 @@ async function call<T>(
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
       // **Never cached, and here it matters more than anywhere else in the app.**
       // A kill switch read from a cache is one that appears not to have worked,

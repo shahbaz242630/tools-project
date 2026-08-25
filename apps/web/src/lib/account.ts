@@ -19,6 +19,7 @@ import {
   parseMeResponse,
 } from '@platform/contracts';
 import type { MeResponse } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 /**
@@ -103,6 +104,7 @@ export async function fetchAccount(
         // this page reads concurrently — say in the logs that they came from
         // the same browser request. See `correlation.ts`.
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
     });
   } catch (error) {

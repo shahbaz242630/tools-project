@@ -25,6 +25,7 @@ import type {
   CategoryConfigurationInput,
   CategoryDraftInput,
 } from '@platform/contracts';
+import { accessAssertionHeaders } from './access-assertion';
 import { correlationHeaders } from './correlation';
 
 export const ADMIN_CATEGORIES_TIMEOUT_MS = 5_000;
@@ -152,6 +153,7 @@ async function call<T>(
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(clientIp === null ? {} : { [CLIENT_IP_HEADER]: clientIp }),
         ...(await correlationHeaders()),
+        ...(await accessAssertionHeaders()),
       },
       // Configuration an administrator has just changed must not be served from
       // a cache that still holds the previous version.
